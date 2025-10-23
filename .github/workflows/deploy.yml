@@ -2,35 +2,51 @@ name: Deploy to DigitalOcean
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: 🧾 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18" # match your droplet Node version if different
+
+      - name: 🔐 Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
 
-      - name: Deploy to server
+      - name: 🧱 Add droplet to known hosts
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: 📤 Upload project files to server
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "node_modules" \
+            --exclude ".env" \
+            ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/
+
+      - name: 🚀 Install dependencies & restart PM2
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             set -e
-            echo "🔄 Deploying ussd_smart_payment_solution..."
-
-            cd ${{ secrets.DEPLOY_PATH }}
-            echo "📦 Pulling latest code..."
-            git fetch origin main
-            git reset --hard origin/main
-
+            cd "${{ secrets.DEPLOY_PATH }}"
             echo "📦 Installing dependencies..."
             yarn install --frozen-lockfile --production
+
+            # Uncomment this if you have a build step
+            # echo "🏗️ Building project..."
+            # yarn build
 
             echo "🚀 Restarting PM2 app..."
             pm2 restart ussd_smart_payment_solution --update-env || \
