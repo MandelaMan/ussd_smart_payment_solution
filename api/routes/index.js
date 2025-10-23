@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 router.get("/", (_req, res) =>
-  res.json({ message: "Welcome to the App for testing" })
+  res.json({ message: "Stalynx Utility API Application" })
 );
 
 // router.use("/users", require("./users"));
