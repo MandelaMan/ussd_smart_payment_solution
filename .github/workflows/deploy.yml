@@ -15,37 +15,54 @@ jobs:
       - name: ⚙️ Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18" # match your droplet Node version if different
+          node-version: "18" # match your droplet if different
 
       - name: 🔐 Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
 
-      - name: 🧱 Add droplet to known hosts
+      - name: 🧱 Add droplet to known_hosts
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
-      - name: 📤 Upload project files to server
+      # Optional: guaranteed clean (keeps only .env and node_modules)
+      - name: 🧹 Clean destination (keep .env and node_modules)
         run: |
-          rsync -az --delete \
-            --exclude ".git" \
-            --exclude ".github" \
-            --exclude "node_modules" \
-            --exclude ".env" \
-            ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
+            set -e
+            # ensure target dir exists (use sudo if needed)
+            (mkdir -p '${{ secrets.DEPLOY_PATH }}' 2>/dev/null) || \
+              (command -v sudo >/dev/null && sudo mkdir -p '${{ secrets.DEPLOY_PATH }}')
+            # if root-owned path, try to chown to deploy (requires sudo; run once manually if it fails)
+            command -v sudo >/dev/null && sudo chown -R '${{ secrets.DEPLOY_USER }}':'${{ secrets.DEPLOY_USER }}' '${{ secrets.DEPLOY_PATH }}' || true
+            cd '${{ secrets.DEPLOY_PATH }}' || exit 0
+            find . -mindepth 1 -maxdepth 1 \
+              ! -name 'node_modules' \
+              ! -name '.env' \
+              -exec rm -rf {} +
+          "
 
-      - name: 🚀 Install dependencies & restart PM2
+      - name: 📤 Sync repo to server (mirror, delete extras)
+        run: |
+          rsync -az --delete --delete-after --human-readable --progress \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --filter "protect .env" \
+            --filter "protect node_modules/" \
+            ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:'${{ secrets.DEPLOY_PATH }}/'
+
+      - name: 🚀 Install deps & restart PM2
         run: |
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             set -e
-            cd "${{ secrets.DEPLOY_PATH }}"
+            cd '${{ secrets.DEPLOY_PATH }}'
+
             echo "📦 Installing dependencies..."
             yarn install --frozen-lockfile --production
 
-            # Uncomment this if you have a build step
-            # echo "🏗️ Building project..."
+            # If you have a build step:
             # yarn build
 
             echo "🚀 Restarting PM2 app..."
