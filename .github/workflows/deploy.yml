@@ -1,0 +1,41 @@
+name: Deploy to DigitalOcean
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
+
+      - name: Deploy to server
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            set -e
+            echo "🔄 Deploying ussd_smart_payment_solution..."
+
+            cd ${{ secrets.DEPLOY_PATH }}
+            echo "📦 Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "📦 Installing dependencies..."
+            yarn install --frozen-lockfile --production
+
+            echo "🚀 Restarting PM2 app..."
+            pm2 restart ussd_smart_payment_solution --update-env || \
+              pm2 start ecosystem.config.js --env production
+            pm2 save
+
+            echo "✅ Deployment complete!"
+          EOF

@@ -39,6 +39,8 @@ app.use("/api", routes);
 app.use(notFound);
 app.use(errorHandler);
 
+const PORT = process.env.PORT || 4000;
+
 app.listen(env.PORT, () => {
   console.log(`Server listening on http://localhost:${env.PORT}`);
 });
