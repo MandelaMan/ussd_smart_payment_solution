@@ -1,0 +1,46 @@
+-- Users
+CREATE TABLE IF NOT EXISTS users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(191) NOT NULL,
+  email VARCHAR(191) NOT NULL UNIQUE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Accounts (one user -> many accounts)
+CREATE TABLE IF NOT EXISTS accounts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(191) NOT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'USD',
+  balance_cents BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_accounts_user_id (user_id),
+  CONSTRAINT fk_accounts_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Transactions (ledger)
+CREATE TABLE IF NOT EXISTS transactions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  type ENUM('deposit','withdrawal','transfer') NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  counterparty_account_id BIGINT UNSIGNED NULL,
+  amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
+  currency CHAR(3) NOT NULL,
+  description VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tx_account_id (account_id),
+  KEY idx_tx_created_at (created_at),
+  CONSTRAINT fk_tx_account
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+    ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT fk_tx_counterparty
+    FOREIGN KEY (counterparty_account_id) REFERENCES accounts(id)
+    ON DELETE SET NULL ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
