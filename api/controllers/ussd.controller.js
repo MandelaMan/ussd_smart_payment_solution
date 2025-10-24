@@ -5,11 +5,11 @@ const { readTransactions } = require("../../utils/transactions");
 
 const packageList = [
   { name: "Basic ", bandwidth: "30MBPS", price: 1 },
-  { name: "Basic + DSTV", bandwidth: "30MBPS", price: 1 },
-  { name: "Basic Plus", bandwidth: "50MBPS", price: 1 },
-  { name: "Basic Plus + DSTV", bandwidth: "50MBPS", price: 1 },
-  { name: "Premium", bandwidth: "100MBPS", price: 1 },
-  { name: "Premium + DSTV", bandwidth: "100MBPS", price: 1 },
+  { name: "Basic + DSTV", bandwidth: "30MBPS", price: 2 },
+  { name: "Basic Plus", bandwidth: "50MBPS", price: 3 },
+  { name: "Basic Plus + DSTV", bandwidth: "50MBPS", price: 4 },
+  { name: "Premium", bandwidth: "100MBPS", price: 5 },
+  { name: "Premium + DSTV", bandwidth: "100MBPS", price: 6 },
 ];
 
 // --- helpers ---
@@ -64,8 +64,10 @@ const formatDmy = (date) => moment(date).format("DD/MM/YYYY");
 // Simulated account details lookup (replace with real DB)
 const getAccountDetails = async (accountNumber) => {
   return {
-    customer_name: "ET-E201",
-    amount: 5900, // current monthly package price
+    customer_name: "TEST1 TEST1 TEST1",
+    customer_number: "ET-001",
+    aptNo: "B19",
+    amount: 1, // current monthly package price
     package: "Basic Plus",
     status: "Active", // or "Inactive"
     dueDate: "31/10/2025",
@@ -108,16 +110,16 @@ const initiateUSSD = async (req, res) => {
       const details = await getAccountDetails(accountNumber);
       if (!details) return end(res, `Account ${accountNumber} not found.`);
 
-      response = `CON ${details.customer_name}
-Package: ${details.package} - Ksh ${details.amount}
-Account Status: ${details.status}
-Expires On: ${details.dueDate}
-1. Renew Subscription
-2. Upgrade Subscription
-3. Downgrade Subscription
-4. Cancel Subscription
-0. Exit
-99. Back`;
+      response = `CON ${details.customer_name} Apt No. ${details.aptNo}
+                Package: ${details.package} - Ksh ${details.amount}
+                Account Status: ${details.status}
+                Expires On: ${details.dueDate}
+                1. Renew Subscription
+                2. Upgrade Subscription
+                3. Downgrade Subscription
+                4. Cancel Subscription
+                0. Exit
+                99. Back`;
     } else if (parts.length === 3) {
       // choose action
       const accountNumber = parts[1].trim();
@@ -138,8 +140,8 @@ Expires On: ${details.dueDate}
         }
 
         // Tell user we're waiting — no extra menu — then short-poll for callback
-        const waitingMsg = `CON Waiting for payment...
-(Do not exit. You'll be updated shortly.)`;
+        const waitingMsg = `CON Waiting for payment confirmation...
+                        (Do not close window. You'll be updated shortly.)`;
         // Send the waiting screen immediately
         res.set("Content-Type", "text/plain");
         res.send(waitingMsg);
