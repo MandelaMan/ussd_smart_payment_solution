@@ -86,8 +86,14 @@ const initiateSTKPush = async (phone, amount) => {
 // Safaricom STK callback (C2B) — client pays business
 const mpesaCallback = async (req, res) => {
   try {
-    const callback = req.body?.Body?.stkCallback;
+    const body = req.body;
+    console.log("M-Pesa callback received:", JSON.stringify(body, null, 2));
+
+    // Safaricom sends { Body: { stkCallback: {...} } }
+    const callback = body?.Body?.stkCallback;
+
     if (!callback) {
+      console.warn("Invalid callback format");
       return res.status(400).json({ message: "Invalid callback payload" });
     }
 
@@ -109,31 +115,18 @@ const mpesaCallback = async (req, res) => {
       transaction.TransactionDate = getItemValue("TransactionDate");
       transaction.PhoneNumber = String(getItemValue("PhoneNumber") || "");
       transaction.Status = "SUCCESS";
-
-      console.log(`✅ Payment confirmed for ${transaction.PhoneNumber}`);
     } else {
-      // Failure or timeout
       transaction.Status = "FAILED";
-      console.log(`❌ Payment failed: ${callback.ResultDesc}`);
     }
 
-    // Read, append (and optionally collapse/replace earlier PENDING by same CheckoutRequestID)
+    // append to transactions.json
     const all = await readTransactions();
-
-    const idx = all.findIndex(
-      (t) => t.CheckoutRequestID === transaction.CheckoutRequestID
-    );
-    if (idx >= 0) {
-      all[idx] = { ...all[idx], ...transaction };
-    } else {
-      all.push(transaction);
-    }
-
+    all.push(transaction);
     await writeTransactions(all);
 
-    res.status(200).json({ message: "Callback received and processed" });
-  } catch (error) {
-    console.error("Callback processing error:", error);
+    res.status(200).json({ message: "Callback processed" });
+  } catch (err) {
+    console.error("Callback error:", err);
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
