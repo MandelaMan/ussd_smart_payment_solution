@@ -1,24 +1,23 @@
-// src/utils/transactions.js
 const fs = require("fs");
 const path = require("path");
 
-const LOG_DIR = path.resolve(process.cwd(), "logs");
+const LOG_DIR = path.resolve(__dirname, "../logs");
 const LOG_FILE = path.join(LOG_DIR, "transactions.json");
 
 async function ensureLogFile() {
   await fs.promises.mkdir(LOG_DIR, { recursive: true });
   try {
-    await fs.promises.access(LOG_FILE, fs.constants.F_OK);
-  } catch (_) {
+    await fs.promises.access(LOG_FILE);
+  } catch {
     await fs.promises.writeFile(LOG_FILE, "[]", "utf8");
   }
 }
 
 async function readTransactions() {
   await ensureLogFile();
-  const content = await fs.promises.readFile(LOG_FILE, "utf8");
+  const data = await fs.promises.readFile(LOG_FILE, "utf8");
   try {
-    return JSON.parse(content || "[]");
+    return JSON.parse(data || "[]");
   } catch {
     return [];
   }
@@ -35,9 +34,4 @@ function mostRecentForPhone(all, phone) {
   return list.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp))[0];
 }
 
-module.exports = {
-  LOG_FILE,
-  readTransactions,
-  writeTransactions,
-  mostRecentForPhone,
-};
+module.exports = { readTransactions, writeTransactions, mostRecentForPhone };

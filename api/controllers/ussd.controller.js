@@ -1,20 +1,20 @@
-// controllers/ussd.controller.js
+// api/controllers/ussd.controller.js
+
 const { initiateSTKPush } = require("./mpesa.controller");
 const {
   readTransactions,
+  writeTransactions,
   mostRecentForPhone,
 } = require("../../utils/transactions");
 
 const initiateUSSD = async (req, res) => {
   const { phoneNumber, text = "" } = req.body;
-
-  let packageAmount = 1;
-  const input = String(text || "").trim();
-  const parts = input.split("*").filter(Boolean);
-
+  const input = text.trim();
+  const parts = input.split("*");
+  const packageAmount = 1;
   let response;
 
-  // Check for a recent transaction to “alert”
+  // 🧠 Try showing banner from last transaction
   let banner = "";
   try {
     const all = await readTransactions();
@@ -22,23 +22,23 @@ const initiateUSSD = async (req, res) => {
     if (recent) {
       const minutesAgo =
         (Date.now() - new Date(recent.Timestamp).getTime()) / 60000;
-      if (minutesAgo <= 10 && recent.Status) {
+      if (minutesAgo < 30) {
         if (recent.Status === "SUCCESS") {
-          banner = `\n\n✅ Payment received (Ksh ${
+          banner = `\n✅ Payment of Ksh ${
             recent.Amount || "-"
-          }). Ref: ${recent.MpesaReceiptNumber || "-"}\n`;
+          } received (Ref: ${recent.MpesaReceiptNumber || "-"})`;
         } else if (recent.Status === "FAILED") {
-          banner = `\n\n❌ Last payment failed: ${recent.ResultDesc}\n`;
+          banner = `\n❌ Last payment failed (${recent.ResultDesc || "Error"})`;
         } else if (recent.Status === "PENDING") {
-          banner = `\n\n⏳ Awaiting your M-Pesa PIN to complete the payment…\n`;
+          banner = `\n⏳ Awaiting M-PESA confirmation...`;
         }
       }
     }
-  } catch (e) {
-    // ignore banner errors
+  } catch (err) {
+    console.warn("⚠️ Could not read transactions:", err.message);
   }
 
-  const mainMenu = `CON${banner}Welcome to Starlynx Utility Limited. Select from the options below:
+  const mainMenu = `CON${banner}\nWelcome to Starlynx Utility Limited. Select from the options below:
   1. New Customer Registration
   2. Manage My Account
   0. Exit`;
@@ -52,16 +52,14 @@ const initiateUSSD = async (req, res) => {
   } else if (parts[0] === "2") {
     if (parts.length === 1) {
       response = `CON Enter your Customer Number:
-                  0. Exit
-                  99. Back`;
+0. Exit
+99. Back`;
     } else if (parts.length === 2) {
       const accountNumber = parts[1].trim();
-
-      if (accountNumber === "0") {
+      if (accountNumber === "0")
         response = "END Thank you for using our service!";
-      } else if (accountNumber === "99") {
-        response = mainMenu;
-      } else {
+      else if (accountNumber === "99") response = mainMenu;
+      else {
         const details = {
           customer_name: "ET-E201",
           amount: 5900,
@@ -70,26 +68,45 @@ const initiateUSSD = async (req, res) => {
           dueDate: "31/10/2025",
         };
 
-        response = `CON ${details.customer_name}\nPackage: ${details.package} - Ksh ${details.amount}\nAccount Status: ${details.status}\nExpires On: ${details.dueDate}\n 
-              1. Renew Subscription
-              2. Upgrade Subscription
-              3. Downgrade Subscription
-              4. Cancel Subscription
-              0. Exit
-              99.Back`;
+        response = `CON ${details.customer_name}\nPackage: ${details.package} - Ksh ${details.amount}\nAccount Status: ${details.status}\nExpires On: ${details.dueDate}\n
+1. Renew Subscription
+2. Upgrade Subscription
+3. Downgrade Subscription
+4. Cancel Subscription
+0. Exit
+99. Back`;
       }
     } else if (parts.length === 3) {
       const accountNumber = parts[1].trim();
       const action = parts[2].trim();
 
       if (action === "1") {
-        const results = await initiateSTKPush(phoneNumber, packageAmount);
+        try {
+          const result = await initiateSTKPush(phoneNumber, packageAmount);
 
-        if (!results?.error) {
-          response =
-            "END Request submitted to M-PESA for processing. Enter your M-PESA PIN when prompted.";
-        } else {
-          response = "END Failed to initiate payment. Please try again later.";
+          if (result?.MerchantRequestID) {
+            // Log pending transaction
+            const all = await readTransactions();
+            all.push({
+              Status: "PENDING",
+              PhoneNumber: phoneNumber.replace(/^(\+|0)+/, ""),
+              Amount: packageAmount,
+              MerchantRequestID: result.MerchantRequestID,
+              CheckoutRequestID: result.CheckoutRequestID,
+              ResultDesc: "Awaiting customer PIN",
+              Timestamp: new Date().toISOString(),
+            });
+            await writeTransactions(all);
+
+            response =
+              "END Request submitted to M-PESA. Enter your PIN when prompted.";
+          } else {
+            response =
+              "END Failed to initiate payment. Please try again later.";
+          }
+        } catch (err) {
+          console.error("❌ STK Push Error:", err.message);
+          response = "END Payment initiation failed. Please try again later.";
         }
       } else if (action === "2") {
         response = `END Your subscription for account ${accountNumber} has been upgraded. Our team will contact you shortly.`;
@@ -99,8 +116,8 @@ const initiateUSSD = async (req, res) => {
         response = "END Thank you for using our service!";
       } else if (action === "99") {
         response = `CON Enter your Customer Number:
-                      0. Exit
-                      99. Back`;
+0. Exit
+99. Back`;
       } else {
         response = "END Invalid option selected.";
       }
@@ -115,8 +132,6 @@ const initiateUSSD = async (req, res) => {
   res.send(response);
 };
 
-const test = async (req, res) => {
-  res.json({ message: "OK" });
-};
+const test = async (req, res) => res.json({ message: "OK" });
 
 module.exports = { initiateUSSD, test };
