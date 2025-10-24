@@ -5,14 +5,14 @@ const path = require("path");
 const LOG_DIR = path.resolve(__dirname, "../logs");
 const LOG_FILE = path.join(LOG_DIR, "transactions.json");
 
-// --- tiny in-process write queue (prevents concurrent lost writes) ---
+// ---- tiny in-process write queue to avoid concurrent clobbering ----
 let _queue = Promise.resolve();
 function withLock(task) {
-  _queue = _queue.then(task, task); // ensure chain continues on error too
+  _queue = _queue.then(task, task); // keep the chain even if the prior task failed
   return _queue;
 }
 
-// Atomic write: write to temp file then rename
+// Atomic write: temp file -> rename
 async function safeWriteJSON(filePath, data) {
   const tmpPath = filePath + ".tmp";
   await fs.promises.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf8");
@@ -33,7 +33,6 @@ async function readTransactions() {
   const data = await fs.promises.readFile(LOG_FILE, "utf8");
   try {
     const parsed = JSON.parse(data || "[]");
-    // Always return an array
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -41,18 +40,12 @@ async function readTransactions() {
 }
 
 async function writeTransactions(all) {
-  // Keep for backward compatibility, but serialize + atomic
   await ensureLogFile();
   return withLock(async () => {
-    // Re-read to merge in case someone else wrote between caller's read and now
-    const current = await readTransactions();
-    // If caller passed only their copy (potentially stale), prefer caller's `all`
-    // but you can also choose to merge. Here we overwrite to match original semantics:
     await safeWriteJSON(LOG_FILE, all);
   });
 }
 
-// New: append atomically (use this instead of read+push+write at call sites)
 async function appendTransaction(txn) {
   await ensureLogFile();
   return withLock(async () => {
@@ -62,9 +55,7 @@ async function appendTransaction(txn) {
   });
 }
 
-// New: update by CheckoutRequestID atomically; append if not found
 async function upsertByCheckoutId(checkoutId, patch) {
-  if (!checkoutId) return appendTransaction({ ...patch });
   await ensureLogFile();
   return withLock(async () => {
     const all = await readTransactions();
@@ -78,17 +69,37 @@ async function upsertByCheckoutId(checkoutId, patch) {
   });
 }
 
-// Helper you already had
+// ----- convenience lookups used by USSD flow -----
+const normalizePhone = (phone = "") => phone.replace(/^(\+|0)+/, "");
+
 function mostRecentForPhone(all, phone) {
-  const cleaned = (phone || "").replace(/^(\+|0)+/, "");
+  const cleaned = normalizePhone(phone);
   const list = all.filter((t) => (t.PhoneNumber || "").endsWith(cleaned));
   return list.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp))[0];
 }
 
+async function findLatestTxnByCheckoutOrPhone(checkoutId, phone) {
+  const all = await readTransactions();
+  if (checkoutId) {
+    const hit = [...all]
+      .reverse()
+      .find((t) => t.CheckoutRequestID === checkoutId);
+    if (hit) return hit;
+  }
+  const cleaned = normalizePhone(phone);
+  return [...all]
+    .reverse()
+    .find((t) => String(t.PhoneNumber || "").endsWith(cleaned));
+}
+
 module.exports = {
+  // IO
   readTransactions,
-  writeTransactions, // still available
-  appendTransaction, // prefer this for "add a record"
-  upsertByCheckoutId, // prefer this in the M-Pesa callback
+  writeTransactions,
+  appendTransaction,
+  upsertByCheckoutId,
+  // helpers
   mostRecentForPhone,
+  findLatestTxnByCheckoutOrPhone,
+  normalizePhone,
 };
