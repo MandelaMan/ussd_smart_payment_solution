@@ -1,4 +1,5 @@
 const { getTISPCustomer } = require("./tisp.controller");
+const { initiateSTKPush } = require("./mpesa.controller");
 
 // const getCustomerDetails = async (client) => {
 //   const customerDetails = {
@@ -51,6 +52,7 @@ const initiateUSSD = async (req, res) => {
           amount: 5900,
           package: "Basic Plus",
           status: "Active",
+          dueDate: "31/10/2025",
         };
 
         if (!details) {
@@ -72,15 +74,14 @@ const initiateUSSD = async (req, res) => {
       const action = parts[2].trim();
 
       if (action === "1") {
-        response = `END Request submitted to M-PESA for processing. Enter M-PESA  PIN when prompted.`;
-        // results = await initiateSTKPush(phoneNumber, packageAmount);
+        results = await initiateSTKPush(phoneNumber, packageAmount);
 
-        // if (results) {
-        //   response =
-        //     "END Request submitted to M-PESA for processing. Enter M-PESA  PIN when prompted.";
-        // } else {
-        //   response = "END Failed to initiate payment. Please try again later.";
-        // }
+        if (results) {
+          response =
+            "END Request submitted to M-PESA for processing. Enter M-PESA  PIN when prompted.";
+        } else {
+          response = "END Failed to initiate payment. Please try again later.";
+        }
       } else if (action === "2") {
         // Upgrade Subscription
         response = `END Your subscription for account ${accountNumber} has been upgraded. Our team will contact you shortly.`;
