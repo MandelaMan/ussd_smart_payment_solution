@@ -140,8 +140,7 @@ const initiateUSSD = async (req, res) => {
         }
 
         // Tell user we're waiting — no extra menu — then short-poll for callback
-        const waitingMsg = `CON Waiting for payment confirmation...
-                        (Do not close window. You'll be updated shortly.)`;
+        const waitingMsg = `END Payment request sent. Please await M-Pesa screen to confirm transaction, Thank You.)`;
         // Send the waiting screen immediately
         res.set("Content-Type", "text/plain");
         res.send(waitingMsg);
