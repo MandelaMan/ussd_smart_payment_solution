@@ -53,22 +53,32 @@ jobs:
             --filter "protect node_modules/" \
             ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:'${{ secrets.DEPLOY_PATH }}/'
 
-      - name: 🚀 Install deps & restart PM2
+      - name: 🚀 Install deps & restart PM2 (Yarn + index.js)
         run: |
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             set -e
             cd '${{ secrets.DEPLOY_PATH }}'
 
-            echo "📦 Installing dependencies..."
+            # Ensure pm2 exists on the droplet
+            if ! command -v pm2 >/dev/null 2>&1; then
+              npm i -g pm2
+            fi
+
+            echo "📦 Installing dependencies with Yarn..."
+            corepack enable || true
+            corepack prepare yarn@stable --activate || true
             yarn install --frozen-lockfile --production
 
-            # If you have a build step:
-            # yarn build
+            APP_NAME="ussd_smart_payment_solution"
+            ENTRY_FILE="index.js"   # ← your entry file
 
-            echo "🚀 Restarting PM2 app..."
-            pm2 restart ussd_smart_payment_solution --update-env || \
-              pm2 start ecosystem.config.js --env production
+            echo "🚀 (Re)starting PM2 app..."
+            if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+              pm2 restart "$APP_NAME" --update-env
+            else
+              pm2 start "$ENTRY_FILE" --name "$APP_NAME"
+            fi
+
             pm2 save
-
             echo "✅ Deployment complete!"
           EOF
