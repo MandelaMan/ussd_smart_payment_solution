@@ -14,31 +14,31 @@ const initiateUSSD = async (req, res) => {
 
   let response;
 
-  //   // Check for a recent transaction to “alert”
-  //   let banner = "";
-  //   try {
-  //     const all = await readTransactions();
-  //     const recent = mostRecentForPhone(all, phoneNumber);
-  //     if (recent) {
-  //       const minutesAgo =
-  //         (Date.now() - new Date(recent.Timestamp).getTime()) / 60000;
-  //       if (minutesAgo <= 10 && recent.Status) {
-  //         if (recent.Status === "SUCCESS") {
-  //           banner = `\n\n✅ Payment received (Ksh ${
-  //             recent.Amount || "-"
-  //           }). Ref: ${recent.MpesaReceiptNumber || "-"}\n`;
-  //         } else if (recent.Status === "FAILED") {
-  //           banner = `\n\n❌ Last payment failed: ${recent.ResultDesc}\n`;
-  //         } else if (recent.Status === "PENDING") {
-  //           banner = `\n\n⏳ Awaiting your M-Pesa PIN to complete the payment…\n`;
-  //         }
-  //       }
-  //     }
-  //   } catch (e) {
-  //     // ignore banner errors
-  //   }
+  // Check for a recent transaction to “alert”
+  let banner = "";
+  try {
+    const all = await readTransactions();
+    const recent = mostRecentForPhone(all, phoneNumber);
+    if (recent) {
+      const minutesAgo =
+        (Date.now() - new Date(recent.Timestamp).getTime()) / 60000;
+      if (minutesAgo <= 10 && recent.Status) {
+        if (recent.Status === "SUCCESS") {
+          banner = `\n\n✅ Payment received (Ksh ${
+            recent.Amount || "-"
+          }). Ref: ${recent.MpesaReceiptNumber || "-"}\n`;
+        } else if (recent.Status === "FAILED") {
+          banner = `\n\n❌ Last payment failed: ${recent.ResultDesc}\n`;
+        } else if (recent.Status === "PENDING") {
+          banner = `\n\n⏳ Awaiting your M-Pesa PIN to complete the payment…\n`;
+        }
+      }
+    }
+  } catch (e) {
+    // ignore banner errors
+  }
 
-  const mainMenu = `CON Welcome to Starlynx Utility Limited. Select from the options below:
+  const mainMenu = `CON${banner}Welcome to Starlynx Utility Limited. Select from the options below:
   1. New Customer Registration
   2. Manage My Account
   0. Exit`;
