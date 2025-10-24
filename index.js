@@ -6,12 +6,14 @@ const morgan = require("morgan");
 
 const { loadEnv } = require("./api/config/env");
 const { getPool } = require("./api/config/db");
-const routes = require("./api/routes");
 const notFound = require("./api/middleware/notFound");
 const errorHandler = require("./api/middleware/errorHandler");
 
 const env = loadEnv();
 const app = express();
+
+//Routes
+const routes = require("./api/routes");
 
 app.use(helmet());
 app.use(cors());

@@ -5,8 +5,9 @@ router.get("/", (_req, res) =>
   res.json({ message: "Stalynx Utility API Application" })
 );
 
-// router.use("/users", require("./users"));
-// router.use("/accounts", require("./accounts"));
-// router.use("/transactions", require("./transactions"));
+router.use("/ussd", require("./ussd.routes"));
+router.use("/tisp", require("./tisp.routes"));
+router.use("/mpesa", require("./mpesa.routes"));
+//Add other routes below
 
 module.exports = router;
