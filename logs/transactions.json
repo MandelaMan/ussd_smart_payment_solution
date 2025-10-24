@@ -8,35 +8,5 @@
     "ResultCode": null,
     "ResultDesc": "Awaiting customer PIN",
     "Timestamp": "2025-10-24T08:15:30.123Z"
-  },
-  {
-    "MerchantRequestID": "12345-67890-1",
-    "CheckoutRequestID": "ws_CO_12345678901234567890123456",
-    "ResultCode": 0,
-    "ResultDesc": "The service request is processed successfully.",
-    "Timestamp": "2025-10-24T08:16:20.123Z",
-    "Amount": 1,
-    "MpesaReceiptNumber": "QFR7ABC123",
-    "TransactionDate": "20251024081620",
-    "PhoneNumber": "254701057515",
-    "Status": "SUCCESS"
-  },
-  {
-    "MerchantRequestID": "77777-88888-2",
-    "CheckoutRequestID": "ws_CO_99999999999999999999999999",
-    "ResultCode": 1032,
-    "ResultDesc": "Request cancelled by user",
-    "Timestamp": "2025-10-24T09:05:11.458Z",
-    "Status": "FAILED"
-  },
-  {
-    "Status": "PENDING",
-    "PhoneNumber": "254700111222",
-    "Amount": 5900,
-    "MerchantRequestID": "99999-00000-1",
-    "CheckoutRequestID": "ws_CO_65432109876543210987654321",
-    "ResultCode": null,
-    "ResultDesc": "Awaiting customer PIN",
-    "Timestamp": "2025-10-24T09:30:00.000Z"
   }
 ]
