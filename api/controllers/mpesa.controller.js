@@ -1,10 +1,76 @@
 // controllers/mpesa.controller.js
+const fs = require("fs");
+const path = require("path");
 const moment = require("moment");
 const axios = require("axios");
-const {
-  readTransactions,
-  writeTransactions,
-} = require("../../utils/transactions");
+
+// ======== Embedded transactions helpers (no external import) ========
+const LOG_DIR = path.resolve(__dirname, "../logs");
+const LOG_FILE = path.join(LOG_DIR, "transactions.json");
+
+// In-process serialized writes
+let _queue = Promise.resolve();
+function withLock(task) {
+  _queue = _queue.then(task, task);
+  return _queue;
+}
+
+async function ensureLogFile() {
+  await fs.promises.mkdir(LOG_DIR, { recursive: true });
+  try {
+    await fs.promises.access(LOG_FILE);
+  } catch {
+    await fs.promises.writeFile(LOG_FILE, "[]", "utf8");
+  }
+}
+
+async function readTransactions() {
+  await ensureLogFile();
+  const data = await fs.promises.readFile(LOG_FILE, "utf8");
+  try {
+    const parsed = JSON.parse(data || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function safeWriteJSON(filePath, data) {
+  const tmpPath = filePath + ".tmp";
+  await fs.promises.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf8");
+  await fs.promises.rename(tmpPath, filePath);
+}
+
+async function writeTransactions(all) {
+  await ensureLogFile();
+  return withLock(async () => {
+    await safeWriteJSON(LOG_FILE, all);
+  });
+}
+
+async function appendTransaction(txn) {
+  await ensureLogFile();
+  return withLock(async () => {
+    const all = await readTransactions();
+    all.push({ ...txn });
+    await safeWriteJSON(LOG_FILE, all);
+  });
+}
+
+async function upsertByCheckoutId(checkoutId, patch) {
+  await ensureLogFile();
+  return withLock(async () => {
+    const all = await readTransactions();
+    const idx = all.findIndex((t) => t.CheckoutRequestID === checkoutId);
+    if (idx >= 0) {
+      all[idx] = { ...all[idx], ...patch };
+    } else {
+      all.push({ ...patch });
+    }
+    await safeWriteJSON(LOG_FILE, all);
+  });
+}
+// ====================================================================
 
 const getAccessToken = async () => {
   const secret_key = process.env.MPESA_CONSUMER_SECRET;
@@ -32,6 +98,7 @@ const initiateSTKPush = async (phone, amount) => {
       "base64"
     );
 
+    // normalize phone (2547XXXXXXXX)
     const user_phone = (phone || "").replace(/^(\+|0)+/, "");
 
     const payload = {
@@ -58,8 +125,7 @@ const initiateSTKPush = async (phone, amount) => {
 
     // Pre-log a PENDING record keyed by CheckoutRequestID
     try {
-      const all = await readTransactions();
-      all.push({
+      await appendTransaction({
         Status: "PENDING",
         PhoneNumber: user_phone,
         Amount: amount,
@@ -69,7 +135,6 @@ const initiateSTKPush = async (phone, amount) => {
         ResultDesc: "Awaiting customer PIN",
         Timestamp: new Date().toISOString(),
       });
-      await writeTransactions(all);
     } catch (e) {
       console.warn("Could not pre-log pending transaction:", e.message);
     }
@@ -117,18 +182,8 @@ const mpesaCallback = async (req, res) => {
     }
 
     // Update existing PENDING by CheckoutRequestID; if not found, append
-    const all = await readTransactions();
-    const idx = all.findIndex(
-      (t) => t.CheckoutRequestID === transaction.CheckoutRequestID
-    );
+    await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
 
-    if (idx !== -1) {
-      all[idx] = { ...all[idx], ...transaction };
-    } else {
-      all.push(transaction);
-    }
-
-    await writeTransactions(all);
     res.status(200).json({ message: "Callback processed" });
   } catch (err) {
     console.error("Callback error:", err);

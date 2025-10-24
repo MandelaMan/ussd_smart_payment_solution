@@ -39,6 +39,34 @@ const getTISPCustomer = async (clientNo) => {
   }
 };
 
+const updateClientDetails = async (clientNo) => {
+  if (!clientNo) {
+    throw new Error("Client number is required.");
+  }
+
+  const data = {
+    TransactionType: "MPESA Paybill",
+    TransID: "${INVOICE.INVOICE_ID}",
+    TransTime: "${INVOICE.MODIFIED_TIME}",
+    TransAmount: "${INVOICE.AMOUNT_PAID}",
+    BusinessShortCode: "123456",
+    BillRefNumber: "${CONTACT.CONTACT_COMPANYNAME}",
+    InvoiceNumber: "${INVOICE.INVOICE_NUMBER}",
+    OrgAccountBalance: "0",
+    ThirdPartyTransID: "HFDYU56",
+    MSISDN: "0722123456",
+    FirstName: "Nelson Omoro",
+  };
+
+  try {
+    const data = await callTISP("POST", { client: clientNo });
+    return JSON.parse(data);
+  } catch (error) {
+    console.error("Failed to get TISP customer:", error.message);
+    throw error;
+  }
+};
+
 const test = async (req, res) => {
   const { customer_no } = req.body;
 

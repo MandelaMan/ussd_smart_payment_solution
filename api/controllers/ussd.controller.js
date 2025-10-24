@@ -1,7 +1,53 @@
 // controllers/ussd.controller.js
+const fs = require("fs");
+const path = require("path");
 const moment = require("moment");
 const { initiateSTKPush } = require("./mpesa.controller");
-const { readTransactions } = require("../../utils/transactions");
+
+// ======== Embedded transactions helpers (no external import) ========
+const LOG_DIR = path.resolve(__dirname, "../logs");
+const LOG_FILE = path.join(LOG_DIR, "transactions.json");
+
+// In-process serialized writes
+let _queue = Promise.resolve();
+function withLock(task) {
+  _queue = _queue.then(task, task);
+  return _queue;
+}
+
+async function ensureLogFile() {
+  await fs.promises.mkdir(LOG_DIR, { recursive: true });
+  try {
+    await fs.promises.access(LOG_FILE);
+  } catch {
+    await fs.promises.writeFile(LOG_FILE, "[]", "utf8");
+  }
+}
+
+async function readTransactions() {
+  await ensureLogFile();
+  const data = await fs.promises.readFile(LOG_FILE, "utf8");
+  try {
+    const parsed = JSON.parse(data || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function safeWriteJSON(filePath, data) {
+  const tmpPath = filePath + ".tmp";
+  await fs.promises.writeFile(tmpPath, JSON.stringify(data, null, 2), "utf8");
+  await fs.promises.rename(tmpPath, filePath);
+}
+
+async function writeTransactions(all) {
+  await ensureLogFile();
+  return withLock(async () => {
+    await safeWriteJSON(LOG_FILE, all);
+  });
+}
+// ====================================================================
 
 const packageList = [
   { name: "Basic ", bandwidth: "30MBPS", price: 1 },
@@ -139,18 +185,12 @@ const initiateUSSD = async (req, res) => {
           );
         }
 
-        // Tell user we're waiting — no extra menu — then short-poll for callback
-        const waitingMsg = `END Payment request sent. Please await M-Pesa screen to confirm transaction, Thank You.)`;
-        // Send the waiting screen immediately
+        // Tell user we're waiting — you had END here; kept as-is
+        const waitingMsg = `END Payment request sent. Please await M-Pesa screen to confirm transaction, Thank You.`;
         res.set("Content-Type", "text/plain");
         res.send(waitingMsg);
 
-        // NOTE: Most USSD gateways do NOT allow streaming updates; if yours does not,
-        // remove the immediate send above and use only the blocking wait below.
-        // If your gateway requires a single response, comment out the two lines above
-        // and keep the blocking wait approach.
-
-        // Block (server-side) for up to ~25s to see if callback landed
+        // Optional server-side short wait (kept as in your code)
         const txn = await waitForTxnStatus({
           checkoutId: stk.CheckoutRequestID,
           phone: phoneNumber,
@@ -159,15 +199,12 @@ const initiateUSSD = async (req, res) => {
         });
 
         if (!txn) {
-          // Timed out still pending
-          // You can optionally fall back to a final message or keep the session alive if supported.
-          return; // we already sent the waiting CON; gateway may keep session until timeout
+          return; // already sent the END message above
         }
 
         if (txn.Status === "SUCCESS") {
           const paidAt = parseMpesaTransactionDate(txn.TransactionDate);
           const newExpiry = formatDmy(addDays(paidAt, 30));
-          // Here you should ALSO update your DB to extend the subscription.
           return end(
             res,
             `Payment was successful. Subscription has been renewed. New expiry date is ${newExpiry}.`
@@ -184,9 +221,9 @@ const initiateUSSD = async (req, res) => {
           )
           .join("\n");
         response = `CON Select a package to upgrade to:
-${list}
-0. Exit
-99. Back`;
+                    ${list}
+                    0. Exit
+                    99. Back`;
       } else if (action === "3") {
         // === DOWNGRADE: show package list ===
         const list = packageList
@@ -195,9 +232,9 @@ ${list}
           )
           .join("\n");
         response = `CON Select a package to downgrade to:
-${list}
-0. Exit
-99. Back`;
+                    ${list}
+                    0. Exit
+                    99. Back`;
       } else if (action === "4") {
         response = `END Your subscription for account ${accountNumber} has been cancelled.`;
       } else if (action === "0") {
@@ -265,7 +302,6 @@ ${list}
         if (!txn) return;
 
         if (txn.Status === "SUCCESS") {
-          // On success you can immediately switch package in DB
           return end(
             res,
             `Payment successful. Package has been upgraded to ${target.name}.`
