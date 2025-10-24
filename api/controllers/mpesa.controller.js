@@ -23,7 +23,6 @@ const getAccessToken = async () => {
 const initiateSTKPush = async (phone, amount) => {
   try {
     const token = await getAccessToken();
-
     const config = { headers: { Authorization: `Bearer ${token}` } };
 
     const Timestamp = moment().format("YYYYMMDDHHmmss");
@@ -33,7 +32,6 @@ const initiateSTKPush = async (phone, amount) => {
       "base64"
     );
 
-    // normalize phone (2547XXXXXXXX)
     const user_phone = (phone || "").replace(/^(\+|0)+/, "");
 
     const payload = {
@@ -48,7 +46,7 @@ const initiateSTKPush = async (phone, amount) => {
       CallBackURL:
         process.env.MPESA_CALLBACK_URL ||
         "https://app.sulsolutions.biz/api/mpesa/callback",
-      AccountReference: "Starlynx",
+      AccountReference: "Starlynx Utility",
       TransactionDesc: "Subscription",
     };
 
@@ -58,7 +56,7 @@ const initiateSTKPush = async (phone, amount) => {
       config
     );
 
-    // Optionally pre-log a 'PENDING' record so USSD can show something immediately
+    // Pre-log a PENDING record keyed by CheckoutRequestID
     try {
       const all = await readTransactions();
       all.push({
@@ -89,14 +87,13 @@ const mpesaCallback = async (req, res) => {
     const body = req.body;
     console.log("M-Pesa callback received:", JSON.stringify(body, null, 2));
 
-    // Safaricom sends { Body: { stkCallback: {...} } }
     const callback = body?.Body?.stkCallback;
-
     if (!callback) {
       console.warn("Invalid callback format");
       return res.status(400).json({ message: "Invalid callback payload" });
     }
 
+    // Build the final transaction update
     const transaction = {
       MerchantRequestID: callback.MerchantRequestID,
       CheckoutRequestID: callback.CheckoutRequestID,
@@ -119,11 +116,19 @@ const mpesaCallback = async (req, res) => {
       transaction.Status = "FAILED";
     }
 
-    // append to transactions.json
+    // Update existing PENDING by CheckoutRequestID; if not found, append
     const all = await readTransactions();
-    all.push(transaction);
-    await writeTransactions(all);
+    const idx = all.findIndex(
+      (t) => t.CheckoutRequestID === transaction.CheckoutRequestID
+    );
 
+    if (idx !== -1) {
+      all[idx] = { ...all[idx], ...transaction };
+    } else {
+      all.push(transaction);
+    }
+
+    await writeTransactions(all);
     res.status(200).json({ message: "Callback processed" });
   } catch (err) {
     console.error("Callback error:", err);
