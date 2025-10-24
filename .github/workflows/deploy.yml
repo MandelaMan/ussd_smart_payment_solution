@@ -27,52 +27,54 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
-      # Optional: guaranteed clean (keeps only .env and node_modules)
-      - name: 🧹 Clean destination (keep .env and node_modules)
+      - name: 🧹 Clean destination (keep only .env)
         run: |
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
             set -e
-            # ensure target dir exists (use sudo if needed)
-            (mkdir -p '${{ secrets.DEPLOY_PATH }}' 2>/dev/null) || \
-              (command -v sudo >/dev/null && sudo mkdir -p '${{ secrets.DEPLOY_PATH }}')
-            # if root-owned path, try to chown to deploy (requires sudo; run once manually if it fails)
-            command -v sudo >/dev/null && sudo chown -R '${{ secrets.DEPLOY_USER }}':'${{ secrets.DEPLOY_USER }}' '${{ secrets.DEPLOY_PATH }}' || true
-            cd '${{ secrets.DEPLOY_PATH }}' || exit 0
-            find . -mindepth 1 -maxdepth 1 \
-              ! -name 'node_modules' \
-              ! -name '.env' \
-              -exec rm -rf {} +
+            mkdir -p '${{ secrets.DEPLOY_PATH }}'
+            cd '${{ secrets.DEPLOY_PATH }}'
+            # remove everything except .env
+            find . -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
           "
 
-      - name: 📤 Sync repo to server (mirror, delete extras)
+      - name: 📤 Sync repo to server
         run: |
           rsync -az --delete --delete-after --human-readable --progress \
             --exclude ".git/" \
             --exclude ".github/" \
             --filter "protect .env" \
-            --filter "protect node_modules/" \
             ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:'${{ secrets.DEPLOY_PATH }}/'
 
-      - name: 🚀 Install deps & restart PM2 (Yarn + index.js)
+      - name: 🚀 Install deps & restart PM2 (deploy user, Yarn, index.js)
         run: |
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             set -e
             cd '${{ secrets.DEPLOY_PATH }}'
 
-            # Ensure pm2 exists on the droplet
+            # make sure the deploy user owns the project
+            chown -R "$(whoami)":"$(whoami)" .
+
+            # Yarn via Corepack (ignore pnpm EEXIST noise)
+            corepack enable || true
+            corepack prepare yarn@stable --activate || true
+
+            echo "📦 Installing production deps..."
+            YARN_ENABLE_GLOBAL_CACHE=0 yarn install --frozen-lockfile --production
+
+            # Ensure PM2 is available for *this user* (no sudo)
             if ! command -v pm2 >/dev/null 2>&1; then
+              npm config set prefix "$HOME/.npm-global"
+              export PATH="$HOME/.npm-global/bin:$PATH"
+              grep -q '.npm-global/bin' "$HOME/.profile" || echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$HOME/.profile"
               npm i -g pm2
             fi
 
-            echo "📦 Installing dependencies with Yarn..."
-            corepack enable || true
-            corepack prepare yarn@stable --activate || true
-            yarn install --frozen-lockfile --production
+            export PATH="$HOME/.npm-global/bin:$PATH"
 
             APP_NAME="ussd_smart_payment_solution"
-            ENTRY_FILE="index.js"   # ← your entry file
+            ENTRY_FILE="index.js"
 
-            echo "🚀 (Re)starting PM2 app..."
+            echo "🚀 (Re)starting PM2..."
             if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
               pm2 restart "$APP_NAME" --update-env
             else
