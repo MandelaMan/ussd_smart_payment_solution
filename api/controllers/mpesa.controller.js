@@ -9,13 +9,10 @@ const {
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
 
-/* ========================================================================== */
-/* Local JSON store for subscription snapshots                                */
-/* ========================================================================== */
+// ---------- paths for the subscriptions JSON ----------
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
 const SUBS_FILE = path.join(LOGS_DIR, "updatedSubscriptions.json");
 
-// tiny in-process write queue for updatedSubscriptions.json
 let _subsQueue = Promise.resolve();
 function queueSubsWrite(task) {
   _subsQueue = _subsQueue
@@ -66,51 +63,7 @@ async function upsertUpdatedSubscription(entry) {
   });
 }
 
-/* ========================================================================== */
-/* Simple idempotency for ISP posts (avoid duplicate posts per TransID)       */
-/* ========================================================================== */
-const ISP_POSTS_FILE = path.join(LOGS_DIR, "ispPosts.json");
-let _ispQueue = Promise.resolve();
-
-async function ensureIspFile() {
-  await fs.mkdir(LOGS_DIR, { recursive: true });
-  try {
-    await fs.access(ISP_POSTS_FILE);
-  } catch {
-    await fs.writeFile(ISP_POSTS_FILE, "[]", "utf8");
-  }
-}
-
-async function readIspPosts() {
-  await ensureIspFile();
-  try {
-    const data = await fs.readFile(ISP_POSTS_FILE, "utf8");
-    const arr = JSON.parse(data || "[]");
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-async function hasIspPosted(transId) {
-  const all = await readIspPosts();
-  return all.some((x) => x.TransID === transId);
-}
-
-async function markIspPosted(record) {
-  _ispQueue = _ispQueue.then(async () => {
-    const all = await readIspPosts();
-    all.push({ ...record, postedAt: new Date().toISOString() });
-    const tmp = ISP_POSTS_FILE + ".tmp";
-    await fs.writeFile(tmp, JSON.stringify(all, null, 2), "utf8");
-    await fs.rename(tmp, ISP_POSTS_FILE);
-  });
-  return _ispQueue;
-}
-
-/* ========================================================================== */
-/* M-Pesa OAuth                                                               */
-/* ========================================================================== */
+// ---------- M-Pesa OAuth ----------
 const getAccessToken = async () => {
   const secret_key = process.env.MPESA_CONSUMER_SECRET;
   const consumer_key = process.env.MPESA_CONSUMER_KEY;
@@ -125,15 +78,13 @@ const getAccessToken = async () => {
   return data.access_token;
 };
 
-/* ========================================================================== */
-/* ISP Payment (external)                                                     */
-/* ========================================================================== */
+// ---------- ISP endpoint + simple helpers ----------
 const ISP_PAYMENT_URL =
   process.env.ISP_PAYMENT_URL ||
   "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
 
-/** Convert "YYYYMMDDHHmmss" -> "DD MMM YYYY hh:mm A" (e.g., 01 Nov 2024 11:48 AM) */
-function formatC2BTime(raw) {
+function formatMpesaTime(raw) {
+  // M-Pesa C2B/Callback uses YYYYMMDDHHmmss
   try {
     if (raw && /^[0-9]{14}$/.test(String(raw))) {
       return moment(raw, "YYYYMMDDHHmmss").format("DD MMM YYYY hh:mm A");
@@ -142,74 +93,33 @@ function formatC2BTime(raw) {
   return moment().format("DD MMM YYYY hh:mm A");
 }
 
-/** Build the ISP payload (compact JSON will be enforced by transformRequest) */
-function buildISPPayloadFromConfirmation(tx) {
-  return {
-    TransactionType: "Paystack", // per your spec
-    TransID: String(tx.TransID || tx.TransRef || ""),
-    TransTime: formatC2BTime(tx.TransTime || tx.TransDate),
-    TransAmount: String(
-      tx.TransAmount || tx.TransactionAmount || tx.amount || "0"
-    ),
-    BusinessShortCode: String(
-      tx.BusinessShortCode || process.env.MPESA_SHORTCODE || ""
-    ),
-    BillRefNumber: String(tx.BillRefNumber || tx.AccountReference || ""),
-    InvoiceNumber: String(tx.InvoiceNumber || tx.BillRefNumber || ""),
-    OrgAccountBalance: String(tx.OrgAccountBalance || "0"),
-    ThirdPartyTransID: String(tx.ThirdPartyTransID || ""),
-    MSISDN: String(tx.MSISDN || tx.MSISDNNumber || ""),
-    FirstName: String(tx.FirstName || ""),
-  };
-}
-
-/** POST to ISP (idempotent on TransID) */
-async function postISPPayment(payload) {
-  const transId = String(payload.TransID || "");
-  if (!transId) {
-    console.warn("ISP post skipped: missing TransID");
-    return;
-  }
-  if (await hasIspPosted(transId)) {
-    console.log("ISP post skipped (duplicate):", transId);
-    return;
-  }
-
+async function postToISP(payload) {
   try {
+    // Axios JSON is already compact (no spaces / pretty-print)
     await axios.post(ISP_PAYMENT_URL, payload, {
       headers: { "Content-Type": "application/json" },
       timeout: 15000,
-      // ensure compact JSON (no pretty-print spaces)
-      transformRequest: [(data) => JSON.stringify(data)],
     });
-    await markIspPosted({ TransID: transId, amount: payload.TransAmount });
-    console.log("ISP payment posted:", transId);
+    console.log("ISP post OK:", payload.TransID);
   } catch (e) {
-    console.error("ISP payment post failed:", e?.response?.data || e.message);
+    console.error("ISP post FAILED:", e?.response?.data || e.message);
   }
 }
 
-/* ========================================================================== */
-/* C2B Validation / Confirmation (Paybill direct payment)                     */
-/* ========================================================================== */
+// ---------- C2B Validation / Confirmation (Paybill) ----------
 const mpesaValidation = (req, res) => {
-  // Add business rules (e.g., validate BillRefNumber pattern) if needed
-  const accept = true;
-  if (accept) {
-    res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
-  } else {
-    res.status(200).json({ ResultCode: 1, ResultDesc: "Cancelled" });
-  }
+  // Add business rules here if needed
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 };
 
 const mpesaConfirmation = async (req, res) => {
   try {
     const tx = req.body;
 
-    // ACK immediately so Safaricom doesn't retry
+    // ACK immediately so Safaricom doesn't retry due to timeout
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 
-    // 1) Update your subscriptions snapshot (optional internal bookkeeping)
+    // Keep your local snapshot
     const transactionId =
       tx?.TransID || tx?.TransRef || tx?.transactionId || null;
     const amount =
@@ -225,18 +135,30 @@ const mpesaConfirmation = async (req, res) => {
       });
     }
 
-    // 2) **NEW**: Always push direct Paybill confirmations to ISP
-    const ispPayload = buildISPPayloadFromConfirmation(tx);
-    await postISPPayment(ispPayload);
+    // ---- NEW: Call ISP for direct Paybill payments ----
+    const ispPayload = {
+      TransactionType: "Paystack",
+      TransID: String(tx.TransID || ""),
+      TransTime: formatMpesaTime(tx.TransTime || tx.TransDate),
+      TransAmount: String(tx.TransAmount || "0"),
+      BusinessShortCode: String(
+        tx.BusinessShortCode || process.env.MPESA_SHORTCODE || ""
+      ),
+      BillRefNumber: String(tx.BillRefNumber || ""),
+      InvoiceNumber: String(tx.InvoiceNumber || tx.BillRefNumber || ""),
+      OrgAccountBalance: String(tx.OrgAccountBalance || "0"),
+      ThirdPartyTransID: String(tx.ThirdPartyTransID || ""),
+      MSISDN: String(tx.MSISDN || tx.MSISDNNumber || ""),
+      FirstName: String(tx.FirstName || ""),
+    };
+    await postToISP(ispPayload);
   } catch (err) {
     console.error("mpesaConfirmation error:", err);
     // already ACKed above
   }
 };
 
-/* ========================================================================== */
-/* STK Push Initiation                                                        */
-/* ========================================================================== */
+// ---------- STK Push Initiation ----------
 const initiateSTKPush = async (phone, amount) => {
   try {
     const token = await getAccessToken();
@@ -249,10 +171,7 @@ const initiateSTKPush = async (phone, amount) => {
       "base64"
     );
 
-    // normalize phone (remove leading + or 0)
     const user_phone = String(phone || "").replace(/^(\+|0)+/, "");
-
-    // If you want per-customer "customerAccount", pass it here dynamically.
     const AccountReference =
       process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
@@ -278,7 +197,6 @@ const initiateSTKPush = async (phone, amount) => {
       config
     );
 
-    // Pre-log a PENDING record keyed by CheckoutRequestID (store AccountReference)
     try {
       await appendTransaction({
         Status: "PENDING",
@@ -302,9 +220,7 @@ const initiateSTKPush = async (phone, amount) => {
   }
 };
 
-/* ========================================================================== */
-/* STK Push Callback (also post to ISP on success)                            */
-/* ========================================================================== */
+// ---------- STK Push Callback ----------
 const mpesaCallback = async (req, res) => {
   try {
     const body = req.body;
@@ -338,12 +254,9 @@ const mpesaCallback = async (req, res) => {
       transaction.Status = "FAILED";
     }
 
-    // Update existing PENDING by CheckoutRequestID; if not found, append
     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
 
-    // If SUCCESS, also write to logs AND post to ISP
     if (transaction.Status === "SUCCESS") {
-      // fetch the pre-logged record to retrieve AccountReference
       const existing =
         (await findLatestTxnByCheckoutOrPhone(
           transaction.CheckoutRequestID,
@@ -355,7 +268,6 @@ const mpesaCallback = async (req, res) => {
         process.env.DEFAULT_ACCOUNT_REFERENCE ||
         "Starlynx Utility";
 
-      // local snapshot
       if (transaction.MpesaReceiptNumber && transaction.Amount) {
         await upsertUpdatedSubscription({
           transactionId: String(transaction.MpesaReceiptNumber),
@@ -364,11 +276,11 @@ const mpesaCallback = async (req, res) => {
         });
       }
 
-      // build ISP payload (map STK fields into the C2B schema)
+      // ---- NEW: Call ISP for successful STK as well (map to ISP schema) ----
       const ispPayload = {
         TransactionType: "Paystack",
         TransID: String(transaction.MpesaReceiptNumber || ""),
-        TransTime: formatC2BTime(String(transaction.TransactionDate || "")),
+        TransTime: formatMpesaTime(String(transaction.TransactionDate || "")),
         TransAmount: String(transaction.Amount || "0"),
         BusinessShortCode: String(process.env.MPESA_SHORTCODE || ""),
         BillRefNumber: String(accountRef || ""),
@@ -378,8 +290,7 @@ const mpesaCallback = async (req, res) => {
         MSISDN: String(transaction.PhoneNumber || ""),
         FirstName: "",
       };
-
-      await postISPPayment(ispPayload);
+      await postToISP(ispPayload);
     }
 
     res.status(200).json({ message: "Callback processed" });
@@ -389,9 +300,7 @@ const mpesaCallback = async (req, res) => {
   }
 };
 
-/* ========================================================================== */
-/* Register C2B URLs + Sandbox Simulate                                       */
-/* ========================================================================== */
+// --- Register C2B URLs & Simulate (unchanged) ---
 const registerC2BUrls = async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -437,8 +346,8 @@ const simulateC2B = async (req, res) => {
       ShortCode: process.env.MPESA_SHORTCODE, // must match registered shortcode
       CommandID: "CustomerPayBillOnline",
       Amount: amount,
-      Msisdn: msisdn, // sandbox test MSISDN 254708374149
-      BillRefNumber: billRef, // becomes your customerAccount
+      Msisdn: msisdn,
+      BillRefNumber: billRef,
     };
 
     const { data } = await axios.post(
@@ -456,9 +365,7 @@ const simulateC2B = async (req, res) => {
   }
 };
 
-/* ========================================================================== */
-/* Test endpoint                                                               */
-/* ========================================================================== */
+// ---------- Test endpoint ----------
 const test = async (req, res) => {
   try {
     const results = await initiateSTKPush("+254701057515", 1);
@@ -468,15 +375,12 @@ const test = async (req, res) => {
   }
 };
 
-/* ========================================================================== */
-/* Exports                                                                     */
-/* ========================================================================== */
 module.exports = {
   registerC2BUrls,
   simulateC2B,
   mpesaValidation,
-  mpesaConfirmation, // posts ISP for direct Paybill confirmation
-  mpesaCallback, // posts ISP for successful STK payments
+  mpesaConfirmation,
+  mpesaCallback,
   getAccessToken,
   initiateSTKPush,
   test,
