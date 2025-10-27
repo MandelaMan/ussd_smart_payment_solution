@@ -10,17 +10,18 @@ const {
 } = require("../../utils/transactions");
 
 /* =========================
-   Helpers for updatedSubscriptions.json
+   Write to ROOT/logs/updatedSubscriptions.json
    ========================= */
-const LOGS_DIR = path.resolve(__dirname, "../../logs");
+const ROOT_DIR = process.cwd(); // ensure root-relative
+const LOGS_DIR = path.join(ROOT_DIR, "logs");
 const SUBS_FILE = path.join(LOGS_DIR, "updatedSubscriptions.json");
 
 // in-process write queue to prevent concurrent corruption
 let subsQueue = Promise.resolve();
 function enqueueSubs(task) {
-  subsQueue = subsQueue
-    .then(task)
-    .catch((e) => console.error("updatedSubscriptions write error:", e));
+  subsQueue = subsQueue.then(task).catch((e) => {
+    console.error("[updatedSubs] queue error:", e);
+  });
   return subsQueue;
 }
 
@@ -30,6 +31,7 @@ async function ensureSubsFile() {
     await fs.access(SUBS_FILE);
   } catch {
     await fs.writeFile(SUBS_FILE, "[]", "utf8");
+    console.log("[updatedSubs] created:", SUBS_FILE);
   }
 }
 
@@ -39,7 +41,8 @@ async function readSubs() {
     const data = await fs.readFile(SUBS_FILE, "utf8");
     const arr = JSON.parse(data || "[]");
     return Array.isArray(arr) ? arr : [];
-  } catch {
+  } catch (e) {
+    console.error("[updatedSubs] read error:", e);
     return [];
   }
 }
@@ -49,26 +52,27 @@ async function writeSubs(all) {
   const tmp = SUBS_FILE + ".tmp";
   await fs.writeFile(tmp, JSON.stringify(all, null, 2), "utf8");
   await fs.rename(tmp, SUBS_FILE);
+  console.log("[updatedSubs] wrote", all.length, "records ->", SUBS_FILE);
 }
 
-// Generic upsert by TransID
+// upsert by TransID
 async function upsertC2BRecord(record) {
   const transId = record?.TransID;
-  if (!transId) return;
+  if (!transId) {
+    console.warn("[updatedSubs] skip: missing TransID");
+    return;
+  }
   return enqueueSubs(async () => {
     const all = await readSubs();
     const idx = all.findIndex((r) => r.TransID === transId);
-    if (idx >= 0) {
-      all[idx] = { ...all[idx], ...record };
-    } else {
-      all.push(record);
-    }
+    if (idx >= 0) all[idx] = { ...all[idx], ...record };
+    else all.push(record);
     await writeSubs(all);
   });
 }
 
 /* =========================
-   OAuth Helper
+   OAuth
    ========================= */
 const getAccessToken = async () => {
   const secret_key = process.env.MPESA_CONSUMER_SECRET;
@@ -84,21 +88,22 @@ const getAccessToken = async () => {
 };
 
 /* =========================
-   C2B: Validation + Confirmation
+   C2B Validation + Confirmation
    ========================= */
 const mpesaValidation = (req, res) => {
-  const accept = true; // add your business rules here
-  res.status(200).json({
-    ResultCode: accept ? 0 : 1,
-    ResultDesc: accept ? "Completed" : "Cancelled",
-  });
+  console.log("[C2B validation] hit");
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 };
 
 const mpesaConfirmation = async (req, res) => {
   try {
+    // ACK first
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
-    const tx = req.body || {};
 
+    const tx = req.body || {};
+    console.log("[C2B confirmation] body:", JSON.stringify(tx));
+
+    // exact shape you want
     const record = {
       TransactionType: String(tx.TransactionType ?? ""),
       TransID: String(tx.TransID ?? ""),
@@ -116,23 +121,13 @@ const mpesaConfirmation = async (req, res) => {
     };
 
     await upsertC2BRecord(record);
-
-    try {
-      await axios.post(
-        "https://your-service.example.com/internal/payment-webhook",
-        record,
-        { timeout: 5000 }
-      );
-    } catch (e) {
-      console.warn("Downstream webhook failed:", e.message);
-    }
   } catch (err) {
-    console.error("mpesaConfirmation error:", err);
+    console.error("[C2B confirmation] error:", err);
   }
 };
 
 /* =========================
-   STK Push (CustomerPayBillOnline)
+   STK Push (init + callback)
    ========================= */
 const initiateSTKPush = async (phone, amount) => {
   try {
@@ -161,7 +156,8 @@ const initiateSTKPush = async (phone, amount) => {
       PhoneNumber: user_phone,
       CallBackURL:
         process.env.MPESA_CALLBACK_URL ||
-        "https://app.sulsolutions.biz/api/mpesa/callback",
+        // ***** FIXED: moved default to /api/payment/callback *****
+        "https://app.sulsolutions.biz/api/payment/callback",
       AccountReference,
       TransactionDesc: "Subscription",
     };
@@ -186,22 +182,19 @@ const initiateSTKPush = async (phone, amount) => {
 
     return data;
   } catch (error) {
-    console.error("STK Push Error:", error.message);
+    console.error("[STK] init error:", error.message);
     return { error: "Initiate STKPush failed: " + error.message };
   }
 };
 
-/* =========================
-   STK Callback
-   ========================= */
 const mpesaCallback = async (req, res) => {
   try {
     const body = req.body;
-    console.log("M-Pesa callback received:", JSON.stringify(body, null, 2));
+    console.log("[STK callback] body:", JSON.stringify(body));
 
     const callback = body?.Body?.stkCallback;
     if (!callback) {
-      console.warn("Invalid callback format");
+      console.warn("[STK callback] invalid format");
       return res.status(400).json({ message: "Invalid callback payload" });
     }
 
@@ -229,7 +222,6 @@ const mpesaCallback = async (req, res) => {
 
     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
 
-    // If successful STK push, also write to updatedSubscriptions.json
     if (transaction.Status === "SUCCESS") {
       const existing =
         (await findLatestTxnByCheckoutOrPhone(
@@ -242,6 +234,7 @@ const mpesaCallback = async (req, res) => {
         process.env.DEFAULT_ACCOUNT_REFERENCE ||
         "Starlynx Utility";
 
+      // write STK success in the SAME C2B confirmation shape
       const record = {
         TransactionType: "Pay Bill",
         TransID: String(transaction.MpesaReceiptNumber || ""),
@@ -265,7 +258,7 @@ const mpesaCallback = async (req, res) => {
 
     res.status(200).json({ message: "Callback processed" });
   } catch (err) {
-    console.error("Callback error:", err);
+    console.error("[STK callback] error:", err);
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
@@ -273,8 +266,6 @@ const mpesaCallback = async (req, res) => {
 /* =========================
    Sandbox: Register + Simulate
    ========================= */
-// controllers/mpesa.controller.js
-
 const registerC2BUrls = async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -285,10 +276,10 @@ const registerC2BUrls = async (req, res) => {
       ResponseType: "Completed",
       ConfirmationURL:
         process.env.MPESA_CONFIRMATION_URL ||
-        "https://app.sulsolutions.biz/api/payment/confirmation", // <— UPDATED
+        "https://app.sulsolutions.biz/api/payment/confirmation",
       ValidationURL:
         process.env.MPESA_VALIDATION_URL ||
-        "https://app.sulsolutions.biz/api/payment/validation", // <— UPDATED
+        "https://app.sulsolutions.biz/api/payment/validation",
     };
 
     const { data } = await axios.post(
@@ -297,6 +288,7 @@ const registerC2BUrls = async (req, res) => {
       config
     );
 
+    console.log("[C2B register] sent:", payload);
     res.json({ ok: true, data, sent: payload });
   } catch (err) {
     console.error("[C2B register] error:", err?.response?.data || err.message);
@@ -333,7 +325,7 @@ const simulateC2B = async (req, res) => {
 
     res.json({ ok: true, data, sent: payload });
   } catch (err) {
-    console.error("simulateC2B error:", err?.response?.data || err.message);
+    console.error("[C2B simulate] error:", err?.response?.data || err.message);
     res
       .status(500)
       .json({ ok: false, error: err?.response?.data || err.message });
