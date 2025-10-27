@@ -19,6 +19,8 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ type: ["application/json", "text/plain"] }));
+
 if (env.NODE_ENV !== "test") app.use(morgan("dev"));
 
 // Health check with DB ping

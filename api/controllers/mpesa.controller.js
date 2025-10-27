@@ -211,48 +211,69 @@ const mpesaValidation = (req, res) => {
   }
 };
 
+/* ------------------------------------------------------------------ */
+/* C2B Confirmation (Paybill) — mirrored to STK callback style        */
+/* ------------------------------------------------------------------ */
 const mpesaConfirmation = async (req, res) => {
   try {
-    const tx = req.body;
+    const tx = req.body; // Safaricom POSTs the C2B payment here
 
     // ACK immediately so Safaricom doesn't retry
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 
-    // --- derive fields robustly
+    // --- Normalize key fields (tolerant to variant keys)
     const transactionId =
       tx?.TransID || tx?.TransRef || tx?.transactionId || null;
     const amount =
       tx?.TransAmount || tx?.TransactionAmount || tx?.amount || null;
-    const customerAccount =
-      tx?.BillRefNumber || tx?.AccountReference || tx?.accountReference || null;
+    const msisdn = tx?.MSISDN || tx?.MSISDNNumber || tx?.PhoneNumber || "";
+    const transTime =
+      tx?.TransTime || tx?.TransDate || tx?.TransactionDate || null;
+    const shortCode =
+      tx?.BusinessShortCode || process.env.MPESA_SHORTCODE || "";
+    const accountRef =
+      tx?.BillRefNumber ||
+      tx?.AccountReference ||
+      tx?.accountReference ||
+      process.env.DEFAULT_ACCOUNT_REFERENCE ||
+      "Starlynx Utility";
 
-    // --- build ISP payload & post (await so we can log errors if any)
-    const ispPayload = buildISPPayloadFromConfirmation(tx);
-    try {
-      await postISPPayment(ispPayload);
-    } catch (e) {
-      // postISPPayment already logs details, but add context to correlate with our persisted entry
-      console.error(
-        "C2B -> ISP post error for TransID:",
-        transactionId,
-        e?.message
-      );
-    }
+    // --- Build a normalized transaction object (similar shape to STK)
+    const normalized = {
+      type: "C2B_CONFIRMATION",
+      Status: "SUCCESS",
+      Amount: amount,
+      MpesaReceiptNumber: transactionId,
+      TransactionDate: transTime,
+      PhoneNumber: String(msisdn || ""),
+      BusinessShortCode: String(shortCode),
+      AccountReference: String(accountRef),
+      Timestamp: new Date().toISOString(),
+    };
 
-    // --- ALWAYS persist the full tx (even if transactionId is missing)
+    // --- Build ISP payload & POST (compact JSON)
+    const ispPayload = buildISPPayloadFromConfirmation({
+      ...tx,
+      // ensure these are present for the ISP mapping
+      BusinessShortCode: shortCode,
+      BillRefNumber: accountRef,
+      MSISDN: msisdn,
+    });
+    await postISPPayment(ispPayload);
+
+    // --- ALWAYS persist full snapshot (function will auto-generate an ID if missing)
     await upsertUpdatedSubscriptionFull({
-      transactionId: transactionId ? String(transactionId) : null, // null allowed; function will auto-generate a safe id
+      transactionId: transactionId ? String(transactionId) : null,
       amount: amount != null ? String(amount) : null,
-      customerAccount: customerAccount != null ? String(customerAccount) : null,
-      rawTx: { type: "C2B_CONFIRMATION", ...tx },
+      customerAccount: String(accountRef),
+      rawTx: { ...tx, _normalized: normalized },
       ispPayload,
       source: "C2B",
     });
 
-    // Optional: quick console to verify flow during testing
     console.log("C2B confirmation processed:", {
       TransID: transactionId,
-      BillRefNumber: customerAccount,
+      BillRefNumber: accountRef,
       Amount: amount,
     });
   } catch (err) {
