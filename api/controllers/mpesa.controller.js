@@ -245,7 +245,75 @@ const mpesaConfirmation = async (req, res) => {
 /* ------------------------------------------------------------------ */
 /* STK Push Initiation                                                 */
 /* ------------------------------------------------------------------ */
-const initiateSTKPush = async (phone, amount) => {
+// const initiateSTKPush = async (phone, amount) => {
+//   try {
+//     const token = await getAccessToken();
+//     const config = { headers: { Authorization: `Bearer ${token}` } };
+
+//     const Timestamp = moment().format("YYYYMMDDHHmmss");
+//     const shortcode = process.env.MPESA_SHORTCODE;
+//     const passkey = process.env.MPESA_PASS_KEY;
+//     const password = Buffer.from(shortcode + passkey + Timestamp).toString(
+//       "base64"
+//     );
+
+//     // normalize phone (remove leading + or 0)
+//     const user_phone = String(phone || "").replace(/^(\+|0)+/, "");
+
+//     // If you want per-customer "customerAccount", pass it here dynamically.
+//     const AccountReference =
+//       process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
+
+//     const payload = {
+//       BusinessShortCode: shortcode,
+//       Password: password,
+//       Timestamp,
+//       TransactionType: "CustomerPayBillOnline",
+//       Amount: amount,
+//       PartyA: user_phone,
+//       PartyB: shortcode,
+//       PhoneNumber: user_phone,
+//       CallBackURL:
+//         process.env.MPESA_CALLBACK_URL ||
+//         "https://app.sulsolutions.biz/api/payment/callback",
+//       AccountReference,
+//       TransactionDesc: "Subscription",
+//     };
+
+//     const { data } = await axios.post(
+//       "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+//       payload,
+//       config
+//     );
+
+//     // Pre-log a PENDING record keyed by CheckoutRequestID (store AccountReference)
+//     try {
+//       await appendTransaction({
+//         Status: "PENDING",
+//         PhoneNumber: user_phone,
+//         Amount: amount,
+//         MerchantRequestID: data.MerchantRequestID,
+//         CheckoutRequestID: data.CheckoutRequestID,
+//         AccountReference,
+//         ResultCode: null,
+//         ResultDesc: "Awaiting customer PIN",
+//         Timestamp: new Date().toISOString(),
+//       });
+//     } catch (e) {
+//       console.warn("Could not pre-log pending transaction:", e.message);
+//     }
+
+//     return data;
+//   } catch (error) {
+//     console.error("STK Push Error:", error.message);
+//     return { error: "Initiate STKPush failed: " + error.message };
+//   }
+// };
+
+/* ------------------------------------------------------------------ */
+/* STK Push Initiation                                                 */
+/* ------------------------------------------------------------------ */
+const initiateSTKPush = async (accountNumber, phone, amount) => {
   try {
     const token = await getAccessToken();
     const config = { headers: { Authorization: `Bearer ${token}` } };
@@ -257,12 +325,12 @@ const initiateSTKPush = async (phone, amount) => {
       "base64"
     );
 
-    // normalize phone (remove leading + or 0)
+    // Normalize phone (remove leading + or 0)
     const user_phone = String(phone || "").replace(/^(\+|0)+/, "");
 
-    // If you want per-customer "customerAccount", pass it here dynamically.
+    // Use provided accountNumber as AccountReference
     const AccountReference =
-      process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
+      String(accountNumber || "").trim() || "Starlynx Utility";
 
     const payload = {
       BusinessShortCode: shortcode,
@@ -276,7 +344,7 @@ const initiateSTKPush = async (phone, amount) => {
       CallBackURL:
         process.env.MPESA_CALLBACK_URL ||
         "https://app.sulsolutions.biz/api/payment/callback",
-      AccountReference,
+      AccountReference, // use provided account number
       TransactionDesc: "Subscription",
     };
 
@@ -286,7 +354,7 @@ const initiateSTKPush = async (phone, amount) => {
       config
     );
 
-    // Pre-log a PENDING record keyed by CheckoutRequestID (store AccountReference)
+    // Pre-log a PENDING record keyed by CheckoutRequestID
     try {
       await appendTransaction({
         Status: "PENDING",
@@ -294,7 +362,7 @@ const initiateSTKPush = async (phone, amount) => {
         Amount: amount,
         MerchantRequestID: data.MerchantRequestID,
         CheckoutRequestID: data.CheckoutRequestID,
-        AccountReference,
+        AccountReference, // stored for lookup on callback
         ResultCode: null,
         ResultDesc: "Awaiting customer PIN",
         Timestamp: new Date().toISOString(),
@@ -310,6 +378,80 @@ const initiateSTKPush = async (phone, amount) => {
   }
 };
 
+/* ------------------------------------------------------------------ */
+/* STK Push Callback                                                   */
+/* ------------------------------------------------------------------ */
+// const mpesaCallback = async (req, res) => {
+//   try {
+//     const body = req.body;
+//     console.log("M-Pesa callback received:", JSON.stringify(body, null, 2));
+
+//     const callback = body?.Body?.stkCallback;
+//     if (!callback) {
+//       console.warn("Invalid callback format");
+//       return res.status(400).json({ message: "Invalid callback payload" });
+//     }
+
+//     const transaction = {
+//       MerchantRequestID: callback.MerchantRequestID,
+//       CheckoutRequestID: callback.CheckoutRequestID,
+//       ResultCode: callback.ResultCode,
+//       ResultDesc: callback.ResultDesc,
+//       Timestamp: new Date().toISOString(),
+//     };
+
+//     if (callback.ResultCode === 0) {
+//       const metadata = callback.CallbackMetadata?.Item || [];
+//       const getItemValue = (name) =>
+//         metadata.find((it) => it.Name === name)?.Value;
+
+//       transaction.Amount = getItemValue("Amount");
+//       transaction.MpesaReceiptNumber = getItemValue("MpesaReceiptNumber");
+//       transaction.TransactionDate = getItemValue("TransactionDate");
+//       transaction.PhoneNumber = String(getItemValue("PhoneNumber") || "");
+//       transaction.Status = "SUCCESS";
+//     } else {
+//       transaction.Status = "FAILED";
+//     }
+
+//     // Update existing PENDING by CheckoutRequestID; if not found, append
+//     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
+
+//     // If SUCCESS, persist FULL tx + POST to ISP
+//     if (transaction.Status === "SUCCESS") {
+//       // fetch the pre-logged record to retrieve AccountReference
+//       const existing =
+//         (await findLatestTxnByCheckoutOrPhone(
+//           transaction.CheckoutRequestID,
+//           transaction.PhoneNumber
+//         )) || {};
+
+//       const accountRef =
+//         existing.AccountReference ||
+//         process.env.DEFAULT_ACCOUNT_REFERENCE ||
+//         "Starlynx Utility";
+
+//       // Build and post ISP payload (compact)
+//       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
+//       await postISPPayment(ispPayload);
+
+//       // Persist full snapshot
+//       await upsertUpdatedSubscriptionFull({
+//         transactionId: String(transaction.MpesaReceiptNumber || ""),
+//         customerAccount: String(accountRef),
+//         amount: String(transaction.Amount || ""),
+//         rawTx: { type: "STK_CALLBACK", ...transaction },
+//         ispPayload,
+//         source: "STK",
+//       });
+//     }
+
+//     res.status(200).json({ message: "Callback processed" });
+//   } catch (err) {
+//     console.error("Callback error:", err);
+//     res.status(500).json({ message: "Internal Server Error" });
+//   }
+// };
 /* ------------------------------------------------------------------ */
 /* STK Push Callback                                                   */
 /* ------------------------------------------------------------------ */
@@ -351,17 +493,17 @@ const mpesaCallback = async (req, res) => {
 
     // If SUCCESS, persist FULL tx + POST to ISP
     if (transaction.Status === "SUCCESS") {
-      // fetch the pre-logged record to retrieve AccountReference
+      // fetch the pre-logged record to retrieve original AccountReference
       const existing =
         (await findLatestTxnByCheckoutOrPhone(
           transaction.CheckoutRequestID,
           transaction.PhoneNumber
         )) || {};
 
-      const accountRef =
-        existing.AccountReference ||
-        process.env.DEFAULT_ACCOUNT_REFERENCE ||
-        "Starlynx Utility";
+      // Use the exact same AccountReference from STK initiation
+      const accountRef = existing.AccountReference
+        ? String(existing.AccountReference)
+        : process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
       // Build and post ISP payload (compact)
       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
@@ -370,7 +512,7 @@ const mpesaCallback = async (req, res) => {
       // Persist full snapshot
       await upsertUpdatedSubscriptionFull({
         transactionId: String(transaction.MpesaReceiptNumber || ""),
-        customerAccount: String(accountRef),
+        customerAccount: accountRef,
         amount: String(transaction.Amount || ""),
         rawTx: { type: "STK_CALLBACK", ...transaction },
         ispPayload,

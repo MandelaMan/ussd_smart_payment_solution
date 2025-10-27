@@ -115,7 +115,7 @@ const initiateUSSD = async (req, res) => {
       if (action === "1") {
         // === RENEW ===
         const amount = details.amount;
-        const stk = await initiateSTKPush(phoneNumber, amount);
+        const stk = await initiateSTKPush(accountNumber, phoneNumber, amount);
         if (stk?.error) {
           return end(
             res,
@@ -212,7 +212,7 @@ ${list}
           );
         }
 
-        const stk = await initiateSTKPush(phoneNumber, amount);
+        const stk = await initiateSTKPush(accountNumber, phoneNumber, amount);
         if (stk?.error)
           return end(
             res,
@@ -259,7 +259,7 @@ ${list}
           );
         }
 
-        const stk = await initiateSTKPush(phoneNumber, amount);
+        const stk = await initiateSTKPush(accountNumber, phoneNumber, amount);
         if (stk?.error)
           return end(
             res,
