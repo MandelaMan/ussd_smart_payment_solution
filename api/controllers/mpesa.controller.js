@@ -9,9 +9,9 @@ const {
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
 
-/* ------------------------------------------------------------------ */
-/* Paths for logs/updatedSubscriptions.json                           */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* Local JSON store for subscription snapshots                                */
+/* ========================================================================== */
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
 const SUBS_FILE = path.join(LOGS_DIR, "updatedSubscriptions.json");
 
@@ -66,9 +66,51 @@ async function upsertUpdatedSubscription(entry) {
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* M-Pesa OAuth                                                        */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* Simple idempotency for ISP posts (avoid duplicate posts per TransID)       */
+/* ========================================================================== */
+const ISP_POSTS_FILE = path.join(LOGS_DIR, "ispPosts.json");
+let _ispQueue = Promise.resolve();
+
+async function ensureIspFile() {
+  await fs.mkdir(LOGS_DIR, { recursive: true });
+  try {
+    await fs.access(ISP_POSTS_FILE);
+  } catch {
+    await fs.writeFile(ISP_POSTS_FILE, "[]", "utf8");
+  }
+}
+
+async function readIspPosts() {
+  await ensureIspFile();
+  try {
+    const data = await fs.readFile(ISP_POSTS_FILE, "utf8");
+    const arr = JSON.parse(data || "[]");
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+async function hasIspPosted(transId) {
+  const all = await readIspPosts();
+  return all.some((x) => x.TransID === transId);
+}
+
+async function markIspPosted(record) {
+  _ispQueue = _ispQueue.then(async () => {
+    const all = await readIspPosts();
+    all.push({ ...record, postedAt: new Date().toISOString() });
+    const tmp = ISP_POSTS_FILE + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(all, null, 2), "utf8");
+    await fs.rename(tmp, ISP_POSTS_FILE);
+  });
+  return _ispQueue;
+}
+
+/* ========================================================================== */
+/* M-Pesa OAuth                                                               */
+/* ========================================================================== */
 const getAccessToken = async () => {
   const secret_key = process.env.MPESA_CONSUMER_SECRET;
   const consumer_key = process.env.MPESA_CONSUMER_KEY;
@@ -83,17 +125,14 @@ const getAccessToken = async () => {
   return data.access_token;
 };
 
-/* ------------------------------------------------------------------ */
-/* ISP Payment (external)                                              */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* ISP Payment (external)                                                     */
+/* ========================================================================== */
 const ISP_PAYMENT_URL =
   process.env.ISP_PAYMENT_URL ||
   "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
 
-/**
- * Formats M-Pesa C2B TransTime ("YYYYMMDDHHmmss") -> "DD MMM YYYY hh:mm A"
- * Falls back to current time if missing.
- */
+/** Convert "YYYYMMDDHHmmss" -> "DD MMM YYYY hh:mm A" (e.g., 01 Nov 2024 11:48 AM) */
 function formatC2BTime(raw) {
   try {
     if (raw && /^[0-9]{14}$/.test(String(raw))) {
@@ -103,13 +142,10 @@ function formatC2BTime(raw) {
   return moment().format("DD MMM YYYY hh:mm A");
 }
 
-/**
- * Build the exact payload expected by the ISP endpoint.
- * Axios serializes to compact JSON (no spaces).
- */
+/** Build the ISP payload (compact JSON will be enforced by transformRequest) */
 function buildISPPayloadFromConfirmation(tx) {
   return {
-    TransactionType: "Paystack", // as required by the ISP
+    TransactionType: "Paystack", // per your spec
     TransID: String(tx.TransID || tx.TransRef || ""),
     TransTime: formatC2BTime(tx.TransTime || tx.TransDate),
     TransAmount: String(
@@ -127,7 +163,18 @@ function buildISPPayloadFromConfirmation(tx) {
   };
 }
 
+/** POST to ISP (idempotent on TransID) */
 async function postISPPayment(payload) {
+  const transId = String(payload.TransID || "");
+  if (!transId) {
+    console.warn("ISP post skipped: missing TransID");
+    return;
+  }
+  if (await hasIspPosted(transId)) {
+    console.log("ISP post skipped (duplicate):", transId);
+    return;
+  }
+
   try {
     await axios.post(ISP_PAYMENT_URL, payload, {
       headers: { "Content-Type": "application/json" },
@@ -135,17 +182,18 @@ async function postISPPayment(payload) {
       // ensure compact JSON (no pretty-print spaces)
       transformRequest: [(data) => JSON.stringify(data)],
     });
-    console.log("ISP payment posted:", payload.TransID);
+    await markIspPosted({ TransID: transId, amount: payload.TransAmount });
+    console.log("ISP payment posted:", transId);
   } catch (e) {
     console.error("ISP payment post failed:", e?.response?.data || e.message);
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* C2B Validation / Confirmation (Paybill)                             */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* C2B Validation / Confirmation (Paybill direct payment)                     */
+/* ========================================================================== */
 const mpesaValidation = (req, res) => {
-  // Add business rules here (e.g., validate BillRefNumber)
+  // Add business rules (e.g., validate BillRefNumber pattern) if needed
   const accept = true;
   if (accept) {
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
@@ -161,18 +209,7 @@ const mpesaConfirmation = async (req, res) => {
     // ACK immediately so Safaricom doesn't retry
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 
-    // Optional internal webhook (best-effort)
-    try {
-      await axios.post(
-        "https://your-service.example.com/internal/payment-webhook",
-        tx,
-        { timeout: 5000 }
-      );
-    } catch (e) {
-      console.warn("Downstream webhook failed:", e.message);
-    }
-
-    // Persist to updatedSubscriptions.json snapshot
+    // 1) Update your subscriptions snapshot (optional internal bookkeeping)
     const transactionId =
       tx?.TransID || tx?.TransRef || tx?.transactionId || null;
     const amount =
@@ -188,18 +225,18 @@ const mpesaConfirmation = async (req, res) => {
       });
     }
 
-    // Push to ISP endpoint (compact JSON, no spaces)
+    // 2) **NEW**: Always push direct Paybill confirmations to ISP
     const ispPayload = buildISPPayloadFromConfirmation(tx);
     await postISPPayment(ispPayload);
   } catch (err) {
-    console.error("processing error", err);
+    console.error("mpesaConfirmation error:", err);
     // already ACKed above
   }
 };
 
-/* ------------------------------------------------------------------ */
-/* STK Push Initiation                                                 */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* STK Push Initiation                                                        */
+/* ========================================================================== */
 const initiateSTKPush = async (phone, amount) => {
   try {
     const token = await getAccessToken();
@@ -265,9 +302,9 @@ const initiateSTKPush = async (phone, amount) => {
   }
 };
 
-/* ------------------------------------------------------------------ */
-/* STK Push Callback                                                   */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* STK Push Callback (also post to ISP on success)                            */
+/* ========================================================================== */
 const mpesaCallback = async (req, res) => {
   try {
     const body = req.body;
@@ -304,7 +341,7 @@ const mpesaCallback = async (req, res) => {
     // Update existing PENDING by CheckoutRequestID; if not found, append
     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
 
-    // If SUCCESS, also write to logs/updatedSubscriptions.json
+    // If SUCCESS, also write to logs AND post to ISP
     if (transaction.Status === "SUCCESS") {
       // fetch the pre-logged record to retrieve AccountReference
       const existing =
@@ -318,20 +355,31 @@ const mpesaCallback = async (req, res) => {
         process.env.DEFAULT_ACCOUNT_REFERENCE ||
         "Starlynx Utility";
 
-      const entry = {
-        transactionId: String(transaction.MpesaReceiptNumber || ""),
-        customerAccount: String(accountRef),
-        amount: String(transaction.Amount || ""),
+      // local snapshot
+      if (transaction.MpesaReceiptNumber && transaction.Amount) {
+        await upsertUpdatedSubscription({
+          transactionId: String(transaction.MpesaReceiptNumber),
+          customerAccount: String(accountRef),
+          amount: String(transaction.Amount),
+        });
+      }
+
+      // build ISP payload (map STK fields into the C2B schema)
+      const ispPayload = {
+        TransactionType: "Paystack",
+        TransID: String(transaction.MpesaReceiptNumber || ""),
+        TransTime: formatC2BTime(String(transaction.TransactionDate || "")),
+        TransAmount: String(transaction.Amount || "0"),
+        BusinessShortCode: String(process.env.MPESA_SHORTCODE || ""),
+        BillRefNumber: String(accountRef || ""),
+        InvoiceNumber: String(accountRef || ""),
+        OrgAccountBalance: "0",
+        ThirdPartyTransID: "",
+        MSISDN: String(transaction.PhoneNumber || ""),
+        FirstName: "",
       };
 
-      if (entry.transactionId && entry.amount) {
-        await upsertUpdatedSubscription(entry);
-      } else {
-        console.warn(
-          "Skipping updatedSubscriptions write due to missing fields:",
-          entry
-        );
-      }
+      await postISPPayment(ispPayload);
     }
 
     res.status(200).json({ message: "Callback processed" });
@@ -341,9 +389,9 @@ const mpesaCallback = async (req, res) => {
   }
 };
 
-/* ------------------------------------------------------------------ */
-/* Register C2B URLs + Sandbox Simulate                               */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* Register C2B URLs + Sandbox Simulate                                       */
+/* ========================================================================== */
 const registerC2BUrls = async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -408,9 +456,9 @@ const simulateC2B = async (req, res) => {
   }
 };
 
-/* ------------------------------------------------------------------ */
-/* Test endpoint                                                       */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* Test endpoint                                                               */
+/* ========================================================================== */
 const test = async (req, res) => {
   try {
     const results = await initiateSTKPush("+254701057515", 1);
@@ -420,15 +468,15 @@ const test = async (req, res) => {
   }
 };
 
-/* ------------------------------------------------------------------ */
-/* Exports                                                            */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* Exports                                                                     */
+/* ========================================================================== */
 module.exports = {
   registerC2BUrls,
   simulateC2B,
   mpesaValidation,
-  mpesaConfirmation, // includes ISP payment POST
-  mpesaCallback,
+  mpesaConfirmation, // posts ISP for direct Paybill confirmation
+  mpesaCallback, // posts ISP for successful STK payments
   getAccessToken,
   initiateSTKPush,
   test,
