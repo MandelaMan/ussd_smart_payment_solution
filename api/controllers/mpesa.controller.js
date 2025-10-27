@@ -9,17 +9,19 @@ const {
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
 
-// ---------- paths for the subscriptions JSON ----------
+/* =========================
+   Helpers for updatedSubscriptions.json
+   ========================= */
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
 const SUBS_FILE = path.join(LOGS_DIR, "updatedSubscriptions.json");
 
-// tiny in-process write queue for updatedSubscriptions.json
-let _subsQueue = Promise.resolve();
-function queueSubsWrite(task) {
-  _subsQueue = _subsQueue
+// in-process write queue to prevent concurrent corruption
+let subsQueue = Promise.resolve();
+function enqueueSubs(task) {
+  subsQueue = subsQueue
     .then(task)
-    .catch((e) => console.error("updatedSubscriptions write err:", e));
-  return _subsQueue;
+    .catch((e) => console.error("updatedSubscriptions write error:", e));
+  return subsQueue;
 }
 
 async function ensureSubsFile() {
@@ -49,26 +51,28 @@ async function writeSubs(all) {
   await fs.rename(tmp, SUBS_FILE);
 }
 
-async function upsertUpdatedSubscription(entry) {
-  if (!entry?.transactionId) return;
-
-  return queueSubsWrite(async () => {
+// Generic upsert by TransID
+async function upsertC2BRecord(record) {
+  const transId = record?.TransID;
+  if (!transId) return;
+  return enqueueSubs(async () => {
     const all = await readSubs();
-    const idx = all.findIndex((x) => x.transactionId === entry.transactionId);
+    const idx = all.findIndex((r) => r.TransID === transId);
     if (idx >= 0) {
-      all[idx] = { ...all[idx], ...entry };
+      all[idx] = { ...all[idx], ...record };
     } else {
-      all.push(entry);
+      all.push(record);
     }
     await writeSubs(all);
   });
 }
 
-// ---------- M-Pesa OAuth ----------
+/* =========================
+   OAuth Helper
+   ========================= */
 const getAccessToken = async () => {
   const secret_key = process.env.MPESA_CONSUMER_SECRET;
   const consumer_key = process.env.MPESA_CONSUMER_KEY;
-
   const auth = Buffer.from(`${consumer_key}:${secret_key}`).toString("base64");
   const config = { headers: { Authorization: `Basic ${auth}` } };
 
@@ -79,58 +83,57 @@ const getAccessToken = async () => {
   return data.access_token;
 };
 
-// ---------- C2B Validation / Confirmation (Paybill) ----------
-const mpesaValidation = (req, res, next) => {
-  // Add your business rules here (e.g., validate BillRefNumber pattern)
-  const accept = true;
-  if (accept) {
-    res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
-  } else {
-    res.status(200).json({ ResultCode: 1, ResultDesc: "Cancelled" });
-  }
+/* =========================
+   C2B: Validation + Confirmation
+   ========================= */
+const mpesaValidation = (req, res) => {
+  const accept = true; // add your business rules here
+  res.status(200).json({
+    ResultCode: accept ? 0 : 1,
+    ResultDesc: accept ? "Completed" : "Cancelled",
+  });
 };
 
-const mpesaConfirmation = async (req, res, next) => {
+const mpesaConfirmation = async (req, res) => {
   try {
-    const tx = req.body;
-
-    // ACK immediately so Safaricom doesn't retry due to timeout
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
+    const tx = req.body || {};
 
-    // Optionally notify an internal service (non-blocking best-effort)
+    const record = {
+      TransactionType: String(tx.TransactionType ?? ""),
+      TransID: String(tx.TransID ?? ""),
+      TransTime: String(tx.TransTime ?? ""),
+      TransAmount: String(tx.TransAmount ?? ""),
+      BusinessShortCode: String(tx.BusinessShortCode ?? ""),
+      BillRefNumber: String(tx.BillRefNumber ?? ""),
+      InvoiceNumber: String(tx.InvoiceNumber ?? ""),
+      OrgAccountBalance: String(tx.OrgAccountBalance ?? ""),
+      ThirdPartyTransID: String(tx.ThirdPartyTransID ?? ""),
+      MSISDN: String(tx.MSISDN ?? ""),
+      FirstName: String(tx.FirstName ?? ""),
+      MiddleName: String(tx.MiddleName ?? ""),
+      LastName: String(tx.LastName ?? ""),
+    };
+
+    await upsertC2BRecord(record);
+
     try {
       await axios.post(
         "https://your-service.example.com/internal/payment-webhook",
-        tx,
+        record,
         { timeout: 5000 }
       );
     } catch (e) {
       console.warn("Downstream webhook failed:", e.message);
     }
-
-    // If this is classic C2B confirmation payload, map and write to updatedSubscriptions
-    // Expected keys: TransID, TransAmount, BillRefNumber
-    const transactionId =
-      tx?.TransID || tx?.TransRef || tx?.transactionId || null;
-    const amount =
-      tx?.TransAmount || tx?.TransactionAmount || tx?.amount || null;
-    const customerAccount =
-      tx?.BillRefNumber || tx?.AccountReference || tx?.accountReference || null;
-
-    if (transactionId && amount && customerAccount) {
-      await upsertUpdatedSubscription({
-        transactionId: String(transactionId),
-        customerAccount: String(customerAccount),
-        amount: String(amount),
-      });
-    }
   } catch (err) {
-    console.error("processing error", err);
-    // already ACKed
+    console.error("mpesaConfirmation error:", err);
   }
 };
 
-// ---------- STK Push Initiation ----------
+/* =========================
+   STK Push (CustomerPayBillOnline)
+   ========================= */
 const initiateSTKPush = async (phone, amount) => {
   try {
     const token = await getAccessToken();
@@ -143,11 +146,7 @@ const initiateSTKPush = async (phone, amount) => {
       "base64"
     );
 
-    // normalize phone (remove leading + or 0)
     const user_phone = String(phone || "").replace(/^(\+|0)+/, "");
-
-    // IMPORTANT: If you want per-customer "customerAccount",
-    // pass it here as AccountReference dynamically.
     const AccountReference =
       process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
@@ -173,22 +172,17 @@ const initiateSTKPush = async (phone, amount) => {
       config
     );
 
-    // Pre-log a PENDING record keyed by CheckoutRequestID (also store AccountReference!)
-    try {
-      await appendTransaction({
-        Status: "PENDING",
-        PhoneNumber: user_phone,
-        Amount: amount,
-        MerchantRequestID: data.MerchantRequestID,
-        CheckoutRequestID: data.CheckoutRequestID,
-        AccountReference, // keep it so we can map to customerAccount later
-        ResultCode: null,
-        ResultDesc: "Awaiting customer PIN",
-        Timestamp: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.warn("Could not pre-log pending transaction:", e.message);
-    }
+    await appendTransaction({
+      Status: "PENDING",
+      PhoneNumber: user_phone,
+      Amount: amount,
+      MerchantRequestID: data.MerchantRequestID,
+      CheckoutRequestID: data.CheckoutRequestID,
+      AccountReference,
+      ResultCode: null,
+      ResultDesc: "Awaiting customer PIN",
+      Timestamp: new Date().toISOString(),
+    });
 
     return data;
   } catch (error) {
@@ -197,7 +191,9 @@ const initiateSTKPush = async (phone, amount) => {
   }
 };
 
-// ---------- STK Push Callback (C2B from customer's phone) ----------
+/* =========================
+   STK Callback
+   ========================= */
 const mpesaCallback = async (req, res) => {
   try {
     const body = req.body;
@@ -231,12 +227,10 @@ const mpesaCallback = async (req, res) => {
       transaction.Status = "FAILED";
     }
 
-    // Update existing PENDING by CheckoutRequestID; if not found, append
     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
 
-    // If SUCCESS, also write to logs/updatedSubscriptions.json
+    // If successful STK push, also write to updatedSubscriptions.json
     if (transaction.Status === "SUCCESS") {
-      // fetch the pre-logged record to retrieve AccountReference
       const existing =
         (await findLatestTxnByCheckoutOrPhone(
           transaction.CheckoutRequestID,
@@ -248,20 +242,25 @@ const mpesaCallback = async (req, res) => {
         process.env.DEFAULT_ACCOUNT_REFERENCE ||
         "Starlynx Utility";
 
-      const entry = {
-        transactionId: String(transaction.MpesaReceiptNumber || ""),
-        customerAccount: String(accountRef),
-        amount: String(transaction.Amount || ""),
+      const record = {
+        TransactionType: "Pay Bill",
+        TransID: String(transaction.MpesaReceiptNumber || ""),
+        TransTime: String(
+          transaction.TransactionDate || moment().format("YYYYMMDDHHmmss")
+        ),
+        TransAmount: String(transaction.Amount || ""),
+        BusinessShortCode: String(process.env.MPESA_SHORTCODE || ""),
+        BillRefNumber: String(accountRef),
+        InvoiceNumber: "",
+        OrgAccountBalance: "",
+        ThirdPartyTransID: "",
+        MSISDN: String(transaction.PhoneNumber || ""),
+        FirstName: "",
+        MiddleName: "",
+        LastName: "",
       };
 
-      if (entry.transactionId && entry.amount) {
-        await upsertUpdatedSubscription(entry);
-      } else {
-        console.warn(
-          "Skipping updatedSubscriptions write due to missing fields:",
-          entry
-        );
-      }
+      await upsertC2BRecord(record);
     }
 
     res.status(200).json({ message: "Callback processed" });
@@ -271,7 +270,77 @@ const mpesaCallback = async (req, res) => {
   }
 };
 
-// ---------- Test endpoint ----------
+/* =========================
+   Sandbox: Register + Simulate
+   ========================= */
+const registerC2BUrls = async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const config = { headers: { Authorization: `Bearer ${token}` } };
+
+    const payload = {
+      ShortCode: process.env.MPESA_SHORTCODE,
+      ResponseType: "Completed",
+      ConfirmationURL:
+        process.env.MPESA_CONFIRMATION_URL ||
+        "https://app.sulsolutions.biz/api/mpesa/confirmation",
+      ValidationURL:
+        process.env.MPESA_VALIDATION_URL ||
+        "https://app.sulsolutions.biz/api/mpesa/validation",
+    };
+
+    const { data } = await axios.post(
+      "https://sandbox.safaricom.co.ke/mpesa/c2b/v1/registerurl",
+      payload,
+      config
+    );
+
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error("registerC2BUrls error:", err?.response?.data || err.message);
+    res
+      .status(500)
+      .json({ ok: false, error: err?.response?.data || err.message });
+  }
+};
+
+const simulateC2B = async (req, res) => {
+  try {
+    const {
+      amount = 10,
+      billRef = "invoice008",
+      msisdn = "254708374149",
+    } = req.body || {};
+
+    const token = await getAccessToken();
+    const config = { headers: { Authorization: `Bearer ${token}` } };
+
+    const payload = {
+      ShortCode: process.env.MPESA_SHORTCODE,
+      CommandID: "CustomerPayBillOnline",
+      Amount: amount,
+      Msisdn: msisdn,
+      BillRefNumber: billRef,
+    };
+
+    const { data } = await axios.post(
+      "https://sandbox.safaricom.co.ke/mpesa/c2b/v1/simulate",
+      payload,
+      config
+    );
+
+    res.json({ ok: true, data, sent: payload });
+  } catch (err) {
+    console.error("simulateC2B error:", err?.response?.data || err.message);
+    res
+      .status(500)
+      .json({ ok: false, error: err?.response?.data || err.message });
+  }
+};
+
+/* =========================
+   Quick test endpoint
+   ========================= */
 const test = async (req, res) => {
   try {
     const results = await initiateSTKPush("+254701057515", 1);
@@ -287,5 +356,7 @@ module.exports = {
   mpesaCallback,
   getAccessToken,
   initiateSTKPush,
+  registerC2BUrls,
+  simulateC2B,
   test,
 };
