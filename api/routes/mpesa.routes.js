@@ -11,9 +11,12 @@ const {
 const router = express.Router();
 
 router.get("/", test);
+
 router.post("/callback", mpesaCallback);
+
 router.post("/validation", mpesaValidation);
 router.post("/confirmation", mpesaConfirmation);
+
 router.post("/register", registerC2BUrls);
 router.post("/simulate", simulateC2B);
 

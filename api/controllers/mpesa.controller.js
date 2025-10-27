@@ -9,7 +9,9 @@ const {
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
 
-// ---------- paths for the subscriptions JSON ----------
+/* ------------------------------------------------------------------ */
+/* Paths for logs/updatedSubscriptions.json                           */
+/* ------------------------------------------------------------------ */
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
 const SUBS_FILE = path.join(LOGS_DIR, "updatedSubscriptions.json");
 
@@ -64,7 +66,9 @@ async function upsertUpdatedSubscription(entry) {
   });
 }
 
-// ---------- M-Pesa OAuth ----------
+/* ------------------------------------------------------------------ */
+/* M-Pesa OAuth                                                        */
+/* ------------------------------------------------------------------ */
 const getAccessToken = async () => {
   const secret_key = process.env.MPESA_CONSUMER_SECRET;
   const consumer_key = process.env.MPESA_CONSUMER_KEY;
@@ -79,9 +83,69 @@ const getAccessToken = async () => {
   return data.access_token;
 };
 
-// ---------- C2B Validation / Confirmation (Paybill) ----------
-const mpesaValidation = (req, res, next) => {
-  // Add your business rules here (e.g., validate BillRefNumber pattern)
+/* ------------------------------------------------------------------ */
+/* ISP Payment (external)                                              */
+/* ------------------------------------------------------------------ */
+const ISP_PAYMENT_URL =
+  process.env.ISP_PAYMENT_URL ||
+  "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
+
+/**
+ * Formats M-Pesa C2B TransTime ("YYYYMMDDHHmmss") -> "DD MMM YYYY hh:mm A"
+ * Falls back to current time if missing.
+ */
+function formatC2BTime(raw) {
+  try {
+    if (raw && /^[0-9]{14}$/.test(String(raw))) {
+      return moment(raw, "YYYYMMDDHHmmss").format("DD MMM YYYY hh:mm A");
+    }
+  } catch (_) {}
+  return moment().format("DD MMM YYYY hh:mm A");
+}
+
+/**
+ * Build the exact payload expected by the ISP endpoint.
+ * Axios serializes to compact JSON (no spaces).
+ */
+function buildISPPayloadFromConfirmation(tx) {
+  return {
+    TransactionType: "Paystack", // as required by the ISP
+    TransID: String(tx.TransID || tx.TransRef || ""),
+    TransTime: formatC2BTime(tx.TransTime || tx.TransDate),
+    TransAmount: String(
+      tx.TransAmount || tx.TransactionAmount || tx.amount || "0"
+    ),
+    BusinessShortCode: String(
+      tx.BusinessShortCode || process.env.MPESA_SHORTCODE || ""
+    ),
+    BillRefNumber: String(tx.BillRefNumber || tx.AccountReference || ""),
+    InvoiceNumber: String(tx.InvoiceNumber || tx.BillRefNumber || ""),
+    OrgAccountBalance: String(tx.OrgAccountBalance || "0"),
+    ThirdPartyTransID: String(tx.ThirdPartyTransID || ""),
+    MSISDN: String(tx.MSISDN || tx.MSISDNNumber || ""),
+    FirstName: String(tx.FirstName || ""),
+  };
+}
+
+async function postISPPayment(payload) {
+  try {
+    await axios.post(ISP_PAYMENT_URL, payload, {
+      headers: { "Content-Type": "application/json" },
+      timeout: 15000,
+      // ensure compact JSON (no pretty-print spaces)
+      transformRequest: [(data) => JSON.stringify(data)],
+    });
+    console.log("ISP payment posted:", payload.TransID);
+  } catch (e) {
+    console.error("ISP payment post failed:", e?.response?.data || e.message);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* C2B Validation / Confirmation (Paybill)                             */
+/* ------------------------------------------------------------------ */
+const mpesaValidation = (req, res) => {
+  // Add business rules here (e.g., validate BillRefNumber)
   const accept = true;
   if (accept) {
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
@@ -90,14 +154,14 @@ const mpesaValidation = (req, res, next) => {
   }
 };
 
-const mpesaConfirmation = async (req, res, next) => {
+const mpesaConfirmation = async (req, res) => {
   try {
     const tx = req.body;
 
-    // ACK immediately so Safaricom doesn't retry due to timeout
+    // ACK immediately so Safaricom doesn't retry
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 
-    // Optionally notify an internal service (non-blocking best-effort)
+    // Optional internal webhook (best-effort)
     try {
       await axios.post(
         "https://your-service.example.com/internal/payment-webhook",
@@ -108,8 +172,7 @@ const mpesaConfirmation = async (req, res, next) => {
       console.warn("Downstream webhook failed:", e.message);
     }
 
-    // If this is classic C2B confirmation payload, map and write to updatedSubscriptions
-    // Expected keys: TransID, TransAmount, BillRefNumber
+    // Persist to updatedSubscriptions.json snapshot
     const transactionId =
       tx?.TransID || tx?.TransRef || tx?.transactionId || null;
     const amount =
@@ -124,13 +187,19 @@ const mpesaConfirmation = async (req, res, next) => {
         amount: String(amount),
       });
     }
+
+    // Push to ISP endpoint (compact JSON, no spaces)
+    const ispPayload = buildISPPayloadFromConfirmation(tx);
+    await postISPPayment(ispPayload);
   } catch (err) {
     console.error("processing error", err);
-    // already ACKed
+    // already ACKed above
   }
 };
 
-// ---------- STK Push Initiation ----------
+/* ------------------------------------------------------------------ */
+/* STK Push Initiation                                                 */
+/* ------------------------------------------------------------------ */
 const initiateSTKPush = async (phone, amount) => {
   try {
     const token = await getAccessToken();
@@ -146,8 +215,7 @@ const initiateSTKPush = async (phone, amount) => {
     // normalize phone (remove leading + or 0)
     const user_phone = String(phone || "").replace(/^(\+|0)+/, "");
 
-    // IMPORTANT: If you want per-customer "customerAccount",
-    // pass it here as AccountReference dynamically.
+    // If you want per-customer "customerAccount", pass it here dynamically.
     const AccountReference =
       process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
@@ -160,7 +228,9 @@ const initiateSTKPush = async (phone, amount) => {
       PartyA: user_phone,
       PartyB: shortcode,
       PhoneNumber: user_phone,
-      CallBackURL: process.env.MPESA_CALLBACK_URL,
+      CallBackURL:
+        process.env.MPESA_CALLBACK_URL ||
+        "https://app.sulsolutions.biz/api/payment/callback",
       AccountReference,
       TransactionDesc: "Subscription",
     };
@@ -171,7 +241,7 @@ const initiateSTKPush = async (phone, amount) => {
       config
     );
 
-    // Pre-log a PENDING record keyed by CheckoutRequestID (also store AccountReference!)
+    // Pre-log a PENDING record keyed by CheckoutRequestID (store AccountReference)
     try {
       await appendTransaction({
         Status: "PENDING",
@@ -179,7 +249,7 @@ const initiateSTKPush = async (phone, amount) => {
         Amount: amount,
         MerchantRequestID: data.MerchantRequestID,
         CheckoutRequestID: data.CheckoutRequestID,
-        AccountReference, // keep it so we can map to customerAccount later
+        AccountReference,
         ResultCode: null,
         ResultDesc: "Awaiting customer PIN",
         Timestamp: new Date().toISOString(),
@@ -195,7 +265,9 @@ const initiateSTKPush = async (phone, amount) => {
   }
 };
 
-// ---------- STK Push Callback (C2B from customer's phone) ----------
+/* ------------------------------------------------------------------ */
+/* STK Push Callback                                                   */
+/* ------------------------------------------------------------------ */
 const mpesaCallback = async (req, res) => {
   try {
     const body = req.body;
@@ -269,7 +341,9 @@ const mpesaCallback = async (req, res) => {
   }
 };
 
-// Registers your Validation & Confirmation URLs to your shortcode on Daraja
+/* ------------------------------------------------------------------ */
+/* Register C2B URLs + Sandbox Simulate                               */
+/* ------------------------------------------------------------------ */
 const registerC2BUrls = async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -278,8 +352,12 @@ const registerC2BUrls = async (req, res) => {
     const payload = {
       ShortCode: process.env.MPESA_SHORTCODE, // sandbox e.g. 600XXX
       ResponseType: "Completed", // or "Cancelled"
-      ConfirmationURL: process.env.MPESA_CONFIRMATION_URL,
-      ValidationURL: process.env.MPESA_VALIDATION_URL,
+      ConfirmationURL:
+        process.env.MPESA_CONFIRMATION_URL ||
+        "https://app.sulsolutions.biz/api/payment/confirmation",
+      ValidationURL:
+        process.env.MPESA_VALIDATION_URL ||
+        "https://app.sulsolutions.biz/api/payment/validation",
     };
 
     const { data } = await axios.post(
@@ -288,7 +366,6 @@ const registerC2BUrls = async (req, res) => {
       config
     );
 
-    // Expect { "OriginatorCoversationID": "...", "ResponseCode": "0", "ResponseDescription": "success" }
     res.json({ ok: true, data });
   } catch (err) {
     console.error("registerC2BUrls error:", err?.response?.data || err.message);
@@ -298,7 +375,6 @@ const registerC2BUrls = async (req, res) => {
   }
 };
 
-// Simulate a C2B (PayBill) customer payment into your shortcode
 const simulateC2B = async (req, res) => {
   try {
     const {
@@ -332,7 +408,9 @@ const simulateC2B = async (req, res) => {
   }
 };
 
-// ---------- Test endpoint ----------
+/* ------------------------------------------------------------------ */
+/* Test endpoint                                                       */
+/* ------------------------------------------------------------------ */
 const test = async (req, res) => {
   try {
     const results = await initiateSTKPush("+254701057515", 1);
@@ -342,11 +420,14 @@ const test = async (req, res) => {
   }
 };
 
+/* ------------------------------------------------------------------ */
+/* Exports                                                            */
+/* ------------------------------------------------------------------ */
 module.exports = {
   registerC2BUrls,
   simulateC2B,
   mpesaValidation,
-  mpesaConfirmation,
+  mpesaConfirmation, // includes ISP payment POST
   mpesaCallback,
   getAccessToken,
   initiateSTKPush,
