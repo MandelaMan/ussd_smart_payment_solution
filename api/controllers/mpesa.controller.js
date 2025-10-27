@@ -51,13 +51,7 @@ async function writeSubs(all) {
   await fs.rename(tmp, SUBS_FILE);
 }
 
-/**
- * Upsert a subscription snapshot, keeping both indexed fields and the full raw tx.
- * - Index by transactionId (derived from TransID / MpesaReceiptNumber / TransRef)
- * - Keep last-seen values for amount + customerAccount
- * - Store full object under `rawTx`
- * - Optionally store the compact ISP payload we POSTed, for traceability
- */
+// Replace the guard + function signature with this version
 async function upsertUpdatedSubscriptionFull({
   transactionId,
   amount,
@@ -66,13 +60,24 @@ async function upsertUpdatedSubscriptionFull({
   ispPayload,
   source,
 }) {
-  if (!transactionId) return;
+  // Generate a safe fallback ID if we didn't get one (prevents dropping C2B writes)
+  const fallbackId = (() => {
+    const msisdn = rawTx?.MSISDN || rawTx?.PhoneNumber || "UNKNOWN_MSISDN";
+    const t =
+      rawTx?.TransID ||
+      rawTx?.TransTime ||
+      rawTx?.TransactionDate ||
+      Date.now();
+    return `AUTO-${String(msisdn)}-${String(t)}`;
+  })();
+
+  const id = String(transactionId || fallbackId);
 
   return queueSubsWrite(async () => {
     const all = await readSubs();
-    const idx = all.findIndex((x) => x.transactionId === transactionId);
+    const idx = all.findIndex((x) => x.transactionId === id);
     const base = {
-      transactionId: String(transactionId),
+      transactionId: id,
       amount:
         amount != null
           ? String(amount)
@@ -85,7 +90,7 @@ async function upsertUpdatedSubscriptionFull({
           : idx >= 0
           ? all[idx].customerAccount
           : undefined,
-      source: source || (idx >= 0 ? all[idx].source : undefined), // "C2B" | "STK"
+      source: source || (idx >= 0 ? all[idx].source : undefined),
       lastUpdatedAt: new Date().toISOString(),
       rawTx: rawTx || (idx >= 0 ? all[idx].rawTx : undefined),
       ispPayload: ispPayload || (idx >= 0 ? all[idx].ispPayload : undefined),
@@ -213,9 +218,7 @@ const mpesaConfirmation = async (req, res) => {
     // ACK immediately so Safaricom doesn't retry
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 
-    // ⛔ Removed: "Optional internal webhook (best-effort)"
-
-    // Persist FULL tx to updatedSubscriptions.json (C2B)
+    // --- derive fields robustly
     const transactionId =
       tx?.TransID || tx?.TransRef || tx?.transactionId || null;
     const amount =
@@ -223,21 +226,37 @@ const mpesaConfirmation = async (req, res) => {
     const customerAccount =
       tx?.BillRefNumber || tx?.AccountReference || tx?.accountReference || null;
 
-    // Build ISP payload and post (compact JSON)
+    // --- build ISP payload & post (await so we can log errors if any)
     const ispPayload = buildISPPayloadFromConfirmation(tx);
-    await postISPPayment(ispPayload);
+    try {
+      await postISPPayment(ispPayload);
+    } catch (e) {
+      // postISPPayment already logs details, but add context to correlate with our persisted entry
+      console.error(
+        "C2B -> ISP post error for TransID:",
+        transactionId,
+        e?.message
+      );
+    }
 
-    // Save full snapshot
+    // --- ALWAYS persist the full tx (even if transactionId is missing)
     await upsertUpdatedSubscriptionFull({
-      transactionId: transactionId ? String(transactionId) : null,
+      transactionId: transactionId ? String(transactionId) : null, // null allowed; function will auto-generate a safe id
       amount: amount != null ? String(amount) : null,
       customerAccount: customerAccount != null ? String(customerAccount) : null,
-      rawTx: tx,
+      rawTx: { type: "C2B_CONFIRMATION", ...tx },
       ispPayload,
       source: "C2B",
     });
+
+    // Optional: quick console to verify flow during testing
+    console.log("C2B confirmation processed:", {
+      TransID: transactionId,
+      BillRefNumber: customerAccount,
+      Amount: amount,
+    });
   } catch (err) {
-    console.error("processing error", err);
+    console.error("C2B processing error", err);
     // already ACKed above
   }
 };
