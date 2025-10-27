@@ -273,6 +273,8 @@ const mpesaCallback = async (req, res) => {
 /* =========================
    Sandbox: Register + Simulate
    ========================= */
+// controllers/mpesa.controller.js
+
 const registerC2BUrls = async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -283,10 +285,10 @@ const registerC2BUrls = async (req, res) => {
       ResponseType: "Completed",
       ConfirmationURL:
         process.env.MPESA_CONFIRMATION_URL ||
-        "https://app.sulsolutions.biz/api/mpesa/confirmation",
+        "https://app.sulsolutions.biz/api/payment/confirmation", // <— UPDATED
       ValidationURL:
         process.env.MPESA_VALIDATION_URL ||
-        "https://app.sulsolutions.biz/api/mpesa/validation",
+        "https://app.sulsolutions.biz/api/payment/validation", // <— UPDATED
     };
 
     const { data } = await axios.post(
@@ -295,9 +297,9 @@ const registerC2BUrls = async (req, res) => {
       config
     );
 
-    res.json({ ok: true, data });
+    res.json({ ok: true, data, sent: payload });
   } catch (err) {
-    console.error("registerC2BUrls error:", err?.response?.data || err.message);
+    console.error("[C2B register] error:", err?.response?.data || err.message);
     res
       .status(500)
       .json({ ok: false, error: err?.response?.data || err.message });
