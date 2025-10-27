@@ -86,20 +86,20 @@ jobs:
 
           # Create ecosystem.config.js if missing
           if [ ! -f ecosystem.config.js ]; then
-            cat > ecosystem.config.js <<'EOC'
-            module.exports = {
-              apps: [{
-                name: 'ussd_smart_payment_solution',
-                script: 'index.js',
-                cwd: process.env.DEPLOY_PATH || '.',
-                instances: 1,
-                exec_mode: 'fork',
-                env: {
-                  NODE_ENV: 'production'
-                }
-              }]
-            }
-            EOC
+          cat > ecosystem.config.js <<'EOC'
+          module.exports = {
+            apps: [{
+              name: 'ussd_smart_payment_solution',
+              script: 'index.js',
+              cwd: process.env.DEPLOY_PATH || '.',
+              instances: 1,
+              exec_mode: 'fork',
+              env: {
+                NODE_ENV: 'production'
+              }
+            }]
+          }
+          EOC
           fi
 
           echo "Reloading with PM2..."
