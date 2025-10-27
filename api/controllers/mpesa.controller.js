@@ -52,11 +52,14 @@ async function writeSubs(all) {
 }
 
 /**
- * Upsert a subscription snapshot, keeping both indexed fields and the full raw tx.
- * - Index by transactionId (derived from TransID / MpesaReceiptNumber / TransRef)
- * - Keep last-seen values for amount + customerAccount
- * - Store full object under `rawTx`
- * - Optionally store the compact ISP payload we POSTed, for traceability
+ * Append-only snapshot writer (keeps the same public name).
+ * Always pushes a new entry; never overwrites previous ones.
+ * Stores:
+ *  - transactionId, amount, customerAccount (for quick reading)
+ *  - source ("C2B" | "STK")
+ *  - createdAt (record creation time)
+ *  - rawTx (full payload we received)
+ *  - ispPayload (exact payload we POSTed outward)
  */
 async function upsertUpdatedSubscriptionFull({
   transactionId,
@@ -66,36 +69,23 @@ async function upsertUpdatedSubscriptionFull({
   ispPayload,
   source,
 }) {
-  if (!transactionId) return;
+  if (!transactionId) {
+    console.warn(
+      "upsertUpdatedSubscriptionFull: missing transactionId; appending anyway"
+    );
+  }
 
   return queueSubsWrite(async () => {
     const all = await readSubs();
-    const idx = all.findIndex((x) => x.transactionId === transactionId);
-    const base = {
-      transactionId: String(transactionId),
-      amount:
-        amount != null
-          ? String(amount)
-          : idx >= 0
-          ? all[idx].amount
-          : undefined,
-      customerAccount:
-        customerAccount != null
-          ? String(customerAccount)
-          : idx >= 0
-          ? all[idx].customerAccount
-          : undefined,
-      source: source || (idx >= 0 ? all[idx].source : undefined), // "C2B" | "STK"
-      lastUpdatedAt: new Date().toISOString(),
-      rawTx: rawTx || (idx >= 0 ? all[idx].rawTx : undefined),
-      ispPayload: ispPayload || (idx >= 0 ? all[idx].ispPayload : undefined),
-    };
-
-    if (idx >= 0) {
-      all[idx] = { ...all[idx], ...base };
-    } else {
-      all.push(base);
-    }
+    all.push({
+      transactionId: transactionId != null ? String(transactionId) : null,
+      amount: amount != null ? String(amount) : null,
+      customerAccount: customerAccount != null ? String(customerAccount) : null,
+      source: source || undefined, // "C2B" | "STK"
+      createdAt: new Date().toISOString(), // append timestamp
+      rawTx: rawTx || undefined,
+      ispPayload: ispPayload || undefined,
+    });
     await writeSubs(all);
   });
 }
@@ -213,9 +203,11 @@ const mpesaConfirmation = async (req, res) => {
     // ACK immediately so Safaricom doesn't retry
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 
-    // ⛔ Removed: "Optional internal webhook (best-effort)"
+    // Build compact ISP payload and POST (from ENV ISP_PAYMENT_URL)
+    const ispPayload = buildISPPayloadFromConfirmation(tx);
+    await postISPPayment(ispPayload);
 
-    // Persist FULL tx to updatedSubscriptions.json (C2B)
+    // Extract simple fields for indexing
     const transactionId =
       tx?.TransID || tx?.TransRef || tx?.transactionId || null;
     const amount =
@@ -223,11 +215,7 @@ const mpesaConfirmation = async (req, res) => {
     const customerAccount =
       tx?.BillRefNumber || tx?.AccountReference || tx?.accountReference || null;
 
-    // Build ISP payload and post (compact JSON)
-    const ispPayload = buildISPPayloadFromConfirmation(tx);
-    await postISPPayment(ispPayload);
-
-    // Save full snapshot
+    // Append full snapshot (append-only)
     await upsertUpdatedSubscriptionFull({
       transactionId: transactionId ? String(transactionId) : null,
       amount: amount != null ? String(amount) : null,
@@ -491,28 +479,29 @@ const mpesaCallback = async (req, res) => {
     // Update existing PENDING by CheckoutRequestID; if not found, append
     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
 
-    // If SUCCESS, persist FULL tx + POST to ISP
+    // If SUCCESS, post to ISP and append snapshot
     if (transaction.Status === "SUCCESS") {
-      // fetch the pre-logged record to retrieve original AccountReference
+      // Retrieve original AccountReference from your pre-logged pending tx
       const existing =
         (await findLatestTxnByCheckoutOrPhone(
           transaction.CheckoutRequestID,
           transaction.PhoneNumber
         )) || {};
 
-      // Use the exact same AccountReference from STK initiation
-      const accountRef = existing.AccountReference
-        ? String(existing.AccountReference)
-        : process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
+      // Use exactly what was initiated in STK (accountNumber)
+      const accountRef =
+        existing.AccountReference ||
+        process.env.DEFAULT_ACCOUNT_REFERENCE ||
+        "Starlynx Utility";
 
-      // Build and post ISP payload (compact)
+      // Build compact ISP payload and POST
       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
       await postISPPayment(ispPayload);
 
-      // Persist full snapshot
+      // Append full snapshot (append-only)
       await upsertUpdatedSubscriptionFull({
         transactionId: String(transaction.MpesaReceiptNumber || ""),
-        customerAccount: accountRef,
+        customerAccount: String(accountRef),
         amount: String(transaction.Amount || ""),
         rawTx: { type: "STK_CALLBACK", ...transaction },
         ispPayload,
