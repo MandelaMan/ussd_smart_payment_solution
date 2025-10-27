@@ -245,7 +245,7 @@ const mpesaConfirmation = async (req, res) => {
 /* ------------------------------------------------------------------ */
 /* STK Push Initiation                                                 */
 /* ------------------------------------------------------------------ */
-const initiateSTKPush = async (accountNumber, phone, amount) => {
+const initiateSTKPush = async (phone, amount) => {
   try {
     const token = await getAccessToken();
     const config = { headers: { Authorization: `Bearer ${token}` } };
@@ -261,7 +261,8 @@ const initiateSTKPush = async (accountNumber, phone, amount) => {
     const user_phone = String(phone || "").replace(/^(\+|0)+/, "");
 
     // If you want per-customer "customerAccount", pass it here dynamically.
-    const AccountReference = accountNumber;
+    const AccountReference =
+      process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
     const payload = {
       BusinessShortCode: shortcode,
@@ -357,12 +358,10 @@ const mpesaCallback = async (req, res) => {
           transaction.PhoneNumber
         )) || {};
 
-      // const accountRef =
-      //   existing.AccountReference ||
-      //   process.env.DEFAULT_ACCOUNT_REFERENCE ||
-      //   "Starlynx Utility";
-
-      const accountRef = accountNumber;
+      const accountRef =
+        existing.AccountReference ||
+        process.env.DEFAULT_ACCOUNT_REFERENCE ||
+        "Starlynx Utility";
 
       // Build and post ISP payload (compact)
       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
