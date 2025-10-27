@@ -46,12 +46,12 @@ const updateClientDetails = async (clientNo) => {
 
   const data = {
     TransactionType: "MPESA Paybill",
-    TransID: "${INVOICE.INVOICE_ID}",
-    TransTime: "${INVOICE.MODIFIED_TIME}",
-    TransAmount: "${INVOICE.AMOUNT_PAID}",
+    TransID: "123456789",
+    TransTime: now(),
+    TransAmount: 1,
     BusinessShortCode: "123456",
-    BillRefNumber: "${CONTACT.CONTACT_COMPANYNAME}",
-    InvoiceNumber: "${INVOICE.INVOICE_NUMBER}",
+    BillRefNumber: "TGH8997UU",
+    InvoiceNumber: "INV0-000003",
     OrgAccountBalance: "0",
     ThirdPartyTransID: "HFDYU56",
     MSISDN: "0722123456",

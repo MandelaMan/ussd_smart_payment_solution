@@ -20,6 +20,43 @@ const getAccessToken = async () => {
   return data.access_token;
 };
 
+const mpesaValidation = (req, res, next) => {
+  const tx = req.body;
+  // decide whether to accept transaction
+  const accept = true; // implement business rules here
+  if (accept) {
+    res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
+  } else {
+    res.status(200).json({ ResultCode: 1, ResultDesc: "Rejected" });
+  }
+};
+
+const mpesaConfirmation = async (req, res, next) => {
+  try {
+    const tx = req.body;
+    // 1) Immediately ACK to Safaricom (important)
+    res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
+
+    // 2) Server-side processing (do not block the ACK)
+    // e.g., insert transaction into DB (pseudo)
+    // await db.insertTransaction(tx);
+
+    // 3) Trigger other functions: call a webhook, enqueue a job, send receipt, etc.
+    // Example: notify your order service
+    await axios.post(
+      "https://your-service.example.com/internal/payment-webhook",
+      tx,
+      { timeout: 5000 }
+    );
+
+    // or enqueue for background workers
+    // await queue.add('processPayment', tx);
+  } catch (err) {
+    // If your internal calls fail, log and handle; Safaricom will retry sending the notification.
+    console.error("processing error", err);
+  }
+};
+
 const initiateSTKPush = async (phone, amount) => {
   try {
     const token = await getAccessToken();
@@ -134,6 +171,8 @@ const test = async (req, res) => {
 };
 
 module.exports = {
+  mpesaValidation,
+  mpesaConfirmation,
   mpesaCallback,
   getAccessToken,
   initiateSTKPush,
