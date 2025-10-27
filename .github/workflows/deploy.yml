@@ -2,85 +2,113 @@ name: Deploy to DigitalOcean
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🧾 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18" # match your droplet if different
+          node-version: "18"
 
-      - name: 🔐 Setup SSH
+      - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
 
-      - name: 🧱 Add droplet to known_hosts
+      - name: Add droplet to known_hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: 🧹 Clean destination (keep only .env)
+      - name: Clean destination (keep only .env)
         run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
-            set -e
-            mkdir -p '${{ secrets.DEPLOY_PATH }}'
-            cd '${{ secrets.DEPLOY_PATH }}'
-            # remove everything except .env
-            find . -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
-          "
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          set -euo pipefail
+          mkdir -p "${{ secrets.DEPLOY_PATH }}"
+          cd "${{ secrets.DEPLOY_PATH }}"
+          find . -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
+          EOF
 
-      - name: 📤 Sync repo to server
+      - name: Sync repo to server (checksum to avoid mtime issues)
         run: |
-          rsync -az --delete --delete-after --human-readable --progress \
+          rsync -az --checksum --delete --delete-after \
             --exclude ".git/" \
             --exclude ".github/" \
             --filter "protect .env" \
-            ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:'${{ secrets.DEPLOY_PATH }}/'
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
-      - name: 🚀 Install deps & restart PM2 (deploy user, Yarn, index.js)
+      - name: Install, build, and reload with PM2
         run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
-            set -e
-            cd '${{ secrets.DEPLOY_PATH }}'
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd "${{ secrets.DEPLOY_PATH }}"
 
-            # make sure the deploy user owns the project
-            chown -R "$(whoami)":"$(whoami)" .
+          # Ensure correct ownership
+          chown -R "$(whoami)":"$(whoami)" .
 
-            # Yarn via Corepack (ignore pnpm EEXIST noise)
-            corepack enable || true
-            corepack prepare yarn@stable --activate || true
+          # Setup Yarn via Corepack
+          corepack enable || true
+          corepack prepare yarn@stable --activate || true
 
-            echo "📦 Installing production deps..."
-            YARN_ENABLE_GLOBAL_CACHE=0 yarn install --frozen-lockfile --production
+          echo "Installing dependencies..."
+          YARN_ENABLE_GLOBAL_CACHE=0 yarn install --immutable || yarn install
 
-            # Ensure PM2 is available for *this user* (no sudo)
-            if ! command -v pm2 >/dev/null 2>&1; then
-              npm config set prefix "$HOME/.npm-global"
-              export PATH="$HOME/.npm-global/bin:$PATH"
-              grep -q '.npm-global/bin' "$HOME/.profile" || echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$HOME/.profile"
-              npm i -g pm2
-            fi
+          # Build if a build script exists
+          if grep -q '"build"' package.json 2>/dev/null; then
+            echo "Building..."
+            yarn build
+          else
+            echo "No build script; skipping build."
+          fi
 
+          # Setup PM2 for this user
+          export PM2_HOME="$HOME/.pm2"
+          if ! command -v pm2 >/dev/null 2>&1; then
+            npm config set prefix "$HOME/.npm-global"
             export PATH="$HOME/.npm-global/bin:$PATH"
-
-            APP_NAME="ussd_smart_payment_solution"
-            ENTRY_FILE="index.js"
-
-            echo "🚀 (Re)starting PM2..."
-            if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-              pm2 restart "$APP_NAME" --update-env
-            else
-              pm2 start "$ENTRY_FILE" --name "$APP_NAME"
+            if ! grep -q '.npm-global/bin' "$HOME/.profile" 2>/dev/null; then
+              echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$HOME/.profile"
             fi
+            npm i -g pm2
+          fi
+          export PATH="$HOME/.npm-global/bin:$PATH"
 
-            pm2 save
-            echo "✅ Deployment complete!"
+          APP_NAME="ussd_smart_payment_solution"
+          ENTRY_FILE="index.js"
+
+          # Create ecosystem.config.js if missing
+          if [ ! -f ecosystem.config.js ]; then
+            cat > ecosystem.config.js <<'EOC'
+            module.exports = {
+              apps: [{
+                name: 'ussd_smart_payment_solution',
+                script: 'index.js',
+                cwd: process.env.DEPLOY_PATH || '.',
+                instances: 1,
+                exec_mode: 'fork',
+                env: {
+                  NODE_ENV: 'production'
+                }
+              }]
+            }
+            EOC
+          fi
+
+          echo "Reloading with PM2..."
+          if pm2 describe "${APP_NAME}" >/dev/null 2>&1; then
+            pm2 reload ecosystem.config.js --only "${APP_NAME}" --update-env
+          else
+            pm2 start ecosystem.config.js --only "${APP_NAME}" --update-env
+          fi
+
+          pm2 save
+          echo "Deployment complete."
           EOF
