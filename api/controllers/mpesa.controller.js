@@ -202,71 +202,72 @@ async function postISPPayment(payload) {
 /* C2B Validation / Confirmation (Paybill)                             */
 /* ------------------------------------------------------------------ */
 const mpesaValidation = (req, res) => {
-  // Add business rules here (e.g., validate BillRefNumber)
-  const accept = true;
-  if (accept) {
-    res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
-  } else {
-    res.status(200).json({ ResultCode: 1, ResultDesc: "Cancelled" });
-  }
+  // Add any business checks here. Return 0 to accept, 1 to reject.
+  res.status(200).json({
+    ResultCode: 0,
+    ResultDesc: "Completed",
+    // You can optionally add a ThirdPartyTransID field if you track one.
+  });
 };
 
 /* ------------------------------------------------------------------ */
 /* C2B Confirmation (Paybill) — mirrored to STK callback style        */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* C2B Confirmation (Paybill) — mirrored to STK callback style        */
+/* ------------------------------------------------------------------ */
 const mpesaConfirmation = async (req, res) => {
   try {
-    const tx = req.body; // Safaricom POSTs the C2B payment here
-
     // ACK immediately so Safaricom doesn't retry
+    // (Returning JSON is fine; Confirmation doesn't require a specific schema)
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
 
-    // --- Normalize key fields (tolerant to variant keys)
-    const transactionId =
-      tx?.TransID || tx?.TransRef || tx?.transactionId || null;
-    const amount =
-      tx?.TransAmount || tx?.TransactionAmount || tx?.amount || null;
-    const msisdn = tx?.MSISDN || tx?.MSISDNNumber || tx?.PhoneNumber || "";
+    // Parse body safely (covers rare cases where body arrives as string)
+    const raw =
+      typeof req.body === "string"
+        ? JSON.parse(req.body || "{}")
+        : req.body || {};
+    const tx = raw;
+
+    // Normalize key fields
+    const transactionId = tx.TransID || tx.TransRef || tx.transactionId || null;
+
+    const amount = tx.TransAmount || tx.TransactionAmount || tx.amount || null;
+
+    const msisdn = tx.MSISDN || tx.MSISDNNumber || tx.PhoneNumber || "";
+
     const transTime =
-      tx?.TransTime || tx?.TransDate || tx?.TransactionDate || null;
-    const shortCode =
-      tx?.BusinessShortCode || process.env.MPESA_SHORTCODE || "";
+      tx.TransTime || tx.TransDate || tx.TransactionDate || null;
+
+    const shortCode = tx.BusinessShortCode || process.env.MPESA_SHORTCODE || "";
+
+    // Use the bill/account reference the payer entered
     const accountRef =
-      tx?.BillRefNumber ||
-      tx?.AccountReference ||
-      tx?.accountReference ||
+      tx.BillRefNumber ||
+      tx.AccountReference ||
+      tx.accountReference ||
       process.env.DEFAULT_ACCOUNT_REFERENCE ||
       "Starlynx Utility";
 
-    // --- Build a normalized transaction object (similar shape to STK)
-    const normalized = {
-      type: "C2B_CONFIRMATION",
-      Status: "SUCCESS",
-      Amount: amount,
-      MpesaReceiptNumber: transactionId,
-      TransactionDate: transTime,
-      PhoneNumber: String(msisdn || ""),
-      BusinessShortCode: String(shortCode),
-      AccountReference: String(accountRef),
-      Timestamp: new Date().toISOString(),
-    };
-
-    // --- Build ISP payload & POST (compact JSON)
+    // Build ISP payload (compact) and POST
     const ispPayload = buildISPPayloadFromConfirmation({
       ...tx,
-      // ensure these are present for the ISP mapping
       BusinessShortCode: shortCode,
       BillRefNumber: accountRef,
       MSISDN: msisdn,
+      TransTime: transTime,
+      TransAmount: amount,
+      TransID: transactionId,
     });
+
     await postISPPayment(ispPayload);
 
-    // --- ALWAYS persist full snapshot (function will auto-generate an ID if missing)
+    // Persist FULL snapshot (with fallback id if TransID missing)
     await upsertUpdatedSubscriptionFull({
-      transactionId: transactionId ? String(transactionId) : null,
+      transactionId: transactionId ? String(transactionId) : null, // function will auto-fallback
       amount: amount != null ? String(amount) : null,
       customerAccount: String(accountRef),
-      rawTx: { ...tx, _normalized: normalized },
+      rawTx: { type: "C2B_CONFIRMATION", ...tx },
       ispPayload,
       source: "C2B",
     });
