@@ -18,7 +18,9 @@ const routes = require("./api/routes");
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-app.use(express.json({ type: ["application/json", "text/plain"] }));
+app.use(
+  express.json({ limit: "1mb", type: ["application/json", "text/plain"] })
+);
 app.use(express.urlencoded({ extended: true }));
 
 if (env.NODE_ENV !== "test") app.use(morgan("dev"));
@@ -39,7 +41,6 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-app.use(express.json({ limit: "1mb" }));
 app.use("/api", routes);
 app.use(notFound);
 app.use(errorHandler);

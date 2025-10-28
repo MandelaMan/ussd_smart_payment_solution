@@ -186,15 +186,22 @@ function buildISPPayloadFromSTK(transaction, accountRef) {
 
 async function postISPPayment(payload) {
   try {
-    await axios.post(ISP_PAYMENT_URL, payload, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 15000,
-      // ensure compact JSON (no pretty-print spaces)
-      transformRequest: [(data) => JSON.stringify(data)],
-    });
+    console.log("Posting ISP payload:", payload);
+    await axios
+      .post(ISP_PAYMENT_URL, payload, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 15000,
+        transformRequest: [(data) => JSON.stringify(data)],
+        validateStatus: () => true, // prevent throw on 4xx/5xx to log body
+      })
+      .then((r) => {
+        if (r.status >= 200 && r.status < 300) return;
+        throw new Error(`ISP responded ${r.status}: ${JSON.stringify(r.data)}`);
+      });
     console.log("ISP payment posted:", payload.TransID);
   } catch (e) {
     console.error("ISP payment post failed:", e?.response?.data || e.message);
+    throw e;
   }
 }
 
@@ -203,45 +210,35 @@ async function postISPPayment(payload) {
 /* ------------------------------------------------------------------ */
 const mpesaValidation = (req, res) => {
   // Add any business checks here. Return 0 to accept, 1 to reject.
-  res.status(200).json({
-    ResultCode: 0,
-    ResultDesc: "Completed",
-    // You can optionally add a ThirdPartyTransID field if you track one.
-  });
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
 };
 
 /* ------------------------------------------------------------------ */
 /* C2B Confirmation (Paybill) — mirrored to STK callback style        */
 /* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/* C2B Confirmation (Paybill) — mirrored to STK callback style        */
-/* ------------------------------------------------------------------ */
 const mpesaConfirmation = async (req, res) => {
   try {
-    // ACK immediately so Safaricom doesn't retry
-    // (Returning JSON is fine; Confirmation doesn't require a specific schema)
+    // 0) ACK immediately
     res.status(200).json({ ResultCode: 0, ResultDesc: "Completed" });
+    // (don’t `await` anything before this point)
 
-    // Parse body safely (covers rare cases where body arrives as string)
+    // 1) Observability
+    console.log("C2B CONFIRMATION HIT", { headers: req.headers });
+
+    // 2) Parse body safely
     const raw =
       typeof req.body === "string"
         ? JSON.parse(req.body || "{}")
         : req.body || {};
-    const tx = raw;
+    const tx = raw || {};
 
-    // Normalize key fields
+    // 3) Normalize
     const transactionId = tx.TransID || tx.TransRef || tx.transactionId || null;
-
     const amount = tx.TransAmount || tx.TransactionAmount || tx.amount || null;
-
     const msisdn = tx.MSISDN || tx.MSISDNNumber || tx.PhoneNumber || "";
-
     const transTime =
       tx.TransTime || tx.TransDate || tx.TransactionDate || null;
-
     const shortCode = tx.BusinessShortCode || process.env.MPESA_SHORTCODE || "";
-
-    // Use the bill/account reference the payer entered
     const accountRef =
       tx.BillRefNumber ||
       tx.AccountReference ||
@@ -249,7 +246,11 @@ const mpesaConfirmation = async (req, res) => {
       process.env.DEFAULT_ACCOUNT_REFERENCE ||
       "Starlynx Utility";
 
-    // Build ISP payload (compact) and POST
+    if (typeof buildISPPayloadFromConfirmation !== "function") {
+      console.error("buildISPPayloadFromConfirmation is not defined");
+      return;
+    }
+
     const ispPayload = buildISPPayloadFromConfirmation({
       ...tx,
       BusinessShortCode: shortCode,
@@ -260,23 +261,33 @@ const mpesaConfirmation = async (req, res) => {
       TransID: transactionId,
     });
 
-    await postISPPayment(ispPayload);
+    try {
+      await postISPPayment(ispPayload);
+      console.log("ISP payment posted OK:", transactionId);
+    } catch (e) {
+      console.error("ISP post failed", {
+        error: e?.response?.data || e.message,
+        ispPayload,
+      });
+    }
 
-    // Persist FULL snapshot (with fallback id if TransID missing)
-    await upsertUpdatedSubscriptionFull({
-      transactionId: transactionId ? String(transactionId) : null, // function will auto-fallback
-      amount: amount != null ? String(amount) : null,
-      customerAccount: String(accountRef),
-      rawTx: { type: "C2B_CONFIRMATION", ...tx },
-      ispPayload,
-      source: "C2B",
-    });
-
-    console.log("C2B confirmation processed:", {
-      TransID: transactionId,
-      BillRefNumber: accountRef,
-      Amount: amount,
-    });
+    try {
+      await upsertUpdatedSubscriptionFull({
+        transactionId: transactionId ? String(transactionId) : null,
+        amount: amount != null ? String(amount) : null,
+        customerAccount: String(accountRef),
+        rawTx: { type: "C2B_CONFIRMATION", ...tx },
+        ispPayload,
+        source: "C2B",
+      });
+      console.log("C2B snapshot upserted:", {
+        transactionId,
+        accountRef,
+        amount,
+      });
+    } catch (e) {
+      console.error("C2B snapshot upsert failed", e);
+    }
   } catch (err) {
     console.error("C2B processing error", err);
     // already ACKed above
