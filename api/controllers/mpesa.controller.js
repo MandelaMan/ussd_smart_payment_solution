@@ -184,7 +184,7 @@ function buildISPPayloadFromConfirmation(tx) {
     TransID: String(tx.TransID || tx.TransRef || ""),
     TransTime: formatC2BTime(tx.TransTime || tx.TransDate),
     TransAmount: String(
-      tx.TransAmount || tx.TransactionAmount || tx.amount || "0"
+      tx.TransAmount || tx.TransactionAmount || tx.amount || "1"
     ),
     BusinessShortCode: String(tx.BusinessShortCode || MPESA_SHORTCODE || ""),
     BillRefNumber: String(tx.BillRefNumber || tx.AccountReference || ""),
@@ -199,7 +199,7 @@ function buildISPPayloadFromConfirmation(tx) {
 /** Build ISP payload from a successful STK callback + accountRef. */
 function buildISPPayloadFromSTK(transaction, accountRef) {
   return {
-    TransactionType: "Paystack",
+    TransactionType: "Paybill",
     TransID: String(transaction.MpesaReceiptNumber || ""),
     TransTime: formatC2BTime(transaction.TransactionDate),
     TransAmount: String(transaction.Amount || "0"),
