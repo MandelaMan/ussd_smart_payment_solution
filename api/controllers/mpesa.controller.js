@@ -180,7 +180,7 @@ function normalizeMsisdn(msisdn) {
 /** Build ISP payload from a C2B confirmation */
 function buildISPPayloadFromConfirmation(tx) {
   return {
-    TransactionType: "Paystack", // as required by the ISP
+    TransactionType: "Paybill", // as required by the ISP
     TransID: String(tx.TransID || tx.TransRef || ""),
     TransTime: formatC2BTime(tx.TransTime || tx.TransDate),
     TransAmount: String(
