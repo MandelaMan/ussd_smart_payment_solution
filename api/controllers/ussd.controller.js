@@ -54,7 +54,7 @@ const getAccountDetails = async (accountNumber) => {
     aptNo: "B19",
     amount: 1, // current monthly package price
     package: "Basic Plus",
-    status: "Active", // or "Inactive"
+    status: "Suspended", // or "Inactive"
     dueDate: "31/10/2025",
   };
 };

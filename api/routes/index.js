@@ -8,6 +8,7 @@ router.get("/", (_req, res) =>
 router.use("/ussd", require("./ussd.routes"));
 router.use("/tisp", require("./tisp.routes"));
 router.use("/payment", require("./mpesa.routes"));
+router.use("/zoho", require("./zoho.routes"));
 //Add other routes below
 
 module.exports = router;

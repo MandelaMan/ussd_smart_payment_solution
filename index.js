@@ -3,6 +3,7 @@ const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
 const morgan = require("morgan");
+const cookieParser = require("cookie-parser");
 
 const { loadEnv } = require("./api/config/env");
 const { getPool } = require("./api/config/db");
@@ -21,6 +22,7 @@ app.use(
   express.json({ limit: "1mb", type: ["application/json", "text/plain"] })
 );
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 if (env.NODE_ENV !== "test") app.use(morgan("dev"));
 
