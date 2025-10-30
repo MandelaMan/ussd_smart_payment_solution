@@ -112,9 +112,9 @@ const initiateUSSD = async (req, res) => {
       const details = await getAccountDetails(accountNumber);
       if (!details) return end(res, `Account ${accountNumber} not found.`);
 
-      response = `CON ${details.customer_name} Apt No. ${details.aptNo}
+      response = `CON ${details.customer_name} Apt No. ${details.company_name}
                 Package: ${details.package} - Ksh ${details.amount}
-                Account Status: ${details.status}
+                A/c Status: ${details.status}
                 Expires On: ${details.dueDate}
                 1. Renew Subscription
                 2. Upgrade Subscription
