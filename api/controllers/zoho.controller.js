@@ -204,7 +204,9 @@ module.exports = {
         10_000,
         "contacts"
       );
+
       const contacts = (data.contacts || []).map(pickLean);
+
       res.json({
         page,
         per_page,

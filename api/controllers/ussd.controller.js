@@ -5,6 +5,8 @@ const {
   readTransactions,
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
+const { getSpecificCustomer } = require("./zoho.controller");
+const { getTISPCustomer } = require("./tisp.controller");
 
 const packageList = [
   { name: "Basic ", bandwidth: "30MBPS", price: 1 },
@@ -15,6 +17,14 @@ const packageList = [
   { name: "Premium + DSTV", bandwidth: "100MBPS", price: 6 },
 ];
 
+const getCustomerDetails = async (client) => {
+  const customerDetails = {
+    ...(await getSpecificCustomer(client)),
+    ...(await getTISPCustomer(client)),
+  };
+
+  return customerDetails;
+};
 // Poll for callback landing (max ~timeoutMs)
 const waitForTxnStatus = async ({
   checkoutId,
@@ -48,15 +58,22 @@ const formatDmy = (date) => moment(date).format("DD/MM/YYYY");
 
 // Simulated account details lookup (replace with real DB)
 const getAccountDetails = async (accountNumber) => {
-  return {
-    customer_name: "TEST1 TEST1 TEST1",
-    customer_number: "ET-001",
-    aptNo: "B19",
-    amount: 1, // current monthly package price
-    package: "Basic Plus",
-    status: "Suspended", // or "Inactive"
-    dueDate: "31/10/2025",
+  const customerDetails = {
+    ...(await getSpecificCustomer(accountNumber)),
+    ...(await getTISPCustomer(accountNumber)),
   };
+
+  return customerDetails;
+
+  // return {
+  //   customer_name: "TEST1 TEST1 TEST1",
+  //   customer_number: "ET-001",
+  //   aptNo: "B19",
+  //   amount: 1, // current monthly package price
+  //   package: "Basic Plus",
+  //   status: "Suspended", // or "Inactive"
+  //   dueDate: "31/10/2025",
+  // };
 };
 
 // --- USSD ---
@@ -309,6 +326,14 @@ const send = (res, text) => {
 };
 const end = (res, text) => send(res, `END ${text}`);
 
+const ussdCustomerDeatils = async (req, res) => {
+  const { client } = req.body;
+
+  const result = await getCustomerDetails(client);
+
+  res.json(result);
+};
+
 const test = async (req, res) => res.json({ message: "OK" });
 
-module.exports = { initiateUSSD, test };
+module.exports = { initiateUSSD, test, ussdCustomerDeatils };
