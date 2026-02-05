@@ -174,9 +174,9 @@ const initiateUSSD = async (req, res) => {
           )
           .join("\n");
         response = `CON Select a package to upgrade to:
-${list}
-0. Exit
-99. Back`;
+          ${list}
+          0. Exit
+          99. Back`;
       } else if (action === "3") {
         // === DOWNGRADE: show package list ===
         const list = packageList
@@ -185,9 +185,9 @@ ${list}
           )
           .join("\n");
         response = `CON Select a package to downgrade to:
-${list}
-0. Exit
-99. Back`;
+                    ${list}
+                    0. Exit
+                    99. Back`;
       } else if (action === "4") {
         response = `END Your subscription for account ${accountNumber} has been cancelled.`;
       } else if (action === "0") {
@@ -237,7 +237,7 @@ ${list}
           );
 
         const waitingMsg = `CON Waiting for payment...
-(Do not exit. You'll be updated shortly.)`;
+                            (Do not exit. You'll be updated shortly.)`;
         res.set("Content-Type", "text/plain");
         res.send(waitingMsg);
 
@@ -284,7 +284,7 @@ ${list}
           );
 
         const waitingMsg = `CON Waiting for payment...
-(Do not exit. You'll be updated shortly.)`;
+                            (Do not exit. You'll be updated shortly.)`;
         res.set("Content-Type", "text/plain");
         res.send(waitingMsg);
 

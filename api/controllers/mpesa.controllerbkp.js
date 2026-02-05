@@ -10,12 +10,6 @@ const {
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
 
-// 👇 ADD: import Zoho helpers (adjust path if needed)
-const {
-  getCustomerByCompanyName_JS,
-  createInvoice_JS,
-} = require("./zoho.controller"); // or "../zoho/zoho.controller" etc.
-
 /* ================================================================== */
 /*                         ENV & CONSTANTS                            */
 /* ================================================================== */
@@ -48,9 +42,6 @@ const MPESA_VALIDATION_URL = process.env.MPESA_VALIDATION_URL;
 const ISP_PAYMENT_URL =
   process.env.ISP_PAYMENT_URL ||
   "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
-
-/** Optional Zoho template id to use when creating invoices */
-const ZOHO_INVOICE_TEMPLATE_ID = process.env.ZOHO_INVOICE_TEMPLATE_ID || null;
 
 /* ================================================================== */
 /*                       FILE STORAGE (light)                          */
@@ -251,102 +242,6 @@ async function postISPPayment(payload) {
 }
 
 /* ================================================================== */
-/*                   ZOHO INVOICE INTEGRATION HELPERS                  */
-/* ================================================================== */
-
-/**
- * Create a Zoho invoice for a given M-Pesa payment.
- * - Uses companyName (e.g. ET-..., CL-...) to look up the Zoho customer
- * - Creates a simple one-line invoice: Amount x 1, with description
- */
-async function createZohoInvoiceForPayment({
-  companyName,
-  amount,
-  transactionId,
-  source,
-}) {
-  try {
-    if (!companyName || !amount) {
-      console.warn(
-        "createZohoInvoiceForPayment: missing companyName or amount",
-        { companyName, amount }
-      );
-      return;
-    }
-
-    console.log(
-      "Zoho invoice: looking up customer by companyName:",
-      companyName
-    );
-    const customer = await getCustomerByCompanyName_JS(companyName);
-
-    if (!customer || typeof customer === "string") {
-      console.error(
-        "Zoho invoice: customer lookup failed",
-        customer || "No customer returned"
-      );
-      return;
-    }
-
-    const customer_id = customer.contact_id;
-    if (!customer_id) {
-      console.error(
-        "Zoho invoice: customer has no contact_id",
-        JSON.stringify(customer)
-      );
-      return;
-    }
-
-    const numericAmount = Number(amount);
-    if (!numericAmount || Number.isNaN(numericAmount)) {
-      console.error("Zoho invoice: invalid amount", amount);
-      return;
-    }
-
-    const description = `M-Pesa Paybill payment for ${companyName} (Tx: ${
-      transactionId || "N/A"
-    }) via ${source}`;
-
-    const items = [
-      {
-        // You can drop item_id and just create an ad-hoc line item
-        name: `Subscription payment - ${companyName}`,
-        rate: numericAmount,
-        quantity: 1,
-        description,
-      },
-    ];
-
-    const payload = {
-      customer_id,
-      items,
-      template_id: ZOHO_INVOICE_TEMPLATE_ID || undefined,
-    };
-
-    console.log("Zoho invoice: creating invoice with payload:", payload);
-
-    const invoice = await createInvoice_JS(payload);
-
-    if (!invoice) {
-      console.error("Zoho invoice: createInvoice_JS returned null");
-      return;
-    }
-
-    console.log(
-      "Zoho invoice created for company:",
-      companyName,
-      "invoice_id:",
-      invoice.invoice_id
-    );
-  } catch (err) {
-    console.error(
-      "createZohoInvoiceForPayment error:",
-      err?.response?.data || err.message
-    );
-  }
-}
-
-/* ================================================================== */
 /*            C2B Validation / Confirmation (Paybill)                  */
 /* ================================================================== */
 const mpesaValidation = (req, res) => {
@@ -452,19 +347,6 @@ const mpesaConfirmation = async (req, res) => {
     } catch (e) {
       console.error("C2B snapshot upsert failed", e);
     }
-
-    // 5) Create Zoho invoice for this Paybill transaction
-    try {
-      // Here we treat accountRef as the company_name used in Zoho
-      await createZohoInvoiceForPayment({
-        companyName: accountRef,
-        amount,
-        transactionId,
-        source: "C2B",
-      });
-    } catch (e) {
-      console.error("Zoho invoice creation failed (C2B):", e.message);
-    }
   } catch (err) {
     console.error("C2B processing error", err);
     // already ACKed above
@@ -505,7 +387,7 @@ const initiateSTKPush = async (accountNumber, phone, amount) => {
       CallBackURL:
         MPESA_CALLBACK_URL ||
         "https://app.sulsolutions.biz/api/payment/callback",
-      AccountReference, // use provided account number (also our companyName / customer account)
+      AccountReference, // use provided account number
       TransactionDesc: "Subscription",
     };
 
@@ -574,7 +456,7 @@ const mpesaCallback = async (req, res) => {
     // Update existing PENDING by CheckoutRequestID; if not found, append
     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
 
-    // If SUCCESS, persist FULL tx + POST to ISP + create Zoho invoice
+    // If SUCCESS, persist FULL tx + POST to ISP
     if (transaction.Status === "SUCCESS") {
       // fetch the pre-logged record to retrieve original AccountReference
       const existing =
@@ -605,18 +487,6 @@ const mpesaCallback = async (req, res) => {
         ispPayload,
         source: "STK",
       });
-
-      // Create Zoho invoice for this STK payment as well
-      try {
-        await createZohoInvoiceForPayment({
-          companyName: accountRef, // treat as company_name in Zoho
-          amount: transaction.Amount,
-          transactionId: transaction.MpesaReceiptNumber,
-          source: "STK",
-        });
-      } catch (e) {
-        console.error("Zoho invoice creation failed (STK):", e.message);
-      }
     }
 
     // ACK to Daraja
@@ -705,8 +575,8 @@ module.exports = {
   registerC2BUrls,
   simulateC2B,
   mpesaValidation,
-  mpesaConfirmation, // includes ISP POST + snapshot + Zoho invoice
-  mpesaCallback, // includes ISP POST on success + snapshot + Zoho invoice
+  mpesaConfirmation, // includes ISP POST + snapshot
+  mpesaCallback, // includes ISP POST on success + snapshot
   getAccessToken,
   initiateSTKPush,
   test,
