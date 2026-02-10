@@ -17,14 +17,25 @@ const packageList = [
   { name: "Premium + DSTV", bandwidth: "100MBPS", price: 6 },
 ];
 
-const getCustomerDetails = async (client) => {
+const getAccountDetails = async (client) => {
   const customerDetails = {
     ...(await getSpecificCustomer_JS(client)),
     ...(await getTISPCustomer(client)),
   };
 
   return customerDetails;
+
+  // return {
+  //   customer_name: "TEST1 TEST1 TEST1",
+  //   customer_number: "ET-001",
+  //   aptNo: "B19",
+  //   amount: 1, // current monthly package price
+  //   package: "Basic Plus",
+  //   status: "Suspended", // or "Inactive"
+  //   dueDate: "31/10/2025",
+  // };
 };
+
 // Poll for callback landing (max ~timeoutMs)
 const waitForTxnStatus = async ({
   checkoutId,
@@ -57,24 +68,24 @@ const addDays = (date, days) => {
 const formatDmy = (date) => moment(date).format("DD/MM/YYYY");
 
 // Simulated account details lookup (replace with real DB)
-const getAccountDetails = async (accountNumber) => {
-  // const customerDetails = {
-  //   ...(await getSpecificCustomer(accountNumber)),
-  //   ...(await getTISPCustomer(accountNumber)),
-  // };
+// const getAccountDetails = async (accountNumber) => {
+//   const customerDetails = {
+//     ...(await getSpecificCustomer(accountNumber)),
+//     ...(await getTISPCustomer(accountNumber)),
+//   };
 
-  // return customerDetails;
+//   return customerDetails;
 
-  return {
-    customer_name: "TEST1 TEST1 TEST1",
-    customer_number: "ET-001",
-    aptNo: "B19",
-    amount: 1, // current monthly package price
-    package: "Basic Plus",
-    status: "Suspended", // or "Inactive"
-    dueDate: "31/10/2025",
-  };
-};
+//   // return {
+//   //   customer_name: "TEST1 TEST1 TEST1",
+//   //   customer_number: "ET-001",
+//   //   aptNo: "B19",
+//   //   amount: 1, // current monthly package price
+//   //   package: "Basic Plus",
+//   //   status: "Suspended", // or "Inactive"
+//   //   dueDate: "31/10/2025",
+//   // };
+// };
 
 // --- USSD ---
 const initiateUSSD = async (req, res) => {
@@ -329,7 +340,7 @@ const end = (res, text) => send(res, `END ${text}`);
 const ussdCustomerDeatils = async (req, res) => {
   const { client } = req.body;
 
-  const result = await getCustomerDetails(client);
+  const result = await getAccountDetails(client);
 
   res.json(result);
 };
