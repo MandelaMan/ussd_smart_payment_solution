@@ -9,6 +9,7 @@ const router = express.Router();
 
 router.get("/", test);
 router.post("/", initiateUSSD);
+router.post("/customer-details", ussdCustomerDeatils);
 router.post("/customer", ussdCustomerDeatils);
 
 module.exports = router;

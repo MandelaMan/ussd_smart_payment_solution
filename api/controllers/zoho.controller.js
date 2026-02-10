@@ -114,7 +114,7 @@ zoho.interceptors.response.use(
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 /** ========= Helpers ========= **/
@@ -122,7 +122,7 @@ const withTimeout = (promise, ms, label = "op") =>
   Promise.race([
     promise,
     new Promise((_, rej) =>
-      setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms)
+      setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms),
     ),
   ]);
 
@@ -130,7 +130,7 @@ async function callZoho(
   endpoint,
   method = "GET",
   data = null,
-  extraParams = {}
+  extraParams = {},
 ) {
   const cfg = { url: `/${endpoint}`, method, params: extraParams };
   if (data) cfg.data = data;
@@ -167,6 +167,7 @@ const pickLean = (c) => {
     company_name,
     email,
     mobile,
+    phone,
     status,
     currency_code,
     outstanding_receivable_amount,
@@ -178,6 +179,7 @@ const pickLean = (c) => {
     company_name,
     email,
     mobile,
+    phone,
     status,
     currency_code,
     outstanding_receivable_amount,
@@ -199,14 +201,14 @@ const getInvoices_JS = async (params = {}) => {
     const data = await withTimeout(
       callZoho("invoices", "GET", null, zohoParams),
       10_000,
-      "get-invoices"
+      "get-invoices",
     );
 
     return data.invoices || [];
   } catch (error) {
     console.error(
       "getInvoices_JS error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return [];
   }
@@ -225,7 +227,7 @@ const getZohoCustomers_JS = async (params = {}) => {
     const data = await withTimeout(
       callZoho("contacts", "GET", null, zohoParams),
       10_000,
-      "contacts"
+      "contacts",
     );
 
     const allContacts = data.contacts || [];
@@ -240,7 +242,7 @@ const getZohoCustomers_JS = async (params = {}) => {
   } catch (error) {
     console.error(
       "getZohoCustomers_JS error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return [];
   }
@@ -261,7 +263,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
       const data = await withTimeout(
         callZoho(`contacts/${idOrEmail}`, "GET", null, { per_page: 1 }),
         8000,
-        "get-by-id"
+        "get-by-id",
       );
       const contact = pickLean(data.contact);
       cache.set(key, contact);
@@ -273,7 +275,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
       const result = await withTimeout(
         callZoho("contacts", "GET", null, { email: idOrEmail, per_page: 1 }),
         8000,
-        "get-by-email"
+        "get-by-email",
       );
       const hit = (result.contacts || [])[0];
       if (!hit) return "Customer not found with provided email.";
@@ -292,7 +294,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
           page: 1,
         }),
         9000,
-        "search_text"
+        "search_text",
       );
     } catch (e) {
       // quick fallback
@@ -303,7 +305,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
           page: 1,
         }),
         6000,
-        "search_text_fallback"
+        "search_text_fallback",
       );
     }
 
@@ -319,7 +321,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
   } catch (error) {
     console.error(
       "getSpecificCustomer_JS error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return "Error trying to execute function." + error.message;
   }
@@ -347,7 +349,7 @@ const getCustomerByCompanyName_JS = async (rawName) => {
       const data = await withTimeout(
         callZoho(`contacts/${companyName}`, "GET", null, { per_page: 1 }),
         8000,
-        "get-by-id"
+        "get-by-id",
       );
       const contact = pickLean(data.contact);
       cache.set(key, contact);
@@ -364,7 +366,7 @@ const getCustomerByCompanyName_JS = async (rawName) => {
           page: 1,
         }),
         9000,
-        "search_company"
+        "search_company",
       );
     } catch (e) {
       // quick fallback
@@ -375,7 +377,7 @@ const getCustomerByCompanyName_JS = async (rawName) => {
           page: 1,
         }),
         6000,
-        "search_company_fallback"
+        "search_company_fallback",
       );
     }
 
@@ -394,7 +396,7 @@ const getCustomerByCompanyName_JS = async (rawName) => {
   } catch (error) {
     console.error(
       "getCustomerByCompanyName_JS error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return "Error trying to execute function. " + error.message;
   }
@@ -406,7 +408,7 @@ const getItems_JS = async () => {
     const result = await withTimeout(
       callZoho("items", "GET"),
       10_000,
-      "get-items"
+      "get-items",
     );
     return result.items || [];
   } catch (error) {
@@ -422,14 +424,14 @@ const getInvoiceTemplates_JS = async () => {
       // This should become /books/v3/invoices/templates under the hood
       callZoho("invoices/templates", "GET"),
       10_000,
-      "get-invoice-templates"
+      "get-invoice-templates",
     );
 
     return result.templates || [];
   } catch (error) {
     console.error(
       "getInvoiceTemplates_JS error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return [];
   }
@@ -452,7 +454,7 @@ const createInvoice_JS = async ({ customer_id, items, template_id }) => {
     const createResult = await withTimeout(
       callZoho("invoices", "POST", invoiceData),
       12_000,
-      "create-invoice"
+      "create-invoice",
     );
 
     const invoice = createResult.invoice;
@@ -462,10 +464,10 @@ const createInvoice_JS = async ({ customer_id, items, template_id }) => {
       await withTimeout(
         callZoho(
           `invoices/${invoice.invoice_id}/templates/${template_id}`,
-          "PUT"
+          "PUT",
         ),
         10_000,
-        "update-invoice-template"
+        "update-invoice-template",
       );
     }
 
@@ -473,7 +475,7 @@ const createInvoice_JS = async ({ customer_id, items, template_id }) => {
   } catch (error) {
     console.error(
       "createInvoice_JS error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return null;
   }
@@ -497,13 +499,13 @@ const markInvoiceAsPaid_JS = async ({ invoice_id, customer_id, amount }) => {
     const result = await withTimeout(
       callZoho("customerpayments", "POST", paymentData),
       12_000,
-      "mark-paid"
+      "mark-paid",
     );
     return result.payment || null;
   } catch (error) {
     console.error(
       "markInvoiceAsPaid_JS error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return null;
   }
@@ -521,7 +523,7 @@ const getInvoices = async (req, res) => {
     const data = await withTimeout(
       callZoho("invoices", "GET", null, params),
       10_000,
-      "get-invoices"
+      "get-invoices",
     );
 
     res.json({
@@ -553,7 +555,7 @@ const getZohoCustomers = async (req, res) => {
     const data = await withTimeout(
       callZoho("contacts", "GET", null, params),
       10_000,
-      "contacts"
+      "contacts",
     );
 
     const allContacts = data.contacts || [];
@@ -564,7 +566,7 @@ const getZohoCustomers = async (req, res) => {
     const filteredContacts = allContacts.filter((c) => {
       const company = c.company_name || "";
       return allowedPrefixes.some((prefix) =>
-        company.toUpperCase().startsWith(prefix)
+        company.toUpperCase().startsWith(prefix),
       );
     });
 
@@ -581,7 +583,7 @@ const getZohoCustomers = async (req, res) => {
   } catch (error) {
     console.error(
       "getZohoCustomers error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     res.status(500).json({
       error: "Failed to fetch customers",
@@ -609,7 +611,7 @@ const getCustomerByCompanyName = async (req, res) => {
   } catch (error) {
     console.error(
       "getCustomerByCompanyName error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     return res.status(500).json({
       error: "Error trying to execute function.",
@@ -638,7 +640,7 @@ const getSpecificCustomerOriginal = async (req, res) => {
   } catch (error) {
     console.error(
       "Zoho fetch customer error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     res.status(500).json({
       error: "Failed to fetch customer",
@@ -669,14 +671,14 @@ const getInvoiceTemplates = async (req, res) => {
 
     console.log(
       "Raw Zoho invoice templates response (count):",
-      templates.length
+      templates.length,
     );
 
     res.json(templates);
   } catch (error) {
     console.error(
       "getInvoiceTemplates error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     res.status(500).json({
       error: "Failed to fetch invoice templates",
@@ -698,7 +700,7 @@ const createInvoice = async (req, res) => {
   } catch (error) {
     console.error(
       "createInvoice error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     res.status(500).json({
       error: "Failed to create invoice",
@@ -720,7 +722,7 @@ const markInvoiceAsPaid = async (req, res) => {
   } catch (error) {
     console.error(
       "markInvoiceAsPaid error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     res.status(500).json({
       error: "Failed to mark invoice as paid",

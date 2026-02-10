@@ -2,7 +2,6 @@ const express = require("express");
 const {
   test,
   getZohoCustomers,
-  getSpecificCustomer,
   getInvoices,
   createInvoice,
   getItems,
@@ -10,6 +9,7 @@ const {
   getCustomerByCompanyName,
 } = require("../controllers/zoho.controller");
 
+// Works fine
 const router = express.Router();
 
 router.get("/", test);

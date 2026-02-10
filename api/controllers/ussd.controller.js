@@ -5,7 +5,7 @@ const {
   readTransactions,
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
-const { getSpecificCustomer } = require("./zoho.controller");
+const { getSpecificCustomer_JS } = require("./zoho.controller");
 const { getTISPCustomer } = require("./tisp.controller");
 
 const packageList = [
@@ -19,7 +19,7 @@ const packageList = [
 
 const getCustomerDetails = async (client) => {
   const customerDetails = {
-    ...(await getSpecificCustomer(client)),
+    ...(await getSpecificCustomer_JS(client)),
     ...(await getTISPCustomer(client)),
   };
 
