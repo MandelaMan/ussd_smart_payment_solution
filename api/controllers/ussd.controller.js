@@ -58,22 +58,22 @@ const formatDmy = (date) => moment(date).format("DD/MM/YYYY");
 
 // Simulated account details lookup (replace with real DB)
 const getAccountDetails = async (accountNumber) => {
-  const customerDetails = {
-    ...(await getSpecificCustomer(accountNumber)),
-    ...(await getTISPCustomer(accountNumber)),
-  };
-
-  return customerDetails;
-
-  // return {
-  //   customer_name: "TEST1 TEST1 TEST1",
-  //   customer_number: "ET-001",
-  //   aptNo: "B19",
-  //   amount: 1, // current monthly package price
-  //   package: "Basic Plus",
-  //   status: "Suspended", // or "Inactive"
-  //   dueDate: "31/10/2025",
+  // const customerDetails = {
+  //   ...(await getSpecificCustomer(accountNumber)),
+  //   ...(await getTISPCustomer(accountNumber)),
   // };
+
+  // return customerDetails;
+
+  return {
+    customer_name: "TEST1 TEST1 TEST1",
+    customer_number: "ET-001",
+    aptNo: "B19",
+    amount: 1, // current monthly package price
+    package: "Basic Plus",
+    status: "Suspended", // or "Inactive"
+    dueDate: "31/10/2025",
+  };
 };
 
 // --- USSD ---
