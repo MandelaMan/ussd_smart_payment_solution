@@ -159,14 +159,25 @@ function hasTispCustomerData(tisp) {
   });
 }
 
+/** Uppercase account-style refs (e.g. et-f502 → ET-F502); leave emails unchanged for Zoho. */
+function normalizeCustomerIdentifier(value) {
+  const s = String(value ?? "").trim();
+  if (!s) return "";
+  if (s.includes("@")) return s;
+  return s.toUpperCase();
+}
+
 const getAccountDetails = async (client) => {
   try {
-    const zohoRaw = await getSpecificCustomer_JS(client);
+    const id = normalizeCustomerIdentifier(client);
+    if (!id) return null;
+
+    const zohoRaw = await getSpecificCustomer_JS(id);
     const zoho = normalizeZohoCustomerResult(zohoRaw);
 
     let tisp = null;
     try {
-      const tispRaw = await getTISPCustomer(client);
+      const tispRaw = await getTISPCustomer(id);
       if (tispRaw && typeof tispRaw === "object" && !Array.isArray(tispRaw)) {
         tisp = tispRaw;
       }
@@ -265,7 +276,7 @@ const initiateUSSD = async (req, res) => {
     }
 
     if (parts.length === 5) {
-      const accountNumber = parts[1].trim();
+      const accountNumber = normalizeCustomerIdentifier(parts[1]);
       const action = parts[2].trim();
       const last = parts[4].trim();
 
@@ -301,7 +312,7 @@ const initiateUSSD = async (req, res) => {
       response = ENTER_CUSTOMER_CON;
     } else if (parts.length === 2) {
       // show account summary + actions
-      const accountNumber = parts[1].trim();
+      const accountNumber = normalizeCustomerIdentifier(parts[1]);
       if (accountNumber === "0")
         return end(res, "Thank you for using our service!");
       if (accountNumber === "99") return send(res, mainMenu);
@@ -329,7 +340,7 @@ Expires On: ${details.dueDate}
 99. Back`;
     } else if (parts.length === 3) {
       // choose action (or follow-up after account-not-found CON: 2*acc*0 only; 99 only when account is valid)
-      const accountNumber = parts[1].trim();
+      const accountNumber = normalizeCustomerIdentifier(parts[1]);
       const action = parts[2].trim();
 
       if (action === "0") {
@@ -394,7 +405,7 @@ Expires On: ${details.dueDate}
       }
     } else if (parts.length === 4) {
       // Handle package choice for upgrade/downgrade
-      const accountNumber = parts[1].trim();
+      const accountNumber = normalizeCustomerIdentifier(parts[1]);
       const action = parts[2].trim(); // "2" upgrade, "3" downgrade
       const pick = parts[3].trim();
 

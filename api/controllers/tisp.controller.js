@@ -62,12 +62,13 @@ function normalizeTispClientPayload(parsed) {
 }
 
 const getTISPCustomer = async (clientNo) => {
-  if (!clientNo) {
+  const client = String(clientNo ?? "").trim().toUpperCase();
+  if (!client) {
     throw new Error("Client number is required.");
   }
 
   try {
-    const data = await callTISP("POST", { client: clientNo });
+    const data = await callTISP("POST", { client });
     const parsed = parseTispResponseBody(data);
     return normalizeTispClientPayload(parsed);
   } catch (error) {
