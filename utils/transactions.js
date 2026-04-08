@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 
 const LOG_DIR = path.resolve(__dirname, "../logs");
-const LOG_FILE = path.join(LOG_DIR, "transactions.json");
+const LOG_FILE = path.join(LOG_DIR, "transaction.json");
+const LEGACY_LOG_FILE = path.join(LOG_DIR, "transactions.json");
 
 // ---- tiny in-process write queue to avoid concurrent clobbering ----
 let _queue = Promise.resolve();
@@ -24,8 +25,30 @@ async function ensureLogFile() {
   try {
     await fs.promises.access(LOG_FILE);
   } catch {
-    await fs.promises.writeFile(LOG_FILE, "[]", "utf8");
+    try {
+      await fs.promises.access(LEGACY_LOG_FILE);
+      await fs.promises.copyFile(LEGACY_LOG_FILE, LOG_FILE);
+    } catch {
+      await fs.promises.writeFile(LOG_FILE, "[]", "utf8");
+    }
   }
+}
+
+/**
+ * Append a successful M-Pesa payment record (STK or Paybill/C2B) for auditing.
+ * Operational rows (PENDING, etc.) remain in the same array via appendTransaction/upsert.
+ */
+async function appendSuccessfulMpesaTransaction(record) {
+  await ensureLogFile();
+  return withLock(async () => {
+    const all = await readTransactions();
+    all.push({
+      loggedAt: new Date().toISOString(),
+      paymentStatus: "SUCCESS",
+      ...record,
+    });
+    await safeWriteJSON(LOG_FILE, all);
+  });
 }
 
 async function readTransactions() {
@@ -98,6 +121,7 @@ module.exports = {
   writeTransactions,
   appendTransaction,
   upsertByCheckoutId,
+  appendSuccessfulMpesaTransaction,
   // helpers
   mostRecentForPhone,
   findLatestTxnByCheckoutOrPhone,

@@ -8,6 +8,7 @@ const {
   appendTransaction,
   upsertByCheckoutId,
   findLatestTxnByCheckoutOrPhone,
+  appendSuccessfulMpesaTransaction,
 } = require("../../utils/transactions");
 
 // 👇 ADD: import Zoho helpers (adjust path if needed)
@@ -16,7 +17,6 @@ const {
   createInvoice_JS,
 } = require("./zoho.controller"); // or "../zoho/zoho.controller" etc.
 const { postSetISPPayment } = require("./tisp.controller");
-const { logSuccessfulStkCallback } = require("../utils/mpesaTxnLogger");
 
 /* ================================================================== */
 /*                         ENV & CONSTANTS                            */
@@ -436,38 +436,50 @@ const mpesaConfirmation = async (req, res) => {
       TransID: transactionId,
     });
 
-    // 3) Forward to ISP (idempotent)
+    await appendSuccessfulMpesaTransaction({
+      channel: "C2B_PAYBILL",
+      TransID: transactionId ? String(transactionId) : null,
+      TransAmount: amount != null ? String(amount) : null,
+      MSISDN: String(msisdn),
+      BillRefNumber: String(accountRef),
+      BusinessShortCode: String(shortCode),
+      TransTime: transTime ? String(transTime) : null,
+    });
+
+    // 3) Forward to ISP (SetISPPayment); updatedSubscriptions only if this succeeds
+    let tispOk = false;
     try {
       await postISPPayment(ispPayload);
+      tispOk = true;
       console.log("ISP payment posted OK:", transactionId);
     } catch (e) {
       console.error("ISP post failed", {
         error: e?.response?.data || e.message,
         ispPayload,
       });
-      // Optional: enqueue for retry if you add a retry queue
     }
 
-    // 4) Persist snapshot
-    try {
-      await upsertUpdatedSubscriptionFull({
-        transactionId: transactionId ? String(transactionId) : null,
-        amount: amount != null ? String(amount) : null,
-        customerAccount: String(accountRef),
-        rawTx: { type: "C2B_CONFIRMATION", ...tx },
-        ispPayload,
-        source: "C2B",
-      });
-      console.log("C2B snapshot upserted:", {
-        transactionId,
-        accountRef,
-        amount,
-      });
-    } catch (e) {
-      console.error("C2B snapshot upsert failed", e);
+    if (tispOk) {
+      try {
+        await upsertUpdatedSubscriptionFull({
+          transactionId: transactionId ? String(transactionId) : null,
+          amount: amount != null ? String(amount) : null,
+          customerAccount: String(accountRef),
+          rawTx: { type: "C2B_CONFIRMATION", ...tx },
+          ispPayload,
+          source: "C2B",
+        });
+        console.log("C2B snapshot upserted (TISP ok):", {
+          transactionId,
+          accountRef,
+          amount,
+        });
+      } catch (e) {
+        console.error("C2B snapshot upsert failed", e);
+      }
     }
 
-    // 5) Create Zoho invoice for this Paybill transaction
+    // 4) Create Zoho invoice for this Paybill transaction
     try {
       // Here we treat accountRef as the company_name used in Zoho
       await createZohoInvoiceForPayment({
@@ -614,54 +626,48 @@ const mpesaCallback = async (req, res) => {
       // Build and post ISP payload (compact)
       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
 
-      logSuccessfulStkCallback({
-        stage: "stk_callback_success",
+      await appendSuccessfulMpesaTransaction({
+        channel: "STK_PUSH",
         CheckoutRequestID: transaction.CheckoutRequestID,
         MpesaReceiptNumber: transaction.MpesaReceiptNumber,
         MerchantRequestID: transaction.MerchantRequestID,
         Amount: transaction.Amount,
         PhoneNumber: transaction.PhoneNumber,
         AccountReference: accountRef,
-        ispPayload,
+        ResultDesc: transaction.ResultDesc,
       });
 
       const idemKey = String(transaction.MpesaReceiptNumber || "");
+      let tispOk = false;
       try {
         if (idemKey && _postedTransIds.has(idemKey)) {
           console.log(
             "TISP SetISPPayment skipped (duplicate MpesaReceiptNumber):",
             idemKey,
           );
+          tispOk = true;
         } else {
           await postSetISPPayment(ispPayload);
           if (idemKey) _postedTransIds.add(idemKey);
-          logSuccessfulStkCallback({
-            stage: "tisp_set_isp_payment_ok",
-            TransID: ispPayload.TransID,
-            TransAmount: ispPayload.TransAmount,
-          });
+          tispOk = true;
         }
       } catch (e) {
         console.error(
           "TISP SetISPPayment failed (STK)",
           e?.response?.data || e.message,
         );
-        logSuccessfulStkCallback({
-          stage: "tisp_set_isp_payment_error",
-          error: String(e.message),
-          ispPayload,
-        });
       }
 
-      // Persist full snapshot
-      await upsertUpdatedSubscriptionFull({
-        transactionId: String(transaction.MpesaReceiptNumber || ""),
-        customerAccount: accountRef,
-        amount: String(transaction.Amount || ""),
-        rawTx: { type: "STK_CALLBACK", ...transaction },
-        ispPayload,
-        source: "STK",
-      });
+      if (tispOk) {
+        await upsertUpdatedSubscriptionFull({
+          transactionId: String(transaction.MpesaReceiptNumber || ""),
+          customerAccount: accountRef,
+          amount: String(transaction.Amount || ""),
+          rawTx: { type: "STK_CALLBACK", ...transaction },
+          ispPayload,
+          source: "STK",
+        });
+      }
 
       // Create Zoho invoice for this STK payment as well
       try {

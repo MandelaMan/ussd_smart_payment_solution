@@ -24,6 +24,7 @@ router.get("/callback", (_req, res) => {
 });
 router.post("/callback", mpesaCallback);
 
+// Paybill / C2B (register these public URLs in Daraja): POST /api/payment/validation, POST /api/payment/confirmation
 router.post("/validation", mpesaValidation);
 router.post("/confirmation", mpesaConfirmation);
 

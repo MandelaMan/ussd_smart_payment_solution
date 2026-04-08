@@ -5,4 +5,3 @@ npm-debug.log*
 logs/errors-*.log
 logs/runtime.log
 logs/deployments.log
-logs/mpesa-stk-success-*.log
