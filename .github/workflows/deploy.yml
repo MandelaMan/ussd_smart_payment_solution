@@ -28,13 +28,13 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Clean destination (keep only .env)
+      - name: Clean destination (keep .env and logs)
         run: |
           ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
           set -euo pipefail
           mkdir -p "${{ secrets.DEPLOY_PATH }}"
           cd "${{ secrets.DEPLOY_PATH }}"
-          find . -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
+          find . -mindepth 1 -maxdepth 1 ! -name '.env' ! -name 'logs' -exec rm -rf {} +
           EOF
 
       - name: Sync repo to server (checksum to avoid mtime issues)
@@ -95,12 +95,20 @@ jobs:
               instances: 1,
               exec_mode: 'fork',
               env: {
-                NODE_ENV: 'production'
+                NODE_ENV: 'production',
+                GIT_COMMIT: process.env.GIT_COMMIT || ''
               }
             }]
           }
           EOC
           fi
+
+          mkdir -p logs
+          export DEPLOY_GIT_SHA='${{ github.sha }}'
+          export DEPLOY_GIT_REF='${{ github.ref }}'
+          node -e "const fs=require('fs'); fs.appendFileSync('logs/deployments.log', JSON.stringify({ts:new Date().toISOString(),event:'deploy',commit:process.env.DEPLOY_GIT_SHA,ref:process.env.DEPLOY_GIT_REF}) + '\n');"
+
+          export GIT_COMMIT="$DEPLOY_GIT_SHA"
 
           echo "Reloading with PM2..."
           if pm2 describe "${APP_NAME}" >/dev/null 2>&1; then

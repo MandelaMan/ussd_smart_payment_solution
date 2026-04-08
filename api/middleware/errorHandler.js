@@ -1,5 +1,13 @@
+const { logError } = require("../utils/errorLogger");
+
 // Centralized error handler
 module.exports = (err, req, res, _next) => {
+  logError(err, {
+    source: "express",
+    method: req.method,
+    path: req.originalUrl || req.url,
+  });
+
   const status = err.status || 500;
   const payload = {
     message: err.message || "Internal Server Error",
