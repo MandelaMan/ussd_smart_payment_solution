@@ -92,6 +92,42 @@ function primarySubscriptionOptionLabel(statusRaw) {
   return "Renew Subscription";
 }
 
+/**
+ * Africa's Talking appends user input with `*`. After "99" (Back), the next
+ * selection may arrive as `99*2` instead of a fresh `2`. Strip leading `99*`
+ * segments so routing matches {@link https://developers.africastalking.com/docs/ussd/handle_sessions}.
+ */
+function normalizeAfricasTalkingText(raw) {
+  let t = String(raw ?? "").trim();
+  while (t.startsWith("99*")) {
+    t = t.slice(3).trim();
+  }
+  if (t === "99") t = "";
+  return t;
+}
+
+function toParts(text) {
+  return text
+    .split("*")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
+/** User returned to main menu (via 99); `pick` is the next root choice (1/2/0/99). */
+function respondMainMenuPick(res, pick, mainMenu) {
+  const p = String(pick ?? "").trim();
+  if (p === "0") return end(res, "Thank you for using our service!");
+  if (p === "99") return send(res, mainMenu);
+  if (p === "1") {
+    return send(
+      res,
+      `END Please call 0713 400 200 or visit https://sulsolutions.biz/`,
+    );
+  }
+  if (p === "2") return send(res, ENTER_CUSTOMER_CON);
+  return end(res, "Invalid entry. Please try again.");
+}
+
 /** Zoho returns a plain object on success, or an error string — never spread strings onto `{}`. */
 function normalizeZohoCustomerResult(result) {
   if (result == null) return null;
@@ -201,11 +237,13 @@ const formatDmy = (date) => moment(date).format("DD/MM/YYYY");
 
 // --- USSD ---
 const initiateUSSD = async (req, res) => {
-  const { phoneNumber, text = "" } = req.body;
+  const { phoneNumber, text: rawText = "" } = req.body;
+  const text =
+    req.body?.Text != null ? String(req.body.Text) : String(rawText ?? "");
 
   let response;
-  const input = text.trim();
-  const parts = input.split("*");
+  const input = normalizeAfricasTalkingText(text);
+  const parts = toParts(input);
 
   const mainMenu = `CON Welcome to Starlynx Utility Limited. Select from the options below:
   1. New Customer Registration
@@ -221,6 +259,11 @@ const initiateUSSD = async (req, res) => {
     response = `END Please call 0713 400 200 or visit https://sulsolutions.biz/`;
   } else if (parts[0] === "2") {
     // Manage My Account
+    // After Back (99), AT may send e.g. 2*ACC*99*2 — last segment is main-menu choice
+    if (parts.length === 5 && parts[3] === "99") {
+      return respondMainMenuPick(res, parts[4], mainMenu);
+    }
+
     if (parts.length === 5) {
       const accountNumber = parts[1].trim();
       const action = parts[2].trim();
@@ -244,6 +287,14 @@ const initiateUSSD = async (req, res) => {
         return send(res, mainMenu);
       }
       return end(res, "Invalid entry. Please try again.");
+    }
+
+    if (parts.length === 4 && parts[2] === "99") {
+      return respondMainMenuPick(res, parts[3], mainMenu);
+    }
+
+    if (parts.length === 3 && parts[1] === "99") {
+      return respondMainMenuPick(res, parts[2], mainMenu);
     }
 
     if (parts.length === 1) {
