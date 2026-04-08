@@ -476,6 +476,20 @@ const mpesaConfirmation = async (req, res) => {
 /* ================================================================== */
 const initiateSTKPush = async (accountNumber, phone, amount) => {
   try {
+    const rawAmount = Number(amount);
+    const useProdAmount = NODE_ENV === "production";
+    const stkAmount = useProdAmount
+      ? Number.isFinite(rawAmount)
+        ? Math.max(1, Math.round(rawAmount))
+        : 1
+      : 1;
+
+    if (!useProdAmount && Number.isFinite(rawAmount) && rawAmount !== stkAmount) {
+      console.info(
+        `[MPESA STK] ${NODE_ENV}: using Amount=${stkAmount} (requested ${rawAmount})`,
+      );
+    }
+
     const token = await getAccessToken();
     const config = { headers: { Authorization: `Bearer ${token}` } };
 
@@ -498,7 +512,7 @@ const initiateSTKPush = async (accountNumber, phone, amount) => {
       Password: password,
       Timestamp,
       TransactionType: "CustomerPayBillOnline",
-      Amount: amount,
+      Amount: stkAmount,
       PartyA: user_phone,
       PartyB: shortcode,
       PhoneNumber: user_phone,
@@ -516,7 +530,7 @@ const initiateSTKPush = async (accountNumber, phone, amount) => {
       await appendTransaction({
         Status: "PENDING",
         PhoneNumber: user_phone,
-        Amount: amount,
+        Amount: stkAmount,
         MerchantRequestID: data.MerchantRequestID,
         CheckoutRequestID: data.CheckoutRequestID,
         AccountReference, // stored for lookup on callback
@@ -691,7 +705,11 @@ const simulateC2B = async (req, res) => {
 const test = async (req, res) => {
   try {
     // Example: push KES 1 to this phone using the root route
-    const results = await initiateSTKPush("+254701057515", 1);
+    const results = await initiateSTKPush(
+      "TEST",
+      "+254701057515",
+      1,
+    );
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: "Test " + err.message });

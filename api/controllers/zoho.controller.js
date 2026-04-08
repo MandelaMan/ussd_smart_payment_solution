@@ -417,6 +417,48 @@ const getItems_JS = async () => {
   }
 };
 
+const ITEM_SKU_PREFIXES = ["GM", "CL", "ENK", "SKY"];
+
+function itemSkuMatchesAllowedPrefixes(item) {
+  const sku = String(item?.sku ?? item?.SKU ?? "").trim();
+  if (!sku) return false;
+  const u = sku.toUpperCase();
+  return ITEM_SKU_PREFIXES.some((p) => u.startsWith(p.toUpperCase()));
+}
+
+/** Paginate Zoho items and keep those whose SKU starts with GM, CL, ENK, or SKY */
+const getItemsByAllowedSkuPrefixes_JS = async () => {
+  const matched = [];
+  let page = 1;
+  const per_page = 200;
+  const maxPages = 50;
+
+  try {
+    while (page <= maxPages) {
+      const result = await withTimeout(
+        callZoho("items", "GET", null, { page, per_page }),
+        15_000,
+        `get-items-sku-${page}`,
+      );
+      const items = result.items || [];
+      for (const it of items) {
+        if (itemSkuMatchesAllowedPrefixes(it)) matched.push(it);
+      }
+      const ctx = result.page_context;
+      if (ctx && ctx.has_more_page === false) break;
+      if (items.length < per_page) break;
+      page += 1;
+    }
+    return matched;
+  } catch (error) {
+    console.error(
+      "getItemsByAllowedSkuPrefixes_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
 // Invoice templates (array)
 const getInvoiceTemplates_JS = async () => {
   try {
@@ -664,6 +706,27 @@ const getItems = async (req, res) => {
   }
 };
 
+// HTTP: items whose SKU starts with GM, CL, ENK, or SKY
+const getItemsBySkuPrefixes = async (req, res) => {
+  try {
+    const items = await getItemsByAllowedSkuPrefixes_JS();
+    res.json({
+      count: items.length,
+      sku_prefixes: ITEM_SKU_PREFIXES,
+      items,
+    });
+  } catch (error) {
+    console.error(
+      "getItemsBySkuPrefixes error:",
+      error.response?.data || error.message,
+    );
+    res.status(500).json({
+      error: "Failed to fetch filtered items",
+      details: error.response?.data || error.message,
+    });
+  }
+};
+
 // HTTP: get invoice templates
 const getInvoiceTemplates = async (req, res) => {
   try {
@@ -744,6 +807,7 @@ module.exports = {
   getCustomerByCompanyName,
   getSpecificCustomerOriginal,
   getItems,
+  getItemsBySkuPrefixes,
   getInvoiceTemplates,
   createInvoice,
   markInvoiceAsPaid,
@@ -755,6 +819,7 @@ module.exports = {
   getSpecificCustomer_JS,
   getCustomerByCompanyName_JS,
   getItems_JS,
+  getItemsByAllowedSkuPrefixes_JS,
   getInvoiceTemplates_JS,
   createInvoice_JS,
   markInvoiceAsPaid_JS,

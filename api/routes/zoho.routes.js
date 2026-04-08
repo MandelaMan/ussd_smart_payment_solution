@@ -5,6 +5,7 @@ const {
   getInvoices,
   createInvoice,
   getItems,
+  getItemsBySkuPrefixes,
   getInvoiceTemplates,
   getCustomerByCompanyName,
 } = require("../controllers/zoho.controller");
@@ -15,6 +16,7 @@ const router = express.Router();
 router.get("/", test);
 router.post("/", createInvoice);
 router.get("/invoice-templates", getInvoiceTemplates);
+router.get("/items/by-sku-prefixes", getItemsBySkuPrefixes);
 router.get("/items", getItems);
 router.get("/customers", getZohoCustomers);
 router.get("/customer/:companyName", getCustomerByCompanyName);
