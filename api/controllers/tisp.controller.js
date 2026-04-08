@@ -2,6 +2,8 @@ const axios = require("axios");
 const moment = require("moment");
 require("dotenv").config();
 
+const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
+
 const ISP_PAYMENT_URL =
   process.env.ISP_PAYMENT_URL ||
   "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
@@ -11,20 +13,45 @@ const ISP_PAYMENT_URL =
  * @param {Record<string, string>} payload - TransactionType, TransID, TransTime, TransAmount, etc.
  */
 async function postSetISPPayment(payload) {
-  const r = await axios.post(ISP_PAYMENT_URL, payload, {
-    headers: { "Content-Type": "application/json" },
-    timeout: 20_000,
-    validateStatus: () => true,
-    transformRequest: [(data) => JSON.stringify(data)],
-  });
+  try {
+    const r = await axios.post(ISP_PAYMENT_URL, payload, {
+      headers: { "Content-Type": "application/json" },
+      timeout: 20_000,
+      validateStatus: () => true,
+      transformRequest: [(data) => JSON.stringify(data)],
+    });
 
-  if (r.status < 200 || r.status >= 300) {
-    throw new Error(
-      `SetISPPayment HTTP ${r.status}: ${JSON.stringify(r.data)}`,
-    );
+    const ok = r.status >= 200 && r.status < 300;
+    await logSetIspPaymentAttempt({
+      outcome: ok ? "success" : "failure",
+      httpStatus: r.status,
+      url: ISP_PAYMENT_URL,
+      request: payload,
+      response: r.data,
+    });
+
+    if (!ok) {
+      const err = new Error(
+        `SetISPPayment HTTP ${r.status}: ${JSON.stringify(r.data)}`,
+      );
+      err._setIspLogged = true;
+      throw err;
+    }
+
+    return r.data;
+  } catch (e) {
+    if (!e._setIspLogged) {
+      await logSetIspPaymentAttempt({
+        outcome: "failure",
+        httpStatus: e.response?.status ?? null,
+        url: ISP_PAYMENT_URL,
+        request: payload,
+        response: e.response?.data ?? null,
+        errorMessage: e.message,
+      });
+    }
+    throw e;
   }
-
-  return r.data;
 }
 
 async function callTISP(method = "POST", data = null, params = {}) {

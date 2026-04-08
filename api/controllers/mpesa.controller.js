@@ -8,8 +8,8 @@ const {
   appendTransaction,
   upsertByCheckoutId,
   findLatestTxnByCheckoutOrPhone,
-  appendSuccessfulMpesaTransaction,
 } = require("../../utils/transactions");
+const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
 
 // 👇 ADD: import Zoho helpers (adjust path if needed)
 const {
@@ -243,6 +243,12 @@ async function postISPPayment(payload) {
   const key = String(payload.TransID || payload.ThirdPartyTransID || "");
   if (key && _postedTransIds.has(key)) {
     console.log("ISP already posted for TransID:", key);
+    await logSetIspPaymentAttempt({
+      outcome: "skipped_duplicate",
+      url: ISP_PAYMENT_URL,
+      request: payload,
+      transKey: key,
+    });
     return;
   }
   try {
@@ -253,13 +259,35 @@ async function postISPPayment(payload) {
       validateStatus: () => true, // don't throw on 4xx/5xx automatically
       transformRequest: [(data) => JSON.stringify(data)],
     });
-    if (r.status < 200 || r.status >= 300) {
-      throw new Error(`ISP responded ${r.status}: ${JSON.stringify(r.data)}`);
+    const ok = r.status >= 200 && r.status < 300;
+    await logSetIspPaymentAttempt({
+      outcome: ok ? "success" : "failure",
+      httpStatus: r.status,
+      url: ISP_PAYMENT_URL,
+      request: payload,
+      response: r.data,
+    });
+    if (!ok) {
+      const err = new Error(
+        `ISP responded ${r.status}: ${JSON.stringify(r.data)}`,
+      );
+      err._setIspLogged = true;
+      throw err;
     }
     if (key) _postedTransIds.add(key);
     console.log("ISP payment posted:", payload.TransID);
   } catch (e) {
     console.error("ISP payment post failed:", e?.response?.data || e.message);
+    if (!e._setIspLogged) {
+      await logSetIspPaymentAttempt({
+        outcome: "failure",
+        httpStatus: e.response?.status ?? null,
+        url: ISP_PAYMENT_URL,
+        request: payload,
+        response: e.response?.data ?? null,
+        errorMessage: e.message,
+      });
+    }
     throw e;
   }
 }
@@ -434,16 +462,6 @@ const mpesaConfirmation = async (req, res) => {
       TransTime: transTime,
       TransAmount: amount,
       TransID: transactionId,
-    });
-
-    await appendSuccessfulMpesaTransaction({
-      channel: "C2B_PAYBILL",
-      TransID: transactionId ? String(transactionId) : null,
-      TransAmount: amount != null ? String(amount) : null,
-      MSISDN: String(msisdn),
-      BillRefNumber: String(accountRef),
-      BusinessShortCode: String(shortCode),
-      TransTime: transTime ? String(transTime) : null,
     });
 
     // 3) Forward to ISP (SetISPPayment); updatedSubscriptions only if this succeeds
@@ -626,17 +644,6 @@ const mpesaCallback = async (req, res) => {
       // Build and post ISP payload (compact)
       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
 
-      await appendSuccessfulMpesaTransaction({
-        channel: "STK_PUSH",
-        CheckoutRequestID: transaction.CheckoutRequestID,
-        MpesaReceiptNumber: transaction.MpesaReceiptNumber,
-        MerchantRequestID: transaction.MerchantRequestID,
-        Amount: transaction.Amount,
-        PhoneNumber: transaction.PhoneNumber,
-        AccountReference: accountRef,
-        ResultDesc: transaction.ResultDesc,
-      });
-
       const idemKey = String(transaction.MpesaReceiptNumber || "");
       let tispOk = false;
       try {
@@ -645,6 +652,12 @@ const mpesaCallback = async (req, res) => {
             "TISP SetISPPayment skipped (duplicate MpesaReceiptNumber):",
             idemKey,
           );
+          await logSetIspPaymentAttempt({
+            outcome: "skipped_duplicate",
+            url: ISP_PAYMENT_URL,
+            request: ispPayload,
+            transKey: idemKey,
+          });
           tispOk = true;
         } else {
           await postSetISPPayment(ispPayload);

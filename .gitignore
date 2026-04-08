@@ -5,3 +5,4 @@ npm-debug.log*
 logs/errors-*.log
 logs/runtime.log
 logs/deployments.log
+logs/tisp-set-isp-payment.json
