@@ -2,6 +2,31 @@ const axios = require("axios");
 const moment = require("moment");
 require("dotenv").config();
 
+const ISP_PAYMENT_URL =
+  process.env.ISP_PAYMENT_URL ||
+  "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
+
+/**
+ * POST payment notification to TISP SetISPPayment (M-Pesa success → ISP ledger).
+ * @param {Record<string, string>} payload - TransactionType, TransID, TransTime, TransAmount, etc.
+ */
+async function postSetISPPayment(payload) {
+  const r = await axios.post(ISP_PAYMENT_URL, payload, {
+    headers: { "Content-Type": "application/json" },
+    timeout: 20_000,
+    validateStatus: () => true,
+    transformRequest: [(data) => JSON.stringify(data)],
+  });
+
+  if (r.status < 200 || r.status >= 300) {
+    throw new Error(
+      `SetISPPayment HTTP ${r.status}: ${JSON.stringify(r.data)}`,
+    );
+  }
+
+  return r.data;
+}
+
 async function callTISP(method = "POST", data = null, params = {}) {
   try {
     const config = {
@@ -87,5 +112,6 @@ const test = async (req, res) => {
 
 module.exports = {
   getTISPCustomer,
+  postSetISPPayment,
   test,
 };

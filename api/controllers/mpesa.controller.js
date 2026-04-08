@@ -15,6 +15,8 @@ const {
   getCustomerByCompanyName_JS,
   createInvoice_JS,
 } = require("./zoho.controller"); // or "../zoho/zoho.controller" etc.
+const { postSetISPPayment } = require("./tisp.controller");
+const { logSuccessfulStkCallback } = require("../utils/mpesaTxnLogger");
 
 /* ================================================================== */
 /*                         ENV & CONSTANTS                            */
@@ -205,18 +207,30 @@ function buildISPPayloadFromConfirmation(tx) {
   };
 }
 
-/** Build ISP payload from a successful STK callback + accountRef. */
+/** M-Pesa CallbackMetadata TransactionDate → YYYYMMDDHHmmss for SetISPPayment */
+function formatTransTimeForTISP(raw) {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  if (digits.length >= 14) return digits.slice(0, 14);
+  return moment.tz(TZ).format("YYYYMMDDHHmmss");
+}
+
+/** Build SetISPPayment JSON from a successful STK callback + bill/customer ref. */
 function buildISPPayloadFromSTK(transaction, accountRef) {
+  const thirdParty = String(
+    transaction.CheckoutRequestID ||
+      transaction.MerchantRequestID ||
+      ""
+  );
   return {
-    TransactionType: "Paybill",
+    TransactionType: "Credit Card",
     TransID: String(transaction.MpesaReceiptNumber || ""),
-    TransTime: formatC2BTime(transaction.TransactionDate),
-    TransAmount: String(transaction.Amount || "0"),
+    TransTime: formatTransTimeForTISP(transaction.TransactionDate),
+    TransAmount: String(transaction.Amount ?? "0"),
     BusinessShortCode: String(MPESA_SHORTCODE || ""),
     BillRefNumber: String(accountRef || ""),
     InvoiceNumber: String(accountRef || ""),
     OrgAccountBalance: "0",
-    ThirdPartyTransID: "",
+    ThirdPartyTransID: thirdParty,
     MSISDN: normalizeMsisdn(transaction.PhoneNumber || ""),
     FirstName: "",
   };
@@ -476,17 +490,12 @@ const mpesaConfirmation = async (req, res) => {
 /* ================================================================== */
 const initiateSTKPush = async (accountNumber, phone, amount) => {
   try {
+    // Dev/pre-production: always charge 1 KES. TODO(live): use Math.round(Number(amount)) when going live.
+    const stkAmount = 1;
     const rawAmount = Number(amount);
-    const useProdAmount = NODE_ENV === "production";
-    const stkAmount = useProdAmount
-      ? Number.isFinite(rawAmount)
-        ? Math.max(1, Math.round(rawAmount))
-        : 1
-      : 1;
-
-    if (!useProdAmount && Number.isFinite(rawAmount) && rawAmount !== stkAmount) {
+    if (Number.isFinite(rawAmount) && rawAmount !== stkAmount) {
       console.info(
-        `[MPESA STK] ${NODE_ENV}: using Amount=${stkAmount} (requested ${rawAmount})`,
+        `[MPESA STK] fixed Amount=${stkAmount} (subscription amount would be ${rawAmount})`,
       );
     }
 
@@ -604,10 +613,44 @@ const mpesaCallback = async (req, res) => {
 
       // Build and post ISP payload (compact)
       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
+
+      logSuccessfulStkCallback({
+        stage: "stk_callback_success",
+        CheckoutRequestID: transaction.CheckoutRequestID,
+        MpesaReceiptNumber: transaction.MpesaReceiptNumber,
+        MerchantRequestID: transaction.MerchantRequestID,
+        Amount: transaction.Amount,
+        PhoneNumber: transaction.PhoneNumber,
+        AccountReference: accountRef,
+        ispPayload,
+      });
+
+      const idemKey = String(transaction.MpesaReceiptNumber || "");
       try {
-        await postISPPayment(ispPayload);
+        if (idemKey && _postedTransIds.has(idemKey)) {
+          console.log(
+            "TISP SetISPPayment skipped (duplicate MpesaReceiptNumber):",
+            idemKey,
+          );
+        } else {
+          await postSetISPPayment(ispPayload);
+          if (idemKey) _postedTransIds.add(idemKey);
+          logSuccessfulStkCallback({
+            stage: "tisp_set_isp_payment_ok",
+            TransID: ispPayload.TransID,
+            TransAmount: ispPayload.TransAmount,
+          });
+        }
       } catch (e) {
-        console.error("ISP post failed (STK)", e?.response?.data || e.message);
+        console.error(
+          "TISP SetISPPayment failed (STK)",
+          e?.response?.data || e.message,
+        );
+        logSuccessfulStkCallback({
+          stage: "tisp_set_isp_payment_error",
+          error: String(e.message),
+          ispPayload,
+        });
       }
 
       // Persist full snapshot

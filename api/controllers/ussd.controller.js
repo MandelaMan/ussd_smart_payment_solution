@@ -331,7 +331,7 @@ Apt No. ${aptNo}
 Package - ${pkgLabel}
 Price - ${priceLabel}
 A/c Status: ${statusLabel}
-Expires On: ${details.dueDate}
+Expires On: ${details.dueDate}\n
 1. ${option1}
 2. Upgrade Subscription
 3. Downgrade Subscription
