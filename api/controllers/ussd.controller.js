@@ -19,6 +19,26 @@ const packageList = [
 
 const USSD_ACCOUNT_NOT_FOUND = "Account not found. Kindly contact support";
 
+const ENTER_CUSTOMER_CON = `CON Enter your Customer Number:
+0. Exit
+99. Back`;
+
+function accountNotFoundCon() {
+  return `CON ${USSD_ACCOUNT_NOT_FOUND}
+0. Exit
+99. Back`;
+}
+
+function packagePickListCon(titleLine) {
+  const list = packageList
+    .map((p, i) => `${i + 1}. ${p.name} (${p.bandwidth}) - Ksh ${p.price}`)
+    .join("\n");
+  return `CON ${titleLine}
+${list}
+0. Exit
+99. Back`;
+}
+
 /** Zoho returns a plain object on success, or an error string — never spread strings onto `{}`. */
 function normalizeZohoCustomerResult(result) {
   if (result == null) return null;
@@ -148,10 +168,33 @@ const initiateUSSD = async (req, res) => {
     response = `END Please call 0713 400 200 or visit https://sulsolutions.biz/`;
   } else if (parts[0] === "2") {
     // Manage My Account
+    if (parts.length === 5) {
+      const accountNumber = parts[1].trim();
+      const action = parts[2].trim();
+      const last = parts[4].trim();
+
+      if (last === "0")
+        return end(res, "Thank you for using our service!");
+      if (last === "99") {
+        const details = await getAccountDetails(accountNumber);
+        if (!details) return send(res, ENTER_CUSTOMER_CON);
+        if (action === "2")
+          return send(
+            res,
+            packagePickListCon("Select a package to upgrade to:"),
+          );
+        if (action === "3")
+          return send(
+            res,
+            packagePickListCon("Select a package to downgrade to:"),
+          );
+        return send(res, mainMenu);
+      }
+      return end(res, "Invalid entry. Please try again.");
+    }
+
     if (parts.length === 1) {
-      response = `CON Enter your Customer Number:
-0. Exit
-99. Back`;
+      response = ENTER_CUSTOMER_CON;
     } else if (parts.length === 2) {
       // show account summary + actions
       const accountNumber = parts[1].trim();
@@ -160,26 +203,32 @@ const initiateUSSD = async (req, res) => {
       if (accountNumber === "99") return send(res, mainMenu);
 
       const details = await getAccountDetails(accountNumber);
-      if (!details)
-        return end(res, USSD_ACCOUNT_NOT_FOUND);
+      if (!details) return send(res, accountNotFoundCon());
 
       response = `CON ${details.customer_name} \nApt No. ${details.company_name}\n
-                Package: ${details.package} - Ksh ${details.amount}\n
-                A/c Status: ${details.status}\n
+                Package: ${details.package} - Ksh ${details.amount}
+                A/c Status: ${details.status}
                 Expires On: ${details.dueDate}\n
-                1. Renew Subscription\n
-                2. Upgrade Subscription\n
-                3. Downgrade Subscription\n
-                4. Cancel Subscription\n
-                0. Exit\n
+                1. Renew Subscription
+                2. Upgrade Subscription
+                3. Downgrade Subscription
+                4. Cancel Subscription
+                0. Exit
                 99. Back`;
     } else if (parts.length === 3) {
-      // choose action
+      // choose action (or follow-up after account-not-found CON: 2*acc*0 / 2*acc*99)
       const accountNumber = parts[1].trim();
       const action = parts[2].trim();
-      const details = await getAccountDetails(accountNumber);
-      if (!details)
-        return end(res, USSD_ACCOUNT_NOT_FOUND);
+
+      if (action === "0") {
+        response = "END Thank you for using our service!";
+      } else if (action === "99") {
+        const details = await getAccountDetails(accountNumber);
+        if (!details) response = ENTER_CUSTOMER_CON;
+        else response = mainMenu;
+      } else {
+        const details = await getAccountDetails(accountNumber);
+        if (!details) return send(res, accountNotFoundCon());
 
       if (action === "1") {
         // === RENEW ===
@@ -219,35 +268,14 @@ const initiateUSSD = async (req, res) => {
           return end(res, `Error processing payment: ${reason}`);
         }
       } else if (action === "2") {
-        // === UPGRADE: show package list ===
-        const list = packageList
-          .map(
-            (p, i) => `${i + 1}. ${p.name} (${p.bandwidth}) - Ksh ${p.price}`,
-          )
-          .join("\n");
-        response = `CON Select a package to upgrade to:
-          ${list}
-          0. Exit
-          99. Back`;
+        response = packagePickListCon("Select a package to upgrade to:");
       } else if (action === "3") {
-        // === DOWNGRADE: show package list ===
-        const list = packageList
-          .map(
-            (p, i) => `${i + 1}. ${p.name} (${p.bandwidth}) - Ksh ${p.price}`,
-          )
-          .join("\n");
-        response = `CON Select a package to downgrade to:
-                    ${list}
-                    0. Exit
-                    99. Back`;
+        response = packagePickListCon("Select a package to downgrade to:");
       } else if (action === "4") {
         response = `END Your subscription for account ${accountNumber} has been cancelled.`;
-      } else if (action === "0") {
-        response = "END Thank you for using our service!";
-      } else if (action === "99") {
-        response = mainMenu;
       } else {
         response = "END Invalid option selected.";
+      }
       }
     } else if (parts.length === 4) {
       // Handle package choice for upgrade/downgrade
@@ -261,8 +289,7 @@ const initiateUSSD = async (req, res) => {
       const idx = Number(pick) - 1;
       const target = packageList[idx];
       const details = await getAccountDetails(accountNumber);
-      if (!details)
-        return end(res, USSD_ACCOUNT_NOT_FOUND);
+      if (!details) return send(res, accountNotFoundCon());
 
       if (!target) return end(res, "Invalid package selection.");
 
@@ -361,7 +388,7 @@ const initiateUSSD = async (req, res) => {
           return end(res, `Error processing payment: ${reason}`);
         }
       } else {
-        return end(res, "END Invalid option selected.");
+        return end(res, "Invalid option selected.");
       }
     } else {
       response = "END Invalid entry. Please try again.";
