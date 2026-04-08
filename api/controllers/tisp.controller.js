@@ -25,6 +25,42 @@ async function callTISP(method = "POST", data = null, params = {}) {
   }
 }
 
+function parseTispResponseBody(data) {
+  if (data == null) return null;
+  if (typeof data === "object" && !Array.isArray(data)) return { ...data };
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if (!trimmed) return null;
+    return JSON.parse(trimmed);
+  }
+  return null;
+}
+
+/**
+ * Map TISP JSON keys to the shape USSD / callers expect (sample ET-F502 uses duedate, package, amount, status).
+ */
+function normalizeTispClientPayload(parsed) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return parsed;
+  }
+  const dueDate =
+    parsed.dueDate ??
+    parsed.duedate ??
+    parsed.DueDate ??
+    parsed.DUE_DATE ??
+    parsed.expiryDate ??
+    parsed.ExpiryDate;
+
+  return {
+    ...parsed,
+    dueDate: dueDate ?? parsed.dueDate,
+    status: parsed.status ?? parsed.Status ?? parsed.STATUS,
+    package: parsed.package ?? parsed.Package ?? parsed.PACKAGE,
+    amount:
+      parsed.amount ?? parsed.Amount ?? parsed.AMOUNT ?? parsed.monthlyAmount,
+  };
+}
+
 const getTISPCustomer = async (clientNo) => {
   if (!clientNo) {
     throw new Error("Client number is required.");
@@ -32,7 +68,8 @@ const getTISPCustomer = async (clientNo) => {
 
   try {
     const data = await callTISP("POST", { client: clientNo });
-    return JSON.parse(data);
+    const parsed = parseTispResponseBody(data);
+    return normalizeTispClientPayload(parsed);
   } catch (error) {
     console.error("Failed to get TISP customer:", error.message);
     throw error;

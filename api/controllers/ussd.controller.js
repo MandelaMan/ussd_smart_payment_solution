@@ -163,15 +163,15 @@ const initiateUSSD = async (req, res) => {
       if (!details)
         return end(res, USSD_ACCOUNT_NOT_FOUND);
 
-      response = `CON ${details.customer_name} Apt No. ${details.company_name}
-                Package: ${details.package} - Ksh ${details.amount}
-                A/c Status: ${details.status}
-                Expires On: ${details.dueDate}
-                1. Renew Subscription
-                2. Upgrade Subscription
-                3. Downgrade Subscription
-                4. Cancel Subscription
-                0. Exit
+      response = `CON ${details.customer_name} \nApt No. ${details.company_name}\n
+                Package: ${details.package} - Ksh ${details.amount}\n
+                A/c Status: ${details.status}\n
+                Expires On: ${details.dueDate}\n
+                1. Renew Subscription\n
+                2. Upgrade Subscription\n
+                3. Downgrade Subscription\n
+                4. Cancel Subscription\n
+                0. Exit\n
                 99. Back`;
     } else if (parts.length === 3) {
       // choose action
