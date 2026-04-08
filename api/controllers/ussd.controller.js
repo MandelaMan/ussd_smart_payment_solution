@@ -25,8 +25,7 @@ const ENTER_CUSTOMER_CON = `CON Enter your Customer Number:
 
 function accountNotFoundCon() {
   return `CON ${USSD_ACCOUNT_NOT_FOUND}
-0. Exit
-99. Back`;
+0. Exit`;
 }
 
 function packagePickListCon(titleLine) {
@@ -37,6 +36,60 @@ function packagePickListCon(titleLine) {
 ${list}
 0. Exit
 99. Back`;
+}
+
+/** e.g. ET-D401 -> D401 (substring after first "-") */
+function aptNumberFromCompanyName(companyName) {
+  if (companyName == null || String(companyName).trim() === "") return "";
+  const s = String(companyName).trim();
+  const i = s.indexOf("-");
+  if (i === -1) return s;
+  const rest = s.slice(i + 1).trim();
+  return rest || s;
+}
+
+/** Title-case each word; "dstv" stays DSTV; keeps + between words */
+function formatPackageLabel(raw) {
+  if (raw == null) return "";
+  return String(raw)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      if (word === "+" || word === "-") return word;
+      const lower = word.toLowerCase();
+      if (lower === "dstv") return "DSTV";
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
+function formatPriceLabel(amount) {
+  const cleaned = String(amount ?? "").replace(/,/g, "").trim();
+  const n = Number(cleaned);
+  if (cleaned !== "" && Number.isFinite(n)) return `Ksh ${Math.round(n)}`;
+  return `Ksh ${amount ?? ""}`.trim();
+}
+
+function formatAccountStatusLabel(statusRaw) {
+  if (statusRaw == null || String(statusRaw).trim() === "") return "";
+  return String(statusRaw)
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** Option 1 label by TISP/Zoho status */
+function primarySubscriptionOptionLabel(statusRaw) {
+  const s = String(statusRaw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  if (s === "active") return "Extend Subscription";
+  if (s === "suspended") return "Renew Subscription";
+  return "Renew Subscription";
 }
 
 /** Zoho returns a plain object on success, or an error string — never spread strings onto `{}`. */
@@ -177,7 +230,7 @@ const initiateUSSD = async (req, res) => {
         return end(res, "Thank you for using our service!");
       if (last === "99") {
         const details = await getAccountDetails(accountNumber);
-        if (!details) return send(res, ENTER_CUSTOMER_CON);
+        if (!details) return send(res, accountNotFoundCon());
         if (action === "2")
           return send(
             res,
@@ -205,18 +258,26 @@ const initiateUSSD = async (req, res) => {
       const details = await getAccountDetails(accountNumber);
       if (!details) return send(res, accountNotFoundCon());
 
-      response = `CON ${details.customer_name} \nApt No. ${details.company_name}\n
-                Package: ${details.package} - Ksh ${details.amount}
-                A/c Status: ${details.status}
-                Expires On: ${details.dueDate}\n
-                1. Renew Subscription
-                2. Upgrade Subscription
-                3. Downgrade Subscription
-                4. Cancel Subscription
-                0. Exit
-                99. Back`;
+      const aptNo = aptNumberFromCompanyName(details.company_name);
+      const pkgLabel = formatPackageLabel(details.package);
+      const priceLabel = formatPriceLabel(details.amount);
+      const statusLabel = formatAccountStatusLabel(details.status);
+      const option1 = primarySubscriptionOptionLabel(details.status);
+
+      response = `CON ${details.customer_name}
+Apt No. ${aptNo}
+Package - ${pkgLabel}
+Price - ${priceLabel}
+A/c Status: ${statusLabel}
+Expires On: ${details.dueDate}
+1. ${option1}
+2. Upgrade Subscription
+3. Downgrade Subscription
+4. Cancel Subscription
+0. Exit
+99. Back`;
     } else if (parts.length === 3) {
-      // choose action (or follow-up after account-not-found CON: 2*acc*0 / 2*acc*99)
+      // choose action (or follow-up after account-not-found CON: 2*acc*0 only; 99 only when account is valid)
       const accountNumber = parts[1].trim();
       const action = parts[2].trim();
 
@@ -224,14 +285,16 @@ const initiateUSSD = async (req, res) => {
         response = "END Thank you for using our service!";
       } else if (action === "99") {
         const details = await getAccountDetails(accountNumber);
-        if (!details) response = ENTER_CUSTOMER_CON;
-        else response = mainMenu;
+        if (!details) return send(res, accountNotFoundCon());
+        response = mainMenu;
       } else {
         const details = await getAccountDetails(accountNumber);
         if (!details) return send(res, accountNotFoundCon());
 
       if (action === "1") {
-        // === RENEW ===
+        const extendWording =
+          primarySubscriptionOptionLabel(details.status) ===
+          "Extend Subscription";
         const amount = details.amount;
         const stk = await initiateSTKPush(accountNumber, phoneNumber, amount);
         if (stk?.error) {
@@ -259,9 +322,10 @@ const initiateUSSD = async (req, res) => {
         if (txn.Status === "SUCCESS") {
           const paidAt = parseMpesaTransactionDate(txn.TransactionDate);
           const newExpiry = formatDmy(addDays(paidAt, 30));
+          const doneVerb = extendWording ? "extended" : "renewed";
           return end(
             res,
-            `Payment was successful. Subscription has been renewed. New expiry date is ${newExpiry}.`,
+            `Payment was successful. Subscription has been ${doneVerb}. New expiry date is ${newExpiry}.`,
           );
         } else {
           const reason = txn.ResultDesc || "Transaction failed";
