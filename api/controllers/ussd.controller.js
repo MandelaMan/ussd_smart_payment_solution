@@ -17,23 +17,60 @@ const packageList = [
   { name: "Premium + DSTV", bandwidth: "100MBPS", price: 6 },
 ];
 
+const ussdAccountNotFoundMessage = (customerNo) =>
+  `We could not find an account for ${customerNo}. Please check your customer number and try again, or call 0713 400 200 for help.`;
+
+/** Zoho returns a plain object on success, or an error string — never spread strings onto `{}`. */
+function normalizeZohoCustomerResult(result) {
+  if (result == null) return null;
+  if (typeof result === "string") return null;
+  if (typeof result !== "object" || Array.isArray(result)) return null;
+  return result;
+}
+
+/** True when merged Zoho + TISP data is enough to show account / billing in USSD. */
+function hasUsableAccountDetails(d) {
+  if (!d || typeof d !== "object" || Array.isArray(d)) return false;
+  if (
+    d.customer_name ||
+    d.contact_name ||
+    d.company_name ||
+    d.contact_id != null
+  )
+    return true;
+  if (
+    d.package != null ||
+    d.dueDate != null ||
+    (d.amount != null && d.amount !== "") ||
+    d.status != null
+  )
+    return true;
+  return false;
+}
+
 const getAccountDetails = async (client) => {
-  const customerDetails = {
-    ...(await getSpecificCustomer_JS(client)),
-    ...(await getTISPCustomer(client)),
-  };
+  try {
+    const zohoRaw = await getSpecificCustomer_JS(client);
+    const zoho = normalizeZohoCustomerResult(zohoRaw);
 
-  return customerDetails;
+    let tisp = null;
+    try {
+      const tispRaw = await getTISPCustomer(client);
+      if (tispRaw && typeof tispRaw === "object" && !Array.isArray(tispRaw)) {
+        tisp = tispRaw;
+      }
+    } catch {
+      tisp = null;
+    }
 
-  // return {
-  //   customer_name: "TEST1 TEST1 TEST1",
-  //   customer_number: "ET-001",
-  //   aptNo: "B19",
-  //   amount: 1, // current monthly package price
-  //   package: "Basic Plus",
-  //   status: "Suspended", // or "Inactive"
-  //   dueDate: "31/10/2025",
-  // };
+    const merged = { ...(zoho || {}), ...(tisp || {}) };
+
+    if (!hasUsableAccountDetails(merged)) return null;
+
+    return merged;
+  } catch {
+    return null;
+  }
 };
 
 // Poll for callback landing (max ~timeoutMs)
@@ -121,7 +158,8 @@ const initiateUSSD = async (req, res) => {
       if (accountNumber === "99") return send(res, mainMenu);
 
       const details = await getAccountDetails(accountNumber);
-      if (!details) return end(res, `Account ${accountNumber} not found.`);
+      if (!details)
+        return end(res, ussdAccountNotFoundMessage(accountNumber));
 
       response = `CON ${details.customer_name} Apt No. ${details.company_name}
                 Package: ${details.package} - Ksh ${details.amount}
@@ -138,7 +176,8 @@ const initiateUSSD = async (req, res) => {
       const accountNumber = parts[1].trim();
       const action = parts[2].trim();
       const details = await getAccountDetails(accountNumber);
-      if (!details) return end(res, `Account ${accountNumber} not found.`);
+      if (!details)
+        return end(res, ussdAccountNotFoundMessage(accountNumber));
 
       if (action === "1") {
         // === RENEW ===
@@ -220,6 +259,8 @@ const initiateUSSD = async (req, res) => {
       const idx = Number(pick) - 1;
       const target = packageList[idx];
       const details = await getAccountDetails(accountNumber);
+      if (!details)
+        return end(res, ussdAccountNotFoundMessage(accountNumber));
 
       if (!target) return end(res, "Invalid package selection.");
 
