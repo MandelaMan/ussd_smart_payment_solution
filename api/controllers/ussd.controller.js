@@ -17,8 +17,7 @@ const packageList = [
   { name: "Premium + DSTV", bandwidth: "100MBPS", price: 6 },
 ];
 
-const ussdAccountNotFoundMessage = (customerNo) =>
-  `We could not find an account for ${customerNo}. Please check your customer number and try again, or call 0713 400 200 for help.`;
+const USSD_ACCOUNT_NOT_FOUND = "Account not found. Kindly contact support";
 
 /** Zoho returns a plain object on success, or an error string — never spread strings onto `{}`. */
 function normalizeZohoCustomerResult(result) {
@@ -28,24 +27,27 @@ function normalizeZohoCustomerResult(result) {
   return result;
 }
 
-/** True when merged Zoho + TISP data is enough to show account / billing in USSD. */
-function hasUsableAccountDetails(d) {
-  if (!d || typeof d !== "object" || Array.isArray(d)) return false;
-  if (
-    d.customer_name ||
-    d.contact_name ||
-    d.company_name ||
-    d.contact_id != null
-  )
+function hasZohoCustomerData(zoho) {
+  if (!zoho || typeof zoho !== "object" || Array.isArray(zoho)) return false;
+  return !!(
+    (zoho.contact_id != null && String(zoho.contact_id).trim() !== "") ||
+    (zoho.customer_name && String(zoho.customer_name).trim() !== "") ||
+    (zoho.contact_name && String(zoho.contact_name).trim() !== "") ||
+    (zoho.company_name && String(zoho.company_name).trim() !== "") ||
+    (zoho.email && String(zoho.email).trim() !== "") ||
+    (zoho.mobile && String(zoho.mobile).trim() !== "") ||
+    (zoho.phone && String(zoho.phone).trim() !== "")
+  );
+}
+
+function hasTispCustomerData(tisp) {
+  if (!tisp || typeof tisp !== "object" || Array.isArray(tisp)) return false;
+  return Object.values(tisp).some((v) => {
+    if (v == null) return false;
+    if (typeof v === "string") return v.trim() !== "";
+    if (typeof v === "object") return Object.keys(v).length > 0;
     return true;
-  if (
-    d.package != null ||
-    d.dueDate != null ||
-    (d.amount != null && d.amount !== "") ||
-    d.status != null
-  )
-    return true;
-  return false;
+  });
 }
 
 const getAccountDetails = async (client) => {
@@ -63,11 +65,11 @@ const getAccountDetails = async (client) => {
       tisp = null;
     }
 
-    const merged = { ...(zoho || {}), ...(tisp || {}) };
+    if (!hasZohoCustomerData(zoho) || !hasTispCustomerData(tisp)) {
+      return null;
+    }
 
-    if (!hasUsableAccountDetails(merged)) return null;
-
-    return merged;
+    return { ...zoho, ...tisp };
   } catch {
     return null;
   }
@@ -159,7 +161,7 @@ const initiateUSSD = async (req, res) => {
 
       const details = await getAccountDetails(accountNumber);
       if (!details)
-        return end(res, ussdAccountNotFoundMessage(accountNumber));
+        return end(res, USSD_ACCOUNT_NOT_FOUND);
 
       response = `CON ${details.customer_name} Apt No. ${details.company_name}
                 Package: ${details.package} - Ksh ${details.amount}
@@ -177,7 +179,7 @@ const initiateUSSD = async (req, res) => {
       const action = parts[2].trim();
       const details = await getAccountDetails(accountNumber);
       if (!details)
-        return end(res, ussdAccountNotFoundMessage(accountNumber));
+        return end(res, USSD_ACCOUNT_NOT_FOUND);
 
       if (action === "1") {
         // === RENEW ===
@@ -260,7 +262,7 @@ const initiateUSSD = async (req, res) => {
       const target = packageList[idx];
       const details = await getAccountDetails(accountNumber);
       if (!details)
-        return end(res, ussdAccountNotFoundMessage(accountNumber));
+        return end(res, USSD_ACCOUNT_NOT_FOUND);
 
       if (!target) return end(res, "Invalid package selection.");
 
