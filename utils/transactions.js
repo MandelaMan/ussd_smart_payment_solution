@@ -4,8 +4,6 @@ const path = require("path");
 
 const LOG_DIR = path.resolve(__dirname, "../logs");
 const LOG_FILE = path.join(LOG_DIR, "transactions.json");
-/** @deprecated removed — migrate data back if present */
-const DEPRECATED_TRANSACTION_JSON = path.join(LOG_DIR, "transaction.json");
 
 // ---- tiny in-process write queue to avoid concurrent clobbering ----
 let _queue = Promise.resolve();
@@ -26,12 +24,7 @@ async function ensureLogFile() {
   try {
     await fs.promises.access(LOG_FILE);
   } catch {
-    try {
-      await fs.promises.access(DEPRECATED_TRANSACTION_JSON);
-      await fs.promises.copyFile(DEPRECATED_TRANSACTION_JSON, LOG_FILE);
-    } catch {
-      await fs.promises.writeFile(LOG_FILE, "[]", "utf8");
-    }
+    await fs.promises.writeFile(LOG_FILE, "[]", "utf8");
   }
 }
 

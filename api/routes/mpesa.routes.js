@@ -6,6 +6,11 @@ const {
   mpesaConfirmation,
   registerC2BUrls,
   simulateC2B,
+  getTransactionSplitConfig,
+  updateTransactionSplitConfig,
+  getTransactionSplitLog,
+  b2cResult,
+  b2cTimeout,
 } = require("../controllers/mpesa.controller");
 
 const router = express.Router();
@@ -30,5 +35,10 @@ router.post("/confirmation", mpesaConfirmation);
 
 router.post("/register", registerC2BUrls);
 router.post("/simulate", simulateC2B);
+router.get("/split/config", getTransactionSplitConfig);
+router.put("/split/config", updateTransactionSplitConfig);
+router.get("/split/logs", getTransactionSplitLog);
+router.post("/b2c/result", b2cResult);
+router.post("/b2c/timeout", b2cTimeout);
 
 module.exports = router;

@@ -15,8 +15,11 @@ const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
 const {
   getCustomerByCompanyName_JS,
   createInvoice_JS,
+  getItems_JS,
+  getInvoices_JS,
+  markInvoiceAsPaid_JS,
 } = require("./zoho.controller"); // or "../zoho/zoho.controller" etc.
-const { postSetISPPayment } = require("./tisp.controller");
+const { postSetISPPayment, getTISPCustomer } = require("./tisp.controller");
 
 /* ================================================================== */
 /*                         ENV & CONSTANTS                            */
@@ -50,6 +53,23 @@ const MPESA_VALIDATION_URL = process.env.MPESA_VALIDATION_URL;
 const ISP_PAYMENT_URL =
   process.env.ISP_PAYMENT_URL ||
   "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
+const B2C_ENDPOINT =
+  process.env.MPESA_B2C_ENDPOINT ||
+  "https://sandbox.safaricom.co.ke/mpesa/b2c/v1/paymentrequest";
+const B2C_COMMAND_ID = process.env.MPESA_B2C_COMMAND_ID || "BusinessPayment";
+const B2C_PARTY_A = process.env.MPESA_B2C_PARTY_A || MPESA_SHORTCODE;
+const B2C_TIMEOUT_URL =
+  process.env.MPESA_B2C_TIMEOUT_URL ||
+  "https://app.sulsolutions.biz/api/payment/b2c/timeout";
+const B2C_RESULT_URL =
+  process.env.MPESA_B2C_RESULT_URL ||
+  "https://app.sulsolutions.biz/api/payment/b2c/result";
+const B2C_REMARKS = process.env.MPESA_B2C_REMARKS || "Revenue share payout";
+const B2C_OCCASION = process.env.MPESA_B2C_OCCASION || "Transaction split";
+const B2C_ORIGINATOR_CONVERSATION_ID =
+  process.env.MPESA_B2C_ORIGINATOR_CONVERSATION_ID || "";
+const B2C_INITIATOR_NAME = process.env.MPESA_B2C_INITIATOR_NAME || "";
+const B2C_SECURITY_CREDENTIAL = process.env.MPESA_B2C_SECURITY_CREDENTIAL || "";
 
 /** Optional Zoho template id to use when creating invoices */
 const ZOHO_INVOICE_TEMPLATE_ID = process.env.ZOHO_INVOICE_TEMPLATE_ID || null;
@@ -59,6 +79,8 @@ const ZOHO_INVOICE_TEMPLATE_ID = process.env.ZOHO_INVOICE_TEMPLATE_ID || null;
 /* ================================================================== */
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
 const SUBS_FILE = path.join(LOGS_DIR, "updatedSubscriptions.json");
+const SPLIT_CONFIG_FILE = path.join(LOGS_DIR, "transactionSplitConfig.json");
+const SPLIT_LOG_FILE = path.join(LOGS_DIR, "transactionSplits.json");
 
 // tiny in-process write queue for updatedSubscriptions.json
 let _subsQueue = Promise.resolve();
@@ -69,12 +91,39 @@ function queueSubsWrite(task) {
   return _subsQueue;
 }
 
+let _splitQueue = Promise.resolve();
+function queueSplitWrite(task) {
+  _splitQueue = _splitQueue
+    .then(task)
+    .catch((e) => console.error("transactionSplit write err:", e));
+  return _splitQueue;
+}
+
 async function ensureSubsFile() {
   await fs.mkdir(LOGS_DIR, { recursive: true });
   try {
     await fs.access(SUBS_FILE);
   } catch {
     await fs.writeFile(SUBS_FILE, "[]", "utf8");
+  }
+}
+
+async function ensureSplitConfigFile() {
+  await fs.mkdir(LOGS_DIR, { recursive: true });
+  try {
+    await fs.access(SPLIT_CONFIG_FILE);
+  } catch {
+    const defaults = { enabled: false, recipients: [] };
+    await fs.writeFile(SPLIT_CONFIG_FILE, JSON.stringify(defaults, null, 2), "utf8");
+  }
+}
+
+async function ensureSplitLogFile() {
+  await fs.mkdir(LOGS_DIR, { recursive: true });
+  try {
+    await fs.access(SPLIT_LOG_FILE);
+  } catch {
+    await fs.writeFile(SPLIT_LOG_FILE, "[]", "utf8");
   }
 }
 
@@ -87,6 +136,73 @@ async function readSubs() {
   } catch {
     return [];
   }
+}
+
+async function readSplitConfig() {
+  await ensureSplitConfigFile();
+  try {
+    const raw = await fs.readFile(SPLIT_CONFIG_FILE, "utf8");
+    const parsed = JSON.parse(raw || "{}");
+    const recipients = Array.isArray(parsed.recipients) ? parsed.recipients : [];
+    return { enabled: Boolean(parsed.enabled), recipients };
+  } catch {
+    return { enabled: false, recipients: [] };
+  }
+}
+
+async function writeSplitConfig(config) {
+  await ensureSplitConfigFile();
+  await queueSplitWrite(async () => {
+    const tmp = SPLIT_CONFIG_FILE + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(config, null, 2), "utf8");
+    await fs.rename(tmp, SPLIT_CONFIG_FILE);
+  });
+}
+
+async function readSplitLog() {
+  await ensureSplitLogFile();
+  try {
+    const raw = await fs.readFile(SPLIT_LOG_FILE, "utf8");
+    const arr = JSON.parse(raw || "[]");
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+async function appendSplitLog(entry) {
+  await ensureSplitLogFile();
+  await queueSplitWrite(async () => {
+    const all = await readSplitLog();
+    all.push({ loggedAt: new Date().toISOString(), ...entry });
+    const tmp = SPLIT_LOG_FILE + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(all, null, 2), "utf8");
+    await fs.rename(tmp, SPLIT_LOG_FILE);
+  });
+}
+
+function normalizeSplitRecipients(recipients) {
+  if (!Array.isArray(recipients)) return [];
+  return recipients
+    .map((r) => ({
+      name: String(r?.name || "").trim(),
+      phone: String(r?.phone || "").trim(),
+      percentage: Number(r?.percentage || 0),
+    }))
+    .filter((r) => r.phone && Number.isFinite(r.percentage) && r.percentage > 0);
+}
+
+function validateSplitConfigInput(input) {
+  const enabled = Boolean(input?.enabled);
+  const recipients = normalizeSplitRecipients(input?.recipients);
+  if (enabled && recipients.length === 0) {
+    return { ok: false, error: "At least one recipient is required when split is enabled." };
+  }
+  const total = recipients.reduce((s, r) => s + r.percentage, 0);
+  if (total > 100) {
+    return { ok: false, error: "Total percentage cannot exceed 100." };
+  }
+  return { ok: true, value: { enabled, recipients, totalPercentage: total } };
 }
 
 async function writeSubs(all) {
@@ -292,9 +408,202 @@ async function postISPPayment(payload) {
   }
 }
 
+function normalizeB2CPhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.startsWith("254") && digits.length === 12) return digits;
+  if (digits.startsWith("0") && digits.length === 10) return `254${digits.slice(1)}`;
+  if (digits.length === 9) return `254${digits}`;
+  return String(phone || "");
+}
+
+function computeSplitAmounts(totalAmount, recipients) {
+  const n = recipients.length;
+  const out = new Array(n).fill(0);
+  if (n === 0) return out;
+  let assigned = 0;
+  for (let i = 0; i < n - 1; i += 1) {
+    const a = Math.floor((totalAmount * recipients[i].percentage) / 100);
+    out[i] = a;
+    assigned += a;
+  }
+  out[n - 1] = Math.max(0, totalAmount - assigned);
+  return out;
+}
+
+async function sendB2CPayout({ phone, amount, remarks }) {
+  const token = await getAccessToken();
+  const payload = {
+    OriginatorConversationID:
+      B2C_ORIGINATOR_CONVERSATION_ID || `SPLIT-${Date.now()}`,
+    InitiatorName: B2C_INITIATOR_NAME,
+    SecurityCredential: B2C_SECURITY_CREDENTIAL,
+    CommandID: B2C_COMMAND_ID,
+    Amount: amount,
+    PartyA: B2C_PARTY_A,
+    PartyB: normalizeB2CPhone(phone),
+    Remarks: remarks || B2C_REMARKS,
+    QueueTimeOutURL: B2C_TIMEOUT_URL,
+    ResultURL: B2C_RESULT_URL,
+    Occasion: B2C_OCCASION,
+  };
+
+  const { data, status } = await axios.post(B2C_ENDPOINT, payload, {
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: 20_000,
+    validateStatus: () => true,
+  });
+  return { status, data, payload };
+}
+
+async function processTransactionSplit({ source, transactionId, totalAmount }) {
+  const key = `${source}:${String(transactionId || "")}`;
+  if (!transactionId) return;
+
+  const config = await readSplitConfig();
+  if (!config.enabled || !config.recipients.length) {
+    await appendSplitLog({
+      key,
+      source,
+      transactionId,
+      totalAmount,
+      outcome: "skipped_disabled",
+    });
+    return;
+  }
+
+  const allLogs = await readSplitLog();
+  const already = allLogs.find((x) => x.key === key && x.outcome === "completed");
+  if (already) {
+    await appendSplitLog({
+      key,
+      source,
+      transactionId,
+      totalAmount,
+      outcome: "skipped_duplicate",
+    });
+    return;
+  }
+
+  const amountNum = Math.round(Number(totalAmount || 0));
+  if (!Number.isFinite(amountNum) || amountNum <= 0) {
+    await appendSplitLog({
+      key,
+      source,
+      transactionId,
+      totalAmount,
+      outcome: "invalid_amount",
+    });
+    return;
+  }
+
+  const recipients = normalizeSplitRecipients(config.recipients);
+  const splitAmounts = computeSplitAmounts(amountNum, recipients);
+
+  const results = [];
+  for (let i = 0; i < recipients.length; i += 1) {
+    const r = recipients[i];
+    const share = splitAmounts[i];
+    if (share <= 0) {
+      results.push({ ...r, amount: share, outcome: "skipped_zero" });
+      continue;
+    }
+    try {
+      const res = await sendB2CPayout({
+        phone: r.phone,
+        amount: share,
+        remarks: `${B2C_REMARKS} ${source}:${transactionId}`,
+      });
+      const ok = res.status >= 200 && res.status < 300;
+      results.push({
+        ...r,
+        amount: share,
+        httpStatus: res.status,
+        response: res.data,
+        request: res.payload,
+        outcome: ok ? "success" : "failure",
+      });
+    } catch (e) {
+      results.push({
+        ...r,
+        amount: share,
+        outcome: "failure",
+        error: e.message,
+      });
+    }
+  }
+
+  const allOk = results.every((r) => r.outcome === "success" || r.outcome === "skipped_zero");
+  await appendSplitLog({
+    key,
+    source,
+    transactionId,
+    totalAmount: amountNum,
+    recipients: results,
+    outcome: allOk ? "completed" : "partial_or_failed",
+  });
+}
+
 /* ================================================================== */
 /*                   ZOHO INVOICE INTEGRATION HELPERS                  */
 /* ================================================================== */
+
+function firstOpenInvoice(invoices) {
+  const list = Array.isArray(invoices) ? invoices : [];
+  const openStatuses = new Set(["sent", "overdue", "partially_paid", "unpaid"]);
+  const filtered = list.filter((inv) =>
+    openStatuses.has(String(inv.status || "").toLowerCase())
+  );
+  if (!filtered.length) return null;
+  return filtered.sort((a, b) => {
+    const da = new Date(a.date || a.created_time || 0).getTime();
+    const db = new Date(b.date || b.created_time || 0).getTime();
+    return db - da;
+  })[0];
+}
+
+function normalizeText(s) {
+  return String(s || "").trim().toLowerCase();
+}
+
+function pickItemByPackage(items, packageName) {
+  const q = normalizeText(packageName);
+  if (!q) return null;
+  return (
+    items.find((it) => normalizeText(it.name).includes(q)) ||
+    items.find((it) => normalizeText(it.description).includes(q)) ||
+    items.find((it) => normalizeText(it.sku).includes(q)) ||
+    null
+  );
+}
+
+function pickItemByAmount(items, amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return (
+    items.find((it) => Number(it.rate) === n) ||
+    items.find((it) => Number(it.sales_rate) === n) ||
+    null
+  );
+}
+
+async function resolveItemForPayment(companyName, amount) {
+  const items = await getItems_JS();
+  if (!Array.isArray(items) || !items.length) return null;
+
+  let packageName = "";
+  try {
+    const tisp = await getTISPCustomer(companyName);
+    packageName = String(tisp?.package || "");
+  } catch (_) {
+    packageName = "";
+  }
+
+  return (
+    pickItemByPackage(items, packageName) ||
+    pickItemByAmount(items, amount) ||
+    null
+  );
+}
 
 /**
  * Create a Zoho invoice for a given M-Pesa payment.
@@ -345,40 +654,93 @@ async function createZohoInvoiceForPayment({
       return;
     }
 
-    const description = `M-Pesa Paybill payment for ${companyName} (Tx: ${
+    const existingInvoices = await getInvoices_JS({
+      customer_id,
+      per_page: 200,
+      page: 1,
+    });
+    const openInvoice = firstOpenInvoice(existingInvoices);
+
+    if (openInvoice?.invoice_id) {
+      const openBal = Number(
+        openInvoice.balance ?? openInvoice.total ?? numericAmount
+      );
+      const applyAmount =
+        Number.isFinite(openBal) && openBal > 0
+          ? Math.min(numericAmount, openBal)
+          : numericAmount;
+      const paid = await markInvoiceAsPaid_JS({
+        invoice_id: openInvoice.invoice_id,
+        customer_id,
+        amount: applyAmount,
+      });
+      if (!paid) {
+        console.error(
+          "Zoho invoice: failed to mark existing open invoice paid",
+          openInvoice.invoice_id
+        );
+      } else {
+        console.log(
+          "Zoho invoice: existing open invoice marked paid",
+          openInvoice.invoice_id
+        );
+      }
+      return;
+    }
+
+    const matchedItem = await resolveItemForPayment(companyName, numericAmount);
+    const description = `Payment for ${companyName} (Tx: ${
       transactionId || "N/A"
     }) via ${source}`;
 
-    const items = [
-      {
-        // You can drop item_id and just create an ad-hoc line item
-        name: `Subscription payment - ${companyName}`,
-        rate: numericAmount,
-        quantity: 1,
-        description,
-      },
-    ];
+    const lineItems = matchedItem
+      ? [
+          {
+            item_id: matchedItem.item_id,
+            name: matchedItem.name,
+            rate:
+              Number(matchedItem.rate ?? matchedItem.sales_rate) || numericAmount,
+            quantity: 1,
+            description,
+          },
+        ]
+      : [
+          {
+            name: `Subscription payment - ${companyName}`,
+            rate: numericAmount,
+            quantity: 1,
+            description,
+          },
+        ];
 
-    const payload = {
+    const created = await createInvoice_JS({
       customer_id,
-      items,
+      items: lineItems,
       template_id: ZOHO_INVOICE_TEMPLATE_ID || undefined,
-    };
+    });
 
-    console.log("Zoho invoice: creating invoice with payload:", payload);
-
-    const invoice = await createInvoice_JS(payload);
-
-    if (!invoice) {
+    if (!created?.invoice_id) {
       console.error("Zoho invoice: createInvoice_JS returned null");
       return;
     }
 
+    const paid = await markInvoiceAsPaid_JS({
+      invoice_id: created.invoice_id,
+      customer_id,
+      amount: numericAmount,
+    });
+    if (!paid) {
+      console.error(
+        "Zoho invoice: created invoice but failed to mark paid",
+        created.invoice_id
+      );
+      return;
+    }
     console.log(
-      "Zoho invoice created for company:",
+      "Zoho invoice created and marked paid for company:",
       companyName,
       "invoice_id:",
-      invoice.invoice_id
+      created.invoice_id
     );
   } catch (err) {
     console.error(
@@ -495,6 +857,16 @@ const mpesaConfirmation = async (req, res) => {
       } catch (e) {
         console.error("C2B snapshot upsert failed", e);
       }
+    }
+
+    try {
+      await processTransactionSplit({
+        source: "C2B",
+        transactionId: transactionId ? String(transactionId) : "",
+        totalAmount: amount,
+      });
+    } catch (e) {
+      console.error("transaction split failed (C2B):", e.message);
     }
 
     // 4) Create Zoho invoice for this Paybill transaction
@@ -682,6 +1054,16 @@ const mpesaCallback = async (req, res) => {
         });
       }
 
+      try {
+        await processTransactionSplit({
+          source: "STK",
+          transactionId: String(transaction.MpesaReceiptNumber || ""),
+          totalAmount: transaction.Amount,
+        });
+      } catch (e) {
+        console.error("transaction split failed (STK):", e.message);
+      }
+
       // Create Zoho invoice for this STK payment as well
       try {
         await createZohoInvoiceForPayment({
@@ -761,6 +1143,74 @@ const simulateC2B = async (req, res) => {
   }
 };
 
+const getTransactionSplitConfig = async (_req, res) => {
+  try {
+    const config = await readSplitConfig();
+    const totalPercentage = config.recipients.reduce(
+      (s, r) => s + Number(r.percentage || 0),
+      0
+    );
+    res.json({ ...config, totalPercentage });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+const updateTransactionSplitConfig = async (req, res) => {
+  try {
+    const parsed = validateSplitConfigInput(req.body || {});
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    await writeSplitConfig({
+      enabled: parsed.value.enabled,
+      recipients: parsed.value.recipients,
+    });
+    res.json({
+      ok: true,
+      config: {
+        enabled: parsed.value.enabled,
+        recipients: parsed.value.recipients,
+        totalPercentage: parsed.value.totalPercentage,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+const getTransactionSplitLog = async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(Number(req.query.limit || 50), 500));
+    const all = await readSplitLog();
+    res.json(all.slice(-limit).reverse());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+const b2cResult = async (req, res) => {
+  try {
+    await appendSplitLog({
+      outcome: "b2c_result_callback",
+      payload: req.body || {},
+    });
+  } catch (e) {
+    console.error("b2cResult log failed:", e.message);
+  }
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
+};
+
+const b2cTimeout = async (req, res) => {
+  try {
+    await appendSplitLog({
+      outcome: "b2c_timeout_callback",
+      payload: req.body || {},
+    });
+  } catch (e) {
+    console.error("b2cTimeout log failed:", e.message);
+  }
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
+};
+
 /* ================================================================== */
 /*                         Test endpoint                               */
 /* ================================================================== */
@@ -787,6 +1237,11 @@ module.exports = {
   mpesaValidation,
   mpesaConfirmation, // includes ISP POST + snapshot + Zoho invoice
   mpesaCallback, // includes ISP POST on success + snapshot + Zoho invoice
+  getTransactionSplitConfig,
+  updateTransactionSplitConfig,
+  getTransactionSplitLog,
+  b2cResult,
+  b2cTimeout,
   getAccessToken,
   initiateSTKPush,
   test,

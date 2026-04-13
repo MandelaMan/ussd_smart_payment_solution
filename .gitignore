@@ -6,3 +6,5 @@ logs/errors-*.log
 logs/runtime.log
 logs/deployments.log
 logs/tisp-set-isp-payment.json
+logs/transactionSplitConfig.json
+logs/transactionSplits.json
