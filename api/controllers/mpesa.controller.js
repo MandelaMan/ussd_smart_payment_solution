@@ -10,6 +10,7 @@ const {
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
 const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
+const { appendJsonLine, readJsonLineEntries } = require("../utils/appendJsonLine");
 
 // 👇 ADD: import Zoho helpers (adjust path if needed)
 const {
@@ -79,8 +80,39 @@ const ZOHO_INVOICE_TEMPLATE_ID = process.env.ZOHO_INVOICE_TEMPLATE_ID || null;
 /* ================================================================== */
 const LOGS_DIR = path.resolve(__dirname, "../../logs");
 const SUBS_FILE = path.join(LOGS_DIR, "updatedSubscriptions.json");
+const SUBS_TRAIL_FILE = path.join(LOGS_DIR, "updatedSubscriptions-trail.jsonl");
 const SPLIT_CONFIG_FILE = path.join(LOGS_DIR, "transactionSplitConfig.json");
-const SPLIT_LOG_FILE = path.join(LOGS_DIR, "transactionSplits.json");
+const SPLIT_LOG_FILE = path.join(LOGS_DIR, "transactionSplits.jsonl");
+const SPLIT_LOG_LEGACY = path.join(LOGS_DIR, "transactionSplits.json");
+
+let _splitLegacyMigrated = false;
+let _splitMigratePromise = null;
+async function migrateSplitLogLegacyOnce() {
+  if (_splitLegacyMigrated) return;
+  if (!_splitMigratePromise) {
+    _splitMigratePromise = (async () => {
+      try {
+        const st = await fs.stat(SPLIT_LOG_FILE).catch(() => null);
+        if (st && st.size > 0) return;
+        const raw = await fs.readFile(SPLIT_LOG_LEGACY, "utf8");
+        const arr = JSON.parse(raw || "[]");
+        if (!Array.isArray(arr) || !arr.length) return;
+        await fs.mkdir(LOGS_DIR, { recursive: true });
+        let blob = "";
+        for (const row of arr) {
+          blob += JSON.stringify(row) + "\n";
+        }
+        await fs.appendFile(SPLIT_LOG_FILE, blob, "utf8");
+        await fs.rename(SPLIT_LOG_LEGACY, SPLIT_LOG_LEGACY + ".bak").catch(() => {});
+      } catch {
+        /* no legacy */
+      } finally {
+        _splitLegacyMigrated = true;
+      }
+    })();
+  }
+  await _splitMigratePromise;
+}
 
 // tiny in-process write queue for updatedSubscriptions.json
 let _subsQueue = Promise.resolve();
@@ -123,7 +155,7 @@ async function ensureSplitLogFile() {
   try {
     await fs.access(SPLIT_LOG_FILE);
   } catch {
-    await fs.writeFile(SPLIT_LOG_FILE, "[]", "utf8");
+    await fs.writeFile(SPLIT_LOG_FILE, "", "utf8");
   }
 }
 
@@ -160,24 +192,19 @@ async function writeSplitConfig(config) {
 }
 
 async function readSplitLog() {
+  await migrateSplitLogLegacyOnce();
   await ensureSplitLogFile();
-  try {
-    const raw = await fs.readFile(SPLIT_LOG_FILE, "utf8");
-    const arr = JSON.parse(raw || "[]");
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
+  return readJsonLineEntries(SPLIT_LOG_FILE);
 }
 
 async function appendSplitLog(entry) {
+  await migrateSplitLogLegacyOnce();
   await ensureSplitLogFile();
   await queueSplitWrite(async () => {
-    const all = await readSplitLog();
-    all.push({ loggedAt: new Date().toISOString(), ...entry });
-    const tmp = SPLIT_LOG_FILE + ".tmp";
-    await fs.writeFile(tmp, JSON.stringify(all, null, 2), "utf8");
-    await fs.rename(tmp, SPLIT_LOG_FILE);
+    await appendJsonLine(SPLIT_LOG_FILE, {
+      loggedAt: new Date().toISOString(),
+      ...entry,
+    });
   });
 }
 
@@ -262,6 +289,10 @@ async function upsertUpdatedSubscriptionFull({
     } else {
       all.push(base);
     }
+    await appendJsonLine(SUBS_TRAIL_FILE, {
+      loggedAt: new Date().toISOString(),
+      record: base,
+    });
     await writeSubs(all);
   });
 }

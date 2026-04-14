@@ -1,9 +1,11 @@
 // utils/transactions.js
 const fs = require("fs");
 const path = require("path");
+const { appendJsonLine } = require("../api/utils/appendJsonLine");
 
 const LOG_DIR = path.resolve(__dirname, "../logs");
 const LOG_FILE = path.join(LOG_DIR, "transactions.json");
+const TRAIL_FILE = path.join(LOG_DIR, "transactions-trail.jsonl");
 
 // ---- tiny in-process write queue to avoid concurrent clobbering ----
 let _queue = Promise.resolve();
@@ -49,6 +51,11 @@ async function writeTransactions(all) {
 async function appendTransaction(txn) {
   await ensureLogFile();
   return withLock(async () => {
+    await appendJsonLine(TRAIL_FILE, {
+      event: "append",
+      loggedAt: new Date().toISOString(),
+      txn: { ...txn },
+    });
     const all = await readTransactions();
     all.push({ ...txn });
     await safeWriteJSON(LOG_FILE, all);
@@ -58,6 +65,12 @@ async function appendTransaction(txn) {
 async function upsertByCheckoutId(checkoutId, patch) {
   await ensureLogFile();
   return withLock(async () => {
+    await appendJsonLine(TRAIL_FILE, {
+      event: "upsert",
+      loggedAt: new Date().toISOString(),
+      checkoutId,
+      patch: { ...patch },
+    });
     const all = await readTransactions();
     const idx = all.findIndex((t) => t.CheckoutRequestID === checkoutId);
     if (idx >= 0) {
