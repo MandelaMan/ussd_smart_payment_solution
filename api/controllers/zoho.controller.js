@@ -196,7 +196,7 @@ const getInvoices_JS = async (params = {}) => {
   try {
     const page = Number(params.page || 1);
     const per_page = Math.min(Number(params.per_page || 50), 200);
-    const zohoParams = { page, per_page };
+    const zohoParams = { ...params, page, per_page };
 
     const data = await withTimeout(
       callZoho("invoices", "GET", null, zohoParams),

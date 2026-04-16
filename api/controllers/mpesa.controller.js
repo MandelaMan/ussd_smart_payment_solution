@@ -592,6 +592,122 @@ function firstOpenInvoice(invoices) {
   })[0];
 }
 
+function isUnpaidLikeInvoice(inv) {
+  const s = String(inv?.status || "").toLowerCase();
+  return ["sent", "overdue", "partially_paid", "unpaid"].includes(s);
+}
+
+function invoiceOrderRef(inv) {
+  return String(
+    inv?.order_number ||
+      inv?.salesorder_number ||
+      inv?.reference_number ||
+      inv?.invoice_number ||
+      ""
+  )
+    .trim()
+    .toUpperCase();
+}
+
+function amountMatchesInvoiceBalance(inv, amount) {
+  const target = Number(amount);
+  if (!Number.isFinite(target) || target <= 0) return false;
+  const balance = Number(inv?.balance);
+  if (Number.isFinite(balance) && balance > 0) {
+    return Math.abs(balance - target) < 0.01;
+  }
+  const total = Number(inv?.total);
+  return Number.isFinite(total) && Math.abs(total - target) < 0.01;
+}
+
+async function reconcileZohoInvoiceBeforeISP({
+  customerNumber,
+  amount,
+  transactionId,
+  source,
+}) {
+  const customerNo = String(customerNumber || "").trim();
+  const numericAmount = Number(amount);
+  if (!customerNo || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return { paid: false, reason: "invalid_input" };
+  }
+
+  // 1) Search invoice by order number/reference matching customer number
+  let allInvoices = [];
+  try {
+    allInvoices = await getInvoices_JS({ per_page: 200, page: 1 });
+  } catch (_) {
+    allInvoices = [];
+  }
+  const normalizedCustomerNo = customerNo.toUpperCase();
+  const invoiceByOrder = allInvoices.find(
+    (inv) =>
+      isUnpaidLikeInvoice(inv) &&
+      invoiceOrderRef(inv) === normalizedCustomerNo &&
+      inv?.invoice_id &&
+      inv?.customer_id
+  );
+
+  if (invoiceByOrder) {
+    const applyAmount = Number(invoiceByOrder.balance || numericAmount) || numericAmount;
+    const paid = await markInvoiceAsPaid_JS({
+      invoice_id: invoiceByOrder.invoice_id,
+      customer_id: invoiceByOrder.customer_id,
+      amount: Math.min(numericAmount, applyAmount),
+    });
+    if (paid) {
+      console.log("Zoho reconcile: paid invoice by order number", {
+        source,
+        transactionId,
+        customerNumber: customerNo,
+        invoiceId: invoiceByOrder.invoice_id,
+      });
+      return { paid: true, strategy: "order_number", invoice: invoiceByOrder };
+    }
+  }
+
+  // 2) Fallback: find customer by company name == customer number and pay unpaid invoice matching amount
+  const customer = await getCustomerByCompanyName_JS(customerNo);
+  if (!customer || typeof customer === "string" || !customer.contact_id) {
+    return { paid: false, reason: "customer_not_found" };
+  }
+  const customerInvoices = await getInvoices_JS({
+    customer_id: customer.contact_id,
+    per_page: 200,
+    page: 1,
+  });
+  const matchedByAmount = (Array.isArray(customerInvoices) ? customerInvoices : []).find(
+    (inv) => isUnpaidLikeInvoice(inv) && amountMatchesInvoiceBalance(inv, numericAmount)
+  );
+  if (!matchedByAmount?.invoice_id) {
+    return { paid: false, reason: "no_amount_match", customerId: customer.contact_id };
+  }
+  const paid = await markInvoiceAsPaid_JS({
+    invoice_id: matchedByAmount.invoice_id,
+    customer_id: customer.contact_id,
+    amount: numericAmount,
+  });
+  if (!paid) {
+    return {
+      paid: false,
+      reason: "mark_paid_failed",
+      invoiceId: matchedByAmount.invoice_id,
+    };
+  }
+  console.log("Zoho reconcile: paid fallback invoice by customer+amount", {
+    source,
+    transactionId,
+    customerNumber: customerNo,
+    customerId: customer.contact_id,
+    invoiceId: matchedByAmount.invoice_id,
+  });
+  return {
+    paid: true,
+    strategy: "customer_unpaid_amount_match",
+    invoice: matchedByAmount,
+  };
+}
+
 function normalizeText(s) {
   return String(s || "").trim().toLowerCase();
 }
@@ -857,7 +973,19 @@ const mpesaConfirmation = async (req, res) => {
       TransID: transactionId,
     });
 
-    // 3) Forward to ISP (SetISPPayment); updatedSubscriptions only if this succeeds
+    // 3) Reconcile Zoho invoice before forwarding to ISP
+    try {
+      await reconcileZohoInvoiceBeforeISP({
+        customerNumber: accountRef,
+        amount,
+        transactionId,
+        source: "C2B",
+      });
+    } catch (e) {
+      console.error("Zoho reconcile failed (C2B):", e.message);
+    }
+
+    // 4) Forward to ISP (SetISPPayment); updatedSubscriptions only if this succeeds
     let tispOk = false;
     try {
       await postISPPayment(ispPayload);
@@ -900,18 +1028,7 @@ const mpesaConfirmation = async (req, res) => {
       console.error("transaction split failed (C2B):", e.message);
     }
 
-    // 4) Create Zoho invoice for this Paybill transaction
-    try {
-      // Here we treat accountRef as the company_name used in Zoho
-      await createZohoInvoiceForPayment({
-        companyName: accountRef,
-        amount,
-        transactionId,
-        source: "C2B",
-      });
-    } catch (e) {
-      console.error("Zoho invoice creation failed (C2B):", e.message);
-    }
+    // Zoho reconciliation now runs before ISP call by design.
   } catch (err) {
     console.error("C2B processing error", err);
     // already ACKed above
@@ -1044,6 +1161,18 @@ const mpesaCallback = async (req, res) => {
         ? String(existing.AccountReference)
         : process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
+      // Reconcile Zoho invoice before posting to ISP
+      try {
+        await reconcileZohoInvoiceBeforeISP({
+          customerNumber: accountRef,
+          amount: transaction.Amount,
+          transactionId: transaction.MpesaReceiptNumber,
+          source: "STK",
+        });
+      } catch (e) {
+        console.error("Zoho reconcile failed (STK):", e.message);
+      }
+
       // Build and post ISP payload (compact)
       const ispPayload = buildISPPayloadFromSTK(transaction, accountRef);
 
@@ -1095,17 +1224,7 @@ const mpesaCallback = async (req, res) => {
         console.error("transaction split failed (STK):", e.message);
       }
 
-      // Create Zoho invoice for this STK payment as well
-      try {
-        await createZohoInvoiceForPayment({
-          companyName: accountRef, // treat as company_name in Zoho
-          amount: transaction.Amount,
-          transactionId: transaction.MpesaReceiptNumber,
-          source: "STK",
-        });
-      } catch (e) {
-        console.error("Zoho invoice creation failed (STK):", e.message);
-      }
+      // Zoho reconciliation now runs before ISP call by design.
     }
 
     // ACK to Daraja
