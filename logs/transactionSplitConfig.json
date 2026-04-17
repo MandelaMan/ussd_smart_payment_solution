@@ -1,0 +1,6 @@
+{
+    "enabled": true,
+    "recipients": [
+      { "name": "Nelson", "phone": "O701057515", "percentage": 1 }
+    ]
+}
