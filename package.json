@@ -10,7 +10,9 @@
     "dev": "nodemon index.js",
     "lint": "eslint .",
     "db:migrate": "node api/config/migrate.js",
-    "db:status": "node api/config/migrate.js --status"
+    "db:status": "node api/config/migrate.js --status",
+    "xtream:sync": "node jobs/xtreamSyncJob.js",
+    "xtream:test": "node jobs/xtreamSyncJob.js --test-endpoints"
   },
   "dependencies": {
     "axios": "^1.6.8",

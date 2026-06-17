@@ -1,0 +1,28 @@
+{
+  "defaults": {
+    "max_connections": 1,
+    "subscription_days": 30,
+    "bouquet_iptv": [1],
+    "bouquet_dstv": [4]
+  },
+  "customers": [
+    {
+      "customer_number": "AZE-BLOCK-A-12",
+      "apartment": "Block A / Unit 12",
+      "isActive": true,
+      "isDstvCustomer": false
+    },
+    {
+      "customer_number": "AZE-BLOCK-B-5",
+      "apartment": "Block B / Unit 5",
+      "isActive": true,
+      "isDstvCustomer": true
+    },
+    {
+      "customer_number": "AZE-BLOCK-B-8",
+      "apartment": "Block C / Unit 8",
+      "isActive": false,
+      "isDstvCustomer": false
+    }
+  ]
+}
