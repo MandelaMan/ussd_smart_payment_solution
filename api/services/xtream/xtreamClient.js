@@ -21,10 +21,7 @@ function apiUrl(cfg) {
 }
 
 function authParams(cfg) {
-  return {
-    developer_username: cfg.developerUsername,
-    developer_password: cfg.developerPassword,
-  };
+  return buildAuthParams(cfg);
 }
 
 function encodeBouquet(bouquetIds) {
@@ -33,18 +30,41 @@ function encodeBouquet(bouquetIds) {
 }
 
 function parseXtreamBody(data) {
-  if (data == null) return { raw: null };
-  if (typeof data === "object") return data;
+  if (data == null) return { raw: null, parseError: "empty_response" };
+  if (typeof data === "object" && !Array.isArray(data)) return data;
   const text = String(data).trim();
-  if (!text) return { raw: text };
+  if (!text) return { raw: "", parseError: "empty_response" };
   try {
     return JSON.parse(text);
   } catch {
-    return { raw: text };
+    return { raw: text.slice(0, 2000), parseError: "not_json" };
   }
 }
 
+function maskSecrets(query) {
+  const out = { ...query };
+  if (out.developer_password != null) out.developer_password = "***";
+  if (out.password != null) out.password = "***";
+  return out;
+}
+
+function buildAuthParams(cfg) {
+  const username =
+    cfg.developerUsername ||
+    process.env.XTREAM_API_USERNAME ||
+    "";
+  const password =
+    cfg.developerPassword ||
+    process.env.XTREAM_API_PASSWORD ||
+    "";
+  return {
+    developer_username: username,
+    developer_password: password,
+  };
+}
+
 function isSuccessResponse(body) {
+  if (Array.isArray(body) && body.length > 0) return true;
   if (!body || typeof body !== "object") return false;
   const status = String(body.status || "").toLowerCase();
   return status === "success" || status === "true";
@@ -64,25 +84,48 @@ function isUserNotFoundError(body) {
  * @param {Record<string, string|number>} params
  */
 async function xtreamRequest(params, cfg = getXtreamConfig()) {
-  if (!cfg.developerUsername || !cfg.developerPassword) {
+  const auth = buildAuthParams(cfg);
+  if (!auth.developer_username || !auth.developer_password) {
     throw new Error(
       "XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD are required"
     );
   }
-  const query = { ...authParams(cfg), ...params };
+  const query = { ...auth, ...params };
+  const method = String(process.env.XTREAM_HTTP_METHOD || "GET").toUpperCase();
   const started = Date.now();
-  const { data, status } = await axios.get(apiUrl(cfg), {
-    params: query,
+  const url = apiUrl(cfg);
+
+  const axiosCfg = {
     timeout: cfg.timeoutMs,
     validateStatus: () => true,
-  });
-  const body = parseXtreamBody(data);
+    responseType: "text",
+    transformResponse: [(d) => d],
+  };
+
+  const res =
+    method === "POST"
+      ? await axios.post(url, null, { ...axiosCfg, params: query })
+      : await axios.get(url, { ...axiosCfg, params: query });
+
+  const rawText =
+    res.data == null ? "" : String(res.data).trim();
+  const body = parseXtreamBody(rawText);
+  const contentType = String(res.headers?.["content-type"] || "");
+
   return {
-    httpStatus: status,
+    httpStatus: res.status,
     body,
-    ok: status >= 200 && status < 300 && isSuccessResponse(body),
+    rawBody: rawText.slice(0, 2000),
+    contentType,
+    ok:
+      res.status >= 200 &&
+      res.status < 300 &&
+      (isSuccessResponse(body) || (Array.isArray(body) && body.length > 0)),
     durationMs: Date.now() - started,
-    request: query,
+    request: maskSecrets(query),
+    requestUrl: url,
+    httpMethod: method,
+    emptyBody: rawText.length === 0,
   };
 }
 

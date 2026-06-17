@@ -118,7 +118,12 @@ async function recordEndpointResult(name, result, extra = {}) {
     ok: result.ok,
     httpStatus: result.httpStatus,
     durationMs: result.durationMs,
+    contentType: result.contentType,
+    emptyBody: result.emptyBody,
+    rawBody: result.rawBody,
     response: result.body,
+    requestUrl: result.requestUrl,
+    httpMethod: result.httpMethod,
     ...extra,
   };
   console.log(
@@ -195,13 +200,17 @@ async function provisionCustomer(profile, cfg) {
   if (!isActive) {
     const disableRes = await disableUser(username, cfg);
     if (disableRes.ok || isUserNotFoundError(disableRes.body)) {
-      return {
-        customer_number: profile.customer_number,
-        username,
-        action: "disabled",
-        ok: true,
-        response: disableRes.body,
-      };
+    return {
+      customer_number: profile.customer_number,
+      username,
+      action: "disabled",
+      ok: true,
+      response: disableRes.body,
+      httpStatus: disableRes.httpStatus,
+      contentType: disableRes.contentType,
+      emptyBody: disableRes.emptyBody,
+      rawBody: disableRes.rawBody,
+    };
     }
     return {
       customer_number: profile.customer_number,
@@ -210,6 +219,9 @@ async function provisionCustomer(profile, cfg) {
       ok: false,
       response: disableRes.body,
       httpStatus: disableRes.httpStatus,
+      contentType: disableRes.contentType,
+      emptyBody: disableRes.emptyBody,
+      rawBody: disableRes.rawBody,
     };
   }
 
@@ -222,6 +234,10 @@ async function provisionCustomer(profile, cfg) {
       ok: true,
       password: profile.password,
       response: createRes.body,
+      httpStatus: createRes.httpStatus,
+      contentType: createRes.contentType,
+      emptyBody: createRes.emptyBody,
+      rawBody: createRes.rawBody,
     };
   }
 
@@ -243,6 +259,9 @@ async function provisionCustomer(profile, cfg) {
         ok: false,
         response: editRes.body,
         httpStatus: editRes.httpStatus,
+        contentType: editRes.contentType,
+        emptyBody: editRes.emptyBody,
+        rawBody: editRes.rawBody,
       };
     }
     const enableRes = await enableUser(username, cfg);
@@ -265,6 +284,9 @@ async function provisionCustomer(profile, cfg) {
     ok: false,
     response: createRes.body,
     httpStatus: createRes.httpStatus,
+    contentType: createRes.contentType,
+    emptyBody: createRes.emptyBody,
+    rawBody: createRes.rawBody,
   };
 }
 
@@ -314,6 +336,9 @@ async function syncCustomers(cfg) {
       isDstvCustomer: profile.isDstvCustomer,
       bouquet: profile.bouquet,
       exp_date: profile.exp_date,
+      contentType: outcome.contentType,
+      emptyBody: outcome.emptyBody,
+      rawBody: outcome.rawBody,
     });
     console.log(
       `[xtream:sync] ${customer.customer_number} -> ${outcome.username}: ${outcome.action} (${outcome.ok ? "ok" : "fail"})`
