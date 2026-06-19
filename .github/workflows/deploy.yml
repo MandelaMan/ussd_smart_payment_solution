@@ -47,7 +47,7 @@ jobs:
             --filter "protect logs/runtime.log" \
             --filter "protect logs/deployments.log" \
             --filter "protect logs/*.bak" \
-            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_PATH }}:${{ secrets.DEPLOY_PATH }}/"
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
       - name: Install, build, and reload with PM2
         run: |
