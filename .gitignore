@@ -3,6 +3,13 @@ node_modules
 npm-debug.log*
 .DS_Store
 
+# Xtream API doc (local reference only — do not ship)
+xtream_ui_r22_backend_api_document-v2.docx
+*.docx
+.tmp_xtream*
+.tmp_xtream_doc/
+.tmp_xtream_doc_extract/
+
 # Server-only logs (never commit; preserved on deploy)
 logs/errors-*.log
 logs/runtime.log

@@ -14,7 +14,8 @@
     "xtream:sync": "node jobs/xtreamSyncJob.js --sync",
     "xtream:test": "node jobs/xtreamSyncJob.js --test-endpoints",
     "xtream:daily": "node jobs/xtreamDailyScheduler.js",
-    "xtream:daily:once": "node jobs/xtreamDailyScheduler.js --once"
+    "xtream:daily:once": "node jobs/xtreamDailyScheduler.js --once",
+    "test:smoke": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "axios": "^1.6.8",
