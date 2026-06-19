@@ -1,5 +1,17 @@
 const axios = require("axios");
 
+/**
+ * Xtream UI R22 Backend API (api.php)
+ * Spec: query-string GET to http://PANEL:ADMIN_PORT/api.php
+ *
+ * Auth (every call): developer_username, developer_password
+ * Bouquet list: action=bouquet&sub=get → JSON array
+ * Create line: action=user&sub=create + username, password, max_connections, exp_date, bouquet
+ * Renew/edit: action=user&sub=edit + username, exp_date, bouquet
+ * Disable: action=user&sub=disable + username
+ * Enable: action=user&sub=enable + username
+ */
+
 function normalizeBaseUrl(raw) {
   const base = String(raw || "http://100.121.223.62:25500").trim();
   return base.replace(/\/+$/, "").replace(/\/api\.php$/i, "");
@@ -11,17 +23,33 @@ function getBaseUrl() {
 
 function getDeveloperCredentials() {
   const developer_username = String(
-    process.env.XTREAM_DEVELOPER_USERNAME || ""
+    process.env.XTREAM_DEVELOPER_USERNAME ||
+      process.env.XTREAM_ADMIN_USERNAME ||
+      ""
   ).trim();
   const developer_password = String(
-    process.env.XTREAM_DEVELOPER_PASSWORD || ""
+    process.env.XTREAM_DEVELOPER_PASSWORD ||
+      process.env.XTREAM_ADMIN_PASSWORD ||
+      ""
   ).trim();
   if (!developer_username || !developer_password) {
     throw new Error(
-      "XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD are required"
+      "XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD are required " +
+        "(panel Settings → General API gateway credentials; same admin port as CMS, e.g. :25500)"
     );
   }
   return { developer_username, developer_password };
+}
+
+/** Doc: bouquet = URL-encoded JSON array of integer bouquet IDs, e.g. [1,2] */
+function formatBouquetParam(bouquet) {
+  const ids = (Array.isArray(bouquet) ? bouquet : [bouquet])
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (!ids.length) {
+    throw new Error("bouquet must contain at least one valid integer ID");
+  }
+  return JSON.stringify(ids);
 }
 
 function redactParams(params) {
@@ -31,16 +59,21 @@ function redactParams(params) {
   return copy;
 }
 
-/** Full GET URL including query string (passwords redacted). */
-function buildFullEndpoint(url, params) {
-  const redacted = redactParams(params);
-  const u = new URL(url);
-  for (const [key, value] of Object.entries(redacted)) {
-    if (value != null && value !== "") {
-      u.searchParams.set(key, String(value));
-    }
+function buildQueryString(params) {
+  const parts = [];
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null || value === "") continue;
+    parts.push(
+      `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
+    );
   }
-  return u.toString();
+  return parts.join("&");
+}
+
+/** Full GET URL per API spec (passwords redacted for logs). */
+function buildFullEndpoint(baseApiUrl, params) {
+  const qs = buildQueryString(redactParams(params));
+  return qs ? `${baseApiUrl}?${qs}` : baseApiUrl;
 }
 
 function parseResponseData(data) {
@@ -48,7 +81,7 @@ function parseResponseData(data) {
     return {
       status: "error",
       message:
-        "Empty response from panel API (check XTREAM_BASE_URL, firewall IP whitelist, and that API access is enabled in panel settings)",
+        "Empty response from panel API — enable API under Settings → General, verify developer_username/developer_password, and whitelist billing server IP on admin port",
     };
   }
   if (typeof data === "string") {
@@ -57,7 +90,14 @@ function parseResponseData(data) {
       return {
         status: "error",
         message:
-          "Empty response from panel API (check XTREAM_BASE_URL, firewall IP whitelist, and that API access is enabled in panel settings)",
+          "Empty response from panel API — enable API under Settings → General, verify developer_username/developer_password, and whitelist billing server IP on admin port",
+      };
+    }
+    if (trimmed.startsWith("<")) {
+      return {
+        status: "error",
+        message: "HTML response from panel (wrong endpoint or not API JSON)",
+        raw: trimmed.slice(0, 300),
       };
     }
     try {
@@ -86,7 +126,7 @@ function responseErrorMessage(data) {
 
 function isSuccessResponse(data) {
   const parsed = parseResponseData(data);
-  if (Array.isArray(parsed)) return parsed.length >= 0;
+  if (Array.isArray(parsed)) return true;
   if (!parsed || typeof parsed !== "object") return false;
   const status = String(parsed.status || "").toLowerCase();
   if (status === "error") return false;
@@ -96,28 +136,42 @@ function isSuccessResponse(data) {
 function describeApiResult(result) {
   if (result.ok) return "success";
   const err = responseErrorMessage(result.data);
-  if (err) return err;
+  if (err) {
+    const lower = err.toLowerCase();
+    if (lower.includes("access denied")) {
+      return "Access denied — check API enabled (Settings → General) and developer credentials";
+    }
+    if (lower.includes("username already exists")) {
+      return "Username already exists — use a unique line username";
+    }
+    if (lower.includes("user not found")) {
+      return "User not found — verify username exists before edit/disable/enable";
+    }
+    return err;
+  }
   if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
   return "Request failed (see logs/xtream-sync.jsonl for full response)";
 }
 
 /**
- * Xtream UI R22 admin API — GET http://PANEL:PORT/api.php
- * Auth: developer_username + developer_password on every request.
+ * GET http://PANEL:PORT/api.php?... per Xtream UI R22 spec (all params in query string).
  */
 async function xtreamRequest(params) {
   const creds = getDeveloperCredentials();
-  const url = `${getBaseUrl()}/api.php`;
+  const apiUrl = `${getBaseUrl()}/api.php`;
   const query = { ...creds, ...params };
+  const endpoint = buildFullEndpoint(apiUrl, query);
 
-  const { data: rawData, status } = await axios.get(url, {
-    params: query,
+  const { data: rawData, status } = await axios.get(endpoint, {
     timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
     validateStatus: () => true,
+    transformResponse: [(body) => body],
+    headers: {
+      Accept: "application/json, text/plain, */*",
+    },
   });
 
   const data = parseResponseData(rawData);
-  const endpoint = buildFullEndpoint(url, query);
 
   return {
     ok: status >= 200 && status < 300 && isSuccessResponse(data),
@@ -126,7 +180,7 @@ async function xtreamRequest(params) {
     data,
     request: {
       method: "GET",
-      url,
+      url: apiUrl,
       endpoint,
       params: redactParams(query),
     },
@@ -138,7 +192,7 @@ async function getBouquets() {
   return xtreamRequest({ action: "bouquet", sub: "get" });
 }
 
-/** action=user&sub=create */
+/** action=user&sub=create — all keys required by spec */
 async function createSubscriptionLine({
   username,
   password,
@@ -146,46 +200,60 @@ async function createSubscriptionLine({
   exp_date,
   bouquet,
 }) {
+  if (!username || !password) {
+    throw new Error("createSubscriptionLine requires username and password");
+  }
+  const exp = Number(exp_date);
+  if (!Number.isFinite(exp) || exp <= 0) {
+    throw new Error("createSubscriptionLine requires exp_date as Unix epoch seconds");
+  }
   return xtreamRequest({
     action: "user",
     sub: "create",
-    username,
-    password,
-    max_connections,
-    exp_date,
-    bouquet: JSON.stringify(bouquet),
+    username: String(username).trim(),
+    password: String(password),
+    max_connections: Math.max(1, Math.floor(Number(max_connections) || 1)),
+    exp_date: Math.floor(exp),
+    bouquet: formatBouquetParam(bouquet),
   });
 }
 
 /** action=user&sub=edit */
 async function editSubscriptionLine({ username, exp_date, bouquet }) {
+  if (!username) throw new Error("editSubscriptionLine requires username");
+  const exp = Number(exp_date);
+  if (!Number.isFinite(exp) || exp <= 0) {
+    throw new Error("editSubscriptionLine requires exp_date as Unix epoch seconds");
+  }
   const params = {
     action: "user",
     sub: "edit",
-    username,
-    exp_date,
+    username: String(username).trim(),
+    exp_date: Math.floor(exp),
   };
   if (bouquet != null) {
-    params.bouquet = JSON.stringify(bouquet);
+    params.bouquet = formatBouquetParam(bouquet);
   }
   return xtreamRequest(params);
 }
 
 /** action=user&sub=disable */
 async function disableSubscriptionLine(username) {
+  if (!username) throw new Error("disableSubscriptionLine requires username");
   return xtreamRequest({
     action: "user",
     sub: "disable",
-    username,
+    username: String(username).trim(),
   });
 }
 
 /** action=user&sub=enable */
 async function enableSubscriptionLine(username) {
+  if (!username) throw new Error("enableSubscriptionLine requires username");
   return xtreamRequest({
     action: "user",
     sub: "enable",
-    username,
+    username: String(username).trim(),
   });
 }
 
@@ -196,6 +264,8 @@ module.exports = {
   parseResponseData,
   describeApiResult,
   buildFullEndpoint,
+  buildQueryString,
+  formatBouquetParam,
   getBouquets,
   createSubscriptionLine,
   editSubscriptionLine,
