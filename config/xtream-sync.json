@@ -1,0 +1,20 @@
+{
+  "defaultMaxConnections": 1,
+  "activeExpiryDays": 30,
+  "bouquets": {
+    "default": [1],
+    "dstv": [1, 4]
+  },
+  "username": {
+    "normalizeUppercase": true,
+    "includeApartmentSuffix": false
+  },
+  "endpointTest": {
+    "enabled": true,
+    "sampleUsernamePrefix": "xtream_api_test_"
+  },
+  "futureSources": {
+    "zoho": false,
+    "tisp": false
+  }
+}

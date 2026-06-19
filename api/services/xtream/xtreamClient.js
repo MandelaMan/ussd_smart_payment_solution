@@ -1,214 +1,183 @@
-"use strict";
+/* eslint-disable no-console */
 const axios = require("axios");
 
-const DEFAULT_BASE = "http://100.121.223.62:25500";
+const DEFAULT_BASE_URL = "http://100.121.223.62:25500";
 
 function getXtreamConfig() {
-  const baseUrl = String(
-    process.env.XTREAM_BASE_URL || DEFAULT_BASE
-  ).replace(/\/+$/, "");
+  const baseUrl = (process.env.XTREAM_BASE_URL || DEFAULT_BASE_URL).replace(
+    /\/$/,
+    ""
+  );
   return {
     baseUrl,
-    apiPath: process.env.XTREAM_API_PATH || "/api.php",
+    apiUrl: `${baseUrl}/api.php`,
     developerUsername: process.env.XTREAM_DEVELOPER_USERNAME || "",
     developerPassword: process.env.XTREAM_DEVELOPER_PASSWORD || "",
-    timeoutMs: Number(process.env.XTREAM_TIMEOUT_MS || 20000),
+    timeoutMs: Number(process.env.XTREAM_TIMEOUT_MS || 20_000),
   };
-}
-
-function apiUrl(cfg) {
-  return `${cfg.baseUrl}${cfg.apiPath}`;
 }
 
 function authParams(cfg) {
-  return buildAuthParams(cfg);
-}
-
-function encodeBouquet(bouquetIds) {
-  const ids = Array.isArray(bouquetIds) ? bouquetIds : [bouquetIds];
-  return JSON.stringify(ids.map((id) => Number(id)));
-}
-
-function parseXtreamBody(data) {
-  if (data == null) return { raw: null, parseError: "empty_response" };
-  if (typeof data === "object" && !Array.isArray(data)) return data;
-  const text = String(data).trim();
-  if (!text) return { raw: "", parseError: "empty_response" };
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { raw: text.slice(0, 2000), parseError: "not_json" };
-  }
-}
-
-function maskSecrets(query) {
-  const out = { ...query };
-  if (out.developer_password != null) out.developer_password = "***";
-  if (out.password != null) out.password = "***";
-  return out;
-}
-
-function buildAuthParams(cfg) {
-  const username =
-    cfg.developerUsername ||
-    process.env.XTREAM_API_USERNAME ||
-    "";
-  const password =
-    cfg.developerPassword ||
-    process.env.XTREAM_API_PASSWORD ||
-    "";
   return {
-    developer_username: username,
-    developer_password: password,
+    developer_username: cfg.developerUsername,
+    developer_password: cfg.developerPassword,
   };
 }
 
-function isSuccessResponse(body) {
-  if (Array.isArray(body) && body.length > 0) return true;
-  if (!body || typeof body !== "object") return false;
-  const status = String(body.status || "").toLowerCase();
-  return status === "success" || status === "true";
+function normalizeBouquetParam(bouquetIds) {
+  const ids = Array.isArray(bouquetIds) ? bouquetIds : [];
+  return JSON.stringify(ids.map((id) => String(id)));
 }
 
-function isUsernameExistsError(body) {
-  const msg = String(body?.message || body?.raw || "").toLowerCase();
-  return msg.includes("username already exists") || msg.includes("already exist");
-}
-
-function isUserNotFoundError(body) {
-  const msg = String(body?.message || body?.raw || "").toLowerCase();
-  return msg.includes("user not found");
-}
-
-/**
- * @param {Record<string, string|number>} params
- */
-async function xtreamRequest(params, cfg = getXtreamConfig()) {
-  const auth = buildAuthParams(cfg);
-  if (!auth.developer_username || !auth.developer_password) {
-    throw new Error(
+async function xtreamRequest(params, label = "xtream") {
+  const cfg = getXtreamConfig();
+  if (!cfg.developerUsername || !cfg.developerPassword) {
+    const err = new Error(
       "XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD are required"
     );
+    err.code = "XTREAM_CONFIG";
+    throw err;
   }
-  const query = { ...auth, ...params };
-  const method = String(process.env.XTREAM_HTTP_METHOD || "GET").toUpperCase();
-  const started = Date.now();
-  const url = apiUrl(cfg);
 
-  const axiosCfg = {
+  const query = { ...authParams(cfg), ...params };
+  const started = Date.now();
+  const { data, status } = await axios.get(cfg.apiUrl, {
+    params: query,
     timeout: cfg.timeoutMs,
     validateStatus: () => true,
-    responseType: "text",
-    transformResponse: [(d) => d],
-  };
-
-  const res =
-    method === "POST"
-      ? await axios.post(url, null, { ...axiosCfg, params: query })
-      : await axios.get(url, { ...axiosCfg, params: query });
-
-  const rawText =
-    res.data == null ? "" : String(res.data).trim();
-  const body = parseXtreamBody(rawText);
-  const contentType = String(res.headers?.["content-type"] || "");
+  });
 
   return {
-    httpStatus: res.status,
-    body,
-    rawBody: rawText.slice(0, 2000),
-    contentType,
-    ok:
-      res.status >= 200 &&
-      res.status < 300 &&
-      (isSuccessResponse(body) || (Array.isArray(body) && body.length > 0)),
+    label,
+    httpStatus: status,
     durationMs: Date.now() - started,
-    request: maskSecrets(query),
-    requestUrl: url,
-    httpMethod: method,
-    emptyBody: rawText.length === 0,
+    request: { url: cfg.apiUrl, params: { ...query, developer_password: "***" } },
+    data,
+    ok: status >= 200 && status < 300,
   };
 }
 
-async function getBouquets(cfg) {
-  return xtreamRequest({ action: "bouquet", sub: "get" }, cfg);
+function responseIndicatesSuccess(data) {
+  if (Array.isArray(data)) return true;
+  if (data && typeof data === "object") {
+    const status = String(data.status || "").toLowerCase();
+    if (status === "success") return true;
+    if (status === "error") return false;
+  }
+  return true;
 }
 
-async function createUser(
-  { username, password, max_connections, exp_date, bouquet },
-  cfg
-) {
-  return xtreamRequest(
+function responseMessage(data) {
+  if (Array.isArray(data)) return `array(${data.length})`;
+  if (data && typeof data === "object") {
+    return String(data.message || data.status || JSON.stringify(data));
+  }
+  return String(data ?? "");
+}
+
+/** action=bouquet&sub=get */
+async function getBouquets() {
+  const res = await xtreamRequest(
+    { action: "bouquet", sub: "get" },
+    "bouquet.get"
+  );
+  return {
+    ...res,
+    success: res.ok && responseIndicatesSuccess(res.data),
+    message: responseMessage(res.data),
+  };
+}
+
+/** action=user&sub=create */
+async function createUser({
+  username,
+  password,
+  maxConnections = 1,
+  expDate,
+  bouquetIds = [],
+}) {
+  const res = await xtreamRequest(
     {
       action: "user",
       sub: "create",
       username,
       password,
-      max_connections,
-      exp_date,
-      bouquet: encodeBouquet(bouquet),
+      max_connections: maxConnections,
+      exp_date: expDate,
+      bouquet: normalizeBouquetParam(bouquetIds),
     },
-    cfg
+    "user.create"
   );
-}
-
-async function editUser({ username, exp_date, bouquet, max_connections }, cfg) {
-  const params = {
-    action: "user",
-    sub: "edit",
-    username,
+  return {
+    ...res,
+    success: res.ok && responseIndicatesSuccess(res.data),
+    message: responseMessage(res.data),
   };
-  if (exp_date != null) params.exp_date = exp_date;
-  if (max_connections != null) params.max_connections = max_connections;
-  if (bouquet != null) params.bouquet = encodeBouquet(bouquet);
-  return xtreamRequest(params, cfg);
 }
 
-async function disableUser(username, cfg) {
-  return xtreamRequest({ action: "user", sub: "disable", username }, cfg);
+/** action=user&sub=edit */
+async function editUser({ username, expDate, bouquetIds = [] }) {
+  const res = await xtreamRequest(
+    {
+      action: "user",
+      sub: "edit",
+      username,
+      exp_date: expDate,
+      bouquet: normalizeBouquetParam(bouquetIds),
+    },
+    "user.edit"
+  );
+  return {
+    ...res,
+    success: res.ok && responseIndicatesSuccess(res.data),
+    message: responseMessage(res.data),
+  };
 }
 
-async function enableUser(username, cfg) {
-  return xtreamRequest({ action: "user", sub: "enable", username }, cfg);
+/** action=user&sub=disable */
+async function disableUser({ username }) {
+  const res = await xtreamRequest(
+    { action: "user", sub: "disable", username },
+    "user.disable"
+  );
+  return {
+    ...res,
+    success: res.ok && responseIndicatesSuccess(res.data),
+    message: responseMessage(res.data),
+  };
 }
 
-function randomPassword(length = 10) {
-  const chars =
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  let out = "";
-  for (let i = 0; i < length; i += 1) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
+/** action=user&sub=enable */
+async function enableUser({ username }) {
+  const res = await xtreamRequest(
+    { action: "user", sub: "enable", username },
+    "user.enable"
+  );
+  return {
+    ...res,
+    success: res.ok && responseIndicatesSuccess(res.data),
+    message: responseMessage(res.data),
+  };
 }
 
-function sanitizeUsername(customerNumber) {
-  return String(customerNumber || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 48);
+function isUsernameExistsError(result) {
+  const msg = String(result?.message || result?.data?.message || "").toLowerCase();
+  return msg.includes("username already exists");
 }
 
-function futureExpDate(days = 30) {
-  const secs = Math.max(1, Number(days) || 30) * 86400;
-  return Math.floor(Date.now() / 1000) + secs;
+function isUserNotFoundError(result) {
+  const msg = String(result?.message || result?.data?.message || "").toLowerCase();
+  return msg.includes("user not found");
 }
 
 module.exports = {
   getXtreamConfig,
-  xtreamRequest,
   getBouquets,
   createUser,
   editUser,
   disableUser,
   enableUser,
-  randomPassword,
-  sanitizeUsername,
-  futureExpDate,
-  encodeBouquet,
-  isSuccessResponse,
   isUsernameExistsError,
   isUserNotFoundError,
+  normalizeBouquetParam,
 };

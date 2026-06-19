@@ -3,7 +3,8 @@ node_modules
 npm-debug.log*
 .DS_Store
 
-# Local API reference doc (do not commit)
+# Xtream API reference doc (local only — do not commit)
 xtream_ui_r22_backend_api_document-v2.docx
+xtream_ui_r22_backend_api_document*.docx
 .tmp_xtream_doc/
 .tmp_xtream_doc.zip

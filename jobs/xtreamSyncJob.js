@@ -1,391 +1,334 @@
-#!/usr/bin/env node
-"use strict";
+/* eslint-disable no-console */
 /**
- * Xtream UI R22 provisioning job.
+ * Xtream UI R22 customer sync + API endpoint test job.
  *
  * Usage:
- *   node jobs/xtreamSyncJob.js                 # endpoint tests + customer sync (default)
- *   node jobs/xtreamSyncJob.js --test-endpoints  # API endpoint tests only
- *   node jobs/xtreamSyncJob.js --sync            # customer sync only
+ *   node jobs/xtreamSyncJob.js                 # sync customers from config
+ *   node jobs/xtreamSyncJob.js --test-endpoints # exercise all documented endpoints
+ *   node jobs/xtreamSyncJob.js --sync --test-endpoints
  *
- * Customer source: config/xtream-test-customers.json (Zoho/TISP hooks reserved for later).
+ * Customer source (for now): config/xtream-test-customers.json
+ * Future: Zoho Books + TISP (see loadCustomers stub below).
  */
 require("dotenv").config();
 
+const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 const {
-  getXtreamConfig,
   getBouquets,
   createUser,
   editUser,
   disableUser,
   enableUser,
-  randomPassword,
-  sanitizeUsername,
-  futureExpDate,
   isUsernameExistsError,
-  isUserNotFoundError,
+  getXtreamConfig,
 } = require("../api/services/xtream/xtreamClient");
-const { appendJsonLine } = require("../api/utils/appendJsonLine");
+const { logXtreamSyncEvent } = require("../api/utils/xtreamSyncLogger");
 
-const LOG_FILE = path.join(__dirname, "..", "logs", "xtream-sync.jsonl");
-const DEFAULT_CONFIG = path.join(
-  __dirname,
-  "..",
-  "config",
-  "xtream-test-customers.json"
-);
+const ROOT = path.resolve(__dirname, "..");
+const TEST_CUSTOMERS_FILE = path.join(ROOT, "config", "xtream-test-customers.json");
+const SYNC_SETTINGS_FILE = path.join(ROOT, "config", "xtream-sync.json");
 
 const args = new Set(process.argv.slice(2));
-const onlyTest = args.has("--test-endpoints");
-const onlySync = args.has("--sync");
-const runAll = args.has("--all") || (!onlyTest && !onlySync);
-const runEndpointTests = runAll || onlyTest;
-const runCustomerSync = runAll || onlySync;
+const runSync = args.has("--sync") || (!args.has("--test-endpoints") && args.size === 0);
+const runEndpointTests = args.has("--test-endpoints");
 
-async function logEvent(entry) {
-  await appendJsonLine(LOG_FILE, {
-    loggedAt: new Date().toISOString(),
-    ...entry,
-  });
+async function readJson(filePath, fallback) {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
 }
 
-async function loadTestCustomersConfig() {
-  const configPath =
-    process.env.XTREAM_CUSTOMERS_CONFIG ||
-    process.env.XTREAM_TEST_CUSTOMERS_CONFIG ||
-    DEFAULT_CONFIG;
-  const raw = await fs.readFile(configPath, "utf8");
-  const parsed = JSON.parse(raw);
-  const customers = Array.isArray(parsed?.customers) ? parsed.customers : [];
-  const defaults = parsed?.defaults || {};
-  return { configPath, customers, defaults };
+function normalizeCustomerNumber(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, "-");
+}
+
+function buildXtreamUsername(customer, settings) {
+  const base = normalizeCustomerNumber(customer.customer_number);
+  const normalized = settings?.username?.normalizeUppercase
+    ? base.toUpperCase()
+    : base;
+  if (!settings?.username?.includeApartmentSuffix) return normalized;
+  const apt = String(customer.apartment || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "");
+  return apt ? `${normalized}_${apt}` : normalized;
+}
+
+function derivePassword(customerNumber) {
+  const secret =
+    process.env.XTREAM_PASSWORD_SECRET || "xtream-local-dev-secret";
+  return crypto
+    .createHash("sha256")
+    .update(`${normalizeCustomerNumber(customerNumber)}:${secret}`)
+    .digest("hex")
+    .slice(0, 10);
+}
+
+function computeExpDate(activeExpiryDays) {
+  const days = Number(activeExpiryDays) > 0 ? Number(activeExpiryDays) : 30;
+  return Math.floor(Date.now() / 1000) + days * 24 * 60 * 60;
+}
+
+function bouquetForCustomer(customer, settings) {
+  const bouquets = settings?.bouquets || {};
+  if (customer.isDstvCustomer) {
+    return Array.isArray(bouquets.dstv) ? bouquets.dstv : [1];
+  }
+  return Array.isArray(bouquets.default) ? bouquets.default : [1];
 }
 
 /**
- * Future hook: merge Zoho Books + TISP billing customers.
- * For now returns only test config customers.
+ * Placeholder for future Zoho + TISP integration.
+ * Returns [] until enabled in config/xtream-sync.json futureSources.
  */
-async function loadCustomersForSync() {
-  const fromConfig = await loadTestCustomersConfig();
-  return {
-    source: "config",
-    ...fromConfig,
-  };
+async function loadCustomersFromZohoAndTisp(_settings) {
+  return [];
 }
 
-function pickBouquet(customer, defaults, bouquetCatalog) {
-  const configured = customer.isDstvCustomer
-    ? defaults.bouquet_dstv
-    : defaults.bouquet_iptv;
-  if (Array.isArray(configured) && configured.length) return configured;
-  const first = bouquetCatalog?.[0]?.id;
-  return first != null ? [Number(first)] : [1];
-}
-
-function buildXtreamProfile(customer, defaults, bouquetCatalog) {
-  const username = sanitizeUsername(customer.customer_number);
-  const password = customer.password || randomPassword(10);
-  const max_connections = Number(
-    customer.max_connections ?? defaults.max_connections ?? 1
-  );
-  const subscription_days = Number(
-    customer.subscription_days ?? defaults.subscription_days ?? 30
-  );
-  const bouquet = pickBouquet(customer, defaults, bouquetCatalog);
-  const exp_date = customer.isActive
-    ? futureExpDate(subscription_days)
-    : Math.floor(Date.now() / 1000) - 3600;
-
-  return {
-    username,
-    password,
-    max_connections,
-    exp_date,
-    bouquet,
-    apartment: customer.apartment || "",
-    customer_number: customer.customer_number,
-    isActive: Boolean(customer.isActive),
-    isDstvCustomer: Boolean(customer.isDstvCustomer),
-  };
-}
-
-async function recordEndpointResult(name, result, extra = {}) {
-  const row = {
-    type: "endpoint_test",
-    endpoint: name,
-    ok: result.ok,
-    httpStatus: result.httpStatus,
-    durationMs: result.durationMs,
-    contentType: result.contentType,
-    emptyBody: result.emptyBody,
-    rawBody: result.rawBody,
-    response: result.body,
-    requestUrl: result.requestUrl,
-    httpMethod: result.httpMethod,
-    ...extra,
-  };
-  console.log(
-    `[xtream:test] ${name}: ${result.ok ? "OK" : "FAIL"} (${result.httpStatus})`
-  );
-  await logEvent(row);
-  return row;
-}
-
-async function testAllEndpoints(cfg, sampleUsername) {
-  const summary = [];
-  const username =
-    sampleUsername ||
-    process.env.XTREAM_TEST_USERNAME ||
-    "et_sync_probe_user";
-
-  const bouquetsRes = await getBouquets(cfg);
-  summary.push(await recordEndpointResult("bouquet.get", bouquetsRes));
-
-  let bouquetIds = [1];
-  const list = bouquetsRes.body;
-  if (Array.isArray(list) && list[0]?.id != null) {
-    bouquetIds = [Number(list[0].id)];
-  }
-
-  const probePassword = randomPassword(10);
-  const exp = futureExpDate(7);
-
-  const createRes = await createUser(
-    {
-      username,
-      password: probePassword,
-      max_connections: 1,
-      exp_date: exp,
-      bouquet: bouquetIds,
-    },
-    cfg
-  );
-  summary.push(
-    await recordEndpointResult("user.create", createRes, { username })
-  );
-
-  if (!createRes.ok && !isUsernameExistsError(createRes.body)) {
-    return { summary, aborted: true };
-  }
-
-  const editRes = await editUser(
-    {
-      username,
-      exp_date: futureExpDate(14),
-      bouquet: bouquetIds,
-      max_connections: 1,
-    },
-    cfg
-  );
-  summary.push(await recordEndpointResult("user.edit", editRes, { username }));
-
-  const disableRes = await disableUser(username, cfg);
-  summary.push(
-    await recordEndpointResult("user.disable", disableRes, { username })
-  );
-
-  const enableRes = await enableUser(username, cfg);
-  summary.push(
-    await recordEndpointResult("user.enable", enableRes, { username })
-  );
-
-  return { summary, aborted: false };
-}
-
-async function provisionCustomer(profile, cfg) {
-  const { username, isActive } = profile;
-
-  if (!isActive) {
-    const disableRes = await disableUser(username, cfg);
-    if (disableRes.ok || isUserNotFoundError(disableRes.body)) {
-    return {
-      customer_number: profile.customer_number,
-      username,
-      action: "disabled",
-      ok: true,
-      response: disableRes.body,
-      httpStatus: disableRes.httpStatus,
-      contentType: disableRes.contentType,
-      emptyBody: disableRes.emptyBody,
-      rawBody: disableRes.rawBody,
-    };
-    }
-    return {
-      customer_number: profile.customer_number,
-      username,
-      action: "disable_failed",
-      ok: false,
-      response: disableRes.body,
-      httpStatus: disableRes.httpStatus,
-      contentType: disableRes.contentType,
-      emptyBody: disableRes.emptyBody,
-      rawBody: disableRes.rawBody,
-    };
-  }
-
-  const createRes = await createUser(profile, cfg);
-  if (createRes.ok) {
-    return {
-      customer_number: profile.customer_number,
-      username,
-      action: "created",
-      ok: true,
-      password: profile.password,
-      response: createRes.body,
-      httpStatus: createRes.httpStatus,
-      contentType: createRes.contentType,
-      emptyBody: createRes.emptyBody,
-      rawBody: createRes.rawBody,
-    };
-  }
-
-  if (isUsernameExistsError(createRes.body)) {
-    const editRes = await editUser(
-      {
-        username,
-        exp_date: profile.exp_date,
-        bouquet: profile.bouquet,
-        max_connections: profile.max_connections,
-      },
-      cfg
-    );
-    if (!editRes.ok) {
-      return {
-        customer_number: profile.customer_number,
-        username,
-        action: "edit_failed",
-        ok: false,
-        response: editRes.body,
-        httpStatus: editRes.httpStatus,
-        contentType: editRes.contentType,
-        emptyBody: editRes.emptyBody,
-        rawBody: editRes.rawBody,
-      };
-    }
-    const enableRes = await enableUser(username, cfg);
-    return {
-      customer_number: profile.customer_number,
-      username,
-      action: "updated",
-      ok: enableRes.ok || isUserNotFoundError(enableRes.body),
-      response: {
-        edit: editRes.body,
-        enable: enableRes.body,
-      },
-    };
-  }
-
-  return {
-    customer_number: profile.customer_number,
-    username,
-    action: "create_failed",
-    ok: false,
-    response: createRes.body,
-    httpStatus: createRes.httpStatus,
-    contentType: createRes.contentType,
-    emptyBody: createRes.emptyBody,
-    rawBody: createRes.rawBody,
-  };
-}
-
-async function syncCustomers(cfg) {
-  const { configPath, customers, defaults, source } =
-    await loadCustomersForSync();
-  console.log(
-    `[xtream:sync] source=${source} config=${configPath} customers=${customers.length}`
-  );
-
-  const bouquetsRes = await getBouquets(cfg);
-  const bouquetCatalog = Array.isArray(bouquetsRes.body)
-    ? bouquetsRes.body
+async function loadCustomers(settings) {
+  const testConfig = await readJson(TEST_CUSTOMERS_FILE, { customers: [] });
+  const testCustomers = Array.isArray(testConfig.customers)
+    ? testConfig.customers
     : [];
 
-  const results = [];
-  for (const customer of customers) {
-    if (!customer?.customer_number) {
-      results.push({
-        ok: false,
-        action: "skipped",
-        reason: "missing customer_number",
-      });
-      continue;
-    }
+  const fromIntegrations = await loadCustomersFromZohoAndTisp(settings);
+  const merged = [...testCustomers, ...fromIntegrations];
 
-    const profile = buildXtreamProfile(customer, defaults, bouquetCatalog);
-    let outcome;
-    try {
-      outcome = await provisionCustomer(profile, cfg);
-    } catch (err) {
-      outcome = {
-        customer_number: customer.customer_number,
-        username: profile.username,
-        action: "error",
-        ok: false,
-        error: err.message,
-      };
-    }
+  const seen = new Set();
+  return merged.filter((c) => {
+    const key = normalizeCustomerNumber(c.customer_number).toUpperCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
-    results.push(outcome);
-    await logEvent({
-      type: "customer_sync",
-      ...outcome,
-      apartment: profile.apartment,
-      isActive: profile.isActive,
-      isDstvCustomer: profile.isDstvCustomer,
-      bouquet: profile.bouquet,
-      exp_date: profile.exp_date,
-      contentType: outcome.contentType,
-      emptyBody: outcome.emptyBody,
-      rawBody: outcome.rawBody,
+async function recordEvent(event, payload = {}) {
+  await logXtreamSyncEvent({ event, ...payload });
+}
+
+async function provisionCustomer(customer, settings) {
+  const username = buildXtreamUsername(customer, settings);
+  const password = derivePassword(customer.customer_number);
+  const maxConnections = Number(settings.defaultMaxConnections || 1);
+  const bouquetIds = bouquetForCustomer(customer, settings);
+  const expDate = computeExpDate(settings.activeExpiryDays);
+
+  const baseMeta = {
+    customer_number: customer.customer_number,
+    apartment: customer.apartment,
+    isActive: Boolean(customer.isActive),
+    isDstvCustomer: Boolean(customer.isDstvCustomer),
+    username,
+    bouquetIds,
+  };
+
+  if (!customer.isActive) {
+    const disabled = await disableUser({ username });
+    await recordEvent("customer.disable", {
+      ...baseMeta,
+      success: disabled.success,
+      httpStatus: disabled.httpStatus,
+      message: disabled.message,
+      response: disabled.data,
     });
-    console.log(
-      `[xtream:sync] ${customer.customer_number} -> ${outcome.username}: ${outcome.action} (${outcome.ok ? "ok" : "fail"})`
-    );
+    return { username, action: "disable", success: disabled.success, result: disabled };
   }
 
-  const okCount = results.filter((r) => r.ok).length;
-  return { total: results.length, okCount, failCount: results.length - okCount, results };
+  const created = await createUser({
+    username,
+    password,
+    maxConnections,
+    expDate,
+    bouquetIds,
+  });
+
+  if (created.success) {
+    await recordEvent("customer.create", {
+      ...baseMeta,
+      success: true,
+      httpStatus: created.httpStatus,
+      message: created.message,
+      expDate,
+      response: created.data,
+    });
+    return { username, action: "create", success: true, result: created };
+  }
+
+  if (isUsernameExistsError(created)) {
+    const edited = await editUser({ username, expDate, bouquetIds });
+    const enabled = await enableUser({ username });
+    const success = edited.success || enabled.success;
+    await recordEvent("customer.renew", {
+      ...baseMeta,
+      success,
+      httpStatus: edited.httpStatus,
+      message: edited.message,
+      expDate,
+      enableMessage: enabled.message,
+      response: edited.data,
+    });
+    return {
+      username,
+      action: "renew",
+      success,
+      result: { create: created, edit: edited, enable: enabled },
+    };
+  }
+
+  await recordEvent("customer.create_failed", {
+    ...baseMeta,
+    success: false,
+    httpStatus: created.httpStatus,
+    message: created.message,
+    response: created.data,
+  });
+  return { username, action: "create_failed", success: false, result: created };
+}
+
+async function syncCustomers() {
+  const settings = await readJson(SYNC_SETTINGS_FILE, {});
+  const customers = await loadCustomers(settings);
+  const cfg = getXtreamConfig();
+
+  console.log(`[xtream-sync] base URL: ${cfg.baseUrl}`);
+  console.log(`[xtream-sync] customers to process: ${customers.length}`);
+
+  await recordEvent("sync.start", {
+    customerCount: customers.length,
+    source: "test-config",
+    baseUrl: cfg.baseUrl,
+  });
+
+  const summary = { total: customers.length, success: 0, failed: 0, results: [] };
+  for (const customer of customers) {
+    try {
+      const outcome = await provisionCustomer(customer, settings);
+      if (outcome.success) summary.success += 1;
+      else summary.failed += 1;
+      summary.results.push(outcome);
+      console.log(
+        `[xtream-sync] ${customer.customer_number} -> ${outcome.action} (${outcome.success ? "ok" : "fail"})`
+      );
+    } catch (e) {
+      summary.failed += 1;
+      summary.results.push({
+        customer_number: customer.customer_number,
+        action: "error",
+        success: false,
+        error: e.message,
+      });
+      await recordEvent("customer.error", {
+        customer_number: customer.customer_number,
+        error: e.message,
+      });
+      console.error(`[xtream-sync] ${customer.customer_number} error:`, e.message);
+    }
+  }
+
+  await recordEvent("sync.complete", summary);
+  console.log(
+    `[xtream-sync] done: ${summary.success} succeeded, ${summary.failed} failed`
+  );
+  return summary;
+}
+
+async function testAllEndpoints() {
+  const settings = await readJson(SYNC_SETTINGS_FILE, {});
+  const cfg = getXtreamConfig();
+  const prefix = settings?.endpointTest?.sampleUsernamePrefix || "xtream_api_test_";
+  const username = `${prefix}${Date.now().toString(36)}`;
+  const password = derivePassword(username);
+  const bouquetIds = bouquetForCustomer(
+    { isDstvCustomer: false },
+    settings
+  );
+  const expDate = computeExpDate(settings.activeExpiryDays);
+
+  console.log(`[xtream-test] base URL: ${cfg.apiUrl}`);
+  await recordEvent("endpoint_test.start", { baseUrl: cfg.baseUrl });
+
+  const steps = [];
+
+  const bouquetRes = await getBouquets();
+  steps.push({ step: "bouquet.get", success: bouquetRes.success, message: bouquetRes.message });
+  console.log(`[xtream-test] bouquet.get -> ${bouquetRes.success ? "ok" : "fail"}: ${bouquetRes.message}`);
+
+  const createRes = await createUser({
+    username,
+    password,
+    maxConnections: 1,
+    expDate,
+    bouquetIds,
+  });
+  steps.push({ step: "user.create", success: createRes.success, message: createRes.message, username });
+  console.log(`[xtream-test] user.create -> ${createRes.success ? "ok" : "fail"}: ${createRes.message}`);
+
+  const newExp = expDate + 7 * 24 * 60 * 60;
+  const editRes = await editUser({ username, expDate: newExp, bouquetIds });
+  steps.push({ step: "user.edit", success: editRes.success, message: editRes.message, username });
+  console.log(`[xtream-test] user.edit -> ${editRes.success ? "ok" : "fail"}: ${editRes.message}`);
+
+  const disableRes = await disableUser({ username });
+  steps.push({ step: "user.disable", success: disableRes.success, message: disableRes.message, username });
+  console.log(`[xtream-test] user.disable -> ${disableRes.success ? "ok" : "fail"}: ${disableRes.message}`);
+
+  const enableRes = await enableUser({ username });
+  steps.push({ step: "user.enable", success: enableRes.success, message: enableRes.message, username });
+  console.log(`[xtream-test] user.enable -> ${enableRes.success ? "ok" : "fail"}: ${enableRes.message}`);
+
+  const passed = steps.filter((s) => s.success).length;
+  const summary = {
+    totalSteps: steps.length,
+    passed,
+    failed: steps.length - passed,
+    steps,
+  };
+
+  await recordEvent("endpoint_test.complete", summary);
+  console.log(`[xtream-test] complete: ${passed}/${steps.length} passed`);
+  return summary;
 }
 
 async function main() {
-  const cfg = getXtreamConfig();
-  console.log(`[xtream] base URL: ${cfg.baseUrl}${cfg.apiPath}`);
+  if (String(process.env.XTREAM_SYNC_ENABLED || "true").toLowerCase() === "false") {
+    console.log("[xtream] job skipped (XTREAM_SYNC_ENABLED=false)");
+    return;
+  }
 
-  const report = {
-    startedAt: new Date().toISOString(),
-    endpointTests: null,
-    customerSync: null,
-  };
-
+  const results = {};
   if (runEndpointTests) {
-    report.endpointTests = await testAllEndpoints(cfg);
-    const failed = report.endpointTests.summary.filter((s) => !s.ok).length;
-    console.log(
-      `[xtream:test] completed: ${report.endpointTests.summary.length - failed}/${report.endpointTests.summary.length} passed`
-    );
+    results.endpointTests = await testAllEndpoints();
+  }
+  if (runSync) {
+    results.sync = await syncCustomers();
   }
 
-  if (runCustomerSync) {
-    report.customerSync = await syncCustomers(cfg);
-    console.log(
-      `[xtream:sync] completed: ${report.customerSync.okCount}/${report.customerSync.total} succeeded`
-    );
-  }
-
-  report.finishedAt = new Date().toISOString();
-  await logEvent({ type: "job_summary", ...report });
-
-  const hasFailures =
-    (report.endpointTests?.summary || []).some((s) => !s.ok) ||
-    (report.customerSync?.failCount || 0) > 0;
-
-  if (hasFailures) process.exitCode = 1;
+  const failed =
+    (results.endpointTests?.failed || 0) + (results.sync?.failed || 0);
+  if (failed > 0) process.exitCode = 1;
+  return results;
 }
 
-main().catch(async (err) => {
-  console.error("[xtream] job failed:", err.message);
-  await logEvent({ type: "job_error", error: err.message, stack: err.stack });
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(async (err) => {
+    console.error("[xtream] fatal:", err.message);
+    await recordEvent("job.fatal", { error: err.message, code: err.code || null });
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  syncCustomers,
+  testAllEndpoints,
+  loadCustomers,
+  provisionCustomer,
+};

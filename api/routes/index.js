@@ -9,6 +9,7 @@ router.use("/ussd", require("./ussd.routes"));
 router.use("/tisp", require("./tisp.routes"));
 router.use("/payment", require("./mpesa.routes"));
 router.use("/zoho", require("./zoho.routes"));
+router.use("/xtream", require("./xtream.routes"));
 //Add other routes below
 
 module.exports = router;

@@ -1,0 +1,28 @@
+{
+  "defaults": {
+    "max_connections": 1,
+    "plan_days": 30,
+    "bouquet_ids": [1],
+    "dstv_bouquet_ids": [4]
+  },
+  "customers": [
+    {
+      "customer_number": "ET-TEST-001",
+      "apartment": "A-101",
+      "isActive": true,
+      "isDstvCustomer": false
+    },
+    {
+      "customer_number": "ET-TEST-002",
+      "apartment": "B-205",
+      "isActive": true,
+      "isDstvCustomer": true
+    },
+    {
+      "customer_number": "ET-TEST-003",
+      "apartment": "C-12",
+      "isActive": false,
+      "isDstvCustomer": false
+    }
+  ]
+}
