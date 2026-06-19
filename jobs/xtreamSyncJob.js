@@ -34,6 +34,7 @@ function apiLogPayload(res, extra = {}) {
     endpoint: res.endpoint || res.request?.endpoint,
     ok: res.ok,
     httpStatus: res.httpStatus,
+    diagnostics: res.diagnostics,
     response: res.data,
     request: res.request,
   };
@@ -311,9 +312,16 @@ async function testAllEndpoints() {
   let allOk = bouquetRes.ok;
 
   if (!bouquetRes.ok) {
+    const diag = bouquetRes.diagnostics || {};
     console.error(`[xtream] bouquet_get FAILED: ${bouquetDetail}`);
     console.error(
+      `[xtream] HTTP ${bouquetRes.httpStatus}, body length ${diag.responseBodyLength ?? "?"}, content-type ${diag.contentType ?? "?"}`
+    );
+    console.error(
       "[xtream] Fix panel access first (credentials, API enabled, billing server IP whitelisted on port 25500)."
+    );
+    console.error(
+      "[xtream] Note: endpoint in logs shows developer_password=[redacted] by design; live request uses .env password."
     );
   }
 

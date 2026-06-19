@@ -169,7 +169,7 @@ async function xtreamRequest(params) {
   const requestUrl = buildRequestUrl(apiUrl, query);
   const endpoint = buildFullEndpoint(apiUrl, query);
 
-  const { data: rawData, status } = await axios.get(requestUrl, {
+  const response = await axios.get(requestUrl, {
     timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
     validateStatus: () => true,
     transformResponse: [(body) => body],
@@ -177,14 +177,20 @@ async function xtreamRequest(params) {
       Accept: "application/json, text/plain, */*",
     },
   });
-
+  const rawData = response.data;
   const data = parseResponseData(rawData);
+  const rawText = rawData == null ? "" : String(rawData);
 
   return {
-    ok: status >= 200 && status < 300 && isSuccessResponse(data),
-    httpStatus: status,
+    ok: response.status >= 200 && response.status < 300 && isSuccessResponse(data),
+    httpStatus: response.status,
     endpoint,
     data,
+    diagnostics: {
+      responseBodyLength: rawText.length,
+      contentType: response.headers["content-type"] || null,
+      passwordConfigured: Boolean(creds.developer_password),
+    },
     request: {
       method: "GET",
       url: apiUrl,
