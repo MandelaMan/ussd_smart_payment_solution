@@ -6,6 +6,7 @@
 const {
   formatBouquetParam,
   buildQueryString,
+  buildRequestUrl,
   buildFullEndpoint,
   parseResponseData,
 } = require("../api/services/xtream/xtreamClient");
@@ -49,6 +50,16 @@ assert(url.startsWith("http://100.121.223.62:25500/api.php?"), "full endpoint ba
 assert(url.includes("action=user"), "create action=user");
 assert(url.includes("sub=create"), "create sub=create");
 assert(url.includes("bouquet=%5B1%2C2%5D"), "bouquet URL-encoded");
+assert(url.includes("developer_password=%5Bredacted%5D"), "log URL redacts password");
+
+const liveUrl = buildRequestUrl("http://100.121.223.62:25500/api.php", {
+  developer_username: "admin",
+  developer_password: "secret",
+  action: "bouquet",
+  sub: "get",
+});
+assert(liveUrl.includes("developer_password=secret"), "live request URL keeps real password");
+assert(!liveUrl.includes("redacted"), "live request URL never contains redacted");
 
 const bouquetList = parseResponseData('[{"id":"1","bouquet_name":"APARTONET"}]');
 assert(Array.isArray(bouquetList) && bouquetList[0].id === "1", "parse bouquet array");

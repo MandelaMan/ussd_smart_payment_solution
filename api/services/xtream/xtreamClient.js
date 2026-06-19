@@ -70,7 +70,13 @@ function buildQueryString(params) {
   return parts.join("&");
 }
 
-/** Full GET URL per API spec (passwords redacted for logs). */
+/** Live request URL — real credentials (never log this string). */
+function buildRequestUrl(baseApiUrl, params) {
+  const qs = buildQueryString(params);
+  return qs ? `${baseApiUrl}?${qs}` : baseApiUrl;
+}
+
+/** Log-safe URL — passwords replaced with [redacted]. */
 function buildFullEndpoint(baseApiUrl, params) {
   const qs = buildQueryString(redactParams(params));
   return qs ? `${baseApiUrl}?${qs}` : baseApiUrl;
@@ -160,9 +166,10 @@ async function xtreamRequest(params) {
   const creds = getDeveloperCredentials();
   const apiUrl = `${getBaseUrl()}/api.php`;
   const query = { ...creds, ...params };
+  const requestUrl = buildRequestUrl(apiUrl, query);
   const endpoint = buildFullEndpoint(apiUrl, query);
 
-  const { data: rawData, status } = await axios.get(endpoint, {
+  const { data: rawData, status } = await axios.get(requestUrl, {
     timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
     validateStatus: () => true,
     transformResponse: [(body) => body],
@@ -264,6 +271,7 @@ module.exports = {
   parseResponseData,
   describeApiResult,
   buildFullEndpoint,
+  buildRequestUrl,
   buildQueryString,
   formatBouquetParam,
   getBouquets,
