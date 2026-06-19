@@ -11,6 +11,8 @@ const {
   editSubscriptionLine,
   disableSubscriptionLine,
   enableSubscriptionLine,
+  getDeveloperCredentials,
+  describeApiResult,
 } = require("../api/services/xtream/xtreamClient");
 const { logXtreamSyncEvent } = require("../api/utils/xtreamSyncLogger");
 
@@ -23,6 +25,18 @@ const CUSTOMER_MAP_FILE = path.join(ROOT, "logs", "xtream-customer-map.json");
 
 function syncEnabled() {
   return String(process.env.XTREAM_SYNC_ENABLED || "true").toLowerCase() !== "false";
+}
+
+/** Flatten API result into log fields; always includes full `endpoint` URL. */
+function apiLogPayload(res, extra = {}) {
+  return {
+    ...extra,
+    endpoint: res.endpoint || res.request?.endpoint,
+    ok: res.ok,
+    httpStatus: res.httpStatus,
+    response: res.data,
+    request: res.request,
+  };
 }
 
 async function readJsonFile(filePath, fallback) {
@@ -98,15 +112,13 @@ async function syncOneCustomer(customer, syncConfig, map) {
       return { customer_number: customerNumber, action: "skip", success: true };
     }
     const res = await disableSubscriptionLine(mapped.username);
-    await logXtreamSyncEvent({
-      event: "customer.disable",
-      customer_number: customerNumber,
-      username: mapped.username,
-      ok: res.ok,
-      httpStatus: res.httpStatus,
-      response: res.data,
-      request: res.request,
-    });
+    await logXtreamSyncEvent(
+      apiLogPayload(res, {
+        event: "customer.disable",
+        customer_number: customerNumber,
+        username: mapped.username,
+      })
+    );
     if (res.ok) {
       map[customerNumber] = { ...mapped, disabledAt: new Date().toISOString() };
     }
@@ -136,16 +148,14 @@ async function syncOneCustomer(customer, syncConfig, map) {
       exp_date: expDate,
       bouquet,
     });
-    await logXtreamSyncEvent({
-      event: "customer.create",
-      customer_number: customerNumber,
-      apartment_number: customer.apartment_number,
-      username,
-      ok: res.ok,
-      httpStatus: res.httpStatus,
-      response: res.data,
-      request: res.request,
-    });
+    await logXtreamSyncEvent(
+      apiLogPayload(res, {
+        event: "customer.create",
+        customer_number: customerNumber,
+        apartment_number: customer.apartment_number,
+        username,
+      })
+    );
     if (res.ok) {
       map[customerNumber] = {
         username,
@@ -166,15 +176,13 @@ async function syncOneCustomer(customer, syncConfig, map) {
 
   if (mapped.disabledAt) {
     const enableRes = await enableSubscriptionLine(mapped.username);
-    await logXtreamSyncEvent({
-      event: "customer.enable",
-      customer_number: customerNumber,
-      username: mapped.username,
-      ok: enableRes.ok,
-      httpStatus: enableRes.httpStatus,
-      response: enableRes.data,
-      request: enableRes.request,
-    });
+    await logXtreamSyncEvent(
+      apiLogPayload(enableRes, {
+        event: "customer.enable",
+        customer_number: customerNumber,
+        username: mapped.username,
+      })
+    );
     if (!enableRes.ok) {
       return {
         customer_number: customerNumber,
@@ -191,15 +199,13 @@ async function syncOneCustomer(customer, syncConfig, map) {
     exp_date: expDate,
     bouquet,
   });
-  await logXtreamSyncEvent({
-    event: "customer.renew",
-    customer_number: customerNumber,
-    username: mapped.username,
-    ok: res.ok,
-    httpStatus: res.httpStatus,
-    response: res.data,
-    request: res.request,
-  });
+  await logXtreamSyncEvent(
+    apiLogPayload(res, {
+      event: "customer.renew",
+      customer_number: customerNumber,
+      username: mapped.username,
+    })
+  );
   if (res.ok) {
     map[customerNumber] = {
       ...mapped,
@@ -270,22 +276,48 @@ async function runSync() {
 }
 
 async function testAllEndpoints() {
+  try {
+    getDeveloperCredentials();
+  } catch (e) {
+    console.error(
+      "[xtream] Missing credentials. Add to .env:\n" +
+        "  XTREAM_DEVELOPER_USERNAME=your_panel_admin_user\n" +
+        "  XTREAM_DEVELOPER_PASSWORD=your_panel_admin_password\n" +
+        "  XTREAM_BASE_URL=http://PANEL_IP:25500"
+    );
+    throw e;
+  }
+
   const syncConfig = await loadSyncConfig();
   await logXtreamSyncEvent({ event: "endpoint_test.start", baseUrl: getBaseUrl() });
 
   const bouquetRes = await getBouquets();
-  await logXtreamSyncEvent({
-    event: "endpoint_test.bouquet_get",
-    ok: bouquetRes.ok,
-    httpStatus: bouquetRes.httpStatus,
-    response: bouquetRes.data,
-    request: bouquetRes.request,
-  });
+  const bouquetDetail = describeApiResult(bouquetRes);
+  await logXtreamSyncEvent(
+    apiLogPayload(bouquetRes, {
+      event: "endpoint_test.bouquet_get",
+      detail: bouquetDetail,
+    })
+  );
 
-  const tests = [{ name: "bouquet_get", ok: bouquetRes.ok }];
+  const tests = [
+    {
+      name: "bouquet_get",
+      ok: bouquetRes.ok,
+      detail: bouquetDetail,
+      endpoint: bouquetRes.endpoint,
+    },
+  ];
   let allOk = bouquetRes.ok;
 
-  if (syncConfig.endpointTest?.enabled) {
+  if (!bouquetRes.ok) {
+    console.error(`[xtream] bouquet_get FAILED: ${bouquetDetail}`);
+    console.error(
+      "[xtream] Fix panel access first (credentials, API enabled, billing server IP whitelisted on port 25500)."
+    );
+  }
+
+  if (syncConfig.endpointTest?.enabled && bouquetRes.ok) {
     const prefix = syncConfig.endpointTest.sampleUsernamePrefix || "xtream_api_test_";
     const sampleUser = `${prefix}${Date.now().toString(36)}`;
     const samplePass = `T${Math.random().toString(36).slice(2, 10)}`;
@@ -299,16 +331,24 @@ async function testAllEndpoints() {
       exp_date: expDate,
       bouquet,
     });
-    await logXtreamSyncEvent({
-      event: "endpoint_test.user_create",
-      username: sampleUser,
+    const createDetail = describeApiResult(createRes);
+    await logXtreamSyncEvent(
+      apiLogPayload(createRes, {
+        event: "endpoint_test.user_create",
+        username: sampleUser,
+        detail: createDetail,
+      })
+    );
+    tests.push({
+      name: "user_create",
       ok: createRes.ok,
-      httpStatus: createRes.httpStatus,
-      response: createRes.data,
-      request: createRes.request,
+      detail: createDetail,
+      endpoint: createRes.endpoint,
     });
-    tests.push({ name: "user_create", ok: createRes.ok });
     allOk = allOk && createRes.ok;
+    if (!createRes.ok) {
+      console.error(`[xtream] user_create FAILED: ${createDetail}`);
+    }
 
     if (createRes.ok) {
       const editRes = await editSubscriptionLine({
@@ -316,45 +356,61 @@ async function testAllEndpoints() {
         exp_date: expDate + 86400,
         bouquet,
       });
-      await logXtreamSyncEvent({
-        event: "endpoint_test.user_edit",
-        username: sampleUser,
+      await logXtreamSyncEvent(
+        apiLogPayload(editRes, {
+          event: "endpoint_test.user_edit",
+          username: sampleUser,
+        })
+      );
+      tests.push({
+        name: "user_edit",
         ok: editRes.ok,
-        httpStatus: editRes.httpStatus,
-        response: editRes.data,
-        request: editRes.request,
+        endpoint: editRes.endpoint,
       });
-      tests.push({ name: "user_edit", ok: editRes.ok });
       allOk = allOk && editRes.ok;
 
       const disableRes = await disableSubscriptionLine(sampleUser);
-      await logXtreamSyncEvent({
-        event: "endpoint_test.user_disable",
-        username: sampleUser,
+      await logXtreamSyncEvent(
+        apiLogPayload(disableRes, {
+          event: "endpoint_test.user_disable",
+          username: sampleUser,
+        })
+      );
+      tests.push({
+        name: "user_disable",
         ok: disableRes.ok,
-        httpStatus: disableRes.httpStatus,
-        response: disableRes.data,
-        request: disableRes.request,
+        endpoint: disableRes.endpoint,
       });
-      tests.push({ name: "user_disable", ok: disableRes.ok });
       allOk = allOk && disableRes.ok;
 
       const enableRes = await enableSubscriptionLine(sampleUser);
-      await logXtreamSyncEvent({
-        event: "endpoint_test.user_enable",
-        username: sampleUser,
+      await logXtreamSyncEvent(
+        apiLogPayload(enableRes, {
+          event: "endpoint_test.user_enable",
+          username: sampleUser,
+        })
+      );
+      tests.push({
+        name: "user_enable",
         ok: enableRes.ok,
-        httpStatus: enableRes.httpStatus,
-        response: enableRes.data,
-        request: enableRes.request,
+        endpoint: enableRes.endpoint,
       });
-      tests.push({ name: "user_enable", ok: enableRes.ok });
       allOk = allOk && enableRes.ok;
     }
+  } else if (syncConfig.endpointTest?.enabled && !bouquetRes.ok) {
+    tests.push({
+      name: "user_create",
+      ok: false,
+      detail: "skipped — bouquet_get must succeed first",
+    });
+    allOk = false;
   }
 
   await logXtreamSyncEvent({ event: "endpoint_test.complete", ok: allOk, tests });
   console.log("[xtream] endpoint test complete", { ok: allOk, tests });
+  if (!allOk) {
+    console.error("[xtream] See logs/xtream-sync.jsonl for full request/response payloads.");
+  }
   return { ok: allOk, tests };
 }
 

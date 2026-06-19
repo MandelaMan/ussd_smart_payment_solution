@@ -8,5 +8,10 @@
     "ResultCode": null,
     "ResultDesc": "Awaiting customer PIN",
     "Timestamp": "2025-10-24T08:15:30.123Z"
+  },
+  {
+    "Status": "SMOKE_TEST",
+    "CheckoutRequestID": "smoke-1781869962465",
+    "Timestamp": "2026-06-19T11:52:42.465Z"
   }
 ]

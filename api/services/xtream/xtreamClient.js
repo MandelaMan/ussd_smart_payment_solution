@@ -31,11 +31,74 @@ function redactParams(params) {
   return copy;
 }
 
+/** Full GET URL including query string (passwords redacted). */
+function buildFullEndpoint(url, params) {
+  const redacted = redactParams(params);
+  const u = new URL(url);
+  for (const [key, value] of Object.entries(redacted)) {
+    if (value != null && value !== "") {
+      u.searchParams.set(key, String(value));
+    }
+  }
+  return u.toString();
+}
+
+function parseResponseData(data) {
+  if (data == null || data === "") {
+    return {
+      status: "error",
+      message:
+        "Empty response from panel API (check XTREAM_BASE_URL, firewall IP whitelist, and that API access is enabled in panel settings)",
+    };
+  }
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if (!trimmed) {
+      return {
+        status: "error",
+        message:
+          "Empty response from panel API (check XTREAM_BASE_URL, firewall IP whitelist, and that API access is enabled in panel settings)",
+      };
+    }
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return {
+        status: "error",
+        message: "Non-JSON response from panel API",
+        raw: trimmed.slice(0, 300),
+      };
+    }
+  }
+  return data;
+}
+
+function responseErrorMessage(data) {
+  const parsed = parseResponseData(data);
+  if (Array.isArray(parsed)) return null;
+  if (parsed && typeof parsed === "object") {
+    const msg = parsed.message || parsed.error || parsed.msg;
+    if (msg) return String(msg);
+    if (parsed.status === "error") return JSON.stringify(parsed);
+  }
+  return null;
+}
+
 function isSuccessResponse(data) {
-  if (Array.isArray(data)) return true;
-  if (!data || typeof data !== "object") return false;
-  const status = String(data.status || "").toLowerCase();
+  const parsed = parseResponseData(data);
+  if (Array.isArray(parsed)) return parsed.length >= 0;
+  if (!parsed || typeof parsed !== "object") return false;
+  const status = String(parsed.status || "").toLowerCase();
+  if (status === "error") return false;
   return status === "success" || status === "ok";
+}
+
+function describeApiResult(result) {
+  if (result.ok) return "success";
+  const err = responseErrorMessage(result.data);
+  if (err) return err;
+  if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
+  return "Request failed (see logs/xtream-sync.jsonl for full response)";
 }
 
 /**
@@ -47,18 +110,24 @@ async function xtreamRequest(params) {
   const url = `${getBaseUrl()}/api.php`;
   const query = { ...creds, ...params };
 
-  const { data, status } = await axios.get(url, {
+  const { data: rawData, status } = await axios.get(url, {
     params: query,
     timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
     validateStatus: () => true,
   });
 
+  const data = parseResponseData(rawData);
+  const endpoint = buildFullEndpoint(url, query);
+
   return {
     ok: status >= 200 && status < 300 && isSuccessResponse(data),
     httpStatus: status,
+    endpoint,
     data,
     request: {
+      method: "GET",
       url,
+      endpoint,
       params: redactParams(query),
     },
   };
@@ -124,6 +193,9 @@ module.exports = {
   getBaseUrl,
   getDeveloperCredentials,
   xtreamRequest,
+  parseResponseData,
+  describeApiResult,
+  buildFullEndpoint,
   getBouquets,
   createSubscriptionLine,
   editSubscriptionLine,
