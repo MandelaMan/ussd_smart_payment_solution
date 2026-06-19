@@ -3,7 +3,9 @@
   "activeExpiryDays": 30,
   "bouquets": {
     "default": [1],
-    "dstv": [1, 4]
+    "dstv": [2],
+    "apartonet_dstv": [1, 2],
+    "xumo": [3]
   },
   "username": {
     "normalizeUppercase": true,
