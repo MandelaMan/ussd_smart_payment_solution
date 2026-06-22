@@ -17,3 +17,9 @@
 {"loggedAt":"2026-06-19T16:44:34.952Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}
 {"loggedAt":"2026-06-22T07:41:53.854Z","event":"smoke_test","marker":"smoke-1782114113854"}
 {"loggedAt":"2026-06-22T07:41:53.864Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}
+{"loggedAt":"2026-06-22T07:51:17.270Z","event":"smoke_test","marker":"smoke-1782114677270"}
+{"loggedAt":"2026-06-22T07:51:17.279Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}
+{"loggedAt":"2026-06-22T07:56:41.320Z","event":"smoke_test","marker":"smoke-1782115001320"}
+{"loggedAt":"2026-06-22T07:56:41.329Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}
+{"loggedAt":"2026-06-22T08:01:54.551Z","event":"smoke_test","marker":"smoke-1782115314551"}
+{"loggedAt":"2026-06-22T08:01:54.559Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}

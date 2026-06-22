@@ -4,6 +4,7 @@ require("dotenv").config();
 
 const {
   getBaseUrl,
+  getApiUrl,
   getDeveloperCredentials,
   getBouquets,
   createSubscriptionLine,
@@ -16,13 +17,12 @@ async function main() {
 
   console.log("=== Xtream panel probe ===");
   console.log("baseUrl:", base);
+  console.log("apiUrl:", getApiUrl());
   console.log("developer_username:", creds.developer_username);
   console.log(
     "developer_password:",
     creds.developer_password ? `[set, length ${creds.developer_password.length}]` : "[MISSING]"
   );
-  console.log("user API method:", process.env.XTREAM_USER_API_METHOD || "POST");
-  console.log("post style:", process.env.XTREAM_POST_STYLE || "flat");
 
   console.log("\n--- bouquet_get (GET) ---");
   const bouquetRes = await getBouquets();
@@ -36,7 +36,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("\n--- user_create (POST) ---");
+  console.log("\n--- user_create (GET per billing doc) ---");
   const sampleUser = `probe_${Date.now().toString(36)}`;
   const exp = Math.floor(Date.now() / 1000) + 30 * 86400;
   const createRes = await createSubscriptionLine({

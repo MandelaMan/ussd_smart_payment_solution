@@ -1,6 +1,7 @@
 const express = require("express");
 const path = require("path");
 const { spawn } = require("child_process");
+const { getBaseUrl, getApiUrl } = require("../services/xtream/xtreamClient");
 
 const router = express.Router();
 
@@ -30,7 +31,8 @@ function runJobScript(extraArgs = []) {
 router.get("/status", (_req, res) => {
   res.json({
     ok: true,
-    baseUrl: process.env.XTREAM_BASE_URL || "http://100.121.223.62:25500",
+    baseUrl: getBaseUrl(),
+    apiUrl: getApiUrl(),
     syncEnabled: String(process.env.XTREAM_SYNC_ENABLED || "true").toLowerCase() !== "false",
     customerSource: "config/xtream-test-customers.json",
     futureSources: ["zoho", "tisp"],

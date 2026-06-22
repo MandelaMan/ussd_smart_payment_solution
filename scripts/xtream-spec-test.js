@@ -6,9 +6,10 @@
 const {
   formatBouquetParam,
   buildQueryString,
-  buildFormBody,
+  buildDocQuery,
   buildRequestUrl,
   buildFullEndpoint,
+  getApiUrl,
   parseResponseData,
 } = require("../api/services/xtream/xtreamClient");
 
@@ -23,6 +24,11 @@ function assert(cond, msg) {
   }
 }
 
+process.env.XTREAM_BASE_URL = "http://100.121.223.62:25500/";
+assert(getApiUrl() === "http://100.121.223.62:25500/api.php", "panel root + /api.php");
+process.env.XTREAM_BASE_URL = "http://100.121.223.62:25500/api.php";
+assert(getApiUrl() === "http://100.121.223.62:25500/api.php", "strip /api.php from base then re-append");
+
 assert(formatBouquetParam([1, 2]) === "[1,2]", "bouquet JSON array [1,2]");
 assert(formatBouquetParam([1]) === "[1]", "bouquet JSON array [1]");
 
@@ -32,9 +38,18 @@ const qs = buildQueryString({
   developer_username: "admin",
   developer_password: "secret",
 });
-assert(qs.includes("action=bouquet"), "query has action=bouquet");
-assert(qs.includes("sub=get"), "query has sub=get");
+assert(qs.startsWith("action=bouquet&sub=get"), "doc order: action then sub");
 assert(qs.includes("developer_username=admin"), "query has developer_username");
+
+const docQuery = buildDocQuery(
+  "bouquet",
+  "get",
+  {},
+  { developer_username: "admin", developer_password: "secret" }
+);
+assert(docQuery.action === "bouquet" && docQuery.sub === "get", "buildDocQuery action/sub");
+const docUrl = buildRequestUrl("http://100.121.223.62:25500/api.php", docQuery);
+assert(docUrl.includes("action=bouquet&sub=get&developer_username="), "doc URL param order");
 
 const url = buildFullEndpoint("http://100.121.223.62:25500/api.php", {
   action: "user",
@@ -48,17 +63,11 @@ const url = buildFullEndpoint("http://100.121.223.62:25500/api.php", {
   bouquet: "[1,2]",
 });
 assert(url.startsWith("http://100.121.223.62:25500/api.php?"), "full endpoint base");
-assert(url.includes("action=user"), "create action=user");
-assert(url.includes("sub=create"), "create sub=create");
+assert(url.includes("action=user&sub=create"), "create action/sub in doc order");
 assert(url.includes("bouquet=%5B1%2C2%5D"), "bouquet URL-encoded");
 assert(url.includes("developer_password=%5Bredacted%5D"), "log URL redacts password");
 
-const liveUrl = buildRequestUrl("http://100.121.223.62:25500/api.php", {
-  developer_username: "admin",
-  developer_password: "secret",
-  action: "bouquet",
-  sub: "get",
-});
+const liveUrl = buildRequestUrl("http://100.121.223.62:25500/api.php", docQuery);
 assert(liveUrl.includes("developer_password=secret"), "live request URL keeps real password");
 assert(!liveUrl.includes("redacted"), "live request URL never contains redacted");
 
@@ -73,17 +82,6 @@ assert(denied.status === "error", "parse access denied");
 
 const xuiOk = parseResponseData('{"result":true,"created_id":14838,"username":"test"}');
 assert(xuiOk.result === true, "parse XUI result:true");
-
-const flatBody = buildFormBody({
-  username: "u1",
-  password: "p1",
-  bouquet: "[1]",
-});
-assert(flatBody.includes("username=u1"), "flat POST body");
-assert(flatBody.includes("bouquet=%5B1%5D"), "flat POST bouquet encoded");
-
-const nestedBody = buildFormBody({ username: "u1", password: "p1" }, "user_data");
-assert(nestedBody.includes("user_data%5Busername%5D=u1"), "user_data POST body");
 
 console.log(failed ? `\n${failed} failed` : "\nAll spec alignment checks passed");
 process.exit(failed ? 1 : 0);
