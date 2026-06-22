@@ -306,7 +306,7 @@ async function testAllEndpoints() {
   } catch (e) {
     console.error(
       "[xtream] Missing credentials. Add to .env on the panel server:\n" +
-        "  XTREAM_BASE_URL=http://127.0.0.1:25500/\n" +
+        "  XTREAM_BASE_URL=http://100.121.223.62:25500/\n" +
         "  XTREAM_DEVELOPER_USERNAME=admin\n" +
         "  XTREAM_DEVELOPER_PASSWORD=your_password"
     );

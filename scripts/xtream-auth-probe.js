@@ -54,10 +54,12 @@ async function main() {
     process.exit(0);
   }
 
-  console.log("\n❌ Failed. api.php is only reachable on the panel server.");
-  console.log("  • Set XTREAM_BASE_URL=http://127.0.0.1:25500/ in .env on that host");
-  console.log("  • Run this app / yarn xtream:* ON the panel server, not the public droplet");
-  console.log("  • Confirm developer_username / developer_password match panel admin gateway");
+  console.log("\n❌ Failed.");
+  console.log("  • Same droplet + Tailscale: use panel Tailscale IP, not 127.0.0.1");
+  console.log("    XTREAM_BASE_URL=http://100.121.223.62:25500/");
+  console.log("  • Check listener: ss -tlnp | grep 25500");
+  console.log("  • Quote URLs in shell: curl -sS \"http://...\"");
+  console.log("  • Confirm developer_username / developer_password");
   process.exit(1);
 }
 

@@ -2,12 +2,12 @@ const axios = require("axios");
 
 /**
  * Xtream billing API — xtream_ui_r22_backend_api_document.docx
- * Base: http://PANEL:25500/api.php (internal / localhost only — not exposed publicly)
+ * Base: http://PANEL:25500/api.php (Tailscale / private — not public internet)
  * All calls: GET with action, sub, developer_username, developer_password, then payload.
  */
 
 function normalizeBaseUrl(raw) {
-  const base = String(raw || "http://127.0.0.1:25500").trim();
+  const base = String(raw || "http://100.121.223.62:25500").trim();
   return base.replace(/\/+$/, "").replace(/\/api\.php$/i, "");
 }
 
@@ -101,9 +101,8 @@ function parseResponseData(data) {
     return {
       status: "error",
       message:
-        "Empty panel response — api.php is internal-only: set XTREAM_BASE_URL to " +
-        "http://127.0.0.1:25500 when this app runs on the panel server, and verify " +
-        "developer_username/developer_password.",
+        "Empty panel response — use the Tailscale IP Xtream listens on (not 127.0.0.1 if panel " +
+        "binds only to tailscale0). Verify developer_username/developer_password.",
     };
   }
   if (typeof data === "string") {
@@ -112,8 +111,8 @@ function parseResponseData(data) {
       return {
         status: "error",
         message:
-          "Empty panel response — use localhost URL (127.0.0.1:25500) from the panel host; " +
-          "the API is not reachable from external IPs.",
+          "Empty panel response — try XTREAM_BASE_URL=http://100.121.223.62:25500/ " +
+          "(Tailscale on same droplet). 127.0.0.1 fails if panel does not bind localhost.",
       };
     }
     if (trimmed.startsWith("<")) {
@@ -157,8 +156,8 @@ function describeApiResult(result) {
   if (err) return err;
   if (result.diagnostics?.responseBodyLength === 0) {
     return (
-      "Empty panel response — XTREAM_BASE_URL must be reachable locally " +
-      "(e.g. http://127.0.0.1:25500 on the panel server; not a public IP)."
+      "Empty panel response — use Tailscale panel IP in XTREAM_BASE_URL " +
+      "(e.g. http://100.121.223.62:25500/), not 127.0.0.1 unless port 25500 binds localhost."
     );
   }
   if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
