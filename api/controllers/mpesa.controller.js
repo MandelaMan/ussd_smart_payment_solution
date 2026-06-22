@@ -140,6 +140,46 @@ async function ensureSubsFile() {
   }
 }
 
+async function rebuildSubsFromTrail() {
+  const entries = await readJsonLineEntries(SUBS_TRAIL_FILE);
+  const byId = new Map();
+  for (const row of entries) {
+    const rec = row.record || row;
+    const id = rec?.transactionId;
+    if (id) byId.set(String(id), rec);
+  }
+  return Array.from(byId.values());
+}
+
+async function readSubsRaw() {
+  await ensureSubsFile();
+  return fs.readFile(SUBS_FILE, "utf8");
+}
+
+async function readSubs() {
+  let raw = "[]";
+  try {
+    raw = await readSubsRaw();
+  } catch {
+    /* new file */
+  }
+
+  let parsed = null;
+  try {
+    const arr = JSON.parse(raw || "[]");
+    if (Array.isArray(arr)) parsed = arr;
+  } catch {
+    parsed = null;
+  }
+
+  if (parsed && parsed.length > 0) return parsed;
+
+  const fromTrail = await rebuildSubsFromTrail();
+  if (fromTrail.length > 0) return fromTrail;
+
+  return Array.isArray(parsed) ? parsed : [];
+}
+
 async function ensureSplitConfigFile() {
   await fs.mkdir(LOGS_DIR, { recursive: true });
   try {
@@ -156,17 +196,6 @@ async function ensureSplitLogFile() {
     await fs.access(SPLIT_LOG_FILE);
   } catch {
     await fs.writeFile(SPLIT_LOG_FILE, "", "utf8");
-  }
-}
-
-async function readSubs() {
-  await ensureSubsFile();
-  try {
-    const data = await fs.readFile(SUBS_FILE, "utf8");
-    const arr = JSON.parse(data || "[]");
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
   }
 }
 
@@ -234,8 +263,38 @@ function validateSplitConfigInput(input) {
 
 async function writeSubs(all) {
   await ensureSubsFile();
+  if (!Array.isArray(all)) throw new Error("writeSubs: expected array");
+
+  const existingRaw = await readSubsRaw().catch(() => "[]");
+  let existing = [];
+  try {
+    const p = JSON.parse(existingRaw || "[]");
+    if (Array.isArray(p)) existing = p;
+  } catch {
+    existing = await rebuildSubsFromTrail();
+  }
+
+  if (existing.length > 0 && all.length === 0) {
+    console.error(
+      `updatedSubscriptions: refused empty write; preserving ${existing.length} record(s)`
+    );
+    return;
+  }
+
+  const merged = new Map();
+  for (const row of existing) {
+    if (row?.transactionId) merged.set(String(row.transactionId), row);
+  }
+  for (const row of all) {
+    if (row?.transactionId) {
+      const id = String(row.transactionId);
+      merged.set(id, { ...merged.get(id), ...row });
+    }
+  }
+  const mergedArr = Array.from(merged.values());
+
   const tmp = SUBS_FILE + ".tmp";
-  await fs.writeFile(tmp, JSON.stringify(all, null, 2), "utf8");
+  await fs.writeFile(tmp, JSON.stringify(mergedArr, null, 2), "utf8");
   await fs.rename(tmp, SUBS_FILE);
 }
 
