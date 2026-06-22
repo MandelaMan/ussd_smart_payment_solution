@@ -6,6 +6,7 @@
 const {
   formatBouquetParam,
   buildQueryString,
+  buildFormBody,
   buildRequestUrl,
   buildFullEndpoint,
   parseResponseData,
@@ -69,6 +70,20 @@ assert(success.status === "success", "parse create success");
 
 const denied = parseResponseData('{"status":"error","message":"Access denied"}');
 assert(denied.status === "error", "parse access denied");
+
+const xuiOk = parseResponseData('{"result":true,"created_id":14838,"username":"test"}');
+assert(xuiOk.result === true, "parse XUI result:true");
+
+const flatBody = buildFormBody({
+  username: "u1",
+  password: "p1",
+  bouquet: "[1]",
+});
+assert(flatBody.includes("username=u1"), "flat POST body");
+assert(flatBody.includes("bouquet=%5B1%5D"), "flat POST bouquet encoded");
+
+const nestedBody = buildFormBody({ username: "u1", password: "p1" }, "user_data");
+assert(nestedBody.includes("user_data%5Busername%5D=u1"), "user_data POST body");
 
 console.log(failed ? `\n${failed} failed` : "\nAll spec alignment checks passed");
 process.exit(failed ? 1 : 0);

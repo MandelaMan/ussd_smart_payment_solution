@@ -1,26 +1,18 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
-/**
- * Panel connectivity probe — run on the billing server (droplet).
- * Usage: yarn xtream:probe
- */
 require("dotenv").config();
 
 const {
   getBaseUrl,
   getDeveloperCredentials,
   getBouquets,
-  buildRequestUrl,
+  createSubscriptionLine,
+  describeApiResult,
 } = require("../api/services/xtream/xtreamClient");
 
 async function main() {
   const base = getBaseUrl();
   const creds = getDeveloperCredentials();
-  const bouquetUrl = buildRequestUrl(`${base}/api.php`, {
-    ...creds,
-    action: "bouquet",
-    sub: "get",
-  });
 
   console.log("=== Xtream panel probe ===");
   console.log("baseUrl:", base);
@@ -29,28 +21,39 @@ async function main() {
     "developer_password:",
     creds.developer_password ? `[set, length ${creds.developer_password.length}]` : "[MISSING]"
   );
-  console.log("request path:", `${base}/api.php?action=bouquet&sub=get&...`);
-  console.log("password in live URL:", bouquetUrl.includes("[redacted]") ? "BUG redacted in URL" : "ok (real password used)");
+  console.log("user API method:", process.env.XTREAM_USER_API_METHOD || "POST");
+  console.log("post style:", process.env.XTREAM_POST_STYLE || "flat");
 
-  const res = await getBouquets();
-  const diag = res.diagnostics || {};
+  console.log("\n--- bouquet_get (GET) ---");
+  const bouquetRes = await getBouquets();
+  console.log("ok:", bouquetRes.ok, "http:", bouquetRes.httpStatus);
+  console.log("bodyLength:", bouquetRes.diagnostics?.responseBodyLength);
+  console.log("detail:", describeApiResult(bouquetRes));
+  console.log("response:", JSON.stringify(bouquetRes.data).slice(0, 400));
 
-  console.log("\n=== Response ===");
-  console.log("ok:", res.ok);
-  console.log("httpStatus:", res.httpStatus);
-  console.log("bodyLength:", diag.responseBodyLength);
-  console.log("contentType:", diag.contentType);
-  console.log("parsed:", JSON.stringify(res.data).slice(0, 800));
-
-  if (!res.ok && Number(diag.responseBodyLength) === 0) {
-    console.log("\n=== Empty body checklist ===");
-    console.log("1. Settings → General → enable API");
-    console.log("2. XTREAM_DEVELOPER_USERNAME/PASSWORD match panel API gateway creds");
-    console.log("3. Whitelist this droplet public IP on panel port 25500");
-    console.log("4. Compare with curl using the same .env values");
+  if (!bouquetRes.ok) {
+    console.log("\nFix bouquet_get before create can work.");
+    process.exit(1);
   }
 
-  process.exit(res.ok ? 0 : 1);
+  console.log("\n--- user_create (POST) ---");
+  const sampleUser = `probe_${Date.now().toString(36)}`;
+  const exp = Math.floor(Date.now() / 1000) + 30 * 86400;
+  const createRes = await createSubscriptionLine({
+    username: sampleUser,
+    password: `T${Math.random().toString(36).slice(2, 10)}`,
+    max_connections: 1,
+    exp_date: exp,
+    bouquet: [1],
+  });
+  console.log("ok:", createRes.ok, "http:", createRes.httpStatus);
+  console.log("method:", createRes.diagnostics?.method);
+  console.log("bodyLength:", createRes.diagnostics?.responseBodyLength);
+  console.log("detail:", describeApiResult(createRes));
+  console.log("endpoint (log):", createRes.endpoint);
+  console.log("response:", JSON.stringify(createRes.data).slice(0, 400));
+
+  process.exit(createRes.ok ? 0 : 1);
 }
 
 main().catch((e) => {
