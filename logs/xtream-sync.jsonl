@@ -31,3 +31,5 @@
 {"loggedAt":"2026-06-22T09:14:30.482Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}
 {"loggedAt":"2026-06-22T09:26:13.401Z","event":"smoke_test","marker":"smoke-1782120373401"}
 {"loggedAt":"2026-06-22T09:26:13.412Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}
+{"loggedAt":"2026-06-22T10:08:02.518Z","event":"smoke_test","marker":"smoke-1782122882518"}
+{"loggedAt":"2026-06-22T10:08:02.526Z","event":"sync.skipped","reason":"XTREAM_SYNC_ENABLED=false"}

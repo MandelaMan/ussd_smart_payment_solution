@@ -1,69 +1,38 @@
+"use strict";
+
 const axios = require("axios");
 
-/**
- * Xtream billing API — xtream_ui_r22_backend_api_document.docx
- * Base: http://PANEL:25500/api.php (Tailscale / private — not public internet)
- * All calls: GET with action, sub, developer_username, developer_password, then payload.
- */
+const DEFAULT_BASE = "http://100.121.223.62:25500";
 
-function normalizeBaseUrl(raw) {
-  const base = String(raw || "http://100.121.223.62:25500").trim();
-  return base.replace(/\/+$/, "").replace(/\/api\.php$/i, "");
-}
-
-function getBaseUrl() {
-  return normalizeBaseUrl(process.env.XTREAM_BASE_URL);
-}
-
-function getApiUrl() {
-  return `${getBaseUrl()}/api.php`;
-}
-
-function cleanEnvValue(raw) {
-  const s = String(raw || "").trim();
-  if (
-    (s.startsWith('"') && s.endsWith('"')) ||
-    (s.startsWith("'") && s.endsWith("'"))
-  ) {
-    return s.slice(1, -1);
-  }
-  return s;
-}
-
-function readDeveloperPair() {
+function getXtreamConfig() {
+  const baseUrl = String(process.env.XTREAM_BASE_URL || DEFAULT_BASE)
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api\.php$/i, "");
   return {
-    developer_username: cleanEnvValue(
-      process.env.XTREAM_DEVELOPER_USERNAME || process.env.XTREAM_ADMIN_USERNAME
-    ),
-    developer_password: cleanEnvValue(
-      process.env.XTREAM_DEVELOPER_PASSWORD || process.env.XTREAM_ADMIN_PASSWORD
+    baseUrl,
+    apiPath: process.env.XTREAM_API_PATH || "/api.php",
+    developerUsername: String(process.env.XTREAM_DEVELOPER_USERNAME || "").trim(),
+    developerPassword: String(process.env.XTREAM_DEVELOPER_PASSWORD || "").trim(),
+    timeoutMs: Number(
+      process.env.XTREAM_TIMEOUT_MS || process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000
     ),
   };
 }
 
-function getDeveloperCredentials() {
-  const pair = readDeveloperPair();
-  if (!pair.developer_username || !pair.developer_password) {
-    throw new Error(
-      "XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD are required in .env"
-    );
-  }
-  return pair;
+function apiUrl(cfg = getXtreamConfig()) {
+  return `${cfg.baseUrl}${cfg.apiPath}`;
 }
 
-function buildDocQuery(action, sub, payload = {}, credsOverride) {
-  const creds = credsOverride || getDeveloperCredentials();
+function authParams(cfg) {
   return {
-    action,
-    sub,
-    developer_username: creds.developer_username,
-    developer_password: creds.developer_password,
-    ...payload,
+    developer_username: cfg.developerUsername,
+    developer_password: cfg.developerPassword,
   };
 }
 
-function formatBouquetParam(bouquet) {
-  const ids = (Array.isArray(bouquet) ? bouquet : [bouquet])
+function encodeBouquet(bouquetIds) {
+  const ids = (Array.isArray(bouquetIds) ? bouquetIds : [bouquetIds])
     .map((id) => Number(id))
     .filter((id) => Number.isFinite(id) && id > 0);
   if (!ids.length) throw new Error("bouquet must contain at least one valid integer ID");
@@ -77,117 +46,92 @@ function redactParams(params) {
   return copy;
 }
 
-function buildQueryString(params) {
-  const parts = [];
-  for (const [key, value] of Object.entries(params)) {
-    if (value == null || value === "") continue;
-    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+function buildFullEndpoint(cfg, params) {
+  const qs = Object.entries(redactParams(params))
+    .filter(([, v]) => v != null && v !== "")
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join("&");
+  const base = apiUrl(cfg);
+  return qs ? `${base}?${qs}` : base;
+}
+
+function parseXtreamBody(data) {
+  if (data == null || data === "") return { raw: null, status: "error", message: "Empty panel response" };
+  if (typeof data === "object") return data;
+  const text = String(data).trim();
+  if (!text) return { raw: text, status: "error", message: "Empty panel response" };
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
   }
-  return parts.join("&");
 }
 
-function buildRequestUrl(baseApiUrl, params) {
-  const qs = buildQueryString(params);
-  return qs ? `${baseApiUrl}?${qs}` : baseApiUrl;
-}
-
-function buildFullEndpoint(baseApiUrl, params) {
-  const qs = buildQueryString(redactParams(params));
-  return qs ? `${baseApiUrl}?${qs}` : baseApiUrl;
-}
-
-function parseResponseData(data) {
-  if (data == null || data === "") {
-    return {
-      status: "error",
-      message:
-        "Empty panel response — use the Tailscale IP Xtream listens on (not 127.0.0.1 if panel " +
-        "binds only to tailscale0). Verify developer_username/developer_password.",
-    };
-  }
-  if (typeof data === "string") {
-    const trimmed = data.trim();
-    if (!trimmed) {
-      return {
-        status: "error",
-        message:
-          "Empty panel response — try XTREAM_BASE_URL=http://100.121.223.62:25500/ " +
-          "(Tailscale on same droplet). 127.0.0.1 fails if panel does not bind localhost.",
-      };
-    }
-    if (trimmed.startsWith("<")) {
-      return { status: "error", message: "HTML response (not API JSON)", raw: trimmed.slice(0, 300) };
-    }
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      return { status: "error", message: "Non-JSON response", raw: trimmed.slice(0, 300) };
-    }
-  }
-  return data;
-}
-
-function responseErrorMessage(data) {
-  const parsed = parseResponseData(data);
-  if (Array.isArray(parsed)) return null;
-  if (parsed && typeof parsed === "object") {
-    if (parsed.result === false && parsed.error) return String(parsed.error);
-    const msg = parsed.message || parsed.error || parsed.msg;
-    if (msg) return String(msg);
-    if (parsed.status === "error") return JSON.stringify(parsed);
-  }
-  return null;
-}
-
-function isSuccessResponse(data) {
-  const parsed = parseResponseData(data);
-  if (Array.isArray(parsed)) return true;
-  if (!parsed || typeof parsed !== "object") return false;
-  if (parsed.result === true || parsed.result === "true") return true;
-  if (parsed.id != null && parsed.username) return true;
-  const status = String(parsed.status || "").toLowerCase();
+function isSuccessResponse(body) {
+  if (Array.isArray(body)) return true;
+  if (!body || typeof body !== "object") return false;
+  if (body.result === true || body.result === "true") return true;
+  if (body.id != null && body.username) return true;
+  const status = String(body.status || "").toLowerCase();
   if (status === "error") return false;
-  return status === "success" || status === "ok";
+  return status === "success" || status === "ok" || status === "true";
+}
+
+function isUsernameExistsError(body) {
+  const msg = String(body?.message || body?.raw || "").toLowerCase();
+  return msg.includes("username already exists") || msg.includes("already exist");
+}
+
+function isUserNotFoundError(body) {
+  const msg = String(body?.message || body?.raw || "").toLowerCase();
+  return msg.includes("user not found");
+}
+
+function responseErrorMessage(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  if (body.result === false && body.error) return String(body.error);
+  const msg = body.message || body.error || body.msg;
+  if (msg) return String(msg);
+  if (body.status === "error") return JSON.stringify(body);
+  return null;
 }
 
 function describeApiResult(result) {
   if (result.ok) return "success";
-  const err = responseErrorMessage(result.data);
+  const err = responseErrorMessage(result.body || result.data);
   if (err) return err;
   if (result.diagnostics?.responseBodyLength === 0) {
-    return (
-      "Empty panel response — use Tailscale panel IP in XTREAM_BASE_URL " +
-      "(e.g. http://100.121.223.62:25500/), not 127.0.0.1 unless port 25500 binds localhost."
-    );
+    return "Empty panel response — check XTREAM_BASE_URL (Tailscale IP) and developer credentials";
   }
   if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
   return "Request failed (see logs/xtream-sync.jsonl)";
 }
 
-async function xtreamApiRequest(action, sub, payload = {}) {
-  const apiUrl = getApiUrl();
-  const query = buildDocQuery(action, sub, payload);
-  const requestUrl = buildRequestUrl(apiUrl, query);
-  const endpoint = buildFullEndpoint(apiUrl, query);
-
-  const response = await axios({
-    method: "GET",
-    url: requestUrl,
-    timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
+/**
+ * GET api.php — matches original working client: auth params + action params via axios `params`.
+ */
+async function xtreamRequest(params, cfg = getXtreamConfig()) {
+  if (!cfg.developerUsername || !cfg.developerPassword) {
+    throw new Error("XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD are required");
+  }
+  const query = { ...authParams(cfg), ...params };
+  const started = Date.now();
+  const response = await axios.get(apiUrl(cfg), {
+    params: query,
+    timeout: cfg.timeoutMs,
     validateStatus: () => true,
-    transformResponse: [(raw) => raw],
-    headers: { Accept: "application/json, text/plain, */*" },
   });
-
-  const rawData = response.data;
-  const rawText = rawData == null ? "" : String(rawData);
-  const data = parseResponseData(rawData);
+  const rawText = response.data == null ? "" : String(response.data);
+  const body = parseXtreamBody(response.data);
+  const endpoint = buildFullEndpoint(cfg, query);
 
   return {
-    ok: response.status >= 200 && response.status < 300 && isSuccessResponse(data),
     httpStatus: response.status,
+    body,
+    data: body,
+    ok: response.status >= 200 && response.status < 300 && isSuccessResponse(body),
+    durationMs: Date.now() - started,
     endpoint,
-    data,
     diagnostics: {
       responseBodyLength: rawText.length,
       contentType: response.headers["content-type"] || null,
@@ -195,78 +139,130 @@ async function xtreamApiRequest(action, sub, payload = {}) {
     },
     request: {
       method: "GET",
-      url: apiUrl,
+      url: apiUrl(cfg),
       endpoint,
       params: redactParams(query),
     },
   };
 }
 
-async function getBouquets() {
-  return xtreamApiRequest("bouquet", "get");
+async function getBouquets(cfg) {
+  return xtreamRequest({ action: "bouquet", sub: "get" }, cfg);
 }
 
-async function getUserProfile(username) {
-  if (!username) throw new Error("getUserProfile requires username");
-  return xtreamApiRequest("user", "get", { username: String(username).trim() });
+async function createUser({ username, password, max_connections, exp_date, bouquet }, cfg) {
+  return xtreamRequest(
+    {
+      action: "user",
+      sub: "create",
+      username,
+      password,
+      max_connections,
+      exp_date,
+      bouquet: encodeBouquet(bouquet),
+    },
+    cfg
+  );
 }
 
-async function createSubscriptionLine({ username, password, max_connections = 1, exp_date, bouquet }) {
-  if (!username || !password) throw new Error("createSubscriptionLine requires username and password");
-  const exp = Number(exp_date);
-  if (!Number.isFinite(exp) || exp <= 0) {
-    throw new Error("createSubscriptionLine requires exp_date as Unix epoch seconds");
+async function editUser({ username, exp_date, bouquet, max_connections }, cfg) {
+  const params = { action: "user", sub: "edit", username };
+  if (exp_date != null) params.exp_date = exp_date;
+  if (max_connections != null) params.max_connections = max_connections;
+  if (bouquet != null) params.bouquet = encodeBouquet(bouquet);
+  return xtreamRequest(params, cfg);
+}
+
+async function getUserProfile(username, cfg) {
+  return xtreamRequest({ action: "user", sub: "get", username }, cfg);
+}
+
+async function disableUser(username, cfg) {
+  return xtreamRequest({ action: "user", sub: "disable", username }, cfg);
+}
+
+async function enableUser(username, cfg) {
+  return xtreamRequest({ action: "user", sub: "enable", username }, cfg);
+}
+
+function randomPassword(length = 10) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  let out = "";
+  for (let i = 0; i < length; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)];
   }
-  return xtreamApiRequest("user", "create", {
-    username: String(username).trim(),
-    password: String(password),
-    max_connections: Math.max(1, Math.floor(Number(max_connections) || 1)),
-    exp_date: Math.floor(exp),
-    bouquet: formatBouquetParam(bouquet),
-  });
+  return out;
 }
 
-async function editSubscriptionLine({ username, exp_date, bouquet }) {
-  if (!username) throw new Error("editSubscriptionLine requires username");
-  const payload = { username: String(username).trim() };
-  if (exp_date != null) {
-    const exp = Number(exp_date);
-    if (!Number.isFinite(exp) || exp <= 0) {
-      throw new Error("editSubscriptionLine exp_date must be a positive Unix epoch when provided");
-    }
-    payload.exp_date = Math.floor(exp);
+function sanitizeUsername(customerNumber) {
+  return String(customerNumber || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 48);
+}
+
+function futureExpDate(days = 30) {
+  const secs = Math.max(1, Number(days) || 30) * 86400;
+  return Math.floor(Date.now() / 1000) + secs;
+}
+
+function getDeveloperCredentials() {
+  const cfg = getXtreamConfig();
+  if (!cfg.developerUsername || !cfg.developerPassword) {
+    throw new Error("XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD are required");
   }
-  if (bouquet != null) payload.bouquet = formatBouquetParam(bouquet);
-  if (payload.exp_date == null && payload.bouquet == null) {
-    throw new Error("editSubscriptionLine requires exp_date and/or bouquet");
-  }
-  return xtreamApiRequest("user", "edit", payload);
+  return {
+    developer_username: cfg.developerUsername,
+    developer_password: cfg.developerPassword,
+  };
 }
 
-async function disableSubscriptionLine(username) {
-  return xtreamApiRequest("user", "disable", { username: String(username).trim() });
+function getBaseUrl() {
+  return getXtreamConfig().baseUrl;
 }
 
-async function enableSubscriptionLine(username) {
-  return xtreamApiRequest("user", "enable", { username: String(username).trim() });
+function getApiUrl() {
+  return apiUrl();
+}
+
+function readDeveloperPair() {
+  const cfg = getXtreamConfig();
+  return {
+    developer_username: cfg.developerUsername,
+    developer_password: cfg.developerPassword,
+  };
 }
 
 module.exports = {
+  getXtreamConfig,
   getBaseUrl,
   getApiUrl,
   getDeveloperCredentials,
   readDeveloperPair,
-  buildDocQuery,
-  parseResponseData,
-  describeApiResult,
-  buildFullEndpoint,
-  buildRequestUrl,
-  buildQueryString,
-  formatBouquetParam,
+  xtreamRequest,
   getBouquets,
   getUserProfile,
-  createSubscriptionLine,
-  editSubscriptionLine,
-  disableSubscriptionLine,
-  enableSubscriptionLine,
+  createUser,
+  editUser,
+  disableUser,
+  enableUser,
+  createSubscriptionLine: createUser,
+  editSubscriptionLine: editUser,
+  disableSubscriptionLine: disableUser,
+  enableSubscriptionLine: enableUser,
+  randomPassword,
+  sanitizeUsername,
+  futureExpDate,
+  encodeBouquet,
+  formatBouquetParam: encodeBouquet,
+  parseXtreamBody,
+  parseResponseData: parseXtreamBody,
+  describeApiResult,
+  buildFullEndpoint,
+  isSuccessResponse,
+  isUsernameExistsError,
+  isUserNotFoundError,
 };
