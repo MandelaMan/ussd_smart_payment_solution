@@ -2,12 +2,11 @@
 /* eslint-disable no-console */
 const {
   formatBouquetParam,
-  buildBillingQuery,
-  buildV2PostBody,
-  buildQueryString,
+  buildFullEndpoint,
   buildRequestUrl,
   getApiUrl,
   parseResponseData,
+  isSuccessResponse,
 } = require("../api/services/xtream/xtreamClient");
 
 let failed = 0;
@@ -19,16 +18,38 @@ function assert(c, m) {
 }
 
 process.env.XTREAM_BASE_URL = "http://100.121.223.62:25500/";
-assert(formatBouquetParam([1]) === "[1]", "bouquet [1]");
+process.env.XTREAM_DEVELOPER_USERNAME = "admin";
+process.env.XTREAM_DEVELOPER_PASSWORD = "secret";
 
-const billing = buildBillingQuery("bouquet", "get", {}, { developer_username: "a", developer_password: "b" });
-assert(buildRequestUrl(getApiUrl(), billing).includes("developer_username=a"), "billing query");
+assert(formatBouquetParam([1, 2]) === "[1,2]", "bouquet JSON array");
 
-const v2body = buildQueryString(buildV2PostBody({ user_data: { username: "u1", bouquet: "[1]" } }));
-assert(v2body.includes("user_data%5Busername%5D=u1"), "v2 post body");
+const apiUrl = getApiUrl();
+const endpoint = buildFullEndpoint(apiUrl, {
+  action: "bouquet",
+  sub: "get",
+  developer_username: "admin",
+  developer_password: "secret",
+});
+assert(endpoint.includes("developer_password=%5Bredacted%5D"), "password redacted in log URL");
+assert(endpoint.includes("action=bouquet"), "bouquet action in URL");
 
-assert(Array.isArray(parseResponseData('[{"id":"1"}]')), "parse array");
-assert(parseResponseData('{"result":true}').result === true, "parse v2 ok");
+const createUrl = buildRequestUrl(apiUrl, {
+  action: "user",
+  sub: "create",
+  developer_username: "admin",
+  developer_password: "secret",
+  username: "APT101",
+  password: "linepass",
+  max_connections: 1,
+  exp_date: 1893456000,
+  bouquet: "[1]",
+});
+assert(createUrl.includes("sub=create"), "user create URL");
+assert(createUrl.includes("bouquet=%5B1%5D"), "bouquet param encoded");
+
+assert(Array.isArray(parseResponseData('[{"id":"1","bouquet_name":"Test"}]')), "parse bouquet array");
+assert(isSuccessResponse({ status: "success" }), "success status");
+assert(!isSuccessResponse({ status: "error", message: "Access denied" }), "error status");
 
 console.log(failed ? `${failed} failed` : "All spec checks passed");
 process.exit(failed ? 1 : 0);
