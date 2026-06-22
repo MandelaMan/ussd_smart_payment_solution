@@ -1,19 +1,13 @@
 const axios = require("axios");
 
 /**
- * Xtream UI R22 / R22F (classic v2 api.php on admin port, e.g. 25500).
- *
- * R22F uses the original Xtream Codes v2 API:
- *   - IP whitelist (Settings > API IP's) — no developer_username in query
- *   - bouquet get: GET  api.php?action=bouquet&sub=get
- *   - user ops:    POST api.php?action=user&sub=create|edit|info|disable|enable
- *                  body uses user_data[...] (create) or username+password+user_data (edit)
- *
- * Optional XTREAM_API_MODE=billing for GET + developer_username/password (custom billing doc).
+ * Xtream billing API — xtream_ui_r22_backend_api_document.docx
+ * Base: http://PANEL:25500/api.php (internal / localhost only — not exposed publicly)
+ * All calls: GET with action, sub, developer_username, developer_password, then payload.
  */
 
 function normalizeBaseUrl(raw) {
-  const base = String(raw || "http://100.121.223.62:25500").trim();
+  const base = String(raw || "http://127.0.0.1:25500").trim();
   return base.replace(/\/+$/, "").replace(/\/api\.php$/i, "");
 }
 
@@ -23,10 +17,6 @@ function getBaseUrl() {
 
 function getApiUrl() {
   return `${getBaseUrl()}/api.php`;
-}
-
-function getApiMode() {
-  return String(process.env.XTREAM_API_MODE || "r22f").toLowerCase();
 }
 
 function cleanEnvValue(raw) {
@@ -59,6 +49,17 @@ function getDeveloperCredentials() {
     );
   }
   return pair;
+}
+
+function buildDocQuery(action, sub, payload = {}, credsOverride) {
+  const creds = credsOverride || getDeveloperCredentials();
+  return {
+    action,
+    sub,
+    developer_username: creds.developer_username,
+    developer_password: creds.developer_password,
+    ...payload,
+  };
 }
 
 function formatBouquetParam(bouquet) {
@@ -95,46 +96,14 @@ function buildFullEndpoint(baseApiUrl, params) {
   return qs ? `${baseApiUrl}?${qs}` : baseApiUrl;
 }
 
-function buildBillingQuery(action, sub, payload = {}, credsOverride) {
-  const creds = credsOverride || getDeveloperCredentials();
-  return {
-    action,
-    sub,
-    developer_username: creds.developer_username,
-    developer_password: creds.developer_password,
-    ...payload,
-  };
-}
-
-function flattenUserData(payload) {
-  const body = {};
-  for (const [key, value] of Object.entries(payload)) {
-    if (value == null || value === "") continue;
-    body[`user_data[${key}]`] = String(value);
-  }
-  return body;
-}
-
-function buildV2PostBody(action, sub, payload = {}) {
-  const { username, password, user_data: userData, ...rest } = payload;
-  const body = {};
-  if (username != null && username !== "") body.username = String(username);
-  if (password != null && password !== "") body.password = String(password);
-  Object.assign(body, flattenUserData(userData || {}));
-  for (const [key, value] of Object.entries(rest)) {
-    if (value == null || value === "") continue;
-    body[key] = String(value);
-  }
-  return body;
-}
-
 function parseResponseData(data) {
   if (data == null || data === "") {
     return {
       status: "error",
       message:
-        "Empty panel response — for R22F: whitelist billing server IP under Settings > API IP's. " +
-        "Classic v2 api.php does not use developer_username; auth is IP-based.",
+        "Empty panel response — api.php is internal-only: set XTREAM_BASE_URL to " +
+        "http://127.0.0.1:25500 when this app runs on the panel server, and verify " +
+        "developer_username/developer_password.",
     };
   }
   if (typeof data === "string") {
@@ -143,7 +112,8 @@ function parseResponseData(data) {
       return {
         status: "error",
         message:
-          "Empty panel response — whitelist billing server IP in Settings > API IP's (R22F v2 API).",
+          "Empty panel response — use localhost URL (127.0.0.1:25500) from the panel host; " +
+          "the API is not reachable from external IPs.",
       };
     }
     if (trimmed.startsWith("<")) {
@@ -166,7 +136,6 @@ function responseErrorMessage(data) {
     const msg = parsed.message || parsed.error || parsed.msg;
     if (msg) return String(msg);
     if (parsed.status === "error") return JSON.stringify(parsed);
-    if (parsed["0"]) return String(parsed["0"]);
   }
   return null;
 }
@@ -176,7 +145,6 @@ function isSuccessResponse(data) {
   if (Array.isArray(parsed)) return true;
   if (!parsed || typeof parsed !== "object") return false;
   if (parsed.result === true || parsed.result === "true") return true;
-  if (parsed.user_info && typeof parsed.user_info === "object") return true;
   if (parsed.id != null && parsed.username) return true;
   const status = String(parsed.status || "").toLowerCase();
   if (status === "error") return false;
@@ -187,31 +155,31 @@ function describeApiResult(result) {
   if (result.ok) return "success";
   const err = responseErrorMessage(result.data);
   if (err) return err;
-  if (result.diagnostics?.responseBodyLength === 0 && result.httpStatus === 200) {
+  if (result.diagnostics?.responseBodyLength === 0) {
     return (
-      "Empty panel response (HTTP 200) — R22F requires billing server IP in Settings > API IP's. " +
-      "developer_username GET params are not used on classic v2 api.php."
+      "Empty panel response — XTREAM_BASE_URL must be reachable locally " +
+      "(e.g. http://127.0.0.1:25500 on the panel server; not a public IP)."
     );
   }
   if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
   return "Request failed (see logs/xtream-sync.jsonl)";
 }
 
-async function executeRequest({ method, url, endpoint, body, logParams, apiMode }) {
-  const config = {
-    method,
-    url,
+async function xtreamApiRequest(action, sub, payload = {}) {
+  const apiUrl = getApiUrl();
+  const query = buildDocQuery(action, sub, payload);
+  const requestUrl = buildRequestUrl(apiUrl, query);
+  const endpoint = buildFullEndpoint(apiUrl, query);
+
+  const response = await axios({
+    method: "GET",
+    url: requestUrl,
     timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
     validateStatus: () => true,
     transformResponse: [(raw) => raw],
     headers: { Accept: "application/json, text/plain, */*" },
-  };
-  if (method === "POST" && body) {
-    config.data = body;
-    config.headers["Content-Type"] = "application/x-www-form-urlencoded";
-  }
+  });
 
-  const response = await axios(config);
   const rawData = response.data;
   const rawText = rawData == null ? "" : String(rawData);
   const data = parseResponseData(rawData);
@@ -224,96 +192,24 @@ async function executeRequest({ method, url, endpoint, body, logParams, apiMode 
     diagnostics: {
       responseBodyLength: rawText.length,
       contentType: response.headers["content-type"] || null,
-      method,
-      apiMode,
+      method: "GET",
     },
     request: {
-      method,
-      url: url.split("?")[0],
+      method: "GET",
+      url: apiUrl,
       endpoint,
-      params: redactParams(logParams || {}),
+      params: redactParams(query),
     },
   };
 }
 
-async function billingGetRequest(action, sub, payload = {}) {
-  const apiUrl = getApiUrl();
-  const query = buildBillingQuery(action, sub, payload);
-  const requestUrl = buildRequestUrl(apiUrl, query);
-  return executeRequest({
-    method: "GET",
-    url: requestUrl,
-    endpoint: buildFullEndpoint(apiUrl, query),
-    logParams: query,
-    apiMode: "billing",
-  });
+async function getBouquets() {
+  return xtreamApiRequest("bouquet", "get");
 }
 
-async function r22fGetRequest(action, sub, queryExtra = {}) {
-  const apiUrl = getApiUrl();
-  const query = { action, sub, ...queryExtra };
-  const requestUrl = buildRequestUrl(apiUrl, query);
-  return executeRequest({
-    method: "GET",
-    url: requestUrl,
-    endpoint: buildFullEndpoint(apiUrl, query),
-    logParams: query,
-    apiMode: "r22f",
-  });
-}
-
-async function r22fPostRequest(action, sub, payload = {}) {
-  const apiUrl = getApiUrl();
-  const query = { action, sub };
-  const requestUrl = buildRequestUrl(apiUrl, query);
-  const body = buildQueryString(buildV2PostBody(action, sub, payload));
-  const logParams = { ...query, ...payload };
-  return executeRequest({
-    method: "POST",
-    url: requestUrl,
-    endpoint: buildFullEndpoint(apiUrl, logParams),
-    body,
-    logParams,
-    apiMode: "r22f",
-  });
-}
-
-async function apiRequest(action, sub, payload = {}, options = {}) {
-  const mode = options.mode || getApiMode();
-  const isReadOnly = options.readOnly === true;
-
-  if (mode === "billing") {
-    return billingGetRequest(action, sub, payload);
-  }
-
-  if (isReadOnly) {
-    return r22fGetRequest(action, sub, payload);
-  }
-
-  return r22fPostRequest(action, sub, payload);
-}
-
-async function getBouquets(options) {
-  const mode = options?.mode || getApiMode();
-  if (mode === "auto") {
-    const r22f = await r22fGetRequest("bouquet", "get");
-    if (r22f.ok || (r22f.diagnostics?.responseBodyLength || 0) > 0) return r22f;
-    return billingGetRequest("bouquet", "get");
-  }
-  return apiRequest("bouquet", "get", {}, { mode, readOnly: true });
-}
-
-async function getUserProfile(username, linePassword) {
+async function getUserProfile(username) {
   if (!username) throw new Error("getUserProfile requires username");
-  const mode = getApiMode();
-  if (mode === "billing") {
-    return billingGetRequest("user", "get", { username: String(username).trim() });
-  }
-  if (!linePassword) throw new Error("getUserProfile requires line password in R22F mode (sub=info)");
-  return r22fPostRequest("user", "info", {
-    username: String(username).trim(),
-    password: String(linePassword),
-  });
+  return xtreamApiRequest("user", "get", { username: String(username).trim() });
 }
 
 async function createSubscriptionLine({ username, password, max_connections = 1, exp_date, bouquet }) {
@@ -322,98 +218,52 @@ async function createSubscriptionLine({ username, password, max_connections = 1,
   if (!Number.isFinite(exp) || exp <= 0) {
     throw new Error("createSubscriptionLine requires exp_date as Unix epoch seconds");
   }
-  const mode = getApiMode();
-  const userData = {
+  return xtreamApiRequest("user", "create", {
     username: String(username).trim(),
     password: String(password),
     max_connections: Math.max(1, Math.floor(Number(max_connections) || 1)),
     exp_date: Math.floor(exp),
     bouquet: formatBouquetParam(bouquet),
-    is_restreamer: Number(process.env.XTREAM_DEFAULT_IS_RESTREAMER || 0),
-  };
-
-  if (mode === "billing") {
-    return billingGetRequest("user", "create", userData);
-  }
-  return r22fPostRequest("user", "create", { user_data: userData });
+  });
 }
 
-async function editSubscriptionLine({ username, password, exp_date, bouquet }) {
+async function editSubscriptionLine({ username, exp_date, bouquet }) {
   if (!username) throw new Error("editSubscriptionLine requires username");
-  const mode = getApiMode();
-  const userData = {};
+  const payload = { username: String(username).trim() };
   if (exp_date != null) {
     const exp = Number(exp_date);
     if (!Number.isFinite(exp) || exp <= 0) {
       throw new Error("editSubscriptionLine exp_date must be a positive Unix epoch when provided");
     }
-    userData.exp_date = Math.floor(exp);
+    payload.exp_date = Math.floor(exp);
   }
-  if (bouquet != null) userData.bouquet = formatBouquetParam(bouquet);
-  if (!Object.keys(userData).length) {
+  if (bouquet != null) payload.bouquet = formatBouquetParam(bouquet);
+  if (payload.exp_date == null && payload.bouquet == null) {
     throw new Error("editSubscriptionLine requires exp_date and/or bouquet");
   }
-
-  if (mode === "billing") {
-    return billingGetRequest("user", "edit", {
-      username: String(username).trim(),
-      ...userData,
-    });
-  }
-  if (!password) throw new Error("editSubscriptionLine requires line password in R22F mode");
-  return r22fPostRequest("user", "edit", {
-    username: String(username).trim(),
-    password: String(password),
-    user_data: userData,
-  });
+  return xtreamApiRequest("user", "edit", payload);
 }
 
-async function disableSubscriptionLine(username, linePassword) {
-  const u = String(username).trim();
-  const mode = getApiMode();
-  if (mode === "billing") return billingGetRequest("user", "disable", { username: u });
-  if (linePassword) {
-    return r22fPostRequest("user", "disable", { username: u, password: String(linePassword) });
-  }
-  return r22fGetRequest("user", "disable", { username: u });
+async function disableSubscriptionLine(username) {
+  return xtreamApiRequest("user", "disable", { username: String(username).trim() });
 }
 
-async function enableSubscriptionLine(username, linePassword) {
-  const u = String(username).trim();
-  const mode = getApiMode();
-  if (mode === "billing") return billingGetRequest("user", "enable", { username: u });
-  if (linePassword) {
-    return r22fPostRequest("user", "enable", { username: u, password: String(linePassword) });
-  }
-  return r22fGetRequest("user", "enable", { username: u });
-}
-
-/** Probe helpers for auth-probe script */
-async function probeBouquetR22f() {
-  return r22fGetRequest("bouquet", "get");
-}
-
-async function probeBouquetBilling() {
-  return billingGetRequest("bouquet", "get");
+async function enableSubscriptionLine(username) {
+  return xtreamApiRequest("user", "enable", { username: String(username).trim() });
 }
 
 module.exports = {
   getBaseUrl,
   getApiUrl,
-  getApiMode,
   getDeveloperCredentials,
   readDeveloperPair,
-  buildBillingQuery,
-  buildDocQuery: buildBillingQuery,
-  buildV2PostBody,
+  buildDocQuery,
   parseResponseData,
   describeApiResult,
   buildFullEndpoint,
   buildRequestUrl,
   buildQueryString,
   formatBouquetParam,
-  probeBouquetR22f,
-  probeBouquetBilling,
   getBouquets,
   getUserProfile,
   createSubscriptionLine,

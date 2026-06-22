@@ -113,7 +113,7 @@ async function syncOneCustomer(customer, syncConfig, map) {
       });
       return { customer_number: customerNumber, action: "skip", success: true };
     }
-    const res = await disableSubscriptionLine(mapped.username, password || mapped.password);
+    const res = await disableSubscriptionLine(mapped.username);
     await logXtreamSyncEvent(
       apiLogPayload(res, {
         event: "customer.disable",
@@ -143,7 +143,7 @@ async function syncOneCustomer(customer, syncConfig, map) {
   }
 
   if (!mapped?.username) {
-    const existing = await getUserProfile(username, password);
+    const existing = await getUserProfile(username);
     if (existing.ok) {
       map[customerNumber] = {
         username,
@@ -199,10 +199,8 @@ async function syncOneCustomer(customer, syncConfig, map) {
 
   const account = map[customerNumber] || mapped;
 
-  const linePassword = password || account.password;
-
   if (account.disabledAt) {
-    const enableRes = await enableSubscriptionLine(account.username, linePassword);
+    const enableRes = await enableSubscriptionLine(account.username);
     await logXtreamSyncEvent(
       apiLogPayload(enableRes, {
         event: "customer.enable",
@@ -223,7 +221,6 @@ async function syncOneCustomer(customer, syncConfig, map) {
 
   const res = await editSubscriptionLine({
     username: account.username,
-    password: linePassword,
     exp_date: expDate,
     bouquet,
   });
@@ -304,19 +301,16 @@ async function runSync() {
 }
 
 async function testAllEndpoints() {
-  const apiMode = String(process.env.XTREAM_API_MODE || "r22f").toLowerCase();
-  if (apiMode === "billing") {
-    try {
-      getDeveloperCredentials();
-    } catch (e) {
-      console.error(
-        "[xtream] Missing credentials for billing mode. Add to .env:\n" +
-          "  XTREAM_DEVELOPER_USERNAME=...\n" +
-          "  XTREAM_DEVELOPER_PASSWORD=...\n" +
-          "  XTREAM_BASE_URL=http://PANEL_IP:25500"
-      );
-      throw e;
-    }
+  try {
+    getDeveloperCredentials();
+  } catch (e) {
+    console.error(
+      "[xtream] Missing credentials. Add to .env on the panel server:\n" +
+        "  XTREAM_BASE_URL=http://127.0.0.1:25500/\n" +
+        "  XTREAM_DEVELOPER_USERNAME=admin\n" +
+        "  XTREAM_DEVELOPER_PASSWORD=your_password"
+    );
+    throw e;
   }
 
   const syncConfig = await loadSyncConfig();
@@ -348,10 +342,7 @@ async function testAllEndpoints() {
       `[xtream] HTTP ${bouquetRes.httpStatus}, body length ${diag.responseBodyLength ?? "?"}, content-type ${diag.contentType ?? "?"}`
     );
     console.error(
-      "[xtream] Fix panel access first (R22F: API IP's whitelist on billing server IP, port 25500 reachable)."
-    );
-    console.error(
-      "[xtream] R22F bouquet_get: GET api.php?action=bouquet&sub=get — no developer_username in URL."
+      "[xtream] Fix panel access: run on panel server with XTREAM_BASE_URL=http://127.0.0.1:25500/"
     );
   }
 
@@ -389,7 +380,7 @@ async function testAllEndpoints() {
     }
 
     if (createRes.ok) {
-      const getRes = await getUserProfile(sampleUser, samplePass);
+      const getRes = await getUserProfile(sampleUser);
       const getDetail = describeApiResult(getRes);
       await logXtreamSyncEvent(
         apiLogPayload(getRes, {
@@ -408,7 +399,6 @@ async function testAllEndpoints() {
 
       const editRes = await editSubscriptionLine({
         username: sampleUser,
-        password: samplePass,
         exp_date: expDate + 86400,
         bouquet,
       });
@@ -425,7 +415,7 @@ async function testAllEndpoints() {
       });
       allOk = allOk && editRes.ok;
 
-      const disableRes = await disableSubscriptionLine(sampleUser, samplePass);
+      const disableRes = await disableSubscriptionLine(sampleUser);
       await logXtreamSyncEvent(
         apiLogPayload(disableRes, {
           event: "endpoint_test.user_disable",
@@ -439,7 +429,7 @@ async function testAllEndpoints() {
       });
       allOk = allOk && disableRes.ok;
 
-      const enableRes = await enableSubscriptionLine(sampleUser, samplePass);
+      const enableRes = await enableSubscriptionLine(sampleUser);
       await logXtreamSyncEvent(
         apiLogPayload(enableRes, {
           event: "endpoint_test.user_enable",

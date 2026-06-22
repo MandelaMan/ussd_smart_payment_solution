@@ -1,13 +1,9 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
-/**
- * Xtream API spec alignment tests (offline — no panel call).
- */
 const {
   formatBouquetParam,
   buildQueryString,
-  buildBillingQuery,
-  buildV2PostBody,
+  buildDocQuery,
   buildRequestUrl,
   buildFullEndpoint,
   getApiUrl,
@@ -25,46 +21,37 @@ function assert(cond, msg) {
   }
 }
 
-process.env.XTREAM_BASE_URL = "http://100.121.223.62:25500/";
-assert(getApiUrl() === "http://100.121.223.62:25500/api.php", "panel root + /api.php");
+process.env.XTREAM_BASE_URL = "http://127.0.0.1:25500/";
+assert(getApiUrl() === "http://127.0.0.1:25500/api.php", "default localhost api.php");
 
-assert(formatBouquetParam([1, 2]) === "[1,2]", "bouquet JSON array [1,2]");
+assert(formatBouquetParam([1, 2]) === "[1,2]", "bouquet JSON array");
 
-const r22fBouquetUrl = buildRequestUrl(getApiUrl(), { action: "bouquet", sub: "get" });
-assert(r22fBouquetUrl.includes("action=bouquet&sub=get"), "R22F bouquet URL has no developer_*");
-assert(!r22fBouquetUrl.includes("developer_username"), "R22F bouquet URL omits developer_username");
-
-const createBody = buildQueryString(
-  buildV2PostBody("user", "create", {
-    user_data: {
-      username: "APT101",
-      password: "linepass",
-      max_connections: 1,
-      exp_date: 1735689600,
-      bouquet: "[1]",
-    },
-  })
-);
-assert(createBody.includes("user_data%5Busername%5D=APT101"), "R22F create POST user_data username");
-assert(createBody.includes("user_data%5Bbouquet%5D=%5B1%5D"), "R22F create POST user_data bouquet");
-
-const billingQuery = buildBillingQuery(
+const docQuery = buildDocQuery(
   "bouquet",
   "get",
   {},
   { developer_username: "admin", developer_password: "secret" }
 );
-const billingUrl = buildRequestUrl("http://100.121.223.62:25500/api.php", billingQuery);
-assert(billingUrl.includes("developer_username=admin"), "billing mode keeps developer_username");
+const docUrl = buildRequestUrl(getApiUrl(), docQuery);
+assert(docUrl.includes("action=bouquet&sub=get&developer_username="), "doc query order");
 
-const success = parseResponseData('{"result":true,"created_id":14838,"username":"test"}');
-assert(success.result === true, "parse v2 create success");
+const liveUrl = buildRequestUrl("http://127.0.0.1:25500/api.php", docQuery);
+assert(liveUrl.includes("developer_password=secret"), "live URL keeps password");
+assert(!liveUrl.includes("redacted"), "live URL not redacted");
 
-const bouquetList = parseResponseData('[{"id":"1","bouquet_name":"APARTONET"}]');
-assert(Array.isArray(bouquetList), "parse bouquet array");
+const logUrl = buildFullEndpoint("http://127.0.0.1:25500/api.php", {
+  action: "user",
+  sub: "create",
+  developer_username: "admin",
+  developer_password: "secret",
+  username: "APT101",
+  password: "linepass",
+  bouquet: "[1]",
+});
+assert(logUrl.includes("developer_password=%5Bredacted%5D"), "log URL redacts password");
 
-const info = parseResponseData('{"result":true,"user_info":{"username":"u1","exp_date":"1735689600"}}');
-assert(info.user_info?.username === "u1", "parse user info");
+assert(Array.isArray(parseResponseData('[{"id":"1"}]')), "parse bouquet array");
+assert(parseResponseData('{"status":"success"}').status === "success", "parse success");
 
 console.log(failed ? `\n${failed} failed` : "\nAll spec alignment checks passed");
 process.exit(failed ? 1 : 0);
