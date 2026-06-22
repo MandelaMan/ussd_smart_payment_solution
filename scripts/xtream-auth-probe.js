@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
 /**
- * Live bouquet_get probe — run on the billing server (droplet):
- *   yarn xtream:auth-probe
+ * Live probe for Xtream UI R22F (classic v2 api.php).
+ * Run on billing server: yarn xtream:auth-probe
  */
 require("dotenv").config();
 
@@ -12,11 +12,11 @@ const axios = require("axios");
 const {
   getBaseUrl,
   getApiUrl,
+  getApiMode,
   readDeveloperPair,
-  buildDocQuery,
   buildFullEndpoint,
-  buildRequestUrl,
-  getBouquets,
+  probeBouquetR22f,
+  probeBouquetBilling,
   describeApiResult,
 } = require("../api/services/xtream/xtreamClient");
 
@@ -51,83 +51,81 @@ function httpGet(url) {
   });
 }
 
+async function tryMode(label, fn) {
+  const res = await fn();
+  const len = res.diagnostics?.responseBodyLength ?? 0;
+  console.log(`\n[${label}] http=${res.httpStatus} bodyLength=${len} ok=${res.ok}`);
+  console.log(`  detail: ${describeApiResult(res)}`);
+  if (len > 0) console.log(`  response: ${JSON.stringify(res.data).slice(0, 300)}`);
+  return { label, ok: res.ok, len, res };
+}
+
 async function main() {
   const dev = readDeveloperPair();
   const publicIp = await fetchOutboundPublicIp();
+  const mode = getApiMode();
 
-  console.log("=== Xtream API probe (billing doc) ===");
+  console.log("=== Xtream API probe ===");
+  console.log("panel:", "Xtream UI R22F — classic v2 api.php (POST + IP whitelist)");
+  console.log("XTREAM_API_MODE:", mode);
   console.log("baseUrl:", getBaseUrl());
   console.log("apiUrl:", getApiUrl());
-  console.log("developer_username:", dev.developer_username || "(not set)");
-  console.log(
-    "developer_password:",
-    dev.developer_password ? `[set, length ${dev.developer_password.length}]` : "(not set)"
-  );
   if (publicIp) {
-    console.log("\n>>> Whitelist this IP in Xtream Settings > API IP's:", publicIp);
-  } else {
-    console.log("\n>>> Could not detect public IP — run: curl -s https://api.ipify.org");
+    console.log("\n>>> Add this IP to Xtream Settings > API IP's:", publicIp);
   }
 
-  if (!dev.developer_username || !dev.developer_password) {
-    console.error("\nSet XTREAM_DEVELOPER_USERNAME and XTREAM_DEVELOPER_PASSWORD in .env");
-    process.exit(1);
+  const r22fUrl = buildFullEndpoint(getApiUrl(), { action: "bouquet", sub: "get" });
+  console.log("\nR22F bouquet_get (no developer_username — IP auth only):");
+  console.log(r22fUrl);
+
+  console.log("\nManual curl (R22F — correct for your panel):");
+  console.log(`curl -sS "${getApiUrl()}?action=bouquet&sub=get" | head -c 400`);
+
+  if (dev.developer_username) {
+    const billingUrl = buildFullEndpoint(getApiUrl(), {
+      action: "bouquet",
+      sub: "get",
+      developer_username: dev.developer_username,
+      developer_password: "[redacted]",
+    });
+    console.log("\nBilling-doc style (NOT used by R22F — for comparison only):");
+    console.log(billingUrl);
   }
 
-  if (dev.developer_username === dev.developer_password) {
-    console.log(
-      "\n⚠️  username and password are identical — confirm .env password is your panel admin password, not duplicated username."
-    );
+  const results = [];
+  results.push(await tryMode("r22f GET bouquet (default)", probeBouquetR22f));
+
+  if (dev.developer_username && dev.developer_password) {
+    results.push(await tryMode("billing GET + developer_*", probeBouquetBilling));
   }
 
-  const sampleQuery = buildDocQuery("bouquet", "get", {}, dev);
-  const liveUrl = buildRequestUrl(getApiUrl(), sampleQuery);
-  const logUrl = buildFullEndpoint(getApiUrl(), sampleQuery);
-
-  console.log("\nLive query params:");
-  console.log("  action=bouquet sub=get");
-  console.log(`  developer_username=${dev.developer_username}`);
-  console.log(`  developer_password=[length ${dev.developer_password.length}]`);
-  console.log("\nLog URL (password redacted):");
-  console.log(logUrl);
-  console.log("\nManual curl (replace YOUR_PASS):");
-  console.log(
-    `curl -sS "${getApiUrl()}?action=bouquet&sub=get&developer_username=${encodeURIComponent(dev.developer_username)}&developer_password=YOUR_PASS" | head -c 400`
-  );
-
-  const res = await getBouquets();
-  const len = res.diagnostics?.responseBodyLength ?? 0;
-
-  console.log(`\n[axios] http=${res.httpStatus} bodyLength=${len} ok=${res.ok}`);
-  console.log(`[axios] content-type: ${res.diagnostics?.contentType || "(none)"}`);
-  console.log(`[axios] detail: ${describeApiResult(res)}`);
-
-  if (len === 0) {
-    try {
-      const raw = await httpGet(liveUrl);
-      console.log(`\n[node http] http=${raw.status} bodyLength=${raw.body.length}`);
-      console.log(`[node http] content-type: ${raw.headers["content-type"] || "(none)"}`);
-      console.log(`[node http] content-length: ${raw.headers["content-length"] || "(none)"}`);
-      if (raw.body.length > 0) {
-        console.log(`[node http] body preview: ${raw.body.slice(0, 400)}`);
-      }
-    } catch (e) {
-      console.log(`\n[node http] failed: ${e.message}`);
+  const winner = results.find((r) => r.ok);
+  if (winner) {
+    console.log(`\n✅ Working mode: ${winner.label}`);
+    if (winner.label.startsWith("r22f")) {
+      console.log("Set in .env: XTREAM_API_MODE=r22f");
+    } else {
+      console.log("Set in .env: XTREAM_API_MODE=billing");
     }
-  } else {
-    console.log(`response: ${JSON.stringify(res.data).slice(0, 500)}`);
-  }
-
-  if (res.ok) {
-    console.log("\n✅ bouquet_get succeeded");
     process.exit(0);
   }
 
-  console.log("\n❌ bouquet_get failed — panel returned HTTP 200 with empty body usually means:");
-  console.log("  1. Billing server IP is NOT in Settings > API IP's (most common)");
-  if (publicIp) console.log(`     → Add: ${publicIp}`);
-  console.log("  2. Wrong admin password in .env (web login password for user 'admin')");
-  console.log("  3. Port 25500 blocked by firewall on the panel host");
+  const r22f = results[0]?.res;
+  if (r22f && (r22f.diagnostics?.responseBodyLength ?? 0) === 0) {
+    try {
+      const raw = await httpGet(`${getApiUrl()}?action=bouquet&sub=get`);
+      console.log(`\n[node http] http=${raw.status} bodyLength=${raw.body.length}`);
+      if (raw.body) console.log(`  body: ${raw.body.slice(0, 300)}`);
+    } catch (e) {
+      console.log(`\n[node http] ${e.message}`);
+    }
+  }
+
+  console.log("\n❌ All modes failed.");
+  console.log("R22F checklist:");
+  console.log("  1. Settings > API IP's — add droplet public IP" + (publicIp ? ` (${publicIp})` : ""));
+  console.log("  2. XTREAM_API_MODE=r22f (default) — do NOT use developer_username curl");
+  console.log("  3. user create uses POST with user_data[], not GET");
   process.exit(1);
 }
 

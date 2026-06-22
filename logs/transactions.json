@@ -48,5 +48,10 @@
     "Status": "SMOKE_TEST",
     "CheckoutRequestID": "smoke-1782118950844",
     "Timestamp": "2026-06-22T09:02:30.844Z"
+  },
+  {
+    "Status": "SMOKE_TEST",
+    "CheckoutRequestID": "smoke-1782119670476",
+    "Timestamp": "2026-06-22T09:14:30.476Z"
   }
 ]
