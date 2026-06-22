@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
-/**
- * Standalone Xtream test sync — does not touch M-Pesa / Zoho / TISP.
- * Config: config/xtream-test-customers.json (or XTREAM_CUSTOMERS_CONFIG)
- */
 require("dotenv").config();
 
 const fs = require("fs/promises");
@@ -11,23 +7,21 @@ const path = require("path");
 const {
   getBaseUrl,
   getBouquets,
-  createUser,
-  editUser,
-  disableUser,
-  enableUser,
+  getUserProfile,
+  createSubscriptionLine,
+  editSubscriptionLine,
+  disableSubscriptionLine,
+  enableSubscriptionLine,
   getDeveloperCredentials,
   describeApiResult,
-  sanitizeUsername,
-  randomPassword,
-  futureExpDate,
-  isUsernameExistsError,
+  getApiMode,
+  hasDeveloperCreds,
 } = require("../api/services/xtream/xtreamClient");
 const { logXtreamSyncEvent } = require("../api/utils/xtreamSyncLogger");
 
 const ROOT = path.resolve(__dirname, "..");
 const SYNC_CONFIG_FILE = path.join(ROOT, "config", "xtream-sync.json");
 const TEST_CUSTOMERS_FILE =
-  process.env.XTREAM_CUSTOMERS_CONFIG ||
   process.env.XTREAM_TEST_CUSTOMERS_FILE ||
   path.join(ROOT, "config", "xtream-test-customers.json");
 const CUSTOMER_MAP_FILE = path.join(ROOT, "logs", "xtream-customer-map.json");
@@ -36,6 +30,7 @@ function syncEnabled() {
   return String(process.env.XTREAM_SYNC_ENABLED || "true").toLowerCase() !== "false";
 }
 
+/** Flatten API result into log fields; always includes full `endpoint` URL. */
 function apiLogPayload(res, extra = {}) {
   return {
     ...extra,
@@ -43,9 +38,8 @@ function apiLogPayload(res, extra = {}) {
     ok: res.ok,
     httpStatus: res.httpStatus,
     diagnostics: res.diagnostics,
-    response: res.body || res.data,
+    response: res.data,
     request: res.request,
-    durationMs: res.durationMs,
   };
 }
 
@@ -65,200 +59,197 @@ async function writeJsonFile(filePath, data) {
 
 async function loadSyncConfig() {
   return readJsonFile(SYNC_CONFIG_FILE, {
+    defaultMaxConnections: 1,
+    activeExpiryDays: 30,
+    bouquets: { default: [1] },
+    username: { normalizeUppercase: true, includeApartmentSuffix: false },
     endpointTest: { enabled: true, sampleUsernamePrefix: "xtream_api_test_" },
   });
 }
 
-async function loadTestConfig() {
+async function loadTestCustomers() {
   const parsed = await readJsonFile(TEST_CUSTOMERS_FILE, null);
-  if (!parsed || !Array.isArray(parsed.customers)) {
-    throw new Error(
-      `Missing or invalid config at ${TEST_CUSTOMERS_FILE}. See config/xtream-test-customers.json.dist`
-    );
-  }
-  return {
-    defaults: parsed.defaults || {
-      max_connections: 1,
-      subscription_days: 30,
-      bouquet_iptv: [1],
-      bouquet_dstv: [4],
-    },
-    customers: parsed.customers,
-  };
+  if (parsed && Array.isArray(parsed.customers)) return parsed.customers;
+  throw new Error(
+    `Missing or invalid test customers config at ${TEST_CUSTOMERS_FILE}. Copy config/xtream-test-customers.json.dist and edit apartment_number + password.`
+  );
 }
 
-/** Resolve customer row — supports original format (isActive/isDstvCustomer) and legacy (active/bouquet key). */
-function resolveCustomerRow(customer, defaults, syncConfig) {
+function buildUsername(customer, syncConfig) {
+  const base = String(customer.apartment_number || customer.customer_number || "")
+    .trim()
+    .replace(/\s+/g, "");
+  if (!base) throw new Error("customer missing apartment_number and customer_number");
+  let username = base;
+  if (syncConfig.username?.normalizeUppercase) username = username.toUpperCase();
+  return username;
+}
+
+function resolveBouquetIds(customer, syncConfig) {
+  const key = String(customer.bouquet || "default").trim();
+  const ids = syncConfig.bouquets?.[key] || syncConfig.bouquets?.default || [1];
+  return Array.isArray(ids) ? ids : [ids];
+}
+
+function computeExpDate(syncConfig) {
+  const days = Number(syncConfig.activeExpiryDays || 30);
+  return Math.floor(Date.now() / 1000) + days * 86400;
+}
+
+async function syncOneCustomer(customer, syncConfig, map) {
   const customerNumber = String(customer.customer_number || "").trim();
-  const active =
-    customer.isActive != null ? Boolean(customer.isActive) : customer.active !== false;
+  const active = customer.active !== false;
+  const username = buildUsername(customer, syncConfig);
+  const password = String(customer.password || "").trim();
+  const maxConnections = Number(customer.max_connections || syncConfig.defaultMaxConnections || 1);
+  const bouquet = resolveBouquetIds(customer, syncConfig);
+  const expDate = computeExpDate(syncConfig);
+  const mapped = map[customerNumber];
 
-  let bouquet;
-  if (customer.bouquet && syncConfig.bouquets) {
-    const key = String(customer.bouquet).trim();
-    bouquet = syncConfig.bouquets[key] || syncConfig.bouquets.default || defaults.bouquet_iptv || [1];
-  } else if (customer.isDstvCustomer) {
-    bouquet = defaults.bouquet_dstv || [4];
-  } else {
-    bouquet = defaults.bouquet_iptv || [1];
-  }
-
-  const username =
-    customer.xtream_username ||
-    (customer.apartment_number
-      ? String(customer.apartment_number).trim().replace(/\s+/g, "").toUpperCase()
-      : sanitizeUsername(customerNumber));
-
-  const maxConnections = Number(
-    customer.max_connections || defaults.max_connections || 1
-  );
-  const subscriptionDays = Number(
-    customer.subscription_days || defaults.subscription_days || 30
-  );
-
-  return {
-    customerNumber,
-    active,
-    bouquet: Array.isArray(bouquet) ? bouquet : [bouquet],
-    username,
-    maxConnections,
-    expDate: futureExpDate(subscriptionDays),
-    apartment: customer.apartment || customer.apartment_number || null,
-    password: customer.password ? String(customer.password) : null,
-  };
-}
-
-async function syncOneCustomer(customer, defaults, syncConfig, map) {
-  const row = resolveCustomerRow(customer, defaults, syncConfig);
-  const mapped = map[row.customerNumber];
-
-  if (!row.active) {
+  if (!active) {
     if (!mapped?.username) {
       await logXtreamSyncEvent({
         event: "sync_skip",
-        customer_number: row.customerNumber,
+        customer_number: customerNumber,
         reason: "inactive_no_xtream_account",
       });
-      return { customer_number: row.customerNumber, action: "skip", success: true };
+      return { customer_number: customerNumber, action: "skip", success: true };
     }
-    const res = await disableUser(mapped.username);
+    const res = await disableSubscriptionLine(mapped.username, password || mapped.password);
     await logXtreamSyncEvent(
       apiLogPayload(res, {
         event: "customer.disable",
-        customer_number: row.customerNumber,
+        customer_number: customerNumber,
         username: mapped.username,
       })
     );
     if (res.ok) {
-      map[row.customerNumber] = { ...mapped, disabledAt: new Date().toISOString() };
+      map[customerNumber] = { ...mapped, disabledAt: new Date().toISOString() };
     }
     return {
-      customer_number: row.customerNumber,
+      customer_number: customerNumber,
       action: "disable",
       success: res.ok,
-      error: res.ok ? undefined : JSON.stringify(res.body),
+      error: res.ok ? undefined : JSON.stringify(res.data),
     };
   }
 
-  const password = row.password || mapped?.password || randomPassword();
-  let username = mapped?.username || row.username;
+  if (!password) {
+    const err = "password is required for active test customers (subscription line password)";
+    await logXtreamSyncEvent({
+      event: "customer.error",
+      customer_number: customerNumber,
+      error: err,
+    });
+    return { customer_number: customerNumber, action: "error", success: false, error: err };
+  }
 
   if (!mapped?.username) {
-    let res = await createUser({
-      username,
-      password,
-      max_connections: row.maxConnections,
-      exp_date: row.expDate,
-      bouquet: row.bouquet,
-    });
-
-    if (!res.ok && isUsernameExistsError(res.body)) {
-      username = `${row.username}_${Date.now().toString(36).slice(-4)}`;
-      res = await createUser({
+    const existing = await getUserProfile(username, password);
+    if (existing.ok) {
+      map[customerNumber] = {
         username,
-        password,
-        max_connections: row.maxConnections,
-        exp_date: row.expDate,
-        bouquet: row.bouquet,
-      });
-    }
-
-    await logXtreamSyncEvent(
-      apiLogPayload(res, {
-        event: "customer.create",
-        customer_number: row.customerNumber,
-        username,
-      })
-    );
-
-    if (res.ok) {
-      map[row.customerNumber] = {
-        username,
-        password,
-        apartment: row.apartment,
+        apartment_number: customer.apartment_number,
         createdAt: new Date().toISOString(),
-        exp_date: row.expDate,
-        bouquet: row.bouquet,
+        exp_date: Number(existing.data?.exp_date) || expDate,
+        bouquet,
+        password,
+        recoveredFromPanel: true,
       };
-      return { customer_number: row.customerNumber, action: "create", success: true };
+      await logXtreamSyncEvent(
+        apiLogPayload(existing, {
+          event: "customer.found_on_panel",
+          customer_number: customerNumber,
+          username,
+        })
+      );
+    } else {
+      const res = await createSubscriptionLine({
+        username,
+        password,
+        max_connections: maxConnections,
+        exp_date: expDate,
+        bouquet,
+      });
+      await logXtreamSyncEvent(
+        apiLogPayload(res, {
+          event: "customer.create",
+          customer_number: customerNumber,
+          apartment_number: customer.apartment_number,
+          username,
+        })
+      );
+      if (res.ok) {
+        map[customerNumber] = {
+          username,
+          apartment_number: customer.apartment_number,
+          createdAt: new Date().toISOString(),
+          exp_date: expDate,
+          bouquet,
+          password,
+        };
+        return { customer_number: customerNumber, action: "create", success: true };
+      }
+      return {
+        customer_number: customerNumber,
+        action: "create",
+        success: false,
+        error: JSON.stringify(res.data),
+      };
     }
-    return {
-      customer_number: row.customerNumber,
-      action: "create",
-      success: false,
-      error: JSON.stringify(res.body),
-    };
   }
 
-  const account = map[row.customerNumber];
+  const account = map[customerNumber] || mapped;
+
+  const linePassword = password || account.password;
 
   if (account.disabledAt) {
-    const enableRes = await enableUser(account.username);
+    const enableRes = await enableSubscriptionLine(account.username, linePassword);
     await logXtreamSyncEvent(
       apiLogPayload(enableRes, {
         event: "customer.enable",
-        customer_number: row.customerNumber,
+        customer_number: customerNumber,
         username: account.username,
       })
     );
     if (!enableRes.ok) {
       return {
-        customer_number: row.customerNumber,
+        customer_number: customerNumber,
         action: "enable",
         success: false,
-        error: JSON.stringify(enableRes.body),
+        error: JSON.stringify(enableRes.data),
       };
     }
-    delete map[row.customerNumber].disabledAt;
+    delete map[customerNumber].disabledAt;
   }
 
-  const res = await editUser({
+  const res = await editSubscriptionLine({
     username: account.username,
-    exp_date: row.expDate,
-    bouquet: row.bouquet,
-    max_connections: row.maxConnections,
+    password: linePassword,
+    exp_date: expDate,
+    bouquet,
   });
   await logXtreamSyncEvent(
     apiLogPayload(res, {
       event: "customer.renew",
-      customer_number: row.customerNumber,
+      customer_number: customerNumber,
       username: account.username,
     })
   );
   if (res.ok) {
-    map[row.customerNumber] = {
+    map[customerNumber] = {
       ...account,
-      exp_date: row.expDate,
-      bouquet: row.bouquet,
+      exp_date: expDate,
+      bouquet,
       renewedAt: new Date().toISOString(),
     };
-    return { customer_number: row.customerNumber, action: "renew", success: true };
+    return { customer_number: customerNumber, action: "renew", success: true };
   }
   return {
-    customer_number: row.customerNumber,
+    customer_number: customerNumber,
     action: "renew",
     success: false,
-    error: JSON.stringify(res.body),
+    error: JSON.stringify(res.data),
   };
 }
 
@@ -269,21 +260,22 @@ async function runSync() {
     return { ok: true, skipped: true };
   }
 
-  const { defaults, customers } = await loadTestConfig();
   const syncConfig = await loadSyncConfig();
+  const customers = await loadTestCustomers();
   const map = await readJsonFile(CUSTOMER_MAP_FILE, {});
 
   await logXtreamSyncEvent({
     event: "sync.start",
     customerCount: customers.length,
-    source: TEST_CUSTOMERS_FILE,
+    source: "test-config",
     baseUrl: getBaseUrl(),
   });
 
   const results = [];
   for (const customer of customers) {
     try {
-      results.push(await syncOneCustomer(customer, defaults, syncConfig, map));
+      const result = await syncOneCustomer(customer, syncConfig, map);
+      results.push(result);
     } catch (e) {
       await logXtreamSyncEvent({
         event: "customer.error",
@@ -300,6 +292,7 @@ async function runSync() {
   }
 
   await writeJsonFile(CUSTOMER_MAP_FILE, map);
+
   const summary = {
     event: "sync.complete",
     total: results.length,
@@ -313,63 +306,157 @@ async function runSync() {
 }
 
 async function testAllEndpoints() {
-  getDeveloperCredentials();
-  const syncConfig = await loadSyncConfig();
-  const probeUser =
-    process.env.XTREAM_TEST_USERNAME ||
-    `${syncConfig.endpointTest?.sampleUsernamePrefix || "xtream_api_test_"}${Date.now().toString(36)}`;
-  const probePass = randomPassword(10);
-  const expDate = futureExpDate(30);
-  const bouquet = [1];
+  if (getApiMode() === "billing" && !hasDeveloperCreds()) {
+    const err = new Error("billing mode requires XTREAM_DEVELOPER_USERNAME/PASSWORD");
+    console.error("[xtream] " + err.message);
+    throw err;
+  }
 
+  const syncConfig = await loadSyncConfig();
   await logXtreamSyncEvent({ event: "endpoint_test.start", baseUrl: getBaseUrl() });
 
   const bouquetRes = await getBouquets();
   const bouquetDetail = describeApiResult(bouquetRes);
   await logXtreamSyncEvent(
-    apiLogPayload(bouquetRes, { event: "endpoint_test.bouquet_get", detail: bouquetDetail })
+    apiLogPayload(bouquetRes, {
+      event: "endpoint_test.bouquet_get",
+      detail: bouquetDetail,
+    })
   );
 
-  const tests = [{ name: "bouquet_get", ok: bouquetRes.ok, detail: bouquetDetail, endpoint: bouquetRes.endpoint }];
+  const tests = [
+    {
+      name: "bouquet_get",
+      ok: bouquetRes.ok,
+      detail: bouquetDetail,
+      endpoint: bouquetRes.endpoint,
+    },
+  ];
   let allOk = bouquetRes.ok;
 
   if (!bouquetRes.ok) {
+    const diag = bouquetRes.diagnostics || {};
     console.error(`[xtream] bouquet_get FAILED: ${bouquetDetail}`);
-  } else if (syncConfig.endpointTest?.enabled !== false) {
-    const createRes = await createUser({
-      username: probeUser,
-      password: probePass,
+    console.error(
+      `[xtream] HTTP ${bouquetRes.httpStatus}, body length ${diag.responseBodyLength ?? "?"}, content-type ${diag.contentType ?? "?"}`
+    );
+    console.error(
+      "[xtream] Fix: XTREAM_BASE_URL=http://100.121.223.62:25500/ API IP's in panel Settings"
+    );
+  }
+
+  if (syncConfig.endpointTest?.enabled && bouquetRes.ok) {
+    const prefix = syncConfig.endpointTest.sampleUsernamePrefix || "xtream_api_test_";
+    const sampleUser = `${prefix}${Date.now().toString(36)}`;
+    const samplePass = `T${Math.random().toString(36).slice(2, 10)}`;
+    const expDate = computeExpDate(syncConfig);
+    const bouquet = resolveBouquetIds({ bouquet: "default" }, syncConfig);
+
+    const createRes = await createSubscriptionLine({
+      username: sampleUser,
+      password: samplePass,
       max_connections: 1,
       exp_date: expDate,
       bouquet,
     });
+    const createDetail = describeApiResult(createRes);
+    await logXtreamSyncEvent(
+      apiLogPayload(createRes, {
+        event: "endpoint_test.user_create",
+        username: sampleUser,
+        detail: createDetail,
+      })
+    );
     tests.push({
       name: "user_create",
       ok: createRes.ok,
-      detail: describeApiResult(createRes),
+      detail: createDetail,
       endpoint: createRes.endpoint,
     });
     allOk = allOk && createRes.ok;
+    if (!createRes.ok) {
+      console.error(`[xtream] user_create FAILED: ${createDetail}`);
+    }
 
     if (createRes.ok) {
-      const steps = [
-        ["user_edit", () => editUser({ username: probeUser, exp_date: expDate + 86400, bouquet })],
-        ["user_disable", () => disableUser(probeUser)],
-        ["user_enable", () => enableUser(probeUser)],
-      ];
-      for (const [name, run] of steps) {
-        const res = await run();
-        tests.push({ name, ok: res.ok, endpoint: res.endpoint });
-        allOk = allOk && res.ok;
-        await logXtreamSyncEvent(
-          apiLogPayload(res, { event: `endpoint_test.${name}`, username: probeUser })
-        );
-      }
+      const getRes = await getUserProfile(sampleUser, samplePass);
+      const getDetail = describeApiResult(getRes);
+      await logXtreamSyncEvent(
+        apiLogPayload(getRes, {
+          event: "endpoint_test.user_get",
+          username: sampleUser,
+          detail: getDetail,
+        })
+      );
+      tests.push({
+        name: "user_get",
+        ok: getRes.ok,
+        detail: getDetail,
+        endpoint: getRes.endpoint,
+      });
+      allOk = allOk && getRes.ok;
+
+      const editRes = await editSubscriptionLine({
+        username: sampleUser,
+        password: samplePass,
+        exp_date: expDate + 86400,
+        bouquet,
+      });
+      await logXtreamSyncEvent(
+        apiLogPayload(editRes, {
+          event: "endpoint_test.user_edit",
+          username: sampleUser,
+        })
+      );
+      tests.push({
+        name: "user_edit",
+        ok: editRes.ok,
+        endpoint: editRes.endpoint,
+      });
+      allOk = allOk && editRes.ok;
+
+      const disableRes = await disableSubscriptionLine(sampleUser, samplePass);
+      await logXtreamSyncEvent(
+        apiLogPayload(disableRes, {
+          event: "endpoint_test.user_disable",
+          username: sampleUser,
+        })
+      );
+      tests.push({
+        name: "user_disable",
+        ok: disableRes.ok,
+        endpoint: disableRes.endpoint,
+      });
+      allOk = allOk && disableRes.ok;
+
+      const enableRes = await enableSubscriptionLine(sampleUser, samplePass);
+      await logXtreamSyncEvent(
+        apiLogPayload(enableRes, {
+          event: "endpoint_test.user_enable",
+          username: sampleUser,
+        })
+      );
+      tests.push({
+        name: "user_enable",
+        ok: enableRes.ok,
+        endpoint: enableRes.endpoint,
+      });
+      allOk = allOk && enableRes.ok;
     }
+  } else if (syncConfig.endpointTest?.enabled && !bouquetRes.ok) {
+    tests.push({
+      name: "user_create",
+      ok: false,
+      detail: "skipped — bouquet_get must succeed first",
+    });
+    allOk = false;
   }
 
   await logXtreamSyncEvent({ event: "endpoint_test.complete", ok: allOk, tests });
   console.log("[xtream] endpoint test complete", { ok: allOk, tests });
+  if (!allOk) {
+    console.error("[xtream] See logs/xtream-sync.jsonl for full request/response payloads.");
+  }
   return { ok: allOk, tests };
 }
 
@@ -387,7 +474,11 @@ async function main() {
     console.log("Usage: node jobs/xtreamSyncJob.js --sync | --test-endpoints");
     process.exit(1);
   } catch (e) {
-    await logXtreamSyncEvent({ type: "job_error", error: e.message, stack: e.stack });
+    await logXtreamSyncEvent({
+      type: "job_error",
+      error: e.message,
+      stack: e.stack,
+    });
     console.error("[xtream] job failed:", e.message);
     process.exit(1);
   }
