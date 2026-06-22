@@ -21,18 +21,25 @@ function getApiUrl() {
   return `${getBaseUrl()}/api.php`;
 }
 
+function cleanEnvValue(raw) {
+  const s = String(raw || "").trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
 function readDeveloperPair() {
   return {
-    developer_username: String(
-      process.env.XTREAM_DEVELOPER_USERNAME ||
-        process.env.XTREAM_ADMIN_USERNAME ||
-        ""
-    ).trim(),
-    developer_password: String(
-      process.env.XTREAM_DEVELOPER_PASSWORD ||
-        process.env.XTREAM_ADMIN_PASSWORD ||
-        ""
-    ).trim(),
+    developer_username: cleanEnvValue(
+      process.env.XTREAM_DEVELOPER_USERNAME || process.env.XTREAM_ADMIN_USERNAME
+    ),
+    developer_password: cleanEnvValue(
+      process.env.XTREAM_DEVELOPER_PASSWORD || process.env.XTREAM_ADMIN_PASSWORD
+    ),
   };
 }
 
@@ -149,6 +156,12 @@ function describeApiResult(result) {
   if (result.ok) return "success";
   const err = responseErrorMessage(result.data);
   if (err) return err;
+  if (result.diagnostics?.responseBodyLength === 0 && result.httpStatus === 200) {
+    return (
+      "Empty panel response (HTTP 200) — add billing server public IP to Settings > API IP's, " +
+      "then verify admin password in .env"
+    );
+  }
   if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
   return "Request failed (see logs/xtream-sync.jsonl)";
 }
