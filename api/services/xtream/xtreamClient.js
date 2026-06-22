@@ -273,26 +273,35 @@ async function v2Post(action, sub, payload = {}) {
 async function runStrategies(strategies) {
   const mode = getApiMode();
   let last;
+  const attempts = [];
   for (const { when, run, label } of strategies) {
     if (when === false) continue;
     if (mode === "billing" && !label.startsWith("billing")) continue;
     if (mode === "v2" && !label.startsWith("v2")) continue;
     last = await run();
+    attempts.push({
+      transport: label,
+      ok: last.ok,
+      httpStatus: last.httpStatus,
+      bodyLength: last.diagnostics?.responseBodyLength ?? 0,
+      endpoint: last.endpoint,
+    });
     if (last.ok || hasUsefulBody(last)) {
-      last.diagnostics = { ...last.diagnostics, usedTransport: label };
+      last.diagnostics = { ...last.diagnostics, usedTransport: label, attempts };
       return last;
     }
   }
-  if (last) last.diagnostics = { ...last.diagnostics, usedTransport: "none" };
-  return (
-    last || {
-      ok: false,
-      httpStatus: 0,
-      endpoint: getApiUrl(),
-      data: { status: "error", message: "No API transport matched" },
-      diagnostics: { responseBodyLength: 0, usedTransport: "none" },
-    }
-  );
+  if (last) {
+    last.diagnostics = { ...last.diagnostics, usedTransport: "none", attempts };
+    return last;
+  }
+  return {
+    ok: false,
+    httpStatus: 0,
+    endpoint: getApiUrl(),
+    data: { status: "error", message: "No API transport matched" },
+    diagnostics: { responseBodyLength: 0, usedTransport: "none", attempts },
+  };
 }
 
 async function getBouquets() {

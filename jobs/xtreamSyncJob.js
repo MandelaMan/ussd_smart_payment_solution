@@ -340,8 +340,27 @@ async function testAllEndpoints() {
     console.error(
       `[xtream] HTTP ${bouquetRes.httpStatus}, body length ${diag.responseBodyLength ?? "?"}, content-type ${diag.contentType ?? "?"}`
     );
+    if (Array.isArray(diag.attempts) && diag.attempts.length) {
+      console.error("[xtream] transports tried:");
+      for (const a of diag.attempts) {
+        console.error(
+          `  - ${a.transport}: http=${a.httpStatus} bodyLength=${a.bodyLength}`
+        );
+      }
+    }
+    if (!hasDeveloperCreds()) {
+      console.error(
+        "[xtream] XTREAM_DEVELOPER_USERNAME/PASSWORD not set — billing-get was skipped"
+      );
+    }
     console.error(
-      "[xtream] Fix: XTREAM_BASE_URL=http://100.121.223.62:25500/ API IP's in panel Settings"
+      "[xtream] Panel returns HTTP 200 + empty body = API not responding (not a code bug)."
+    );
+    console.error(
+      "[xtream] Fix on Xtream UI: Settings > API IP's add 100.121.223.62 and 127.0.0.1, Save"
+    );
+    console.error(
+      "[xtream] Verify .env: XTREAM_BASE_URL=http://100.121.223.62:25500/ and real admin password"
     );
   }
 
