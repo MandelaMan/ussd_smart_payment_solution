@@ -313,6 +313,14 @@ async function testAllEndpoints() {
     console.error(
       `[xtream] HTTP ${bouquetRes.httpStatus}, body length ${diag.responseBodyLength ?? "?"}`
     );
+    if (diag.responseBodyLength === 0) {
+      console.error(
+        "[xtream] Panel returns HTTP 200 + 0 bytes — API handler did not run (panel config, not app code)."
+      );
+      console.error("[xtream] On Xtream UI: Settings → API IP's → add 100.121.223.62 and 127.0.0.1, Save");
+      console.error("[xtream] Enable API in panel settings; verify XTREAM_DEVELOPER_PASSWORD in .env");
+      console.error("[xtream] Run: yarn xtream:check  (on the droplet, after .env is set)");
+    }
   }
 
   if (syncConfig.endpointTest?.enabled && bouquetRes.ok) {
