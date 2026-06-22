@@ -1,9 +1,10 @@
 const axios = require("axios");
 
 /**
- * Xtream UI R22 billing API (api.php on ADMIN port, e.g. 25500).
- * Per spec: every call is GET with query string:
- *   action, sub, developer_username, developer_password, then payload keys.
+ * Xtream UI R22 billing API — xtream_ui_r22_backend_api_document.docx
+ * Base: http://PANEL:ADMIN_PORT/api.php
+ * Auth: developer_username + developer_password on every GET query string.
+ * Endpoints: bouquet/get, user/create|get|edit|disable|enable
  */
 
 function normalizeBaseUrl(raw) {
@@ -96,7 +97,7 @@ function parseResponseData(data) {
     return {
       status: "error",
       message:
-        "Empty panel response — verify developer_username/developer_password, enable API under Settings > General, and whitelist billing server IP on port 25500.",
+        "Empty panel response — verify developer_username/developer_password, add billing server IP under Settings > API IP's, and ensure port 25500 is reachable.",
     };
   }
   if (typeof data === "string") {
@@ -105,7 +106,7 @@ function parseResponseData(data) {
       return {
         status: "error",
         message:
-          "Empty panel response — verify developer_username/developer_password, enable API under Settings > General, and whitelist billing server IP on port 25500.",
+        "Empty panel response — verify developer_username/developer_password, add billing server IP under Settings > API IP's, and ensure port 25500 is reachable.",
       };
     }
     if (trimmed.startsWith("<")) {
@@ -137,6 +138,8 @@ function isSuccessResponse(data) {
   if (Array.isArray(parsed)) return true;
   if (!parsed || typeof parsed !== "object") return false;
   if (parsed.result === true || parsed.result === "true") return true;
+  // user&sub=get returns a profile object (id + username), not { status: success }
+  if (parsed.id != null && parsed.username) return true;
   const status = String(parsed.status || "").toLowerCase();
   if (status === "error") return false;
   return status === "success" || status === "ok";
@@ -192,6 +195,11 @@ async function getBouquets() {
   return xtreamApiRequest("bouquet", "get");
 }
 
+async function getUserProfile(username) {
+  if (!username) throw new Error("getUserProfile requires username");
+  return xtreamApiRequest("user", "get", { username: String(username).trim() });
+}
+
 async function createSubscriptionLine({ username, password, max_connections = 1, exp_date, bouquet }) {
   if (!username || !password) throw new Error("createSubscriptionLine requires username and password");
   const exp = Number(exp_date);
@@ -209,12 +217,18 @@ async function createSubscriptionLine({ username, password, max_connections = 1,
 
 async function editSubscriptionLine({ username, exp_date, bouquet }) {
   if (!username) throw new Error("editSubscriptionLine requires username");
-  const exp = Number(exp_date);
-  if (!Number.isFinite(exp) || exp <= 0) {
-    throw new Error("editSubscriptionLine requires exp_date as Unix epoch seconds");
+  const payload = { username: String(username).trim() };
+  if (exp_date != null) {
+    const exp = Number(exp_date);
+    if (!Number.isFinite(exp) || exp <= 0) {
+      throw new Error("editSubscriptionLine exp_date must be a positive Unix epoch when provided");
+    }
+    payload.exp_date = Math.floor(exp);
   }
-  const payload = { username: String(username).trim(), exp_date: Math.floor(exp) };
   if (bouquet != null) payload.bouquet = formatBouquetParam(bouquet);
+  if (payload.exp_date == null && payload.bouquet == null) {
+    throw new Error("editSubscriptionLine requires exp_date and/or bouquet");
+  }
   return xtreamApiRequest("user", "edit", payload);
 }
 
@@ -239,6 +253,7 @@ module.exports = {
   buildQueryString,
   formatBouquetParam,
   getBouquets,
+  getUserProfile,
   createSubscriptionLine,
   editSubscriptionLine,
   disableSubscriptionLine,

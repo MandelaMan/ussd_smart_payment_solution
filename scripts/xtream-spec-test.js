@@ -83,5 +83,30 @@ assert(denied.status === "error", "parse access denied");
 const xuiOk = parseResponseData('{"result":true,"created_id":14838,"username":"test"}');
 assert(xuiOk.result === true, "parse XUI result:true");
 
+const userProfile = parseResponseData(
+  '{"id":"4521","username":"testuser99","password":"p1","exp_date":"1781128800","max_connections":"1","active_connections":"0","is_enabled":"1","bouquet":"[1,4,12]"}'
+);
+assert(userProfile.username === "testuser99" && userProfile.id === "4521", "parse user profile get");
+
+const getUrl = buildFullEndpoint("http://100.121.223.62:25500/api.php", {
+  action: "user",
+  sub: "get",
+  developer_username: "admin",
+  developer_password: "secret",
+  username: "testuser99",
+});
+assert(getUrl.includes("action=user&sub=get&developer_username="), "user get URL order");
+
+const bouquetEditUrl = buildFullEndpoint("http://100.121.223.62:25500/api.php", {
+  action: "user",
+  sub: "edit",
+  developer_username: "admin",
+  developer_password: "secret",
+  username: "testuser99",
+  bouquet: "[1,4]",
+});
+assert(bouquetEditUrl.includes("bouquet=%5B1%2C4%5D"), "edit bouquet-only URL");
+assert(!bouquetEditUrl.includes("exp_date"), "edit bouquet-only has no exp_date");
+
 console.log(failed ? `\n${failed} failed` : "\nAll spec alignment checks passed");
 process.exit(failed ? 1 : 0);
