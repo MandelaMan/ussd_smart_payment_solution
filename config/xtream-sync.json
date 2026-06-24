@@ -3,8 +3,8 @@
   "activeExpiryDays": 30,
   "bouquets": {
     "default": [1],
-    "dstv": [2],
-    "apartonet_dstv": [1, 2],
+    "apartonet": [1],
+    "apartonet_dstv": [2],
     "xumo": [3]
   },
   "username": {

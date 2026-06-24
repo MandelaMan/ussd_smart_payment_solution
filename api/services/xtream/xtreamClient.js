@@ -118,7 +118,9 @@ function describeApiResult(result) {
   const err = responseErrorMessage(result.data);
   if (err) return err;
   if (result.diagnostics?.responseBodyLength === 0) {
-    return "Empty panel response — check API IP whitelist and developer credentials";
+    return (
+      "Empty panel response - whitelist billing server Tailscale IP 100.120.188.75 in panel API IP settings"
+    );
   }
   if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
   return "Request failed (see logs/xtream-sync.jsonl)";
@@ -155,6 +157,8 @@ async function apiGet(action, sub, payload = {}) {
     diagnostics: {
       responseBodyLength: rawText.length,
       contentType: response.headers["content-type"] || null,
+      server: response.headers["server"] || null,
+      setCookie: Boolean(response.headers["set-cookie"]),
       method: "GET",
     },
     request: {

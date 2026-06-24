@@ -5,7 +5,7 @@
       "apartment_number": "APT-101",
       "password": "DemoPass101",
       "active": true,
-      "bouquet": "default",
+      "bouquet": "apartonet",
       "max_connections": 1
     },
     {
@@ -13,15 +13,23 @@
       "apartment_number": "APT-102",
       "password": "DemoPass102",
       "active": true,
-      "bouquet": "dstv",
+      "bouquet": "apartonet_dstv",
       "max_connections": 1
     },
     {
       "customer_number": "ET-DEMO-003",
       "apartment_number": "APT-103",
       "password": "DemoPass103",
+      "active": true,
+      "bouquet": "xumo",
+      "max_connections": 1
+    },
+    {
+      "customer_number": "ET-DEMO-004",
+      "apartment_number": "APT-104",
+      "password": "DemoPass104",
       "active": false,
-      "bouquet": "default",
+      "bouquet": "apartonet",
       "max_connections": 1
     }
   ]

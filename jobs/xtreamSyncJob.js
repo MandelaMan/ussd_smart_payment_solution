@@ -383,7 +383,7 @@ async function testAllEndpoints() {
     tests.push({
       name: "user_create",
       ok: false,
-      detail: "skipped — bouquet_get must succeed first",
+      detail: "skipped - bouquet_get must succeed first",
     });
     allOk = false;
   }
