@@ -11,14 +11,19 @@ xtream_ui_r22_backend_api_document-v2.docx
 .tmp_xtream_doc/
 .tmp_xtream_doc_extract/
 
-# Server-only logs (never commit; preserved on deploy)
+# Server-only logs (never commit; never rsync on deploy — see deploy.yml)
 logs/errors-*.log
 logs/runtime.log
 logs/deployments.log
 logs/*.bak
+logs/transactions.json
+logs/transactions-trail.jsonl
+logs/transactionSplits.jsonl
+logs/tisp-set-isp-payment.jsonl
+logs/updatedSubscriptions.json
+logs/updatedSubscriptions-trail.jsonl
+logs/xtream-sync.jsonl
+logs/xtream-customer-map.json
 
-# Tracked under logs/ (commit & deploy):
-# - transactionSplitConfig.json
-# - transactions.json, updatedSubscriptions.json
-# - *-trail.jsonl, transactionSplits.jsonl, tisp-set-isp-payment.jsonl
-# - xtream-*.json / *.jsonl
+# Deployed from repo when changed (optional split rules):
+# logs/transactionSplitConfig.json

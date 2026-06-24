@@ -43,12 +43,8 @@ jobs:
             --exclude ".git/" \
             --exclude ".github/" \
             --filter "protect .env" \
-            --filter "protect logs/errors-*" \
-            --filter "protect logs/runtime.log" \
-            --filter "protect logs/deployments.log" \
-            --filter "protect logs/updatedSubscriptions.json" \
-            --filter "protect logs/updatedSubscriptions-trail.jsonl" \
-            --filter "protect logs/*.bak" \
+            --include "logs/transactionSplitConfig.json" \
+            --exclude "logs/*" \
             ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
       - name: Install, build, and reload with PM2
