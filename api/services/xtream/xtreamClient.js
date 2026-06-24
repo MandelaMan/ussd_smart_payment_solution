@@ -1,8 +1,9 @@
 const axios = require("axios");
 
 /**
- * Xtream UI R22 api.php — v2 billing doc (GET + developer_username/developer_password).
- * Base: http://PANEL_IP:ADMIN_PORT/api.php
+ * Xtream Codes streaming API (wwwdir/api.php on http_broadcast port, e.g. 25461).
+ * Auth: billing server IP must be in panel Settings → API IP's (api_ips).
+ * User create/edit: POST with user_data[...] fields.
  */
 
 function normalizeBaseUrl(raw) {
@@ -56,6 +57,12 @@ function redactParams(params) {
   return copy;
 }
 
+function redactUserData(userData) {
+  const copy = { ...userData };
+  if (copy.password) copy.password = "[redacted]";
+  return copy;
+}
+
 function buildQueryString(params) {
   const parts = [];
   for (const [key, value] of Object.entries(params)) {
@@ -72,6 +79,17 @@ function buildRequestUrl(apiUrl, params) {
 
 function buildFullEndpoint(apiUrl, params) {
   return buildRequestUrl(apiUrl, redactParams(params));
+}
+
+function encodeUserDataBody(userData) {
+  const parts = [];
+  for (const [key, value] of Object.entries(userData)) {
+    if (value == null || value === "") continue;
+    parts.push(
+      `${encodeURIComponent(`user_data[${key}]`)}=${encodeURIComponent(String(value))}`
+    );
+  }
+  return parts.join("&");
 }
 
 function parseResponseData(data) {
@@ -97,6 +115,8 @@ function isSuccessResponse(data) {
   const parsed = parseResponseData(data);
   if (Array.isArray(parsed)) return true;
   if (!parsed || typeof parsed !== "object") return false;
+  if (parsed.result === true) return true;
+  if (parsed.result === false) return false;
   const status = String(parsed.status || "").toLowerCase();
   if (status === "error") return false;
   return status === "success" || status === "ok" || status === "true";
@@ -106,8 +126,9 @@ function responseErrorMessage(data) {
   const parsed = parseResponseData(data);
   if (Array.isArray(parsed)) return null;
   if (parsed && typeof parsed === "object") {
-    const msg = parsed.message || parsed.error || parsed.msg;
+    const msg = parsed.message || parsed.error || parsed.msg || parsed[0];
     if (msg) return String(msg);
+    if (parsed.result === false) return JSON.stringify(parsed);
     if (parsed.status === "error") return JSON.stringify(parsed);
   }
   return null;
@@ -119,36 +140,15 @@ function describeApiResult(result) {
   if (err) return err;
   if (result.diagnostics?.responseBodyLength === 0) {
     return (
-      "Empty panel response - whitelist billing server Tailscale IP 100.120.188.75 in panel API IP settings"
+      "Empty panel response — use streaming port 25461 (not admin 25500); whitelist billing server IP in panel API IP settings"
     );
   }
   if (result.httpStatus >= 400) return `HTTP ${result.httpStatus}`;
   return "Request failed (see logs/xtream-sync.jsonl)";
 }
 
-async function apiGet(action, sub, payload = {}) {
-  const apiUrl = getApiUrl();
-  const creds = getDeveloperCredentials();
-  const query = {
-    action,
-    sub,
-    developer_username: creds.developer_username,
-    developer_password: creds.developer_password,
-    ...payload,
-  };
-  const requestUrl = buildRequestUrl(apiUrl, query);
-  const endpoint = buildFullEndpoint(apiUrl, query);
-
-  const response = await axios.get(requestUrl, {
-    timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
-    validateStatus: () => true,
-    transformResponse: [(raw) => raw],
-    headers: { Accept: "application/json, text/plain, */*" },
-  });
-
+function buildApiResult(response, { endpoint, method, requestMeta, data }) {
   const rawText = response.data == null ? "" : String(response.data);
-  const data = parseResponseData(response.data);
-
   return {
     ok: response.status >= 200 && response.status < 300 && isSuccessResponse(data),
     httpStatus: response.status,
@@ -159,18 +159,71 @@ async function apiGet(action, sub, payload = {}) {
       contentType: response.headers["content-type"] || null,
       server: response.headers["server"] || null,
       setCookie: Boolean(response.headers["set-cookie"]),
-      method: "GET",
+      method,
     },
-    request: {
-      method: "GET",
-      endpoint,
-      params: redactParams(query),
-    },
+    request: requestMeta,
   };
 }
 
+async function apiGet(action, sub, payload = {}) {
+  const apiUrl = getApiUrl();
+  const query = { action, sub, ...payload };
+  const requestUrl = buildRequestUrl(apiUrl, query);
+  const endpoint = buildFullEndpoint(apiUrl, query);
+
+  const response = await axios.get(requestUrl, {
+    timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
+    validateStatus: () => true,
+    transformResponse: [(raw) => raw],
+    headers: { Accept: "application/json, text/plain, */*" },
+  });
+
+  const data = parseResponseData(response.data);
+  return buildApiResult(response, {
+    endpoint,
+    method: "GET",
+    requestMeta: { method: "GET", endpoint, params: redactParams(query) },
+    data,
+  });
+}
+
+async function apiPost(action, sub, userData = {}) {
+  const apiUrl = getApiUrl();
+  const query = { action, sub };
+  const requestUrl = buildRequestUrl(apiUrl, query);
+  const endpoint = buildFullEndpoint(apiUrl, query);
+  const body = encodeUserDataBody(userData);
+
+  const response = await axios.post(requestUrl, body, {
+    timeout: Number(process.env.XTREAM_REQUEST_TIMEOUT_MS || 20000),
+    validateStatus: () => true,
+    transformResponse: [(raw) => raw],
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+  });
+
+  const data = parseResponseData(response.data);
+  return buildApiResult(response, {
+    endpoint,
+    method: "POST",
+    requestMeta: {
+      method: "POST",
+      endpoint,
+      user_data: redactUserData(userData),
+    },
+    data,
+  });
+}
+
+/** Health check — bouquet&sub=get is not supported on standard Xtream Codes builds. */
+async function pingApi() {
+  return apiGet("server", "list");
+}
+
 async function getBouquets() {
-  return apiGet("bouquet", "get");
+  return pingApi();
 }
 
 async function createSubscriptionLine({ username, password, max_connections = 1, exp_date, bouquet }) {
@@ -179,7 +232,7 @@ async function createSubscriptionLine({ username, password, max_connections = 1,
   if (!Number.isFinite(exp) || exp <= 0) {
     throw new Error("createSubscriptionLine requires exp_date as Unix epoch seconds");
   }
-  return apiGet("user", "create", {
+  return apiPost("user", "create", {
     username: String(username).trim(),
     password: String(password),
     max_connections: Math.max(1, Math.floor(Number(max_connections) || 1)),
@@ -190,21 +243,21 @@ async function createSubscriptionLine({ username, password, max_connections = 1,
 
 async function editSubscriptionLine({ username, exp_date, bouquet }) {
   if (!username) throw new Error("editSubscriptionLine requires username");
-  const payload = { username: String(username).trim() };
+  const userData = { username: String(username).trim() };
   if (exp_date != null) {
     const exp = Number(exp_date);
     if (!Number.isFinite(exp) || exp <= 0) {
       throw new Error("editSubscriptionLine exp_date must be a positive Unix epoch when provided");
     }
-    payload.exp_date = Math.floor(exp);
+    userData.exp_date = Math.floor(exp);
   }
   if (bouquet != null) {
-    payload.bouquet = formatBouquetParam(bouquet);
+    userData.bouquet = formatBouquetParam(bouquet);
   }
-  if (payload.exp_date == null && payload.bouquet == null) {
+  if (userData.exp_date == null && userData.bouquet == null) {
     throw new Error("editSubscriptionLine requires exp_date and/or bouquet");
   }
-  return apiGet("user", "edit", payload);
+  return apiPost("user", "edit", userData);
 }
 
 async function disableSubscriptionLine(username) {
@@ -229,6 +282,7 @@ module.exports = {
   describeApiResult,
   isSuccessResponse,
   responseErrorMessage,
+  pingApi,
   getBouquets,
   createSubscriptionLine,
   editSubscriptionLine,

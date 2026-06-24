@@ -93,7 +93,7 @@ function computeExpDate(syncConfig) {
 
 function isUsernameExistsError(res) {
   const msg = (responseErrorMessage(res.data) || "").toLowerCase();
-  return msg.includes("already exists");
+  return msg.includes("already exists") || msg === "exists" || msg.includes('"exists"');
 }
 
 async function syncOneCustomer(customer, syncConfig, map) {
@@ -291,39 +291,33 @@ async function testAllEndpoints() {
   const syncConfig = await loadSyncConfig();
   await logXtreamSyncEvent({ event: "endpoint_test.start", baseUrl: getBaseUrl() });
 
-  const bouquetRes = await getBouquets();
-  const bouquetDetail = describeApiResult(bouquetRes);
+  const pingRes = await getBouquets();
+  const pingDetail = describeApiResult(pingRes);
   await logXtreamSyncEvent(
-    apiLogPayload(bouquetRes, { event: "endpoint_test.bouquet_get", detail: bouquetDetail })
+    apiLogPayload(pingRes, { event: "endpoint_test.server_list", detail: pingDetail })
   );
 
   const tests = [
     {
-      name: "bouquet_get",
-      ok: bouquetRes.ok,
-      detail: bouquetDetail,
-      endpoint: bouquetRes.endpoint,
+      name: "server_list",
+      ok: pingRes.ok,
+      detail: pingDetail,
+      endpoint: pingRes.endpoint,
     },
   ];
-  let allOk = bouquetRes.ok;
+  let allOk = pingRes.ok;
 
-  if (!bouquetRes.ok) {
-    console.error(`[xtream] bouquet_get FAILED: ${bouquetDetail}`);
-    const diag = bouquetRes.diagnostics || {};
+  if (!pingRes.ok) {
+    console.error(`[xtream] server_list FAILED: ${pingDetail}`);
+    const diag = pingRes.diagnostics || {};
     console.error(
-      `[xtream] HTTP ${bouquetRes.httpStatus}, body length ${diag.responseBodyLength ?? "?"}`
+      `[xtream] HTTP ${pingRes.httpStatus}, body length ${diag.responseBodyLength ?? "?"}`
     );
-    if (diag.responseBodyLength === 0) {
-      console.error(
-        "[xtream] Panel returns HTTP 200 + 0 bytes — API handler did not run (panel config, not app code)."
-      );
-      console.error("[xtream] On Xtream UI: Settings → API IP's → add 100.121.223.62 and 127.0.0.1, Save");
-      console.error("[xtream] Enable API in panel settings; verify XTREAM_DEVELOPER_PASSWORD in .env");
-      console.error("[xtream] Run: yarn xtream:check  (on the droplet, after .env is set)");
-    }
+    console.error("[xtream] Use XTREAM_BASE_URL on port 25461; whitelist billing IP in panel API IP settings");
+    console.error("[xtream] Run: yarn xtream:check");
   }
 
-  if (syncConfig.endpointTest?.enabled && bouquetRes.ok) {
+  if (syncConfig.endpointTest?.enabled && pingRes.ok) {
     const prefix = syncConfig.endpointTest.sampleUsernamePrefix || "xtream_api_test_";
     const sampleUser = `${prefix}${Date.now().toString(36)}`;
     const samplePass = `T${Math.random().toString(36).slice(2, 10)}`;
@@ -379,11 +373,11 @@ async function testAllEndpoints() {
       tests.push({ name: "user_enable", ok: enableRes.ok, endpoint: enableRes.endpoint });
       allOk = allOk && enableRes.ok;
     }
-  } else if (syncConfig.endpointTest?.enabled && !bouquetRes.ok) {
+  } else if (syncConfig.endpointTest?.enabled && !pingRes.ok) {
     tests.push({
       name: "user_create",
       ok: false,
-      detail: "skipped - bouquet_get must succeed first",
+      detail: "skipped - server_list must succeed first",
     });
     allOk = false;
   }

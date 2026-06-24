@@ -17,38 +17,22 @@ function assert(c, m) {
   } else console.log("PASS", m);
 }
 
-process.env.XTREAM_BASE_URL = "http://100.121.223.62:25500/";
-process.env.XTREAM_DEVELOPER_USERNAME = "admin";
-process.env.XTREAM_DEVELOPER_PASSWORD = "secret";
+process.env.XTREAM_BASE_URL = "http://100.121.223.62:25461/";
 
 assert(formatBouquetParam([1, 2]) === "[1,2]", "bouquet JSON array");
 
 const apiUrl = getApiUrl();
-const endpoint = buildFullEndpoint(apiUrl, {
-  action: "bouquet",
-  sub: "get",
-  developer_username: "admin",
-  developer_password: "secret",
-});
-assert(endpoint.includes("developer_password=%5Bredacted%5D"), "password redacted in log URL");
-assert(endpoint.includes("action=bouquet"), "bouquet action in URL");
+const pingEndpoint = buildFullEndpoint(apiUrl, { action: "server", sub: "list" });
+assert(pingEndpoint.includes("action=server"), "server list action in URL");
+assert(pingEndpoint.includes("sub=list"), "server list sub in URL");
 
-const createUrl = buildRequestUrl(apiUrl, {
-  action: "user",
-  sub: "create",
-  developer_username: "admin",
-  developer_password: "secret",
-  username: "APT101",
-  password: "linepass",
-  max_connections: 1,
-  exp_date: 1893456000,
-  bouquet: "[1]",
-});
-assert(createUrl.includes("sub=create"), "user create URL");
-assert(createUrl.includes("bouquet=%5B1%5D"), "bouquet param encoded");
+const createUrl = buildRequestUrl(apiUrl, { action: "user", sub: "create" });
+assert(createUrl.includes("sub=create"), "user create query URL");
 
-assert(Array.isArray(parseResponseData('[{"id":"1","bouquet_name":"Test"}]')), "parse bouquet array");
+assert(Array.isArray(parseResponseData('[{"id":1,"server_name":"Main"}]')), "parse server array");
+assert(isSuccessResponse({ result: true, created_id: 1 }), "result true");
 assert(isSuccessResponse({ status: "success" }), "success status");
+assert(!isSuccessResponse({ result: false, error: "EXISTS" }), "result false");
 assert(!isSuccessResponse({ status: "error", message: "Access denied" }), "error status");
 
 console.log(failed ? `${failed} failed` : "All spec checks passed");
