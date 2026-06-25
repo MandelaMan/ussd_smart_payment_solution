@@ -10,6 +10,7 @@ const {
   findLatestTxnByCheckoutOrPhone,
 } = require("../../utils/transactions");
 const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
+const { logError } = require("../utils/errorLogger");
 const { appendJsonLine, readJsonLineEntries } = require("../utils/appendJsonLine");
 
 // 👇 ADD: import Zoho helpers (adjust path if needed)
@@ -1157,6 +1158,11 @@ const initiateSTKPush = async (accountNumber, phone, amount) => {
         Timestamp: new Date().toISOString(),
       });
     } catch (e) {
+      logError(e, {
+        source: "mpesa.stk_prelog",
+        accountReference: AccountReference,
+        phone: user_phone,
+      });
       console.warn("Could not pre-log pending transaction:", e.message);
     }
 

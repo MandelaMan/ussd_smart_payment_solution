@@ -1,32 +1,32 @@
 {
   "customers": [
     {
-      "customer_number": "ET-DEMO-001",
-      "apartment_number": "APT-101",
+      "customer_number": "ET-A101",
+      "apartment_number": "A101",
       "password": "DemoPass101",
       "active": true,
       "bouquet": "apartonet",
       "max_connections": 1
     },
     {
-      "customer_number": "ET-DEMO-002",
-      "apartment_number": "APT-102",
+      "customer_number": "ET-A102",
+      "apartment_number": "A102",
       "password": "DemoPass102",
       "active": true,
       "bouquet": "apartonet_dstv",
       "max_connections": 1
     },
     {
-      "customer_number": "ET-DEMO-003",
-      "apartment_number": "APT-103",
+      "customer_number": "ET-A103",
+      "apartment_number": "A103",
       "password": "DemoPass103",
       "active": true,
       "bouquet": "xumo",
       "max_connections": 1
     },
     {
-      "customer_number": "ET-DEMO-004",
-      "apartment_number": "APT-104",
+      "customer_number": "ET-A1044",
+      "apartment_number": "A104",
       "password": "DemoPass104",
       "active": false,
       "bouquet": "apartonet",

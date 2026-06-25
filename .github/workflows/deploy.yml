@@ -53,8 +53,10 @@ jobs:
           set -euo pipefail
           cd "${{ secrets.DEPLOY_PATH }}"
 
-          # Ensure correct ownership
-          chown -R "$(whoami)":"$(whoami)" .
+          # Own app code; keep logs/ writable for the running process
+          find . -mindepth 1 -maxdepth 1 ! -name 'logs' ! -name '.env' -exec chown -R "$(whoami)":"$(whoami)" {} +
+          mkdir -p logs
+          chmod u+rwx logs
 
           # Setup Yarn via Corepack
           corepack enable || true

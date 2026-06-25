@@ -84,7 +84,7 @@ async function testTispLogger() {
 }
 
 async function testTransactionsTrail() {
-  const { appendTransaction } = require("../utils/transactions");
+  const { appendTransaction, readTransactions } = require("../utils/transactions");
   const marker = `smoke-${Date.now()}`;
   await appendTransaction({
     Status: "SMOKE_TEST",
@@ -92,9 +92,13 @@ async function testTransactionsTrail() {
     Timestamp: new Date().toISOString(),
   });
   const trail = path.join(ROOT, "logs", "transactions-trail.jsonl");
-  const raw = await fs.readFile(trail, "utf8");
-  if (!raw.includes(marker)) throw new Error("marker not in transactions-trail.jsonl");
-  pass("transactions trail append", trail);
+  const trailRaw = await fs.readFile(trail, "utf8");
+  if (!trailRaw.includes(marker)) throw new Error("marker not in transactions-trail.jsonl");
+  const all = await readTransactions();
+  if (!all.some((t) => t.CheckoutRequestID === marker)) {
+    throw new Error("marker not in transactions.json after append");
+  }
+  pass("transactions append", "trail + transactions.json");
 }
 
 async function testErrorLogger() {
