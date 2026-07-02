@@ -768,6 +768,47 @@ async function reconcileZohoInvoiceBeforeISP({
   };
 }
 
+/** Reconcile by order ref / amount; if no match, create invoice or pay newest open invoice. */
+async function applyZohoPaymentForMpesa({
+  customerNumber,
+  amount,
+  transactionId,
+  source,
+}) {
+  const reconcileResult = await reconcileZohoInvoiceBeforeISP({
+    customerNumber,
+    amount,
+    transactionId,
+    source,
+  });
+  if (reconcileResult?.paid) {
+    return reconcileResult;
+  }
+
+  console.log("Zoho reconcile: no match, trying create or pay open invoice", {
+    source,
+    transactionId,
+    customerNumber,
+    reason: reconcileResult?.reason,
+  });
+
+  const fallback = await createZohoInvoiceForPayment({
+    companyName: customerNumber,
+    amount,
+    transactionId,
+    source,
+  });
+  if (fallback?.paid) {
+    return fallback;
+  }
+  return {
+    paid: false,
+    reason: fallback?.reason || reconcileResult?.reason || "zoho_unresolved",
+    reconcile: reconcileResult,
+    fallback,
+  };
+}
+
 function normalizeText(s) {
   return String(s || "").trim().toLowerCase();
 }
@@ -829,7 +870,7 @@ async function createZohoInvoiceForPayment({
         "createZohoInvoiceForPayment: missing companyName or amount",
         { companyName, amount }
       );
-      return;
+      return { paid: false, reason: "missing_input" };
     }
 
     console.log(
@@ -843,7 +884,7 @@ async function createZohoInvoiceForPayment({
         "Zoho invoice: customer lookup failed",
         customer || "No customer returned"
       );
-      return;
+      return { paid: false, reason: "customer_not_found" };
     }
 
     const customer_id = customer.contact_id;
@@ -852,13 +893,13 @@ async function createZohoInvoiceForPayment({
         "Zoho invoice: customer has no contact_id",
         JSON.stringify(customer)
       );
-      return;
+      return { paid: false, reason: "customer_no_contact_id" };
     }
 
     const numericAmount = Number(amount);
     if (!numericAmount || Number.isNaN(numericAmount)) {
       console.error("Zoho invoice: invalid amount", amount);
-      return;
+      return { paid: false, reason: "invalid_amount" };
     }
 
     const existingInvoices = await getInvoices_JS({
@@ -886,13 +927,23 @@ async function createZohoInvoiceForPayment({
           "Zoho invoice: failed to mark existing open invoice paid",
           openInvoice.invoice_id
         );
-      } else {
-        console.log(
-          "Zoho invoice: existing open invoice marked paid",
-          openInvoice.invoice_id
-        );
+        return {
+          paid: false,
+          reason: "mark_paid_failed",
+          invoice_id: openInvoice.invoice_id,
+        };
       }
-      return;
+      console.log(
+        "Zoho invoice: existing open invoice marked paid",
+        openInvoice.invoice_id
+      );
+      return {
+        paid: true,
+        strategy: "marked_open_invoice",
+        invoice_id: openInvoice.invoice_id,
+        invoice_number: openInvoice.invoice_number,
+        amount_applied: applyAmount,
+      };
     }
 
     const matchedItem = await resolveItemForPayment(companyName, numericAmount);
@@ -928,7 +979,7 @@ async function createZohoInvoiceForPayment({
 
     if (!created?.invoice_id) {
       console.error("Zoho invoice: createInvoice_JS returned null");
-      return;
+      return { paid: false, reason: "create_failed" };
     }
 
     const paid = await markInvoiceAsPaid_JS({
@@ -941,7 +992,11 @@ async function createZohoInvoiceForPayment({
         "Zoho invoice: created invoice but failed to mark paid",
         created.invoice_id
       );
-      return;
+      return {
+        paid: false,
+        reason: "created_mark_paid_failed",
+        invoice_id: created.invoice_id,
+      };
     }
     console.log(
       "Zoho invoice created and marked paid for company:",
@@ -949,11 +1004,19 @@ async function createZohoInvoiceForPayment({
       "invoice_id:",
       created.invoice_id
     );
+    return {
+      paid: true,
+      strategy: "created_and_paid",
+      invoice_id: created.invoice_id,
+      invoice_number: created.invoice_number,
+      amount_applied: numericAmount,
+    };
   } catch (err) {
     console.error(
       "createZohoInvoiceForPayment error:",
       err?.response?.data || err.message
     );
+    return { paid: false, reason: "error", error: err.message };
   }
 }
 
@@ -1033,16 +1096,20 @@ const mpesaConfirmation = async (req, res) => {
       TransID: transactionId,
     });
 
-    // 3) Reconcile Zoho invoice before forwarding to ISP
+    // 3) Zoho invoice before forwarding to ISP
     try {
-      await reconcileZohoInvoiceBeforeISP({
+      const zohoResult = await applyZohoPaymentForMpesa({
         customerNumber: accountRef,
         amount,
         transactionId,
         source: "C2B",
       });
+      console.log("Zoho result (C2B):", zohoResult);
+      if (req.headers?.["x-paybill-simulation"]) {
+        req._zohoPaymentResult = zohoResult;
+      }
     } catch (e) {
-      console.error("Zoho reconcile failed (C2B):", e.message);
+      console.error("Zoho payment failed (C2B):", e.message);
     }
 
     // 4) Forward to ISP (SetISPPayment); updatedSubscriptions only if this succeeds
@@ -1226,16 +1293,17 @@ const mpesaCallback = async (req, res) => {
         ? String(existing.AccountReference)
         : process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
-      // Reconcile Zoho invoice before posting to ISP
+      // Zoho invoice before posting to ISP
       try {
-        await reconcileZohoInvoiceBeforeISP({
+        const zohoResult = await applyZohoPaymentForMpesa({
           customerNumber: accountRef,
           amount: transaction.Amount,
           transactionId: transaction.MpesaReceiptNumber,
           source: "STK",
         });
+        console.log("Zoho result (STK):", zohoResult);
       } catch (e) {
-        console.error("Zoho reconcile failed (STK):", e.message);
+        console.error("Zoho payment failed (STK):", e.message);
       }
 
       // Build and post ISP payload (compact)

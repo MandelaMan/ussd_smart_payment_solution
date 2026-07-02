@@ -244,6 +244,7 @@ async function main() {
   await mpesaConfirmation(req, res);
 
   const ack = res.getBody();
+  const zohoPaymentResult = req._zohoPaymentResult || null;
   const zohoAfter = await snapshotZoho(opts.billRef);
   const zohoOutcome = inferZohoOutcome(zohoBefore, zohoAfter);
 
@@ -266,12 +267,13 @@ async function main() {
       BusinessShortCode: payment.BusinessShortCode,
     },
     ack,
+    zohoPaymentResult,
     zohoBefore,
     zohoAfter,
     zohoOutcome,
     notes: [
       "Handler: mpesaConfirmation (same as POST /api/payment/confirmation)",
-      "Zoho step: reconcileZohoInvoiceBeforeISP — pays existing unpaid invoice by order ref or amount match",
+      "Zoho: reconcileZohoInvoiceBeforeISP, then createZohoInvoiceForPayment if no match",
       "TISP/ISP post runs after Zoho; failures are logged to console only",
     ],
   };
@@ -279,6 +281,9 @@ async function main() {
   await appendJsonLine(LOG_FILE, entry);
 
   console.log("\n[paybill-sim] ack:", JSON.stringify(ack));
+  if (zohoPaymentResult) {
+    console.log("[paybill-sim] zoho handler:", JSON.stringify(zohoPaymentResult));
+  }
   console.log("[paybill-sim] zoho outcome:", zohoOutcome.summary);
   if (zohoOutcome.newlyPaidInvoices.length) {
     console.log(
