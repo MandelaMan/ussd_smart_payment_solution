@@ -1,0 +1,182 @@
+USSD Smart Payment Solution — Simulation & Test Guide
+====================================================
+
+Run all commands from the project root on the billing server
+(e.g. /var/www/ussd_smart_payment_solution) after .env is configured.
+
+Prerequisites
+-------------
+1. Copy .env.dist to .env and fill in real credentials.
+2. yarn install
+3. For Zoho tests: ZOHO_* vars, ZOHO_PAYMENT_MODE=Mobile Money,
+   ZOHO_INVOICE_TAX_INCLUSIVE=true
+4. For Xtream tests: XTREAM_BASE_URL (port 25461), billing IP whitelisted on panel
+5. For paybill simulation: customer must exist in Zoho Books (company name = bill ref)
+
+
+================================================================================
+ZOHO — PAYBILL / M-PESA INVOICE (local simulation)
+================================================================================
+
+Uses the same handler as live production: POST /api/payment/confirmation
+(mpesaConfirmation → applyZohoPaymentForMpesa).
+
+Default test customer: ET-333-TEST, amount 3900 KES.
+
+  yarn paybill:simulate
+
+Custom bill ref, amount, and phone:
+
+  yarn paybill:simulate --bill-ref ET-333-TEST --amount 3900 --msisdn 254701057515
+
+Environment overrides (optional):
+
+  PAYBILL_SIM_BILL_REF=ET-333-TEST
+  PAYBILL_SIM_AMOUNT=3900
+  PAYBILL_SIM_MSISDN=254701057515
+
+Result log (append-only):
+
+  logs/paybill-simulate.jsonl
+
+View last run:
+
+  tail -1 logs/paybill-simulate.jsonl
+
+What it does:
+  - Snapshots Zoho invoices before/after
+  - Runs C2B confirmation handler (Zoho → TISP → subscription snapshot)
+  - Creates invoice at exact M-Pesa amount (VAT-inclusive) if no matching open invoice
+  - Marks invoice paid via Mobile Money payment mode
+
+
+================================================================================
+ZOHO — LIVE M-PESA (production, no simulation script)
+================================================================================
+
+When a real M-Pesa payment hits the running app, Zoho is updated automatically.
+
+Paybill (C2B) — customer pays via Paybill, account = company name:
+
+  Daraja POST → https://YOUR_HOST/api/payment/confirmation
+  Handler:    mpesaConfirmation
+  Bill ref:   tx.BillRefNumber  (e.g. ET-333-TEST)
+  Zoho flow:  applyZohoPaymentForMpesa (source: C2B)
+
+STK Push (USSD) — customer pays via STK prompt:
+
+  Daraja POST → https://YOUR_HOST/api/payment/callback
+  Handler:    mpesaCallback (on ResultCode 0 / SUCCESS)
+  Account:    AccountReference from STK initiation
+  Zoho flow:  applyZohoPaymentForMpesa (source: STK)
+
+Live Zoho audit log (every real payment):
+
+  logs/zoho-mpesa-payments.jsonl
+
+Verify after a live payment:
+
+  tail -5 logs/zoho-mpesa-payments.jsonl
+  pm2 logs ussd_smart_payment_solution --lines 50 | grep "Zoho result"
+
+Required .env for live Zoho on M-Pesa:
+
+  ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN
+  ZOHO_ORG_ID, ZOHO_BASE_URL, ZOHO_AUTH_URL
+  ZOHO_PAYMENT_MODE=Mobile Money
+  ZOHO_INVOICE_TAX_INCLUSIVE=true
+  MPESA_CONFIRMATION_URL=https://YOUR_HOST/api/payment/confirmation
+  MPESA_CALLBACK_URL=https://YOUR_HOST/api/payment/callback
+
+
+================================================================================
+XTREAM — PANEL CONNECTIVITY
+================================================================================
+
+Check API reachability (no subscription changes):
+
+  yarn xtream:check
+
+Expect: server&sub=list returns JSON. Uses XTREAM_BASE_URL (port 25461).
+
+
+================================================================================
+XTREAM — UNIT / SPEC TESTS (no panel required)
+================================================================================
+
+  yarn test:xtream-spec
+
+Validates URL building, response parsing, and client helpers offline.
+
+
+================================================================================
+XTREAM — LIVE ENDPOINT TEST (creates temp user on panel)
+================================================================================
+
+  yarn xtream:test
+
+Runs server_list, then user_create / edit / disable / enable on the panel.
+Uses credentials from .env. Logs to logs/xtream-sync.jsonl.
+
+
+================================================================================
+XTREAM — SYNC TEST CUSTOMERS FROM CONFIG
+================================================================================
+
+1. Copy test customer config:
+
+     cp config/xtream-test-customers.json.dist config/xtream-test-customers.json
+
+2. Edit config/xtream-test-customers.json and config/xtream-sync.json (bouquets).
+
+3. Run sync:
+
+     yarn xtream:sync
+
+Mapping file: logs/xtream-customer-map.json
+Event log:    logs/xtream-sync.jsonl
+
+Disable sync without removing scheduler:
+
+  XTREAM_SYNC_ENABLED=false yarn xtream:sync
+
+
+================================================================================
+XTREAM — DAILY SCHEDULER
+================================================================================
+
+Run once (same as cron job):
+
+  yarn xtream:daily:once
+
+Run continuous scheduler (production):
+
+  yarn xtream:daily
+
+
+================================================================================
+GENERAL SMOKE TEST
+================================================================================
+
+  yarn test:smoke
+
+Loads core modules and tests append-only loggers (no external APIs).
+
+
+================================================================================
+QUICK REFERENCE
+================================================================================
+
+  yarn paybill:simulate     Zoho invoice via paybill handler (simulated C2B)
+  yarn xtream:check         Xtream panel ping
+  yarn xtream:test          Xtream API live endpoint test
+  yarn xtream:sync          Sync test customers to Xtream panel
+  yarn test:xtream-spec     Xtream client unit checks
+  yarn test:smoke           App module smoke test
+
+Log files:
+  logs/paybill-simulate.jsonl      Paybill simulation results
+  logs/zoho-mpesa-payments.jsonl   Live M-Pesa → Zoho results
+  logs/xtream-sync.jsonl           Xtream API / sync events
+  logs/transactions.json           M-Pesa STK transaction state
+  logs/transactions-trail.jsonl    M-Pesa transaction audit trail

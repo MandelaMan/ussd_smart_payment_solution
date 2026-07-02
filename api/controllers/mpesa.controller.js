@@ -86,6 +86,7 @@ const SUBS_TRAIL_FILE = path.join(LOGS_DIR, "updatedSubscriptions-trail.jsonl");
 const SPLIT_CONFIG_FILE = path.join(LOGS_DIR, "transactionSplitConfig.json");
 const SPLIT_LOG_FILE = path.join(LOGS_DIR, "transactionSplits.jsonl");
 const SPLIT_LOG_LEGACY = path.join(LOGS_DIR, "transactionSplits.json");
+const ZOHO_MPESA_LOG_FILE = path.join(LOGS_DIR, "zoho-mpesa-payments.jsonl");
 
 let _splitLegacyMigrated = false;
 let _splitMigratePromise = null;
@@ -790,6 +791,20 @@ async function recordInvoicePayment({
   });
 }
 
+async function logZohoMpesaPaymentResult(result, meta = {}) {
+  try {
+    await appendJsonLine(ZOHO_MPESA_LOG_FILE, {
+      loggedAt: new Date().toISOString(),
+      event: "zoho_mpesa_payment",
+      live: true,
+      ...meta,
+      result,
+    });
+  } catch (e) {
+    console.error("zoho-mpesa payment log failed:", e.message);
+  }
+}
+
 async function applyZohoPaymentForMpesa({
   customerNumber,
   amount,
@@ -998,7 +1013,7 @@ const mpesaConfirmation = async (req, res) => {
       TransID: transactionId,
     });
 
-    // 3) Zoho invoice before forwarding to ISP
+    // 3) Zoho invoice before forwarding to ISP (live paybill flow)
     try {
       const zohoResult = await applyZohoPaymentForMpesa({
         customerNumber: accountRef,
@@ -1007,11 +1022,22 @@ const mpesaConfirmation = async (req, res) => {
         source: "C2B",
       });
       console.log("Zoho result (C2B):", zohoResult);
+      await logZohoMpesaPaymentResult(zohoResult, {
+        channel: "C2B",
+        accountRef,
+        amount,
+        transactionId,
+        msisdn,
+      });
       if (req.headers?.["x-paybill-simulation"]) {
         req._zohoPaymentResult = zohoResult;
       }
     } catch (e) {
       console.error("Zoho payment failed (C2B):", e.message);
+      await logZohoMpesaPaymentResult(
+        { paid: false, reason: "error", error: e.message },
+        { channel: "C2B", accountRef, amount, transactionId, msisdn }
+      );
     }
 
     // 4) Forward to ISP (SetISPPayment); updatedSubscriptions only if this succeeds
@@ -1195,7 +1221,7 @@ const mpesaCallback = async (req, res) => {
         ? String(existing.AccountReference)
         : process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
-      // Zoho invoice before posting to ISP
+      // Zoho invoice before posting to ISP (live STK flow)
       try {
         const zohoResult = await applyZohoPaymentForMpesa({
           customerNumber: accountRef,
@@ -1204,8 +1230,27 @@ const mpesaCallback = async (req, res) => {
           source: "STK",
         });
         console.log("Zoho result (STK):", zohoResult);
+        await logZohoMpesaPaymentResult(zohoResult, {
+          channel: "STK",
+          accountRef,
+          amount: transaction.Amount,
+          transactionId: transaction.MpesaReceiptNumber,
+          checkoutRequestId: transaction.CheckoutRequestID,
+          phone: transaction.PhoneNumber,
+        });
       } catch (e) {
         console.error("Zoho payment failed (STK):", e.message);
+        await logZohoMpesaPaymentResult(
+          { paid: false, reason: "error", error: e.message },
+          {
+            channel: "STK",
+            accountRef,
+            amount: transaction.Amount,
+            transactionId: transaction.MpesaReceiptNumber,
+            checkoutRequestId: transaction.CheckoutRequestID,
+            phone: transaction.PhoneNumber,
+          }
+        );
       }
 
       // Build and post ISP payload (compact)
