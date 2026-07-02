@@ -17,11 +17,10 @@ const { appendJsonLine, readJsonLineEntries } = require("../utils/appendJsonLine
 const {
   getCustomerByCompanyName_JS,
   createInvoice_JS,
-  getItems_JS,
   getInvoices_JS,
   markInvoiceAsPaid_JS,
 } = require("./zoho.controller"); // or "../zoho/zoho.controller" etc.
-const { postSetISPPayment, getTISPCustomer } = require("./tisp.controller");
+const { postSetISPPayment } = require("./tisp.controller");
 
 /* ================================================================== */
 /*                         ENV & CONSTANTS                            */
@@ -638,20 +637,6 @@ async function processTransactionSplit({ source, transactionId, totalAmount }) {
 /*                   ZOHO INVOICE INTEGRATION HELPERS                  */
 /* ================================================================== */
 
-function firstOpenInvoice(invoices) {
-  const list = Array.isArray(invoices) ? invoices : [];
-  const openStatuses = new Set(["sent", "overdue", "partially_paid", "unpaid"]);
-  const filtered = list.filter((inv) =>
-    openStatuses.has(String(inv.status || "").toLowerCase())
-  );
-  if (!filtered.length) return null;
-  return filtered.sort((a, b) => {
-    const da = new Date(a.date || a.created_time || 0).getTime();
-    const db = new Date(b.date || b.created_time || 0).getTime();
-    return db - da;
-  })[0];
-}
-
 function isUnpaidLikeInvoice(inv) {
   const s = String(inv?.status || "").toLowerCase();
   return ["sent", "overdue", "partially_paid", "unpaid"].includes(s);
@@ -662,22 +647,10 @@ function invoiceOrderRef(inv) {
     inv?.order_number ||
       inv?.salesorder_number ||
       inv?.reference_number ||
-      inv?.invoice_number ||
       ""
   )
     .trim()
     .toUpperCase();
-}
-
-function amountMatchesInvoiceBalance(inv, amount) {
-  const target = Number(amount);
-  if (!Number.isFinite(target) || target <= 0) return false;
-  const balance = Number(inv?.balance);
-  if (Number.isFinite(balance) && balance > 0) {
-    return Math.abs(balance - target) < 0.01;
-  }
-  const total = Number(inv?.total);
-  return Number.isFinite(total) && Math.abs(total - target) < 0.01;
 }
 
 function roundMoney(value) {
@@ -696,6 +669,28 @@ function invoiceOutstandingBalance(inv) {
 
 function amountsEqual(a, b) {
   return Math.abs(roundMoney(a) - roundMoney(b)) < 0.01;
+}
+
+function invoiceBalanceMatchesPayment(inv, paymentAmount) {
+  const bal = invoiceOutstandingBalance(inv);
+  return bal > 0 && amountsEqual(bal, paymentAmount);
+}
+
+/** Only match invoices explicitly tied to this payment — never auto-pick receivable/open invoices. */
+function findTargetOpenInvoice(invoices, customerNumber, paymentAmount) {
+  const list = (Array.isArray(invoices) ? invoices : []).filter(isUnpaidLikeInvoice);
+  if (!list.length) return null;
+
+  const normalizedRef = String(customerNumber || "").trim().toUpperCase();
+  if (normalizedRef) {
+    const byOrder = list.find((inv) => invoiceOrderRef(inv) === normalizedRef);
+    if (byOrder) return byOrder;
+  }
+
+  const byBalance = list.find((inv) => invoiceBalanceMatchesPayment(inv, paymentAmount));
+  if (byBalance) return byBalance;
+
+  return null;
 }
 
 /** Plan how much of an M-Pesa payment to apply to an invoice (Zoho keeps excess as customer credit). */
@@ -736,53 +731,13 @@ function planInvoicePayment(paymentAmount, invoiceBalance) {
   };
 }
 
-function findTargetOpenInvoice(invoices, customerNumber, paymentAmount) {
-  const list = (Array.isArray(invoices) ? invoices : []).filter(isUnpaidLikeInvoice);
-  if (!list.length) return null;
-
-  const normalizedRef = String(customerNumber || "").trim().toUpperCase();
-  const byOrder = list.find((inv) => invoiceOrderRef(inv) === normalizedRef);
-  if (byOrder) return byOrder;
-
-  const byExactAmount = list.find(
-    (inv) => amountMatchesInvoiceBalance(inv, paymentAmount)
-  );
-  if (byExactAmount) return byExactAmount;
-
-  if (list.length === 1) return list[0];
-
-  return firstOpenInvoice(list);
-}
-
 async function findOpenInvoiceForPayment({ customerNumber, customer_id, paymentAmount }) {
   const customerInvoices = await getInvoices_JS({
     customer_id,
     per_page: 200,
     page: 1,
   });
-  const fromCustomer = findTargetOpenInvoice(
-    customerInvoices,
-    customerNumber,
-    paymentAmount
-  );
-  if (fromCustomer) return fromCustomer;
-
-  let allInvoices = [];
-  try {
-    allInvoices = await getInvoices_JS({ per_page: 200, page: 1 });
-  } catch {
-    allInvoices = [];
-  }
-  const normalizedRef = String(customerNumber || "").trim().toUpperCase();
-  return (
-    (Array.isArray(allInvoices) ? allInvoices : []).find(
-      (inv) =>
-        isUnpaidLikeInvoice(inv) &&
-        String(inv.customer_id) === String(customer_id) &&
-        invoiceOrderRef(inv) === normalizedRef &&
-        inv?.invoice_id
-    ) || null
-  );
+  return findTargetOpenInvoice(customerInvoices, customerNumber, paymentAmount);
 }
 
 async function createInvoiceForExactAmount({
@@ -792,29 +747,19 @@ async function createInvoiceForExactAmount({
   transactionId,
   source,
 }) {
-  const matchedItem = await resolveItemForPayment(companyName, paymentAmount);
-  const description = `Payment for ${companyName} (Tx: ${
+  const description = `M-Pesa payment for ${companyName} (Tx: ${
     transactionId || "N/A"
   }) via ${source}`;
 
-  const lineItems = matchedItem
-    ? [
-        {
-          item_id: matchedItem.item_id,
-          name: matchedItem.name,
-          rate: paymentAmount,
-          quantity: 1,
-          description,
-        },
-      ]
-    : [
-        {
-          name: `Subscription payment - ${companyName}`,
-          rate: paymentAmount,
-          quantity: 1,
-          description,
-        },
-      ];
+  // No item_id — Zoho ignores custom rate and uses catalog/receivable price when item_id is set.
+  const lineItems = [
+    {
+      name: `M-Pesa payment - ${companyName}`,
+      rate: paymentAmount,
+      quantity: 1,
+      description,
+    },
+  ];
 
   return createInvoice_JS({
     customer_id,
@@ -952,50 +897,6 @@ async function applyZohoPaymentForMpesa({
     remaining_balance: plan.remaining_balance ?? 0,
     zoho_payment_id: payment.payment_id || null,
   };
-}
-
-function normalizeText(s) {
-  return String(s || "").trim().toLowerCase();
-}
-
-function pickItemByPackage(items, packageName) {
-  const q = normalizeText(packageName);
-  if (!q) return null;
-  return (
-    items.find((it) => normalizeText(it.name).includes(q)) ||
-    items.find((it) => normalizeText(it.description).includes(q)) ||
-    items.find((it) => normalizeText(it.sku).includes(q)) ||
-    null
-  );
-}
-
-function pickItemByAmount(items, amount) {
-  const n = Number(amount);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return (
-    items.find((it) => Number(it.rate) === n) ||
-    items.find((it) => Number(it.sales_rate) === n) ||
-    null
-  );
-}
-
-async function resolveItemForPayment(companyName, amount) {
-  const items = await getItems_JS();
-  if (!Array.isArray(items) || !items.length) return null;
-
-  let packageName = "";
-  try {
-    const tisp = await getTISPCustomer(companyName);
-    packageName = String(tisp?.package || "");
-  } catch (_) {
-    packageName = "";
-  }
-
-  return (
-    pickItemByPackage(items, packageName) ||
-    pickItemByAmount(items, amount) ||
-    null
-  );
 }
 
 /* ================================================================== */
