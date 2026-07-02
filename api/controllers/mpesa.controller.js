@@ -680,132 +680,277 @@ function amountMatchesInvoiceBalance(inv, amount) {
   return Number.isFinite(total) && Math.abs(total - target) < 0.01;
 }
 
-async function reconcileZohoInvoiceBeforeISP({
-  customerNumber,
-  amount,
-  transactionId,
-  source,
-}) {
-  const customerNo = String(customerNumber || "").trim();
-  const numericAmount = Number(amount);
-  if (!customerNo || !Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { paid: false, reason: "invalid_input" };
-  }
+function roundMoney(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
 
-  // 1) Search invoice by order number/reference matching customer number
-  let allInvoices = [];
-  try {
-    allInvoices = await getInvoices_JS({ per_page: 200, page: 1 });
-  } catch (_) {
-    allInvoices = [];
-  }
-  const normalizedCustomerNo = customerNo.toUpperCase();
-  const invoiceByOrder = allInvoices.find(
-    (inv) =>
-      isUnpaidLikeInvoice(inv) &&
-      invoiceOrderRef(inv) === normalizedCustomerNo &&
-      inv?.invoice_id &&
-      inv?.customer_id
-  );
+function invoiceOutstandingBalance(inv) {
+  const balance = Number(inv?.balance);
+  if (Number.isFinite(balance) && balance >= 0) return roundMoney(balance);
+  const total = Number(inv?.total);
+  if (Number.isFinite(total) && total >= 0) return roundMoney(total);
+  return 0;
+}
 
-  if (invoiceByOrder) {
-    const applyAmount = Number(invoiceByOrder.balance || numericAmount) || numericAmount;
-    const paid = await markInvoiceAsPaid_JS({
-      invoice_id: invoiceByOrder.invoice_id,
-      customer_id: invoiceByOrder.customer_id,
-      amount: Math.min(numericAmount, applyAmount),
-    });
-    if (paid) {
-      console.log("Zoho reconcile: paid invoice by order number", {
-        source,
-        transactionId,
-        customerNumber: customerNo,
-        invoiceId: invoiceByOrder.invoice_id,
-      });
-      return { paid: true, strategy: "order_number", invoice: invoiceByOrder };
-    }
-  }
+function amountsEqual(a, b) {
+  return Math.abs(roundMoney(a) - roundMoney(b)) < 0.01;
+}
 
-  // 2) Fallback: find customer by company name == customer number and pay unpaid invoice matching amount
-  const customer = await getCustomerByCompanyName_JS(customerNo);
-  if (!customer || typeof customer === "string" || !customer.contact_id) {
-    return { paid: false, reason: "customer_not_found" };
-  }
-  const customerInvoices = await getInvoices_JS({
-    customer_id: customer.contact_id,
-    per_page: 200,
-    page: 1,
-  });
-  const matchedByAmount = (Array.isArray(customerInvoices) ? customerInvoices : []).find(
-    (inv) => isUnpaidLikeInvoice(inv) && amountMatchesInvoiceBalance(inv, numericAmount)
-  );
-  if (!matchedByAmount?.invoice_id) {
-    return { paid: false, reason: "no_amount_match", customerId: customer.contact_id };
-  }
-  const paid = await markInvoiceAsPaid_JS({
-    invoice_id: matchedByAmount.invoice_id,
-    customer_id: customer.contact_id,
-    amount: numericAmount,
-  });
-  if (!paid) {
+/** Plan how much of an M-Pesa payment to apply to an invoice (Zoho keeps excess as customer credit). */
+function planInvoicePayment(paymentAmount, invoiceBalance) {
+  const pay = roundMoney(paymentAmount);
+  const balance = roundMoney(invoiceBalance);
+
+  if (balance <= 0) {
     return {
-      paid: false,
-      reason: "mark_paid_failed",
-      invoiceId: matchedByAmount.invoice_id,
+      payment_amount: pay,
+      amount_applied: pay,
+      outcome: "paid_in_full",
+      excess_amount: 0,
     };
   }
-  console.log("Zoho reconcile: paid fallback invoice by customer+amount", {
-    source,
-    transactionId,
-    customerNumber: customerNo,
-    customerId: customer.contact_id,
-    invoiceId: matchedByAmount.invoice_id,
-  });
+  if (amountsEqual(pay, balance)) {
+    return {
+      payment_amount: pay,
+      amount_applied: balance,
+      outcome: "paid_in_full",
+      excess_amount: 0,
+    };
+  }
+  if (pay < balance) {
+    return {
+      payment_amount: pay,
+      amount_applied: pay,
+      outcome: "partially_paid",
+      excess_amount: 0,
+      remaining_balance: roundMoney(balance - pay),
+    };
+  }
   return {
-    paid: true,
-    strategy: "customer_unpaid_amount_match",
-    invoice: matchedByAmount,
+    payment_amount: pay,
+    amount_applied: balance,
+    outcome: "paid_with_excess_credit",
+    excess_amount: roundMoney(pay - balance),
   };
 }
 
-/** Reconcile by order ref / amount; if no match, create invoice or pay newest open invoice. */
+function findTargetOpenInvoice(invoices, customerNumber, paymentAmount) {
+  const list = (Array.isArray(invoices) ? invoices : []).filter(isUnpaidLikeInvoice);
+  if (!list.length) return null;
+
+  const normalizedRef = String(customerNumber || "").trim().toUpperCase();
+  const byOrder = list.find((inv) => invoiceOrderRef(inv) === normalizedRef);
+  if (byOrder) return byOrder;
+
+  const byExactAmount = list.find(
+    (inv) => amountMatchesInvoiceBalance(inv, paymentAmount)
+  );
+  if (byExactAmount) return byExactAmount;
+
+  if (list.length === 1) return list[0];
+
+  return firstOpenInvoice(list);
+}
+
+async function findOpenInvoiceForPayment({ customerNumber, customer_id, paymentAmount }) {
+  const customerInvoices = await getInvoices_JS({
+    customer_id,
+    per_page: 200,
+    page: 1,
+  });
+  const fromCustomer = findTargetOpenInvoice(
+    customerInvoices,
+    customerNumber,
+    paymentAmount
+  );
+  if (fromCustomer) return fromCustomer;
+
+  let allInvoices = [];
+  try {
+    allInvoices = await getInvoices_JS({ per_page: 200, page: 1 });
+  } catch {
+    allInvoices = [];
+  }
+  const normalizedRef = String(customerNumber || "").trim().toUpperCase();
+  return (
+    (Array.isArray(allInvoices) ? allInvoices : []).find(
+      (inv) =>
+        isUnpaidLikeInvoice(inv) &&
+        String(inv.customer_id) === String(customer_id) &&
+        invoiceOrderRef(inv) === normalizedRef &&
+        inv?.invoice_id
+    ) || null
+  );
+}
+
+async function createInvoiceForExactAmount({
+  companyName,
+  customer_id,
+  paymentAmount,
+  transactionId,
+  source,
+}) {
+  const matchedItem = await resolveItemForPayment(companyName, paymentAmount);
+  const description = `Payment for ${companyName} (Tx: ${
+    transactionId || "N/A"
+  }) via ${source}`;
+
+  const lineItems = matchedItem
+    ? [
+        {
+          item_id: matchedItem.item_id,
+          name: matchedItem.name,
+          rate: paymentAmount,
+          quantity: 1,
+          description,
+        },
+      ]
+    : [
+        {
+          name: `Subscription payment - ${companyName}`,
+          rate: paymentAmount,
+          quantity: 1,
+          description,
+        },
+      ];
+
+  return createInvoice_JS({
+    customer_id,
+    items: lineItems,
+    template_id: ZOHO_INVOICE_TEMPLATE_ID || undefined,
+  });
+}
+
+async function recordInvoicePayment({
+  invoice_id,
+  customer_id,
+  paymentAmount,
+  amountApplied,
+  transactionId,
+  source,
+}) {
+  return markInvoiceAsPaid_JS({
+    invoice_id,
+    customer_id,
+    amount: paymentAmount,
+    amount_applied: amountApplied,
+    reference_number: transactionId ? String(transactionId) : undefined,
+    description: `M-Pesa ${source || "payment"} ${transactionId || ""}`.trim(),
+  });
+}
+
 async function applyZohoPaymentForMpesa({
   customerNumber,
   amount,
   transactionId,
   source,
 }) {
-  const reconcileResult = await reconcileZohoInvoiceBeforeISP({
-    customerNumber,
-    amount,
-    transactionId,
-    source,
-  });
-  if (reconcileResult?.paid) {
-    return reconcileResult;
+  const companyName = String(customerNumber || "").trim();
+  const paymentAmount = roundMoney(amount);
+  if (!companyName || paymentAmount <= 0) {
+    return { paid: false, reason: "invalid_input" };
   }
 
-  console.log("Zoho reconcile: no match, trying create or pay open invoice", {
-    source,
-    transactionId,
-    customerNumber,
-    reason: reconcileResult?.reason,
+  const customer = await getCustomerByCompanyName_JS(companyName);
+  if (!customer || typeof customer === "string" || !customer.contact_id) {
+    return { paid: false, reason: "customer_not_found" };
+  }
+
+  const customer_id = customer.contact_id;
+  const openInvoice = await findOpenInvoiceForPayment({
+    customerNumber: companyName,
+    customer_id,
+    paymentAmount,
   });
 
-  const fallback = await createZohoInvoiceForPayment({
-    companyName: customerNumber,
-    amount,
+  if (!openInvoice?.invoice_id) {
+    const created = await createInvoiceForExactAmount({
+      companyName,
+      customer_id,
+      paymentAmount,
+      transactionId,
+      source,
+    });
+    if (!created?.invoice_id) {
+      return { paid: false, reason: "create_failed" };
+    }
+
+    const createdBalance = invoiceOutstandingBalance(created);
+    const plan = planInvoicePayment(paymentAmount, createdBalance);
+    const payment = await recordInvoicePayment({
+      invoice_id: created.invoice_id,
+      customer_id,
+      paymentAmount: plan.payment_amount,
+      amountApplied: plan.amount_applied,
+      transactionId,
+      source,
+    });
+    if (!payment) {
+      return {
+        paid: false,
+        reason: "created_mark_paid_failed",
+        invoice_id: created.invoice_id,
+      };
+    }
+
+    return {
+      paid: true,
+      strategy: "created_and_paid",
+      invoice_id: created.invoice_id,
+      invoice_number: created.invoice_number,
+      invoice_balance_before: createdBalance,
+      payment_amount: plan.payment_amount,
+      amount_applied: plan.amount_applied,
+      excess_amount: plan.excess_amount || 0,
+      remaining_balance: plan.remaining_balance ?? 0,
+      zoho_payment_id: payment.payment_id || null,
+    };
+  }
+
+  const invoiceBalance = invoiceOutstandingBalance(openInvoice);
+  const plan = planInvoicePayment(paymentAmount, invoiceBalance);
+  const payment = await recordInvoicePayment({
+    invoice_id: openInvoice.invoice_id,
+    customer_id,
+    paymentAmount: plan.payment_amount,
+    amountApplied: plan.amount_applied,
     transactionId,
     source,
   });
-  if (fallback?.paid) {
-    return fallback;
+
+  if (!payment) {
+    return {
+      paid: false,
+      reason: "mark_paid_failed",
+      invoice_id: openInvoice.invoice_id,
+      plan,
+    };
   }
+
+  console.log("Zoho payment applied:", {
+    source,
+    transactionId,
+    customerNumber: companyName,
+    invoiceId: openInvoice.invoice_id,
+    outcome: plan.outcome,
+    payment_amount: plan.payment_amount,
+    amount_applied: plan.amount_applied,
+    excess_amount: plan.excess_amount || 0,
+  });
+
   return {
-    paid: false,
-    reason: fallback?.reason || reconcileResult?.reason || "zoho_unresolved",
-    reconcile: reconcileResult,
-    fallback,
+    paid: true,
+    strategy: plan.outcome,
+    invoice_id: openInvoice.invoice_id,
+    invoice_number: openInvoice.invoice_number,
+    invoice_balance_before: invoiceBalance,
+    payment_amount: plan.payment_amount,
+    amount_applied: plan.amount_applied,
+    excess_amount: plan.excess_amount || 0,
+    remaining_balance: plan.remaining_balance ?? 0,
+    zoho_payment_id: payment.payment_id || null,
   };
 }
 
@@ -851,173 +996,6 @@ async function resolveItemForPayment(companyName, amount) {
     pickItemByAmount(items, amount) ||
     null
   );
-}
-
-/**
- * Create a Zoho invoice for a given M-Pesa payment.
- * - Uses companyName (e.g. ET-..., CL-...) to look up the Zoho customer
- * - Creates a simple one-line invoice: Amount x 1, with description
- */
-async function createZohoInvoiceForPayment({
-  companyName,
-  amount,
-  transactionId,
-  source,
-}) {
-  try {
-    if (!companyName || !amount) {
-      console.warn(
-        "createZohoInvoiceForPayment: missing companyName or amount",
-        { companyName, amount }
-      );
-      return { paid: false, reason: "missing_input" };
-    }
-
-    console.log(
-      "Zoho invoice: looking up customer by companyName:",
-      companyName
-    );
-    const customer = await getCustomerByCompanyName_JS(companyName);
-
-    if (!customer || typeof customer === "string") {
-      console.error(
-        "Zoho invoice: customer lookup failed",
-        customer || "No customer returned"
-      );
-      return { paid: false, reason: "customer_not_found" };
-    }
-
-    const customer_id = customer.contact_id;
-    if (!customer_id) {
-      console.error(
-        "Zoho invoice: customer has no contact_id",
-        JSON.stringify(customer)
-      );
-      return { paid: false, reason: "customer_no_contact_id" };
-    }
-
-    const numericAmount = Number(amount);
-    if (!numericAmount || Number.isNaN(numericAmount)) {
-      console.error("Zoho invoice: invalid amount", amount);
-      return { paid: false, reason: "invalid_amount" };
-    }
-
-    const existingInvoices = await getInvoices_JS({
-      customer_id,
-      per_page: 200,
-      page: 1,
-    });
-    const openInvoice = firstOpenInvoice(existingInvoices);
-
-    if (openInvoice?.invoice_id) {
-      const openBal = Number(
-        openInvoice.balance ?? openInvoice.total ?? numericAmount
-      );
-      const applyAmount =
-        Number.isFinite(openBal) && openBal > 0
-          ? Math.min(numericAmount, openBal)
-          : numericAmount;
-      const paid = await markInvoiceAsPaid_JS({
-        invoice_id: openInvoice.invoice_id,
-        customer_id,
-        amount: applyAmount,
-      });
-      if (!paid) {
-        console.error(
-          "Zoho invoice: failed to mark existing open invoice paid",
-          openInvoice.invoice_id
-        );
-        return {
-          paid: false,
-          reason: "mark_paid_failed",
-          invoice_id: openInvoice.invoice_id,
-        };
-      }
-      console.log(
-        "Zoho invoice: existing open invoice marked paid",
-        openInvoice.invoice_id
-      );
-      return {
-        paid: true,
-        strategy: "marked_open_invoice",
-        invoice_id: openInvoice.invoice_id,
-        invoice_number: openInvoice.invoice_number,
-        amount_applied: applyAmount,
-      };
-    }
-
-    const matchedItem = await resolveItemForPayment(companyName, numericAmount);
-    const description = `Payment for ${companyName} (Tx: ${
-      transactionId || "N/A"
-    }) via ${source}`;
-
-    const lineItems = matchedItem
-      ? [
-          {
-            item_id: matchedItem.item_id,
-            name: matchedItem.name,
-            rate:
-              Number(matchedItem.rate ?? matchedItem.sales_rate) || numericAmount,
-            quantity: 1,
-            description,
-          },
-        ]
-      : [
-          {
-            name: `Subscription payment - ${companyName}`,
-            rate: numericAmount,
-            quantity: 1,
-            description,
-          },
-        ];
-
-    const created = await createInvoice_JS({
-      customer_id,
-      items: lineItems,
-      template_id: ZOHO_INVOICE_TEMPLATE_ID || undefined,
-    });
-
-    if (!created?.invoice_id) {
-      console.error("Zoho invoice: createInvoice_JS returned null");
-      return { paid: false, reason: "create_failed" };
-    }
-
-    const paid = await markInvoiceAsPaid_JS({
-      invoice_id: created.invoice_id,
-      customer_id,
-      amount: numericAmount,
-    });
-    if (!paid) {
-      console.error(
-        "Zoho invoice: created invoice but failed to mark paid",
-        created.invoice_id
-      );
-      return {
-        paid: false,
-        reason: "created_mark_paid_failed",
-        invoice_id: created.invoice_id,
-      };
-    }
-    console.log(
-      "Zoho invoice created and marked paid for company:",
-      companyName,
-      "invoice_id:",
-      created.invoice_id
-    );
-    return {
-      paid: true,
-      strategy: "created_and_paid",
-      invoice_id: created.invoice_id,
-      invoice_number: created.invoice_number,
-      amount_applied: numericAmount,
-    };
-  } catch (err) {
-    console.error(
-      "createZohoInvoiceForPayment error:",
-      err?.response?.data || err.message
-    );
-    return { paid: false, reason: "error", error: err.message };
-  }
 }
 
 /* ================================================================== */

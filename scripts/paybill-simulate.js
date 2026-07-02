@@ -4,7 +4,7 @@
  * Paybill (C2B) simulation — runs the same handler as POST /api/payment/confirmation.
  *
  * Default: customer ET-333-TEST, KES 3900, sandbox MSISDN.
- * Uses reconcileZohoInvoiceBeforeISP (mark existing unpaid invoice paid) then TISP/ISP
+ * Uses applyZohoPaymentForMpesa (exact amount create/pay, partial, or excess credit).
  * exactly as production mpesaConfirmation does.
  *
  * Usage:
@@ -207,6 +207,7 @@ function inferZohoOutcome(before, after) {
   if (newInvoices.length > 0) summary = "invoice_created";
   else if (newlyPaid.length > 0) summary = "invoice_marked_paid";
   else if (beforeUnpaid > afterUnpaid) summary = "unpaid_count_reduced";
+  else if (afterUnpaid > beforeUnpaid) summary = "partial_or_new_open";
 
   return {
     summary,
@@ -273,7 +274,7 @@ async function main() {
     zohoOutcome,
     notes: [
       "Handler: mpesaConfirmation (same as POST /api/payment/confirmation)",
-      "Zoho: reconcileZohoInvoiceBeforeISP, then createZohoInvoiceForPayment if no match",
+      "Zoho: no invoice → create at exact M-Pesa amount; existing → full / partial / excess credit",
       "TISP/ISP post runs after Zoho; failures are logged to console only",
     ],
   };

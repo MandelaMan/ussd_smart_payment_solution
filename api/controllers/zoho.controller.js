@@ -14,6 +14,7 @@ const ZOHO_ORG_ID = process.env.ZOHO_ORG_ID;
 const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN;
 const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
 const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
+const ZOHO_PAYMENT_MODE = process.env.ZOHO_PAYMENT_MODE || "Mobile Money";
 
 if (!ZOHO_BASE_URL || !ZOHO_ORG_ID) {
   console.warn("[zoho] Missing ZOHO_BASE_URL or ZOHO_ORG_ID");
@@ -523,20 +524,34 @@ const createInvoice_JS = async ({ customer_id, items, template_id }) => {
   }
 };
 
-// Mark invoice as paid (object or null)
-const markInvoiceAsPaid_JS = async ({ invoice_id, customer_id, amount }) => {
+// Mark invoice as paid (object or null). `amount` = total received; `amount_applied` = applied to invoice (excess becomes customer credit in Zoho).
+const markInvoiceAsPaid_JS = async ({
+  invoice_id,
+  customer_id,
+  amount,
+  amount_applied,
+  reference_number,
+  description,
+}) => {
   try {
-    if (!invoice_id || !customer_id || !amount) {
+    const paymentAmount = Number(amount);
+    const applied = Number(amount_applied ?? amount);
+    if (!invoice_id || !customer_id || !Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      return null;
+    }
+    if (!Number.isFinite(applied) || applied <= 0) {
       return null;
     }
 
     const paymentData = {
       customer_id,
-      payment_mode: "cash",
-      amount,
+      payment_mode: ZOHO_PAYMENT_MODE,
+      amount: paymentAmount,
       date: moment().format("YYYY-MM-DD"),
-      invoices: [{ invoice_id, amount_applied: amount }],
+      invoices: [{ invoice_id, amount_applied: applied }],
     };
+    if (reference_number) paymentData.reference_number = String(reference_number);
+    if (description) paymentData.description = String(description);
 
     const result = await withTimeout(
       callZoho("customerpayments", "POST", paymentData),
