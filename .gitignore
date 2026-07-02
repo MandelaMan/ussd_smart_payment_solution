@@ -24,6 +24,7 @@ logs/updatedSubscriptions.json
 logs/updatedSubscriptions-trail.jsonl
 logs/xtream-sync.jsonl
 logs/xtream-customer-map.json
+logs/paybill-simulate.jsonl
 
 # Deployed from repo when changed (optional split rules):
 # logs/transactionSplitConfig.json
