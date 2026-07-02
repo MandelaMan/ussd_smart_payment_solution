@@ -72,8 +72,10 @@ const B2C_ORIGINATOR_CONVERSATION_ID =
 const B2C_INITIATOR_NAME = process.env.MPESA_B2C_INITIATOR_NAME || "";
 const B2C_SECURITY_CREDENTIAL = process.env.MPESA_B2C_SECURITY_CREDENTIAL || "";
 
-/** Optional Zoho template id to use when creating invoices */
-const ZOHO_INVOICE_TEMPLATE_ID = process.env.ZOHO_INVOICE_TEMPLATE_ID || null;
+/** M-Pesa / paybill amounts are VAT-inclusive; do not add tax on top of the rate. */
+const ZOHO_INVOICE_TAX_INCLUSIVE =
+  String(process.env.ZOHO_INVOICE_TAX_INCLUSIVE || "true").toLowerCase() !== "false";
+const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 
 /* ================================================================== */
 /*                       FILE STORAGE (light)                          */
@@ -751,20 +753,22 @@ async function createInvoiceForExactAmount({
     transactionId || "N/A"
   }) via ${source}`;
 
-  // No item_id — Zoho ignores custom rate and uses catalog/receivable price when item_id is set.
-  const lineItems = [
-    {
-      name: `M-Pesa payment - ${companyName}`,
-      rate: paymentAmount,
-      quantity: 1,
-      description,
-    },
-  ];
+  // No item_id — Zoho ignores custom rate and uses catalog price when item_id is set.
+  const lineItem = {
+    name: `M-Pesa payment - ${companyName}`,
+    rate: paymentAmount,
+    quantity: 1,
+    description,
+  };
+  if (ZOHO_VAT_TAX_ID) {
+    lineItem.tax_id = ZOHO_VAT_TAX_ID;
+  }
 
   return createInvoice_JS({
     customer_id,
-    items: lineItems,
-    template_id: ZOHO_INVOICE_TEMPLATE_ID || undefined,
+    items: [lineItem],
+    is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    reference_number: companyName,
   });
 }
 
@@ -823,6 +827,25 @@ async function applyZohoPaymentForMpesa({
     }
 
     const createdBalance = invoiceOutstandingBalance(created);
+    if (!amountsEqual(createdBalance, paymentAmount)) {
+      console.error("Zoho invoice total does not match M-Pesa amount", {
+        paymentAmount,
+        invoice_total: created.total,
+        invoice_balance: createdBalance,
+        invoice_id: created.invoice_id,
+        is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+      });
+      return {
+        paid: false,
+        reason: "invoice_amount_mismatch",
+        invoice_id: created.invoice_id,
+        invoice_number: created.invoice_number,
+        payment_amount: paymentAmount,
+        invoice_total: roundMoney(created.total),
+        invoice_balance: createdBalance,
+      };
+    }
+
     const plan = planInvoicePayment(paymentAmount, createdBalance);
     const payment = await recordInvoicePayment({
       invoice_id: created.invoice_id,

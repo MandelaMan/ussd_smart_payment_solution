@@ -481,7 +481,13 @@ const getInvoiceTemplates_JS = async () => {
 };
 
 // Create invoice (object or null)
-const createInvoice_JS = async ({ customer_id, items, template_id }) => {
+const createInvoice_JS = async ({
+  customer_id,
+  items,
+  template_id,
+  is_inclusive_tax,
+  reference_number,
+}) => {
   try {
     if (!customer_id || !items?.length) {
       return null;
@@ -492,8 +498,13 @@ const createInvoice_JS = async ({ customer_id, items, template_id }) => {
       date: moment().format("YYYY-MM-DD"),
       line_items: items,
     };
+    if (is_inclusive_tax != null) {
+      invoiceData.is_inclusive_tax = Boolean(is_inclusive_tax);
+    }
+    if (reference_number) {
+      invoiceData.reference_number = String(reference_number);
+    }
 
-    // 1) Create invoice
     const createResult = await withTimeout(
       callZoho("invoices", "POST", invoiceData),
       12_000,
@@ -502,7 +513,6 @@ const createInvoice_JS = async ({ customer_id, items, template_id }) => {
 
     const invoice = createResult.invoice;
 
-    // 2) If template_id provided, update invoice template
     if (template_id) {
       await withTimeout(
         callZoho(

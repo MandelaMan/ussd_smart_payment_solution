@@ -274,7 +274,7 @@ async function main() {
     zohoOutcome,
     notes: [
       "Handler: mpesaConfirmation (same as POST /api/payment/confirmation)",
-      "Zoho: no invoice → create at exact M-Pesa amount; existing → full / partial / excess credit",
+      "Zoho: create invoice with is_inclusive_tax (M-Pesa amount is VAT-inclusive); no extra VAT on top",
       "TISP/ISP post runs after Zoho; failures are logged to console only",
     ],
   };
