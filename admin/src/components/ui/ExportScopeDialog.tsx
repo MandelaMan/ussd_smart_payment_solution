@@ -54,7 +54,6 @@ function ScopeOption({ selected, title, detail, onSelect }: ScopeOptionProps) {
   return (
     <Box
       as="button"
-      type="button"
       onClick={onSelect}
       w="full"
       textAlign="left"
