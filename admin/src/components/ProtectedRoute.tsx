@@ -1,13 +1,7 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { AppShellSkeleton } from "./PageSkeletons";
 import { useAuth } from "../lib/auth";
-import {
-  canAccessConfig,
-  canAccessFinance,
-  canManageUsers,
-  normalizeRole,
-  type UserRole,
-} from "../lib/rbac";
+import { normalizeRole, type UserRole } from "../lib/rbac";
 
 export function ProtectedRoute() {
   const { user, loading } = useAuth();
@@ -53,15 +47,4 @@ export function ConfigRoute() {
 
 export function CustomerWriteRoute() {
   return <RoleRoute roles={["admin", "support"]} redirectTo="/customers" />;
-}
-
-export function useRouteAccess() {
-  const { user } = useAuth();
-  return {
-    user,
-    role: normalizeRole(user?.role),
-    finance: canAccessFinance(user),
-    config: canAccessConfig(user),
-    manageUsers: canManageUsers(user),
-  };
 }

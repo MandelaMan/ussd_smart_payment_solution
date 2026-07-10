@@ -323,7 +323,5 @@ function estimateDueDateFromLastPayment(
 module.exports = {
   calculateUpgradeQuote,
   calculateDowngradeQuote,
-  periodDaysForFrequency,
   estimateDueDateFromLastPayment,
-  frequenciesDiffer,
 };

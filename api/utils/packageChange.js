@@ -73,27 +73,7 @@ async function resolveBaselinePriceAtFrequency(
   return Math.round(Number(current.package_price) || 0);
 }
 
-/** @deprecated Prefer classifyPackageChangeByPrice after resolving prices. */
-function classifyPackageChange(current, newProduct, targetFrequency) {
-  const currentFreq = normalizeFrequency(current.payment_frequency);
-  const targetFreq = normalizeFrequency(
-    targetFrequency != null ? targetFrequency : current.payment_frequency
-  );
-  const frequencyChanged = targetFreq !== currentFreq;
-  const baseline = Math.round(Number(current.package_price) || 0);
-  const next = Math.round(Number(newProduct.price) || 0);
-  const byPrice = classifyPackageChangeByPrice(baseline, next);
-  return {
-    frequencyChanged,
-    ...byPrice,
-    isUpgrade: byPrice.isUpgrade,
-    isDowngrade: byPrice.isDowngrade,
-  };
-}
-
 module.exports = {
-  normalizeFrequency,
-  classifyPackageChange,
   classifyPackageChangeByPrice,
   resolveBaselinePriceAtFrequency,
 };

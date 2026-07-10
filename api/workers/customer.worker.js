@@ -1,4 +1,3 @@
-const pLimit = require("p-limit");
 const { loadEnv } = require("../config/env");
 const { createProgressReporter, ensureSyncJobRecord } = require("./base.worker");
 const crmService = require("../services/external/crm.service");
@@ -10,6 +9,7 @@ const { INTEGRATIONS } = require("../queue/definitions");
 const { emitSyncEvent } = require("../socket");
 const { syncLog } = require("../lib/structuredLogger");
 const { invalidateDashboardCaches } = require("../lib/cache");
+const { mapWithConcurrency } = require("../utils/mapWithConcurrency");
 
 const env = loadEnv();
 const INTEGRATION = INTEGRATIONS.CUSTOMER;
@@ -43,7 +43,6 @@ async function processCustomerSyncJob(job) {
     onDbProgress: (counts) => syncJobRepo.updateSyncJobProgress(syncJobDbId, counts),
   });
 
-  const limit = pLimit(env.API_CONCURRENCY);
   let created = 0;
   let updated = 0;
   let failed = 0;
@@ -56,39 +55,35 @@ async function processCustomerSyncJob(job) {
       updatedAfter,
     });
 
-    await Promise.all(
-      customers.map((customer) =>
-        limit(async () => {
-          try {
-            const result = await ispService.fetchCustomerStatus(
-              customer.customerNumber,
-              { correlationId }
-            );
-            if (result.ok && result.status) {
-              await customerRepo.updateCustomerSubscriptionStatus(
-                customer.id,
-                result.status
-              );
-              updated += 1;
-            } else {
-              failed += 1;
-            }
-          } catch {
-            failed += 1;
-          } finally {
-            processed += 1;
-            await reporter.report({
-              processed,
-              created,
-              updated,
-              failed,
-              total,
-              phase: `page ${page}/${totalPages}`,
-            });
-          }
-        })
-      )
-    );
+    await mapWithConcurrency(customers, env.API_CONCURRENCY, async (customer) => {
+      try {
+        const result = await ispService.fetchCustomerStatus(
+          customer.customerNumber,
+          { correlationId }
+        );
+        if (result.ok && result.status) {
+          await customerRepo.updateCustomerSubscriptionStatus(
+            customer.id,
+            result.status
+          );
+          updated += 1;
+        } else {
+          failed += 1;
+        }
+      } catch {
+        failed += 1;
+      } finally {
+        processed += 1;
+        await reporter.report({
+          processed,
+          created,
+          updated,
+          failed,
+          total,
+          phase: `page ${page}/${totalPages}`,
+        });
+      }
+    });
 
     await integrationStateRepo.upsertIntegrationState(INTEGRATION, {
       syncCursor: { page, totalPages, processed },

@@ -48,10 +48,6 @@ export function canAccessConfig(user: User | null): boolean {
   return role === "admin" || role === "support";
 }
 
-export function canAccessCustomers(user: User | null): boolean {
-  return Boolean(user);
-}
-
 export function canMutateCustomers(user: User | null): boolean {
   const role = normalizeRole(user?.role);
   return role === "admin" || role === "support";

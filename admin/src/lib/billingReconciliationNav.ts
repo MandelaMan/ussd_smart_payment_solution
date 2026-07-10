@@ -105,19 +105,8 @@ export const BILLING_ISSUE_MODULES = BILLING_MODULES.filter(
 /** @deprecated — use BILLING_ISSUE_MODULES */
 export const BILLING_STANDARD_MODULES = BILLING_ISSUE_MODULES;
 
-const STATUS_MODULE_PATH: Record<string, string> = {
-  unmatched_payment: "unallocated-mpesa",
-  manual_review_required: "manual-review",
-  ...Object.fromEntries(BILLING_GAP_STATUSES.map((status) => [status, "billing-gaps"])),
-};
-
 export function billingModulePath(module: BillingModuleDef) {
   return `${BILLING_BASE_PATH}/${module.path}`;
-}
-
-export function billingModulePathForStatus(status: string) {
-  const path = STATUS_MODULE_PATH[status];
-  return path ? `${BILLING_BASE_PATH}/${path}` : BILLING_BASE_PATH;
 }
 
 export function getBillingModuleFromPath(pathname: string): BillingModuleDef | null {

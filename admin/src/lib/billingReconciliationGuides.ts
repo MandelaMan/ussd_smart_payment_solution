@@ -120,7 +120,3 @@ export const BILLING_RECONCILIATION_GUIDES: BillingGuide[] = [
     ],
   },
 ];
-
-export function getBillingGuide(id: BillingGuideId) {
-  return BILLING_RECONCILIATION_GUIDES.find((g) => g.id === id);
-}

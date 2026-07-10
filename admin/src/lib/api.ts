@@ -2138,10 +2138,3 @@ export function timeAgo(value: string) {
   if (days < 7) return `${days}d ago`;
   return new Date(value).toLocaleDateString("en-KE", { month: "short", day: "numeric" });
 }
-
-export function statusColor(status: string) {
-  const s = status.toUpperCase();
-  if (s === "SUCCESS" || s === "PAID") return "green";
-  if (s === "PENDING") return "yellow";
-  return "red";
-}
