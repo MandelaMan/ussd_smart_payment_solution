@@ -20,7 +20,6 @@ import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { DateField } from "../components/ui/DateField";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
-import { countActiveFilters } from "../components/ui/MobileFilterSheet";
 import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
 import { SelectField } from "../components/ui/SelectField";
 import { DisplayText } from "../components/ui/DisplayText";
@@ -169,16 +168,9 @@ export function TransactionsPage() {
 
   const rowKey = (row: UnifiedTransaction) => `${row.source}-${row.id}`;
 
-  const mobileAdvancedFilterCount = countActiveFilters([
-    { value: status },
-    { value: channel },
-    { value: from },
-    { value: to },
-  ]);
-
   const advancedFilters = (
     <>
-      <FilterField label="Status" flex="1" minW={0}>
+      <FilterField label="Status" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
         <SelectField
           size="sm"
           fieldProps={{
@@ -199,7 +191,7 @@ export function TransactionsPage() {
         </SelectField>
       </FilterField>
 
-      <FilterField label="Channel" flex="1" minW={0}>
+      <FilterField label="Channel" flex={FILTER_FLEX.standard} minW={0}>
         <SelectField
           size="sm"
           fieldProps={{
@@ -218,7 +210,7 @@ export function TransactionsPage() {
         </SelectField>
       </FilterField>
 
-      <FilterField label="From" flex="1" minW="148px">
+      <FilterField label="From" flex={FILTER_FLEX.compact} minW={0}>
         <DateField
           size="sm"
           value={from}
@@ -232,7 +224,7 @@ export function TransactionsPage() {
         />
       </FilterField>
 
-      <FilterField label="To" flex="1" minW="148px">
+      <FilterField label="To" flex={FILTER_FLEX.compact} minW={0}>
         <DateField
           size="sm"
           value={to}
@@ -264,17 +256,7 @@ export function TransactionsPage() {
           { key: "success", label: "Success", active: status === "SUCCESS", onClick: () => { setStatus(status === "SUCCESS" ? "" : "SUCCESS"); setPage(1); setExpanded(null); } },
           { key: "failed", label: "Failed", active: status === "FAILED", onClick: () => { setStatus(status === "FAILED" ? "" : "FAILED"); setPage(1); setExpanded(null); } },
         ]}
-        filterContent={advancedFilters}
-        activeFilterCount={mobileAdvancedFilterCount}
-        onClearFilters={() => {
-          setStatus("");
-          setChannel("");
-          setFrom("");
-          setTo("");
-          setPage(1);
-          setExpanded(null);
-        }}
-        headerActions={
+        chipsTrailing={
           <DataTableExportButton
             entityLabel="transactions"
             viewCount={rows.length}
@@ -295,7 +277,7 @@ export function TransactionsPage() {
       />
 
       <FilterToolbar>
-          <FilterField label="Source" flex={FILTER_FLEX.compact} minW={0}>
+          <FilterField label="Source" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -315,7 +297,7 @@ export function TransactionsPage() {
             </SelectField>
           </FilterField>
 
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input
               size="sm"
               placeholder="Phone, receipt, customer…"

@@ -5,35 +5,67 @@ import type { ReactNode } from "react";
 export const FILTER_FLEX = {
   /** Full-width search on mobile, wider on desktop. */
   search: { base: "1 1 100%", lg: "2" },
-  /** Standard filter — stacks on mobile, half-width on sm, inline on lg. */
-  standard: { base: "1 1 100%", sm: "1 1 calc(50% - 4px)", lg: "1" },
+  /** Standard filter — full width on mobile, half on sm+, inline on lg. */
+  standard: { base: "1 1 100%", sm: "1 1 calc(50% - 6px)", lg: "1" },
   /** Wider filter (e.g. building select). */
-  wide: { base: "1 1 100%", sm: "1 1 calc(50% - 4px)", lg: "1.4" },
-  /** Compact filter — half width from mobile up. */
-  compact: { base: "1 1 calc(50% - 4px)", lg: "1" },
+  wide: { base: "1 1 100%", sm: "1 1 calc(50% - 6px)", lg: "1.4" },
+  /** Compact filter — full width on mobile, half from sm up. */
+  compact: { base: "1 1 100%", sm: "1 1 calc(50% - 6px)", lg: "1" },
 } as const;
 
 export function FilterToolbar({
   children,
+  actions,
   zIndex = 2,
 }: {
   children: ReactNode;
+  /** Trailing actions (e.g. Export) — full-width on mobile, inline on desktop. */
+  actions?: ReactNode;
   zIndex?: number;
 }) {
   return (
     <Box
-      display={{ base: "none", lg: "block" }}
       bg="white"
-      borderRadius="lg"
-      px={3}
-      py={2.5}
+      borderRadius={{ base: "xl", lg: "lg" }}
+      px={{ base: 3.5, lg: 3 }}
+      py={{ base: 3.5, lg: 2.5 }}
       border="1px solid"
       borderColor="gray.100"
       position="relative"
       zIndex={zIndex}
+      boxShadow={{ base: "sm", lg: "none" }}
+      w="full"
+      minW={0}
     >
-      <Flex gap={2} align="flex-end" flexWrap={{ base: "wrap", lg: "nowrap" }} w="full">
+      <Flex
+        gap={{ base: 3, lg: 2 }}
+        align={{ base: "stretch", lg: "flex-end" }}
+        direction={{ base: "column", lg: "row" }}
+        flexWrap={{ base: "wrap", lg: "nowrap" }}
+        w="full"
+        minW={0}
+      >
         {children}
+        {actions ? (
+          <Box
+            flexShrink={0}
+            w={{ base: "full", lg: "auto" }}
+            ml={{ base: 0, lg: "auto" }}
+            pt={{ base: 1, lg: 0 }}
+            display={{ base: "grid", lg: "flex" }}
+            gridTemplateColumns="1fr"
+            alignItems="flex-end"
+            gap={2}
+            css={{
+              "& > *": { width: "100%" },
+              "@media (min-width: 62em)": {
+                "& > *": { width: "auto" },
+              },
+            }}
+          >
+            {actions}
+          </Box>
+        ) : null}
       </Flex>
     </Box>
   );

@@ -470,6 +470,7 @@ export function ModuleListPageSkeleton({
         mx={{ base: -4, lg: 0 }}
         flex={1}
         minH={TABLE_VIEWPORT_MIN_H}
+        minW={0}
         display="flex"
         flexDirection="column"
       >

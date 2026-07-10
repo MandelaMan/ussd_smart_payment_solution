@@ -21,7 +21,6 @@ import {
   FiSettings,
   FiList,
   FiRefreshCw,
-  FiActivity,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/auth";
@@ -80,12 +79,6 @@ export function Sidebar({ open, onClose }: Props) {
       label: "Apartment History",
       icon: FiLayers,
       visible: canAccessConfig(user),
-    },
-    {
-      to: "/activity",
-      label: "Activity",
-      icon: FiActivity,
-      visible: canAccessFinance(user) || normalizeRole(user?.role) === "support",
     },
     {
       to: "/transactions",

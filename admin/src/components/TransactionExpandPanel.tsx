@@ -109,7 +109,8 @@ function PanelShell({
       boxShadow="sm"
     >
       <Flex
-        align="center"
+        direction={{ base: "column", sm: "row" }}
+        align={{ base: "stretch", sm: "center" }}
         justify="space-between"
         gap={3}
         px={3}
@@ -119,8 +120,9 @@ function PanelShell({
         borderColor="gray.100"
         borderLeft="4px solid"
         borderLeftColor={meta.accent}
+        minW={0}
       >
-        <Flex align="center" gap={3} minW={0}>
+        <Flex align="center" gap={3} minW={0} flex="1">
           <Flex
             boxSize="36px"
             borderRadius="lg"
@@ -134,7 +136,7 @@ function PanelShell({
           >
             <Icon size={18} />
           </Flex>
-          <Box minW={0}>
+          <Box minW={0} overflow="hidden">
             <Text fontWeight="semibold" fontSize="sm" color="gray.800">
               {meta.title}
             </Text>
@@ -145,10 +147,17 @@ function PanelShell({
             )}
           </Box>
         </Flex>
-        <Flex align="center" gap={3} flexShrink={0}>
+        <Flex
+          align="center"
+          gap={2}
+          flexShrink={0}
+          flexWrap="wrap"
+          justify={{ base: "flex-start", sm: "flex-end" }}
+          minW={0}
+        >
           {badge}
           {amount != null && (
-            <Text fontWeight="bold" fontSize="lg" color="gray.900" letterSpacing="-0.02em">
+            <Text fontWeight="bold" fontSize="lg" color="gray.900" letterSpacing="-0.02em" whiteSpace="nowrap">
               {formatCurrency(amount)}
             </Text>
           )}

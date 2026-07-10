@@ -55,7 +55,9 @@ const softInputProps = {
 
 const softInputPropsCompact = {
   ...softInputProps,
-  h: "48px",
+  h: "44px",
+  fontSize: "16px" as const,
+  borderRadius: "md" as const,
 };
 
 const SPARK_TX = "0,22 8,18 16,20 24,12 32,14 40,8 48,10 56,4";
@@ -278,8 +280,10 @@ function StatTileCard({
         compact
           ? undefined
           : {
-              animation: `login-tile-float 3.6s ease-in-out infinite`,
-              animationDelay: `${delay}s`,
+              "@media (min-width: 48em) and (prefers-reduced-motion: no-preference)": {
+                animation: `login-tile-float 3.6s ease-in-out infinite`,
+                animationDelay: `${delay}s`,
+              },
               "@keyframes login-tile-float": {
                 "0%, 100%": { transform: "translateY(0)" },
                 "50%": { transform: "translateY(-5px)" },
@@ -593,15 +597,15 @@ export function LoginPage() {
     const inputProps = compact ? softInputPropsCompact : softInputProps;
     return (
       <Box as="form" onSubmit={handleSubmit} w="full">
-        <Stack gap={compact ? 4 : 4}>
+        <Stack gap={compact ? 3 : 4}>
           {error ? (
-            <Box bg="red.50" color="red.700" px={3} py={2} borderRadius="lg" fontSize="sm">
+            <Box bg="red.50" color="red.700" px={3} py={2} borderRadius="md" fontSize="sm">
               {error}
             </Box>
           ) : null}
 
           <Field.Root required>
-            <InputGroup startElement={<FiMail color="gray" size={18} />}>
+            <InputGroup startElement={<FiMail color="gray" size={compact ? 16 : 18} />}>
               <Input
                 type="email"
                 autoComplete="email"
@@ -615,7 +619,7 @@ export function LoginPage() {
           </Field.Root>
 
           <Field.Root required>
-            <InputGroup startElement={<FiLock color="gray" size={18} />}>
+            <InputGroup startElement={<FiLock color="gray" size={compact ? 16 : 18} />}>
               <Input
                 type="password"
                 autoComplete="current-password"
@@ -627,7 +631,7 @@ export function LoginPage() {
             </InputGroup>
           </Field.Root>
 
-          <Flex align="center" justify="space-between" gap={2} flexWrap="nowrap" pt={compact ? 1 : 0}>
+          <Flex align="center" justify="space-between" gap={2} flexWrap="nowrap">
             <Checkbox.Root
               checked={rememberMe}
               onCheckedChange={(d) => setRememberMe(Boolean(d.checked))}
@@ -636,7 +640,11 @@ export function LoginPage() {
             >
               <Checkbox.HiddenInput />
               <Checkbox.Control borderRadius="sm" />
-              <Checkbox.Label color="gray.500" fontWeight="normal" fontSize="sm">
+              <Checkbox.Label
+                color="gray.500"
+                fontWeight="normal"
+                fontSize={compact ? "xs" : "sm"}
+              >
                 Remember Me
               </Checkbox.Label>
             </Checkbox.Root>
@@ -646,6 +654,7 @@ export function LoginPage() {
               size="sm"
               color={BRAND.cerulean}
               fontWeight="semibold"
+              fontSize={compact ? "xs" : "sm"}
               px={0}
               h="auto"
               minH="unset"
@@ -662,14 +671,14 @@ export function LoginPage() {
             color="white"
             _hover={{ bg: "brand.700" }}
             _active={{ transform: "scale(0.985)" }}
-            size="lg"
-            h={compact ? "48px" : "54px"}
+            size={compact ? "md" : "lg"}
+            h={compact ? "44px" : "54px"}
             borderRadius="lg"
             fontWeight="bold"
-            fontSize="md"
+            fontSize={compact ? "sm" : "md"}
             letterSpacing="0.01em"
             loading={submitting}
-            mt={compact ? 2 : 1}
+            mt={compact ? 1 : 1}
             boxShadow="0 10px 24px rgba(22, 106, 130, 0.28)"
           >
             {compact ? "Sign in" : "Login"}
@@ -772,15 +781,20 @@ export function LoginPage() {
       bg={BRAND.cerulean}
       overflow={{ base: "hidden", md: "visible" }}
     >
-      {/* Mobile: locked viewport — content packed, no dead space */}
+      {/* Mobile: compact, scrollable layout that fits short viewports */}
       <Flex
         display={{ base: "flex", md: "none" }}
         flex="1"
         direction="column"
-        h="100dvh"
+        h="100%"
         maxH="100dvh"
         position="relative"
-        overflow="hidden"
+        overflowX="hidden"
+        overflowY="auto"
+        css={{
+          WebkitOverflowScrolling: "touch",
+          overscrollBehaviorY: "contain",
+        }}
       >
         <HeroBackdrop />
 
@@ -789,12 +803,12 @@ export function LoginPage() {
           zIndex={1}
           flexShrink={0}
           px={4}
-          pt="max(1rem, env(safe-area-inset-top, 0px))"
-          pb={7}
+          pt="max(1.25rem, env(safe-area-inset-top, 0px))"
+          pb={6}
         >
-          <Flex align="center" gap={3.5} mb={5}>
+          <Flex align="center" gap={3} mb={6}>
             <Flex
-              boxSize="56px"
+              boxSize="48px"
               borderRadius="xl"
               bg="white"
               align="center"
@@ -802,7 +816,7 @@ export function LoginPage() {
               flexShrink={0}
               overflow="hidden"
               p={1.5}
-              boxShadow="0 8px 20px rgba(0,0,0,0.18)"
+              boxShadow="0 6px 16px rgba(0,0,0,0.16)"
             >
               <Image
                 src="/admin/logo.png"
@@ -817,13 +831,13 @@ export function LoginPage() {
               <Text
                 fontWeight="bold"
                 color="white"
-                fontSize="xl"
+                fontSize="lg"
                 letterSpacing="-0.01em"
-                lineHeight="1.15"
+                lineHeight="1.2"
               >
                 {BRAND_NAME}
               </Text>
-              <Text fontSize="sm" color="whiteAlpha.800" lineHeight="1.3" mt={0.5}>
+              <Text fontSize="sm" color="whiteAlpha.800" lineHeight="1.3" mt={1}>
                 Customer & payment operations
               </Text>
             </Box>
@@ -831,16 +845,17 @@ export function LoginPage() {
 
           <Heading
             color="white"
-            fontSize="2xl"
-            lineHeight="1.45"
+            fontSize="18.5px"
+            lineHeight="1.4"
             letterSpacing="-0.02em"
-            maxW="20rem"
+            maxW="19rem"
             mb={6}
+            fontWeight="semibold"
           >
             {HERO_HEADLINE}
           </Heading>
 
-          <Box display="grid" gridTemplateColumns="1fr 1fr" gap={3} w="full">
+          <Box display="grid" gridTemplateColumns="1fr 1fr" gap={3.5} w="full">
             <StatTileCard
               label="Transactions"
               value={DEMO_TILE_STATS.transactions}
@@ -875,37 +890,36 @@ export function LoginPage() {
           zIndex={2}
           direction="column"
           flex="1"
-          minH={0}
+          flexShrink={0}
           mt={2}
           bg="white"
           borderTopRadius="2xl"
-          px={6}
-          pt={5}
-          pb="max(1.5rem, env(safe-area-inset-bottom, 0px))"
-          boxShadow="0 -12px 40px rgba(0,0,0,0.16)"
-          overflow="hidden"
+          px={5}
+          pt={3.5}
+          pb="max(1rem, env(safe-area-inset-bottom, 0px))"
+          boxShadow="0 -10px 32px rgba(0,0,0,0.14)"
         >
-          <Flex justify="center" mb={4} flexShrink={0}>
-            <Box w="36px" h="3px" borderRadius="md" bg="gray.200" />
+          <Flex justify="center" mb={3} flexShrink={0}>
+            <Box w="32px" h="3px" borderRadius="md" bg="gray.200" />
           </Flex>
 
           <Heading
-            fontSize="2xl"
+            fontSize="lg"
             fontWeight="bold"
             color="gray.800"
             letterSpacing="-0.02em"
-            mb={2}
+            mb={1}
             flexShrink={0}
           >
             Welcome back
           </Heading>
-          <Text fontSize="sm" color="gray.500" mb={6} lineHeight="1.5" flexShrink={0}>
+          <Text fontSize="xs" color="gray.500" mb={3.5} lineHeight="1.4" flexShrink={0}>
             Sign in to access your operations dashboard
           </Text>
 
           <Box flexShrink={0}>{formFields(true)}</Box>
 
-          <Text mt="auto" pt={5} fontSize="xs" color="gray.400" textAlign="center" flexShrink={0}>
+          <Text mt={4} mb={1} fontSize="2xs" color="gray.400" textAlign="center" flexShrink={0}>
             {COPYRIGHT}
           </Text>
         </Flex>

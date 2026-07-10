@@ -46,7 +46,7 @@ export function ModalShell({
         inset={0}
         zIndex={MODAL_Z_INDEX}
         display="flex"
-        alignItems={{ base: "flex-end", sm: "center" }}
+        alignItems={{ base: "stretch", sm: "center" }}
         justifyContent="center"
         px={{ base: 0, sm: 4 }}
         py={{ base: 0, sm: 4 }}
@@ -65,16 +65,18 @@ export function ModalShell({
           aria-modal="true"
           position="relative"
           w="full"
-          maxW={{ base: "full", sm: maxW }}
-          maxH={{ base: "min(92dvh, 100%)", sm: "calc(100dvh - 2rem)" }}
+          h={{ base: "100dvh", sm: "auto" }}
+          maxW={{ base: "100%", sm: maxW }}
+          maxH={{ base: "100dvh", sm: "calc(100dvh - 2rem)" }}
           bg="white"
-          borderRadius={{ base: "2xl 2xl 0 0", sm: "xl" }}
+          borderRadius={{ base: 0, sm: "xl" }}
           boxShadow="xl"
           borderWidth={{ base: "0", sm: "1px" }}
           borderColor="gray.200"
           overflow="hidden"
           display="flex"
           flexDirection="column"
+          pt={{ base: "env(safe-area-inset-top, 0px)", sm: 0 }}
           pb={{ base: "env(safe-area-inset-bottom, 0px)", sm: 0 }}
           onMouseDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
@@ -85,7 +87,7 @@ export function ModalShell({
               variant="ghost"
               size="sm"
               position="absolute"
-              top={{ base: 2, sm: 3 }}
+              top={{ base: "calc(0.5rem + env(safe-area-inset-top, 0px))", sm: 3 }}
               right={{ base: 2, sm: 3 }}
               zIndex={2}
               color="gray.500"
@@ -96,17 +98,6 @@ export function ModalShell({
               <FiX size={18} />
             </IconButton>
           ) : null}
-          <Box
-            display={{ base: "block", sm: "none" }}
-            w="10"
-            h="1"
-            bg="gray.300"
-            borderRadius="full"
-            mx="auto"
-            mt={2}
-            mb={1}
-            flexShrink={0}
-          />
           <Box overflowY="auto" flex={1} minH={0}>
             {children}
           </Box>

@@ -184,16 +184,20 @@ function SyncChip({
       fontSize="xs"
       color={color}
       title={detail || undefined}
+      minW={0}
+      flexShrink={1}
     >
-      <Text fontWeight="medium" color="gray.600">
+      <Text fontWeight="medium" color="gray.600" flexShrink={0}>
         {label}
       </Text>
       {icon ? (
-        <Box aria-hidden>{icon}</Box>
+        <Box aria-hidden flexShrink={0}>{icon}</Box>
       ) : (
-        <Box w="14px" h="14px" borderRadius="full" bg="gray.200" aria-hidden />
+        <Box w="14px" h="14px" borderRadius="full" bg="gray.200" aria-hidden flexShrink={0} />
       )}
-      <Text fontWeight="semibold">{statusText}</Text>
+      <Text fontWeight="semibold" truncate maxW={{ base: "9rem", sm: "none" }}>
+        {statusText}
+      </Text>
     </Flex>
   );
 }
@@ -493,6 +497,9 @@ export function CustomerExpandPanel({
     ref: panelRef,
     scrollMarginTop: "1rem",
     scrollMarginBottom: "2rem",
+    maxW: "100%" as const,
+    minW: 0,
+    overflowX: "hidden" as const,
     css: expandPanelMotion,
   };
 
@@ -574,22 +581,31 @@ export function CustomerExpandPanel({
         overflow="hidden"
       >
       <Flex
-        align="start"
+        direction={{ base: "column", sm: "row" }}
+        align={{ base: "stretch", sm: "start" }}
         justify="space-between"
         gap={3}
-        px={4}
+        px={{ base: 3, sm: 4 }}
         py={4}
         borderBottom="1px solid"
         borderColor="gray.100"
+        minW={0}
       >
-        <Box minW={0} flex="1">
+        <Box minW={0} flex="1" overflow="hidden">
           <Flex align="center" gap={2} flexWrap="wrap">
-            <Text fontSize="xl" fontWeight="bold" color="gray.900" lineHeight="1.2" textTransform="none">
+            <Text
+              fontSize={{ base: "lg", sm: "xl" }}
+              fontWeight="bold"
+              color="gray.900"
+              lineHeight="1.2"
+              textTransform="none"
+              overflowWrap="anywhere"
+            >
               {formatTitleCase(customer.fullName)}
             </Text>
             <TextStatus status={statusLabel} />
           </Flex>
-          <Flex align="center" gap={4} mt={2.5} flexWrap="wrap">
+          <Flex align="center" gap={{ base: 2, sm: 4 }} mt={2.5} flexWrap="wrap">
             <SyncChip
               label="TISP"
               state={tispSyncState}
@@ -633,53 +649,64 @@ export function CustomerExpandPanel({
             />
           </Flex>
         </Box>
-        <Flex align="center" gap={2} flexShrink={0} onClick={(e) => e.stopPropagation()}>
-          <Badge
-            colorPalette={customer.customerType === "C2B" ? "brand" : "blue"}
-            variant="subtle"
-          >
-            {customer.customerType}
-          </Badge>
-          <Text fontWeight="bold" fontSize="lg" color="gray.900">
-            {hidePricing ? `${customer.productMbps} Mbps` : formatCurrency(customer.packagePrice)}
-          </Text>
-          <IconButton
-            aria-label={
-              inCooldown
-                ? `Refresh available in ${remainingSeconds} seconds`
-                : "Refresh from Zoho"
-            }
-            title={
-              inCooldown
-                ? `Available in ${remainingSeconds}s`
-                : "Refresh from Zoho (TISP + billing)"
-            }
-            variant="outline"
-            size="sm"
-            borderRadius="md"
-            disabled={inCooldown}
-            loading={refreshing}
-            onClick={() => void handleRefresh()}
-          >
-            <FiRefreshCw />
-          </IconButton>
-          {!readOnly ? (
-            <CustomerActionMenu
-              customer={customer}
-              onAction={onAction}
-              allowPermanentDelete={allowPermanentDelete}
-            />
-          ) : null}
-          {onClose ? (
-            <IconButton
-              aria-label="Close"
-              variant="ghost"
-              size="sm"
-              onClick={onClose}
+        <Flex
+          align="center"
+          gap={2}
+          flexShrink={0}
+          flexWrap="wrap"
+          justify={{ base: "space-between", sm: "flex-end" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Flex align="center" gap={2} minW={0}>
+            <Badge
+              colorPalette={customer.customerType === "C2B" ? "brand" : "blue"}
+              variant="subtle"
             >
-              <FiX />
+              {customer.customerType}
+            </Badge>
+            <Text fontWeight="bold" fontSize={{ base: "md", sm: "lg" }} color="gray.900" whiteSpace="nowrap">
+              {hidePricing ? `${customer.productMbps} Mbps` : formatCurrency(customer.packagePrice)}
+            </Text>
+          </Flex>
+          <Flex align="center" gap={1}>
+            <IconButton
+              aria-label={
+                inCooldown
+                  ? `Refresh available in ${remainingSeconds} seconds`
+                  : "Refresh from Zoho"
+              }
+              title={
+                inCooldown
+                  ? `Available in ${remainingSeconds}s`
+                  : "Refresh from Zoho (TISP + billing)"
+              }
+              variant="outline"
+              size="sm"
+              borderRadius="md"
+              disabled={inCooldown}
+              loading={refreshing}
+              onClick={() => void handleRefresh()}
+            >
+              <FiRefreshCw />
             </IconButton>
-          ) : null}
+            {!readOnly ? (
+              <CustomerActionMenu
+                customer={customer}
+                onAction={onAction}
+                allowPermanentDelete={allowPermanentDelete}
+              />
+            ) : null}
+            {onClose ? (
+              <IconButton
+                aria-label="Close"
+                variant="ghost"
+                size="sm"
+                onClick={onClose}
+              >
+                <FiX />
+              </IconButton>
+            ) : null}
+          </Flex>
         </Flex>
       </Flex>
 

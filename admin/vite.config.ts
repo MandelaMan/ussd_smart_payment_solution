@@ -1,15 +1,78 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
   base: "/admin/",
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: "autoUpdate",
+      includeAssets: ["favicon.svg", "logo.png", "icons.svg"],
+      manifest: {
+        name: "SUL Bix",
+        short_name: "SUL Bix",
+        description: "A unified hub for customer management and billing",
+        start_url: "/admin/",
+        scope: "/admin/",
+        display: "standalone",
+        orientation: "portrait-primary",
+        background_color: "#f4f5f7",
+        theme_color: "#166a82",
+        icons: [
+          {
+            src: "pwa-192x192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+          {
+            src: "pwa-512x512.png",
+            sizes: "512x512",
+            type: "image/png",
+          },
+          {
+            src: "pwa-512x512-maskable.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        navigateFallback: "/admin/index.html",
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith("/api"),
+            handler: "NetworkOnly",
+          },
+        ],
+      },
+    }),
+  ],
   server: {
     port: 5173,
     proxy: {
       "/api": {
         target: "http://localhost:4000",
         changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    target: "es2020",
+    cssCodeSplit: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("echarts")) return "echarts";
+          if (id.includes("recharts") || id.includes("d3-")) return "recharts";
+          if (id.includes("@chakra-ui") || id.includes("@emotion")) return "chakra";
+          if (id.includes("socket.io")) return "socket";
+          if (id.includes("framer-motion")) return "motion";
+          if (id.includes("react-dom") || id.includes("/react/")) return "react";
+        },
       },
     },
   },

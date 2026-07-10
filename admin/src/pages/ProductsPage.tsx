@@ -345,7 +345,7 @@ export function ProductsPage() {
             Base package structure is fixed per category and plan. Set building-specific prices below.
           </Text>
         </Box>
-        <Flex gap={2} align="center">
+        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
           <DataTableExportButton
             entityLabel="packages"
             viewCount={products.length}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Box } from "@chakra-ui/react";
+import { Box, useBreakpointValue } from "@chakra-ui/react";
+import { Navigate } from "react-router-dom";
 import { ActivityPanel } from "../components/ActivityPanel";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { PageErrorBanner } from "../components/ui/pageLayout";
@@ -12,6 +13,8 @@ export function ActivityPage() {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Activity is a mobile module only — desktop keeps it on the homepage rail.
+  const isDesktop = useBreakpointValue({ base: false, lg: true }, { ssr: false });
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +44,10 @@ export function ActivityPage() {
     };
   }, [user]);
 
+  if (isDesktop) {
+    return <Navigate to="/" replace />;
+  }
+
   const role = normalizeRole(user?.role);
   if (role === "partner") {
     return (
@@ -52,22 +59,13 @@ export function ActivityPage() {
   }
 
   return (
-    <Box
-      display="flex"
-      flexDirection="column"
-      gap={3}
-      flex={{ lg: 1 }}
-      minH={{ base: "calc(100dvh - 140px)", lg: 0 }}
-      h={{ lg: "100%" }}
-    >
+    <Box display="flex" flexDirection="column" gap={2} minW={0}>
       <MobilePageChrome
         title="Activity"
         description="Payments and integration events"
       />
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
-      <Box flex={1} minH={0} display="flex" flexDirection="column">
-        <ActivityPanel items={items} loading={loading} />
-      </Box>
+      <ActivityPanel items={items} loading={loading} variant="page" />
     </Box>
   );
 }

@@ -232,8 +232,18 @@ export function BillingCommunicationsTable({
         </Box>
       )}
 
-      <FilterToolbar>
-        <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+      <FilterToolbar
+        actions={
+          <DataTableExportButton
+            entityLabel="communications"
+            viewCount={rows.length}
+            totalCount={pagination.total}
+            loading={exporting}
+            onExport={handleExport}
+          />
+        }
+      >
+        <FilterField label="Search" flex={FILTER_FLEX.search}>
           <Input
             size="sm"
             placeholder="Customer number or name…"
@@ -241,7 +251,7 @@ export function BillingCommunicationsTable({
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </FilterField>
-        <FilterField label="Billing gap" flex={FILTER_FLEX.standard} minW={0}>
+        <FilterField label="Billing gap" flex={FILTER_FLEX.standard}>
           <SelectField
             size="sm"
             fieldProps={{
@@ -260,15 +270,6 @@ export function BillingCommunicationsTable({
             <option value="payment_under_review">Payment under review</option>
           </SelectField>
         </FilterField>
-        <Box flexShrink={0} ml="auto">
-          <DataTableExportButton
-            entityLabel="communications"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        </Box>
       </FilterToolbar>
 
       {sendableSelected.length > 0 && (

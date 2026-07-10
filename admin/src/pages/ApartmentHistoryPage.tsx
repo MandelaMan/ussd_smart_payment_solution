@@ -26,7 +26,6 @@ import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
-import { countActiveFilters } from "../components/ui/MobileFilterSheet";
 import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
 import { SelectField } from "../components/ui/SelectField";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
@@ -250,15 +249,9 @@ export function ApartmentHistoryPage() {
     setExpanded((prev) => (prev === id ? null : id));
   }
 
-  const mobileFilterCount = countActiveFilters([
-    { value: buildingId },
-    { value: apartmentNumber },
-    { value: currentOnly },
-  ]);
-
   const advancedFilters = (
     <>
-      <FilterField label="Building" flex="1" minW={0}>
+      <FilterField label="Building" flex={FILTER_FLEX.wide} minW={0}>
         <SearchableSelect
           size="sm"
           value={buildingId}
@@ -275,7 +268,7 @@ export function ApartmentHistoryPage() {
         />
       </FilterField>
 
-      <FilterField label="Apartment" flex="1" minW={0}>
+      <FilterField label="Apartment" flex={FILTER_FLEX.standard} minW={0}>
         <Input
           size="sm"
           placeholder="e.g. B19"
@@ -285,7 +278,7 @@ export function ApartmentHistoryPage() {
         />
       </FilterField>
 
-      <FilterField label="Occupancy" flex="1" minW={0}>
+      <FilterField label="Occupancy" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
         <SelectField
           size="sm"
           fieldProps={{
@@ -358,16 +351,6 @@ export function ApartmentHistoryPage() {
           { key: "all", label: "All", active: currentOnly === "", onClick: () => { setCurrentOnly(""); setPage(1); setExpanded(null); } },
           { key: "current", label: "Current", active: currentOnly === "true", onClick: () => { setCurrentOnly("true"); setPage(1); setExpanded(null); } },
         ]}
-        filterContent={advancedFilters}
-        activeFilterCount={mobileFilterCount}
-        onClearFilters={() => {
-          setBuildingId("");
-          setApartmentInput("");
-          setApartmentNumber("");
-          setCurrentOnly("");
-          setPage(1);
-          setExpanded(null);
-        }}
         desktopActions={
           <DataTableExportButton
             entityLabel="apartment history"
@@ -380,7 +363,7 @@ export function ApartmentHistoryPage() {
       />
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input
               size="sm"
               placeholder="Tenant, customer #, apartment…"
@@ -404,6 +387,7 @@ export function ApartmentHistoryPage() {
           mx={{ base: -4, lg: 0 }}
           px={{ base: 4, lg: 5 }}
           py={5}
+          minW={0}
         >
           <Text fontSize="sm" fontWeight="semibold" color="gray.800" mb={1} lineHeight="1.4">
             Occupancy timeline — {apartmentNumber}

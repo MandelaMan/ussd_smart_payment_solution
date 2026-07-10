@@ -87,17 +87,21 @@ export function MobileDataCard({
         transition="opacity 0.2s ease, background 0.2s ease"
         _active={onClick ? { bg: isOpen ? "brand.100" : "gray.50" } : undefined}
         onClick={onClick}
+        maxW="100%"
+        minW={0}
+        overflow="hidden"
       >
-        <Flex align="flex-start" gap={2.5}>
+        <Flex align="flex-start" gap={2.5} maxW="100%" minW={0}>
           {leading ? <Box flexShrink={0} pt={0.5}>{leading}</Box> : null}
           <Flex flex={1} minW={0} align="flex-start" justify="space-between" gap={3}>
-            <Box flex={1} minW={0}>
+            <Box flex={1} minW={0} overflow="hidden">
               <Text
                 fontWeight={MOBILE_LIST_ROW.title.fontWeight}
                 fontSize={MOBILE_LIST_ROW.title.fontSize}
                 lineHeight={MOBILE_LIST_ROW.title.lineHeight}
                 letterSpacing={MOBILE_LIST_ROW.title.letterSpacing}
                 lineClamp={2}
+                overflowWrap="anywhere"
               >
                 {title}
               </Text>
@@ -108,14 +112,19 @@ export function MobileDataCard({
                   color="gray.500"
                   mt={MOBILE_LIST_ROW.subtitle.mt}
                   lineClamp={2}
+                  overflowWrap="anywhere"
                 >
                   {subtitle}
                 </Text>
               ) : null}
               {statusLine ? <Box mt={MOBILE_LIST_ROW.status.mt}>{statusLine}</Box> : null}
             </Box>
-            <Flex direction="column" align="flex-end" gap={2} flexShrink={0} pt={0.5}>
-              {trailing}
+            <Flex direction="column" align="flex-end" gap={2} flexShrink={0} pt={0.5} maxW="40%">
+              {trailing ? (
+                <Box maxW="100%" overflow="hidden" textAlign="right">
+                  {trailing}
+                </Box>
+              ) : null}
               {menu ? (
                 <Box
                   color="gray.400"
@@ -132,7 +141,7 @@ export function MobileDataCard({
             </Flex>
           </Flex>
         </Flex>
-        {footer ? <Box mt={2}>{footer}</Box> : null}
+        {footer ? <Box mt={2} maxW="100%" overflow="hidden">{footer}</Box> : null}
       </Box>
     );
   }
@@ -151,27 +160,34 @@ export function MobileDataCard({
       transition="opacity 0.2s ease, background 0.2s ease"
       _hover={onClick ? { bg: isOpen ? "brand.50" : "gray.50" } : undefined}
       onClick={onClick}
+      maxW="100%"
+      minW={0}
+      overflow="hidden"
     >
-      <Flex align="flex-start" gap={2}>
+      <Flex align="flex-start" gap={2} maxW="100%" minW={0}>
         {showChevronIcon ? (
           <Box flexShrink={0} color={isOpen ? "brand.600" : "gray.500"} mt={0.5}>
             {isOpen ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
           </Box>
         ) : null}
         {leading ? <Box flexShrink={0}>{leading}</Box> : null}
-        <Box flex={1} minW={0}>
-          <Flex align="flex-start" justify="space-between" gap={2}>
-            <Box flex={1} minW={0}>
-              <Text fontWeight="semibold" fontSize="sm" lineHeight="1.4" lineClamp={2}>
+        <Box flex={1} minW={0} overflow="hidden">
+          <Flex align="flex-start" justify="space-between" gap={2} minW={0}>
+            <Box flex={1} minW={0} overflow="hidden">
+              <Text fontWeight="semibold" fontSize="sm" lineHeight="1.4" lineClamp={2} overflowWrap="anywhere">
                 {title}
               </Text>
               {subtitle ? (
-                <Text fontSize="xs" color="gray.500" mt={1} lineHeight="1.45" lineClamp={2}>
+                <Text fontSize="xs" color="gray.500" mt={1} lineHeight="1.45" lineClamp={2} overflowWrap="anywhere">
                   {subtitle}
                 </Text>
               ) : null}
             </Box>
-            {trailing ? <Box flexShrink={0}>{trailing}</Box> : null}
+            {trailing ? (
+              <Box flexShrink={0} maxW="40%" overflow="hidden" textAlign="right">
+                {trailing}
+              </Box>
+            ) : null}
           </Flex>
           {visibleFields && visibleFields.length > 0 ? (
             <Grid templateColumns="repeat(2, minmax(0, 1fr))" gap={2} mt={2.5}>
@@ -187,7 +203,7 @@ export function MobileDataCard({
               ))}
             </Grid>
           ) : null}
-          {footer ? <Box mt={2.5}>{footer}</Box> : null}
+          {footer ? <Box mt={2.5} maxW="100%" overflow="hidden">{footer}</Box> : null}
         </Box>
       </Flex>
     </Box>
@@ -220,21 +236,24 @@ export function MobileDataList<T>({
   }
 
   return (
-    <Stack gap={0} divideY="1px" divideColor="gray.100">
+    <Stack gap={0} divideY="1px" divideColor="gray.100" maxW="100%" minW={0} overflowX="hidden">
       {items.map((item) => {
         const key = getKey(item);
         const isOpen = expandedId === key;
 
         return (
-          <Box key={key}>
+          <Box key={key} maxW="100%" minW={0} overflowX="hidden">
             {renderCard(item, isOpen)}
             {isOpen && renderExpanded ? (
               <Box
-                px={4}
+                px={{ base: 3, sm: 4 }}
                 py={3}
                 bg="surface.50"
                 borderTop="1px solid"
                 borderColor="gray.100"
+                maxW="100%"
+                minW={0}
+                overflowX="hidden"
               >
                 {renderExpanded(item)}
               </Box>
@@ -268,10 +287,10 @@ export function ResponsiveListViews({
 
   return (
     <>
-      <Box display={MOBILE_LIST_DISPLAY} {...shellProps}>
+      <Box display={MOBILE_LIST_DISPLAY} minW={0} maxW="100%" {...shellProps}>
         {mobile}
       </Box>
-      <Box display={DESKTOP_TABLE_DISPLAY} {...shellProps}>
+      <Box display={DESKTOP_TABLE_DISPLAY} minW={0} {...shellProps}>
         {desktop}
       </Box>
     </>

@@ -53,19 +53,23 @@ export function AppDialog({
         <Dialog.Positioner
           zIndex={zIndex}
           display="flex"
-          alignItems={{ base: "flex-end", sm: "center" }}
+          alignItems={{ base: "stretch", sm: "center" }}
           justifyContent="center"
           p={{ base: 0, sm: 4 }}
+          inset={0}
         >
           <Dialog.Content
-            borderRadius={{ base: "2xl 2xl 0 0", sm: "xl" }}
+            borderRadius={{ base: 0, sm: "xl" }}
             mx={{ base: 0, sm: 4 }}
-            mb={{ base: 0, sm: undefined }}
+            mb={0}
             w="full"
-            maxW={{ base: "full", sm: maxW }}
-            maxH={{ base: "min(92dvh, 100%)", sm: "calc(100dvh - 2rem)" }}
+            h={{ base: "100dvh", sm: "auto" }}
+            maxW={{ base: "100%", sm: maxW }}
+            maxH={{ base: "100dvh", sm: "calc(100dvh - 2rem)" }}
             overflow="hidden"
             overflowY="auto"
+            display="flex"
+            flexDirection="column"
             bg="white"
             boxShadow="xl"
             borderWidth={{ base: 0, sm: "1px" }}
@@ -73,6 +77,7 @@ export function AppDialog({
             zIndex={zIndex + 1}
             position="relative"
             pb={{ base: "env(safe-area-inset-bottom, 0px)", sm: 0 }}
+            pt={{ base: "env(safe-area-inset-top, 0px)", sm: 0 }}
           >
             {showCloseButton ? (
               <IconButton
@@ -80,7 +85,7 @@ export function AppDialog({
                 variant="ghost"
                 size="sm"
                 position="absolute"
-                top={3}
+                top={{ base: "calc(0.75rem + env(safe-area-inset-top, 0px))", sm: 3 }}
                 right={3}
                 zIndex={2}
                 color="gray.500"

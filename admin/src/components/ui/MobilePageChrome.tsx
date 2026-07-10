@@ -63,7 +63,7 @@ export function MobilePageChrome({
   const hasFilters = Boolean(filterContent);
 
   return (
-    <Box mb={{ base: 3, lg: 0 }}>
+    <Box mb={{ base: 3, lg: 0 }} minW={0} maxW="100%">
       <Box display={{ base: "block", lg: "none" }}>
         {searchOpen && hasSearch ? (
           <Flex align="center" gap={2} mb={3}>

@@ -84,7 +84,6 @@ import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hidePr
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobileFAB, MobilePageChrome } from "../components/ui/MobilePageChrome";
-import { countActiveFilters } from "../components/ui/MobileFilterSheet";
 import { ListPageStack } from "../components/ui/pageLayout";
 import { MobileCardListSkeleton, DataTableLoadingSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
@@ -1146,14 +1145,9 @@ export function CustomersListPage() {
     }
   }
 
-  const mobileAdvancedFilterCount = countActiveFilters([
-    { value: buildingId },
-    { value: categoryId },
-  ]);
-
   const advancedFilters = (
     <>
-      <FilterField label="Building" flex="1" minW={0}>
+      <FilterField label="Building" flex={FILTER_FLEX.wide} minW={0}>
         <SearchableSelect
           size="sm"
           value={buildingId}
@@ -1170,7 +1164,7 @@ export function CustomersListPage() {
         />
       </FilterField>
 
-      <FilterField label="Package category" flex="1" minW={0}>
+      <FilterField label="Package category" flex={FILTER_FLEX.standard} minW={0}>
         <SelectField
           size="sm"
           isLoading={lookupsLoading}
@@ -1223,14 +1217,6 @@ export function CustomersListPage() {
           { key: "c2b", label: "C2B", active: customerType === "C2B", onClick: () => { setCustomerType(customerType === "C2B" ? "" : "C2B"); setPage(1); setExpanded(null); } },
           { key: "b2b", label: "B2B", active: customerType === "B2B", onClick: () => { setCustomerType(customerType === "B2B" ? "" : "B2B"); setPage(1); setExpanded(null); } },
         ]}
-        filterContent={advancedFilters}
-        activeFilterCount={mobileAdvancedFilterCount}
-        onClearFilters={() => {
-          setBuildingId("");
-          setCategoryId("");
-          setPage(1);
-          setExpanded(null);
-        }}
         desktopActions={
           <Flex gap={2} align="center" flexShrink={0}>
             <DataTableExportButton
@@ -1289,7 +1275,7 @@ export function CustomersListPage() {
       ) : null}
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input
               size="sm"
               h={FILTER_CONTROL_HEIGHT}
@@ -1302,7 +1288,7 @@ export function CustomersListPage() {
 
           {advancedFilters}
 
-          <FilterField label="Type" flex={FILTER_FLEX.compact} minW={0}>
+          <FilterField label="Type" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -1321,7 +1307,7 @@ export function CustomersListPage() {
             </SelectField>
           </FilterField>
 
-          <FilterField label="Status" flex={FILTER_FLEX.standard} minW="220px">
+          <FilterField label="Status" flex={FILTER_FLEX.standard} minW={{ base: 0, lg: "220px" }} hideOnMobile>
             <StatusMultiSelect
               size="sm"
               value={statusFilters}

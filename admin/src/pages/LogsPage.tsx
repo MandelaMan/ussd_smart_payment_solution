@@ -209,14 +209,19 @@ export function LogsPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <Flex justify="space-between" align={{ base: "start", md: "center" }} gap={3}>
+      <Flex
+        justify="space-between"
+        align={{ base: "stretch", md: "center" }}
+        direction={{ base: "column", md: "row" }}
+        gap={3}
+      >
         <Box>
           <Heading size="lg">Logs</Heading>
           <Text fontSize="sm" color="gray.500">
             API endpoint summary and integration retries — expand a row for payload and response details
           </Text>
         </Box>
-        <Flex gap={2} align="center">
+        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
           <DataTableExportButton
             entityLabel="logs"
             viewCount={rows.length}

@@ -1,7 +1,9 @@
-import ReactECharts from "echarts-for-react";
+import { Box, Flex, Spinner } from "@chakra-ui/react";
+import { lazy, Suspense, useMemo } from "react";
 import type { EChartsOption } from "echarts";
-import { Box } from "@chakra-ui/react";
-import { useMemo } from "react";
+import { BRAND } from "../../theme";
+
+const ReactECharts = lazy(() => import("echarts-for-react"));
 
 type Props = {
   option: object;
@@ -21,14 +23,22 @@ export function LazyEChart({ option, height = "260px", onEvents }: Props) {
 
   return (
     <Box w="100%" h={height}>
-      <ReactECharts
-        option={merged as EChartsOption}
-        style={{ width: "100%", height: "100%" }}
-        opts={{ renderer: "canvas" }}
-        notMerge
-        lazyUpdate
-        onEvents={onEvents}
-      />
+      <Suspense
+        fallback={
+          <Flex h="100%" align="center" justify="center">
+            <Spinner color={BRAND.cerulean} size="md" borderWidth="2px" />
+          </Flex>
+        }
+      >
+        <ReactECharts
+          option={merged as EChartsOption}
+          style={{ width: "100%", height: "100%" }}
+          opts={{ renderer: "canvas" }}
+          notMerge
+          lazyUpdate
+          onEvents={onEvents}
+        />
+      </Suspense>
     </Box>
   );
 }

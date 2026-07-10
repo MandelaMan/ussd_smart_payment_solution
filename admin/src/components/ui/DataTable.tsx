@@ -205,7 +205,7 @@ export function DataTableCard({
   loading = false,
 }: DataTableCardProps) {
   return (
-    <Box mx={{ base: -4, lg: 0 }}>
+    <Box mx={{ base: -4, lg: 0 }} minW={0}>
       <Box
         bg="white"
         borderRadius={{ base: 0, lg: "sm" }}
@@ -216,6 +216,8 @@ export function DataTableCard({
         minH={loading ? TABLE_VIEWPORT_MIN_H : undefined}
         display="flex"
         flexDirection="column"
+        minW={0}
+        maxW="100%"
       >
       <Box
         flex={loading ? 1 : undefined}

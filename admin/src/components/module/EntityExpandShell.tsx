@@ -35,7 +35,8 @@ export function EntityExpandShell({
       boxShadow="sm"
     >
       <Flex
-        align="center"
+        direction={{ base: "column", sm: "row" }}
+        align={{ base: "stretch", sm: "center" }}
         justify="space-between"
         gap={3}
         px={3}
@@ -45,8 +46,9 @@ export function EntityExpandShell({
         borderColor="gray.100"
         borderLeft="4px solid"
         borderLeftColor={accent}
+        minW={0}
       >
-        <Flex align="center" gap={3} minW={0}>
+        <Flex align="center" gap={3} minW={0} flex="1">
           <Flex
             boxSize="36px"
             borderRadius="lg"
@@ -60,8 +62,8 @@ export function EntityExpandShell({
           >
             <Icon size={18} />
           </Flex>
-          <Box minW={0}>
-            <Text fontWeight="semibold" fontSize="sm" color="gray.800">
+          <Box minW={0} overflow="hidden">
+            <Text fontWeight="semibold" fontSize="sm" color="gray.800" lineClamp={2} overflowWrap="anywhere">
               {title}
             </Text>
             {subtitle && (
@@ -71,7 +73,14 @@ export function EntityExpandShell({
             )}
           </Box>
         </Flex>
-        <Flex align="center" gap={3} flexShrink={0} wrap="wrap" justify="flex-end">
+        <Flex
+          align="center"
+          gap={2}
+          flexShrink={0}
+          flexWrap="wrap"
+          justify={{ base: "flex-start", sm: "flex-end" }}
+          minW={0}
+        >
           {badge}
           {value}
           {status}
@@ -131,8 +140,10 @@ export function DetailCard({
         fontWeight="medium"
         color="gray.800"
         fontFamily={mono ? "mono" : undefined}
-        wordBreak={mono ? "break-all" : undefined}
+        wordBreak={mono ? "break-all" : "break-word"}
+        overflowWrap="anywhere"
         lineHeight="1.35"
+        minW={0}
       >
         {value || <Text as="span" color="gray.400">—</Text>}
       </Box>

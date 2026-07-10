@@ -28,12 +28,14 @@ export function Layout() {
       >
         <Box
           as="main"
+          data-app-scroll-root
           flex="1"
           minH={0}
           minW={0}
           display="flex"
           flexDirection="column"
           overflow="auto"
+          overflowX="hidden"
           WebkitOverflowScrolling="touch"
           p={{ base: 0, lg: 3 }}
           pt={{
@@ -45,7 +47,7 @@ export function Layout() {
             lg: 3,
           }}
         >
-          <Box flex="1" minH={0} px={{ base: 3, lg: 0 }}>
+          <Box flex="1" minH={0} minW={0} w="full" overflowX="hidden" px={{ base: 4, lg: 0 }}>
             <Outlet />
           </Box>
         </Box>

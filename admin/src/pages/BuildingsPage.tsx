@@ -279,7 +279,7 @@ export function BuildingsPage() {
             {canMutate ? "Expand a row to view details and edit" : "View building reference data"}
           </Text>
         </Box>
-        <Flex gap={2} align="center">
+        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
           <DataTableExportButton
             entityLabel="buildings"
             viewCount={buildings.length}

@@ -2,12 +2,12 @@ import { Box, Flex, Heading, Text } from "@chakra-ui/react";
 import type { ReactNode } from "react";
 
 /** Standard vertical rhythm for admin list and detail pages. */
-export const PAGE_STACK_GAP = { base: 0, lg: 3 } as const;
+export const PAGE_STACK_GAP = { base: 3, lg: 3 } as const;
 
 /** List page stack — tight on mobile for edge-to-edge lists. */
 export function ListPageStack({ children }: { children: ReactNode }) {
   return (
-    <Box display="flex" flexDirection="column" gap={PAGE_STACK_GAP}>
+    <Box display="flex" flexDirection="column" gap={PAGE_STACK_GAP} minW={0} maxW="100%">
       {children}
     </Box>
   );

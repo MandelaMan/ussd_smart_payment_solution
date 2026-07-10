@@ -228,7 +228,7 @@ export function AgenciesPage() {
             {canMutate ? "Expand a row to view details and edit" : "View agency reference data"}
           </Text>
         </Box>
-        <Flex gap={2} align="center">
+        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
           <DataTableExportButton
             entityLabel="agencies"
             viewCount={agencies.length}

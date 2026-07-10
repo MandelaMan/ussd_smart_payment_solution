@@ -28,7 +28,9 @@ export function MobileFilterSheet({
         pb={4}
         pr={12}
         gap={4}
-        maxH="min(85dvh, 100%)"
+        h={{ base: "100%", sm: "auto" }}
+        maxH={{ base: "100%", sm: "min(85dvh, 100%)" }}
+        minH={0}
       >
         <Flex align="center" justify="space-between" gap={3}>
           <Heading size="md">{title}</Heading>

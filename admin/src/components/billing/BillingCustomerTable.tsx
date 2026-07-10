@@ -335,7 +335,17 @@ export function BillingCustomerTable({
 
   return (
     <Stack gap={3}>
-      <FilterToolbar>
+      <FilterToolbar
+        actions={
+          <DataTableExportButton
+            entityLabel="billing customers"
+            viewCount={rows.length}
+            totalCount={pagination.total}
+            loading={exporting}
+            onExport={handleExport}
+          />
+        }
+      >
         <FilterField label="Search" flex={FILTER_FLEX.search}>
           <Input
             size="sm"
@@ -362,15 +372,6 @@ export function BillingCustomerTable({
             </SelectField>
           </FilterField>
         )}
-        <Box flexShrink={0} ml="auto">
-          <DataTableExportButton
-            entityLabel="billing customers"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        </Box>
       </FilterToolbar>
 
       {!inputActive && !tableBusy && (

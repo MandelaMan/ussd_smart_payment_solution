@@ -33,9 +33,9 @@ export function BillingModuleShell({
   children,
 }: Props) {
   return (
-    <Stack gap={PAGE_STACK_GAP}>
-      <Flex justify="space-between" align={{ base: "stretch", md: "center" }} gap={3} wrap="wrap">
-        <Box>
+    <Stack gap={PAGE_STACK_GAP} minW={0} maxW="100%">
+      <Flex justify="space-between" align={{ base: "stretch", md: "center" }} gap={3} wrap="wrap" minW={0}>
+        <Box minW={0} flex="1">
           <Heading size="lg">{title}</Heading>
           <Text fontSize="sm" color="gray.500" mt={0.5}>
             {description}
@@ -51,7 +51,7 @@ export function BillingModuleShell({
             </Text>
           )}
         </Box>
-        <Flex gap={2}>
+        <Flex gap={2} flexShrink={0} flexWrap="wrap">
           {onExport && (
             <Button size="sm" variant="outline" loading={exporting} onClick={onExport}>
               <FiDownload />

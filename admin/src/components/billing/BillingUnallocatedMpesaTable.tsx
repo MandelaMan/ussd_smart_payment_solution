@@ -120,7 +120,17 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
 
   return (
     <Stack gap={3}>
-      <FilterToolbar>
+      <FilterToolbar
+        actions={
+          <DataTableExportButton
+            entityLabel="unallocated payments"
+            viewCount={rows.length}
+            totalCount={filtered.length}
+            loading={exporting}
+            onExport={handleExport}
+          />
+        }
+      >
         <FilterField label="Search" flex={FILTER_FLEX.search}>
           <Input
             size="sm"
@@ -129,15 +139,6 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </FilterField>
-        <Box flexShrink={0} ml="auto">
-          <DataTableExportButton
-            entityLabel="unallocated payments"
-            viewCount={rows.length}
-            totalCount={filtered.length}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        </Box>
       </FilterToolbar>
 
       {error && (

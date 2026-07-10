@@ -152,7 +152,7 @@ export function ReportsPage() {
       />
 
       <FilterToolbar>
-        <FilterField label="From" flex={FILTER_FLEX.standard} minW={0}>
+        <FilterField label="From" flex={FILTER_FLEX.standard}>
           <DateField
             size="sm"
             value={from}
@@ -161,7 +161,7 @@ export function ReportsPage() {
             placeholder="Start date"
           />
         </FilterField>
-        <FilterField label="To" flex={FILTER_FLEX.standard} minW={0}>
+        <FilterField label="To" flex={FILTER_FLEX.standard}>
           <DateField
             size="sm"
             value={to}
@@ -170,13 +170,19 @@ export function ReportsPage() {
             placeholder="End date"
           />
         </FilterField>
-        <FilterField label="Applies to" flex={FILTER_FLEX.wide} minW={0}>
-          <Text fontSize="xs" color="gray.500" pt={2}>
+        <Box
+          display={{ base: "none", lg: "block" }}
+          flex={FILTER_FLEX.wide}
+          minW={0}
+          alignSelf="flex-end"
+          pb={1}
+        >
+          <Text fontSize="xs" color="gray.500">
             {showAnalytics
               ? "Charts and time-based report exports"
               : "Time-based report exports"}
           </Text>
-        </FilterField>
+        </Box>
       </FilterToolbar>
 
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
