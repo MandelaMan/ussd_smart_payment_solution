@@ -324,7 +324,6 @@ export function PackageChangeForm({
   const hasPendingUpgrade =
     isUpgrade && customer.upgradePaymentStatus === "payment_pending";
   const needsPayment = Boolean(upgradeQuote?.paymentRequired);
-  const upgradeNeedsPayment = isUpgrade && needsPayment;
 
   const confirmDisabled =
     dataLoading ||

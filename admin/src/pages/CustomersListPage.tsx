@@ -841,17 +841,6 @@ export function CustomersListPage() {
     }
   }
 
-  async function loadUpgradeQuote(
-    customerId: number,
-    productId: string,
-    billingOverride?: {
-      paymentFrequency?: Customer["paymentFrequency"];
-      customPeriodDays?: number | null;
-    }
-  ) {
-    return loadPackageChangeQuote(customerId, productId, "upgrade", billingOverride);
-  }
-
   async function handleActionPaymentFrequencyChange(
     frequency: Customer["paymentFrequency"]
   ) {
