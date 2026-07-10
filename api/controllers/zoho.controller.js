@@ -894,6 +894,63 @@ const createInvoice_JS = async ({
   }
 };
 
+/**
+ * Create a Zoho Books credit note (object or null).
+ * @see https://www.zoho.com/books/api/v3/credit-notes/#create-a-credit-note
+ */
+const createCreditNote_JS = async ({
+  customer_id,
+  items,
+  reference_number,
+  notes,
+  is_inclusive_tax,
+}) => {
+  try {
+    if (!customer_id || !items?.length) {
+      return null;
+    }
+
+    const creditNoteData = {
+      customer_id,
+      date: moment().format("YYYY-MM-DD"),
+      line_items: items,
+    };
+    if (reference_number) {
+      creditNoteData.reference_number = String(reference_number);
+    }
+    if (notes) {
+      creditNoteData.notes = String(notes);
+    }
+    if (is_inclusive_tax != null) {
+      creditNoteData.is_inclusive_tax = Boolean(is_inclusive_tax);
+    }
+
+    const createResult = await withTimeout(
+      callZoho("creditnotes", "POST", creditNoteData),
+      12_000,
+      "create-credit-note",
+    );
+
+    return createResult.creditnote || createResult.credit_note || null;
+  } catch (error) {
+    const zohoError =
+      error.response?.data?.message ||
+      error.response?.data?.code ||
+      error.message;
+    console.error(
+      "createCreditNote_JS error:",
+      error.response?.data || error.message,
+    );
+    const err = new Error(
+      typeof zohoError === "string"
+        ? zohoError
+        : "Zoho credit note creation failed",
+    );
+    err.zoho = error.response?.data || null;
+    throw err;
+  }
+};
+
 /** Email a Zoho Books invoice to the customer (1 API call). */
 const emailInvoice_JS = async ({ invoice_id, to_mail_ids, cc_mail_ids, subject, body }) => {
   try {
@@ -1244,6 +1301,7 @@ module.exports = {
   getItemsByAllowedSkuPrefixes_JS,
   getInvoiceTemplates_JS,
   createInvoice_JS,
+  createCreditNote_JS,
   emailInvoice_JS,
   createContact_JS,
   updateContact_JS,

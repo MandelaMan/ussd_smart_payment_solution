@@ -104,10 +104,17 @@ function buildZohoStatusFromInvoices(
   zohoContactId: string | null = null,
   billing?: Pick<
     CustomerZohoStatus,
-    "billedViaAgency" | "agencyName" | "billingNote" | "lastSyncedAt" | "fromSnapshot" | "cacheFresh"
+    | "billedViaAgency"
+    | "agencyName"
+    | "billingNote"
+    | "lastSyncedAt"
+    | "fromSnapshot"
+    | "cacheFresh"
+    | "creditBalance"
   >
 ): CustomerZohoStatus {
   const unpaid = invoices.filter((inv) => (inv.balanceDue || 0) > 0);
+  const creditBalance = Number(billing?.creditBalance) || 0;
   return {
     linked,
     zohoContactId,
@@ -115,6 +122,7 @@ function buildZohoStatusFromInvoices(
     invoiceCount: invoices.length,
     unpaidCount: unpaid.length,
     totalBalanceDue: unpaid.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0),
+    creditBalance: creditBalance > 0 ? creditBalance : 0,
     billedViaAgency: billing?.billedViaAgency,
     agencyName: billing?.agencyName,
     billingNote: billing?.billingNote,
@@ -318,6 +326,7 @@ export function CustomerExpandPanel({
               lastSyncedAt: invoiceRes.lastSyncedAt,
               fromSnapshot: invoiceRes.fromSnapshot,
               cacheFresh: invoiceRes.cacheFresh,
+              creditBalance: invoiceRes.creditBalance,
             }
           )
         );
@@ -736,10 +745,18 @@ export function CustomerExpandPanel({
               />
             )}
             <DetailCard label="VAT exempt" value={customer.isVatExempt ? "Yes" : "No"} />
+            <DetailCard label="Type" value={customer.customerType} />
             <DetailCard
               label="Last payment"
               value={customer.lastPaymentDate ? formatDate(customer.lastPaymentDate) : null}
             />
+            {!hideFinancials && (zohoStatus?.creditBalance || 0) > 0 ? (
+              <DetailCard
+                label="Overpayment"
+                value={formatCurrency(zohoStatus!.creditBalance!)}
+                highlight
+              />
+            ) : null}
           </DetailGrid>
         </Box>
 

@@ -42,6 +42,7 @@ export type Product = {
   planId?: number | null;
   planCode?: string | null;
   planName?: string | null;
+  planSortOrder?: number | null;
   requiresDecoderFee?: number | null;
   decoderFeeAmount?: number | null;
 };
@@ -176,6 +177,9 @@ export type Customer = {
   productId: number;
   productName: string;
   productMbps: number;
+  planId?: number | null;
+  planName?: string | null;
+  planSortOrder?: number | null;
   agencyId: number | null;
   agencyName: string | null;
   customerNumber: string;
@@ -208,12 +212,16 @@ export type UpgradeQuote = {
   currentPrice: number;
   newPrice: number;
   priceDifference: number;
+  remainingCredit?: number;
+  creditAmount?: number;
   dueDate: string | null;
   subscriptionStatus: string | null;
   isActive: boolean;
   periodDays: number;
+  currentPeriodDays?: number;
   daysUntilDue: number | null;
   daysRemainingInPeriod: number | null;
+  frequencyChanged?: boolean;
   recommendedPaymentMethod: UpgradePaymentMethod | "none";
   explanation: string;
   paymentRequired: boolean;
@@ -284,6 +292,8 @@ export type CustomerZohoStatus = {
   invoiceCount: number;
   unpaidCount: number;
   totalBalanceDue: number;
+  /** Zoho unused credit / overpayment on the contact (KES). */
+  creditBalance?: number;
   billedViaAgency?: boolean;
   agencyId?: number | null;
   agencyName?: string | null;
@@ -1635,6 +1645,7 @@ export const api = {
       lastSyncedAt?: string | null;
       fromSnapshot?: boolean;
       cacheFresh?: boolean;
+      creditBalance?: number;
     }>(`/admin/customers/${id}/invoices`),
 
   getCustomerPayments: (id: number, params: Record<string, string> = {}) => {
@@ -1728,6 +1739,25 @@ export const api = {
       })}`
     ),
 
+  getDowngradeQuote: (
+    id: number,
+    productId: number,
+    billing?: {
+      paymentFrequency?: Customer["paymentFrequency"];
+      customPeriodDays?: number | null;
+    }
+  ) =>
+    request<{ quote: UpgradeQuote }>(
+      `/admin/customers/${id}/downgrade-quote${buildQueryString({
+        productId: String(productId),
+        paymentFrequency: billing?.paymentFrequency,
+        customPeriodDays:
+          billing?.customPeriodDays != null
+            ? String(billing.customPeriodDays)
+            : undefined,
+      })}`
+    ),
+
   upgradeCustomer: (
     id: number,
     productId: number,
@@ -1777,17 +1807,25 @@ export const api = {
       customPeriodDays?: number | null;
     }
   ) =>
-    request<{ ok: boolean; customer: Customer; tisp?: { ok: boolean; error?: string } }>(
-      `/admin/customers/${id}/downgrade`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          productId,
-          paymentFrequency: billing?.paymentFrequency,
-          customPeriodDays: billing?.customPeriodDays,
-        }),
-      }
-    ),
+    request<{
+      ok: boolean;
+      customer: Customer;
+      quote?: UpgradeQuote;
+      creditNote?: {
+        creditNoteId: string | null;
+        creditNoteNumber: string | null;
+        total: number;
+      } | null;
+      creditNoteError?: string;
+      tisp?: { ok: boolean; error?: string };
+    }>(`/admin/customers/${id}/downgrade`, {
+      method: "POST",
+      body: JSON.stringify({
+        productId,
+        paymentFrequency: billing?.paymentFrequency,
+        customPeriodDays: billing?.customPeriodDays,
+      }),
+    }),
 
   changeCustomerPaymentFrequency: (
     id: number,

@@ -40,6 +40,7 @@ const {
   refreshCustomerStatus,
   retryBillingOnboarding,
   getUpgradeQuote,
+  getDowngradeQuote,
   createCustomer,
   updateCustomer,
   convertCustomerType,
@@ -208,6 +209,7 @@ router.post(
   retryBillingOnboarding
 );
 router.get("/customers/:id/upgrade-quote", requireCustomerWrite, getUpgradeQuote);
+router.get("/customers/:id/downgrade-quote", requireCustomerWrite, getDowngradeQuote);
 router.get("/customers/:id", requireCustomerRead, getCustomer);
 router.post("/customers/:id/upgrade", requireCustomerWrite, upgradePackage);
 router.post("/customers/:id/upgrade/cancel", requireCustomerWrite, cancelPendingUpgrade);

@@ -53,14 +53,166 @@ function packageDisplayPrice(
   return product.price;
 }
 
-function QuoteRow({ label, value }: { label: string; value: string }) {
+function SettlementLine({
+  label,
+  value,
+  muted,
+  strong,
+  negative,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+  strong?: boolean;
+  negative?: boolean;
+}) {
   return (
-    <Flex justify="space-between" gap={2} fontSize="xs">
-      <Text color="blue.700">{label}</Text>
-      <Text fontWeight="medium" textAlign="right">
+    <Flex justify="space-between" align="baseline" gap={3}>
+      <Text
+        fontSize={strong ? "sm" : "xs"}
+        fontWeight={strong ? "semibold" : "normal"}
+        color={muted ? "gray.500" : "gray.700"}
+      >
+        {label}
+      </Text>
+      <Text
+        fontSize={strong ? "sm" : "xs"}
+        fontWeight={strong ? "bold" : "medium"}
+        color={negative ? "green.700" : strong ? "gray.900" : "gray.800"}
+        fontVariantNumeric="tabular-nums"
+        textAlign="right"
+      >
         {value}
       </Text>
     </Flex>
+  );
+}
+
+function PackageChangeSettlement({
+  mode,
+  quote,
+}: {
+  mode: "upgrade" | "downgrade";
+  quote: UpgradeQuote;
+}) {
+  const isUpgrade = mode === "upgrade";
+  const remainingCredit = quote.remainingCredit ?? 0;
+  const creditAmount = quote.creditAmount ?? 0;
+  const needsPayment = quote.paymentRequired;
+  const showCreditLine = remainingCredit > 0;
+  const resultLabel = needsPayment
+    ? "Amount due"
+    : creditAmount > 0
+      ? "Credit"
+      : "Amount due";
+  const resultValue = needsPayment
+    ? formatCurrency(quote.topUpAmount)
+    : creditAmount > 0
+      ? formatCurrency(creditAmount)
+      : formatCurrency(0);
+
+  return (
+    <Box
+      bg="white"
+      borderRadius="md"
+      borderWidth="1px"
+      borderColor="gray.200"
+      overflow="hidden"
+      w="full"
+    >
+      <Flex
+        px={3}
+        py={2}
+        bg="gray.50"
+        borderBottomWidth="1px"
+        borderColor="gray.100"
+        align="center"
+        justify="space-between"
+        gap={2}
+      >
+        <Text fontSize="xs" fontWeight="semibold" color="gray.800">
+          {isUpgrade ? "Payment breakdown" : "Credit breakdown"}
+        </Text>
+        {quote.daysRemainingInPeriod != null && quote.daysRemainingInPeriod > 0 ? (
+          <Text fontSize="2xs" color="gray.500">
+            {quote.daysRemainingInPeriod} day
+            {quote.daysRemainingInPeriod === 1 ? "" : "s"} left on current plan
+          </Text>
+        ) : null}
+      </Flex>
+
+      <Box px={3} py={2.5}>
+        <Flex gap={2} mb={3}>
+          <Box flex="1" minW={0} bg="gray.50" borderRadius="md" px={2.5} py={2}>
+            <Text fontSize="2xs" color="gray.500" textTransform="uppercase" letterSpacing="wide">
+              From
+            </Text>
+            <Text fontSize="sm" fontWeight="semibold" color="gray.900" lineHeight="1.3">
+              {quote.currentMbps} Mbps
+            </Text>
+            <Text fontSize="xs" color="gray.600">
+              {formatCurrency(quote.currentPrice)}
+            </Text>
+          </Box>
+          <Flex align="center" color="gray.400" flexShrink={0} aria-hidden>
+            →
+          </Flex>
+          <Box flex="1" minW={0} bg="brand.50" borderRadius="md" px={2.5} py={2}>
+            <Text fontSize="2xs" color="brand.700" textTransform="uppercase" letterSpacing="wide">
+              To
+            </Text>
+            <Text fontSize="sm" fontWeight="semibold" color="brand.800" lineHeight="1.3">
+              {quote.newMbps} Mbps
+            </Text>
+            <Text fontSize="xs" color="brand.700">
+              {formatCurrency(quote.newPrice)}
+            </Text>
+          </Box>
+        </Flex>
+
+        <Stack
+          gap={1.5}
+          pt={2}
+          borderTopWidth="1px"
+          borderColor="gray.100"
+        >
+          <SettlementLine label="New package" value={formatCurrency(quote.newPrice)} />
+          {showCreditLine ? (
+            <SettlementLine
+              label={
+                quote.daysRemainingInPeriod != null
+                  ? `Unused days credit (${quote.daysRemainingInPeriod}d)`
+                  : "Unused days credit"
+              }
+              value={`− ${formatCurrency(remainingCredit)}`}
+              negative
+            />
+          ) : null}
+          {!isUpgrade && !showCreditLine && creditAmount > 0 ? (
+            <SettlementLine
+              label="Prorated price drop"
+              value={`− ${formatCurrency(creditAmount)}`}
+              negative
+            />
+          ) : null}
+          <Box borderTopWidth="1px" borderColor="gray.200" pt={1.5} mt={0.5}>
+            <SettlementLine
+              label={resultLabel}
+              value={resultValue}
+              strong
+              negative={!needsPayment && creditAmount > 0}
+            />
+          </Box>
+        </Stack>
+
+        {quote.dueDate ? (
+          <Text fontSize="2xs" color="gray.500" mt={2}>
+            Current period ends {formatDate(quote.dueDate)}
+            {quote.daysUntilDue != null ? ` · ${quote.daysUntilDue}d remaining` : ""}
+          </Text>
+        ) : null}
+      </Box>
+    </Box>
   );
 }
 
@@ -171,7 +323,8 @@ export function PackageChangeForm({
   const isUpgrade = mode === "upgrade";
   const hasPendingUpgrade =
     isUpgrade && customer.upgradePaymentStatus === "payment_pending";
-  const upgradeNeedsPayment = isUpgrade && upgradeQuote?.paymentRequired === true;
+  const needsPayment = Boolean(upgradeQuote?.paymentRequired);
+  const upgradeNeedsPayment = isUpgrade && needsPayment;
 
   const confirmDisabled =
     dataLoading ||
@@ -180,15 +333,10 @@ export function PackageChangeForm({
     hasPendingUpgrade ||
     !productId ||
     packages.length === 0 ||
-    (isUpgrade &&
-      !!productId &&
-      !upgradeQuote &&
-      !upgradeQuoteLoading &&
-      !hasPendingUpgrade) ||
-    (isUpgrade &&
-      paymentFrequency === "custom" &&
+    (!!productId && !upgradeQuote && !upgradeQuoteLoading && !hasPendingUpgrade) ||
+    (paymentFrequency === "custom" &&
       (!customPeriodDays || Number(customPeriodDays) < 1)) ||
-    (upgradeNeedsPayment && !paymentMethod);
+    (needsPayment && !paymentMethod);
 
   const billingLabel =
     customer.paymentFrequency === "custom" && customer.customPeriodDays
@@ -211,14 +359,26 @@ export function PackageChangeForm({
       )}`,
     });
   }
-  if (isUpgrade && upgradeQuote) {
-    summaryItems.push({
-      label: "Top-up required",
-      value: upgradeQuote.paymentRequired
-        ? formatCurrency(upgradeQuote.topUpAmount)
-        : "None",
-    });
-    if (upgradeNeedsPayment && paymentMethod) {
+  if (upgradeQuote) {
+    if (isUpgrade) {
+      summaryItems.push({
+        label: "Top-up required",
+        value: upgradeQuote.paymentRequired
+          ? formatCurrency(upgradeQuote.topUpAmount)
+          : "None",
+      });
+    } else {
+      summaryItems.push({
+        label: (upgradeQuote.creditAmount ?? 0) > 0 ? "Credit" : "Top-up",
+        value:
+          (upgradeQuote.creditAmount ?? 0) > 0
+            ? formatCurrency(upgradeQuote.creditAmount ?? 0)
+            : upgradeQuote.paymentRequired
+              ? formatCurrency(upgradeQuote.topUpAmount)
+              : "None",
+      });
+    }
+    if (needsPayment && paymentMethod) {
       summaryItems.push({
         label: "Payment method",
         value: paymentMethod === "invoice" ? "Zoho invoice" : "M-Pesa STK",
@@ -331,7 +491,9 @@ export function PackageChangeForm({
               </Flex>
             ) : packages.length === 0 ? (
               <Text fontSize="xs" color="gray.500" py={2}>
-                No packages available.
+                {isUpgrade
+                  ? "No higher-priced packages for this billing frequency."
+                  : "No lower-priced packages for this billing frequency."}
               </Text>
             ) : (
               <SelectField
@@ -370,7 +532,9 @@ export function PackageChangeForm({
             </Flex>
           ) : packages.length === 0 ? (
             <Text fontSize="xs" color="gray.500">
-              No packages available.
+              {isUpgrade
+                ? "No higher-priced packages for this billing frequency."
+                : "No lower-priced packages for this billing frequency."}
             </Text>
           ) : (
             <SelectField
@@ -394,57 +558,20 @@ export function PackageChangeForm({
         </Field.Root>
       )}
 
-      {isUpgrade && productId ? (
+      {productId ? (
         <Box w="full">
           {upgradeQuoteLoading ? (
             <Flex align="center" justify="center" gap={2} py={2}>
               <Spinner size="sm" color="brand.600" />
               <Text fontSize="xs" color="gray.500">
-                Calculating top-up…
+                {isUpgrade ? "Calculating top-up…" : "Calculating credit…"}
               </Text>
             </Flex>
           ) : upgradeQuote ? (
             <Stack gap={2}>
-              <Box
-                bg="blue.50"
-                borderRadius="md"
-                px={2.5}
-                py={2}
-                borderWidth="1px"
-                borderColor="blue.100"
-                w="full"
-              >
-                <Flex justify="space-between" align="center" mb={1.5}>
-                  <Text fontWeight="semibold" fontSize="xs" color="blue.900">
-                    Upgrade summary
-                  </Text>
-                  <Text fontWeight="bold" fontSize="sm" color="blue.900">
-                    Top-up {formatCurrency(upgradeQuote.topUpAmount)}
-                  </Text>
-                </Flex>
-                <Stack gap={0.5}>
-                  <QuoteRow
-                    label="Current"
-                    value={`${upgradeQuote.currentMbps} Mbps · ${formatCurrency(upgradeQuote.currentPrice)}`}
-                  />
-                  <QuoteRow
-                    label="New"
-                    value={`${upgradeQuote.newMbps} Mbps · ${formatCurrency(upgradeQuote.newPrice)}`}
-                  />
-                  {upgradeQuote.dueDate ? (
-                    <QuoteRow
-                      label="Due"
-                      value={`${formatDate(upgradeQuote.dueDate)}${
-                        upgradeQuote.daysUntilDue != null
-                          ? ` (${upgradeQuote.daysUntilDue}d)`
-                          : ""
-                      }`}
-                    />
-                  ) : null}
-                </Stack>
-              </Box>
+              <PackageChangeSettlement mode={mode} quote={upgradeQuote} />
 
-              {upgradeQuote.paymentRequired ? (
+              {needsPayment ? (
                 <Field.Root required w="full">
                   <Field.Label fontSize="sm">Payment method</Field.Label>
                   <Flex gap={2} w="full" direction={{ base: "column", sm: "row" }}>
@@ -453,7 +580,7 @@ export function PackageChangeForm({
                       selected={paymentMethod === "invoice"}
                       recommended={upgradeQuote.recommendedPaymentMethod === "invoice"}
                       title="Zoho invoice"
-                      description="Upgrade on payment received"
+                      description="Apply on payment received"
                       onSelect={onPaymentMethodChange}
                       disabled={fieldsDisabled}
                     />
@@ -469,8 +596,19 @@ export function PackageChangeForm({
                   </Flex>
                 </Field.Root>
               ) : (
-                <Text fontSize="xs" color="green.700" bg="green.50" px={2.5} py={1.5} borderRadius="md">
-                  No additional payment required.
+                <Text
+                  fontSize="xs"
+                  color="green.700"
+                  bg="green.50"
+                  px={2.5}
+                  py={1.5}
+                  borderRadius="md"
+                >
+                  {isUpgrade
+                    ? "No additional payment required."
+                    : (upgradeQuote.creditAmount ?? 0) > 0
+                      ? "No payment required — unused period value is credited."
+                      : "No payment required."}
                 </Text>
               )}
             </Stack>
@@ -490,7 +628,7 @@ export function PackageChangeForm({
           disabled={confirmDisabled}
           onClick={() => setConfirmOpen(true)}
         >
-          {isUpgrade && upgradeNeedsPayment
+          {needsPayment
             ? paymentMethod === "invoice"
               ? "Review invoice"
               : paymentMethod === "stk"
@@ -525,7 +663,7 @@ export function PackageChangeForm({
           Back
         </Button>
         <Button colorPalette="brand" size="sm" loading={loading} onClick={onSubmit}>
-          {isUpgrade && upgradeNeedsPayment
+          {needsPayment
             ? paymentMethod === "invoice"
               ? "Create invoice"
               : paymentMethod === "stk"

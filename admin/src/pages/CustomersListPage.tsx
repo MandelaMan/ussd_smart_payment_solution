@@ -495,7 +495,8 @@ export function CustomersListPage() {
   async function loadActionPackages(
     customer: Customer,
     type: CustomerAction,
-    paymentFrequency: Customer["paymentFrequency"]
+    paymentFrequency: Customer["paymentFrequency"],
+    customPeriodDays = ""
   ) {
     const freq = paymentFrequency === "custom" ? "monthly" : paymentFrequency;
     const res = await api.listProducts({
@@ -504,13 +505,98 @@ export function CustomersListPage() {
       activeOnly: "true",
       unpaginated: "true",
     });
-    return res.products.filter(
-      (p) =>
-        p.id !== customer.productId &&
-        (type === "upgrade"
-          ? p.mbps > customer.productMbps
-          : p.mbps < customer.productMbps)
+
+    const baselinePrice = resolveActionBaselinePrice(
+      customer,
+      res.products,
+      paymentFrequency,
+      customPeriodDays
     );
+
+    return res.products
+      .filter((p) => {
+        if (p.id === customer.productId) return false;
+        const price = productPriceAtFrequency(p, paymentFrequency, customPeriodDays);
+        if (type === "upgrade") return price > baselinePrice;
+        if (type === "downgrade") return price < baselinePrice;
+        return false;
+      })
+      .sort((a, b) => {
+        const priceDiff =
+          productPriceAtFrequency(a, paymentFrequency, customPeriodDays) -
+          productPriceAtFrequency(b, paymentFrequency, customPeriodDays);
+        if (priceDiff !== 0) return priceDiff;
+        const planDiff = (a.planSortOrder ?? 0) - (b.planSortOrder ?? 0);
+        if (planDiff !== 0) return planDiff;
+        if (a.mbps !== b.mbps) return a.mbps - b.mbps;
+        return Number(a.hasDstv) - Number(b.hasDstv);
+      });
+  }
+
+  function productPriceAtFrequency(
+    product: Product,
+    frequency: Customer["paymentFrequency"],
+    customPeriodDays: string
+  ) {
+    if (frequency === "custom") {
+      const days = Number(customPeriodDays);
+      if (days >= 1) {
+        return Math.round((Number(product.monthlyPrice) * days) / 30);
+      }
+    }
+    return Math.round(Number(product.price) || 0);
+  }
+
+  function resolveActionBaselinePrice(
+    customer: Customer,
+    productsAtFreq: Product[],
+    frequency: Customer["paymentFrequency"],
+    customPeriodDays: string
+  ) {
+    const sameFrequency = frequency === customer.paymentFrequency;
+    const sameCustomPeriod =
+      frequency === "custom" &&
+      customer.paymentFrequency === "custom" &&
+      Number(customPeriodDays) === Number(customer.customPeriodDays ?? 0);
+
+    if (sameFrequency && frequency !== "custom") {
+      return Math.round(Number(customer.packagePrice) || 0);
+    }
+    if (sameCustomPeriod) {
+      return Math.round(Number(customer.packagePrice) || 0);
+    }
+
+    if (frequency === "custom" && customer.paymentFrequency === "custom") {
+      const days = Number(customPeriodDays);
+      const currentDays = Number(customer.customPeriodDays) || 30;
+      if (days >= 1 && currentDays >= 1) {
+        return Math.round((Number(customer.packagePrice) * days) / currentDays);
+      }
+    }
+
+    const twin =
+      productsAtFreq.find(
+        (p) =>
+          ((customer.planId != null && p.planId === customer.planId) ||
+            (!!customer.planName && p.planName === customer.planName)) &&
+          Boolean(p.hasDstv) === Boolean(customer.hasDstv)
+      ) ??
+      productsAtFreq.find(
+        (p) =>
+          (customer.planId != null && p.planId === customer.planId) ||
+          (!!customer.planName && p.planName === customer.planName)
+      ) ??
+      productsAtFreq.find(
+        (p) =>
+          p.mbps === customer.productMbps &&
+          Boolean(p.hasDstv) === Boolean(customer.hasDstv)
+      );
+
+    if (twin) {
+      return productPriceAtFrequency(twin, frequency, customPeriodDays);
+    }
+
+    return Math.round(Number(customer.packagePrice) || 0);
   }
 
   function openAction(customer: Customer, type: CustomerAction) {
@@ -551,7 +637,14 @@ export function CustomersListPage() {
       try {
         if (type === "upgrade" || type === "downgrade") {
           setActionPackages(
-            await loadActionPackages(customer, type, customer.paymentFrequency)
+            await loadActionPackages(
+              customer,
+              type,
+              customer.paymentFrequency,
+              customer.customPeriodDays != null
+                ? String(customer.customPeriodDays)
+                : ""
+            )
           );
         }
 
@@ -651,8 +744,30 @@ export function CustomersListPage() {
         activeOnly: "true",
         unpaginated: "true",
       });
+      const currentHasDstv = Boolean(customer.hasDstv);
       const match =
-        res.products.find((p) => p.mbps === customer.productMbps) ?? null;
+        res.products.find(
+          (p) =>
+            customer.planId != null &&
+            p.planId === customer.planId &&
+            Boolean(p.hasDstv) === currentHasDstv
+        ) ??
+        res.products.find(
+          (p) =>
+            !!customer.planName &&
+            p.planName === customer.planName &&
+            Boolean(p.hasDstv) === currentHasDstv
+        ) ??
+        res.products.find(
+          (p) =>
+            p.mbps === customer.productMbps &&
+            Boolean(p.hasDstv) === currentHasDstv
+        ) ??
+        res.products.find(
+          (p) => customer.planId != null && p.planId === customer.planId
+        ) ??
+        res.products.find((p) => p.mbps === customer.productMbps) ??
+        null;
       setBillingPreviewProduct(match);
     } catch {
       setBillingPreviewProduct(null);
@@ -671,9 +786,10 @@ export function CustomersListPage() {
     };
   }
 
-  async function loadUpgradeQuote(
+  async function loadPackageChangeQuote(
     customerId: number,
     productId: string,
+    mode: "upgrade" | "downgrade" = "upgrade",
     billingOverride?: {
       paymentFrequency?: Customer["paymentFrequency"];
       customPeriodDays?: number | null;
@@ -699,11 +815,10 @@ export function CustomersListPage() {
     setUpgradePaymentMethod("");
     const requestId = ++upgradeQuoteRequestRef.current;
     try {
-      const res = await api.getUpgradeQuote(
-        customerId,
-        Number(productId),
-        billing
-      );
+      const res =
+        mode === "downgrade"
+          ? await api.getDowngradeQuote(customerId, Number(productId), billing)
+          : await api.getUpgradeQuote(customerId, Number(productId), billing);
       if (requestId !== upgradeQuoteRequestRef.current) return;
       setUpgradeQuote(res.quote);
       if (res.quote.paymentRequired && res.quote.recommendedPaymentMethod !== "none") {
@@ -712,7 +827,10 @@ export function CustomersListPage() {
     } catch (e) {
       if (requestId !== upgradeQuoteRequestRef.current) return;
       toaster.create({
-        title: "Failed to calculate upgrade top-up",
+        title:
+          mode === "downgrade"
+            ? "Failed to calculate downgrade credit"
+            : "Failed to calculate upgrade top-up",
         description: e instanceof Error ? e.message : "Please try again",
         type: "error",
       });
@@ -721,6 +839,17 @@ export function CustomersListPage() {
         setUpgradeQuoteLoading(false);
       }
     }
+  }
+
+  async function loadUpgradeQuote(
+    customerId: number,
+    productId: string,
+    billingOverride?: {
+      paymentFrequency?: Customer["paymentFrequency"];
+      customPeriodDays?: number | null;
+    }
+  ) {
+    return loadPackageChangeQuote(customerId, productId, "upgrade", billingOverride);
   }
 
   async function handleActionPaymentFrequencyChange(
@@ -747,7 +876,12 @@ export function CustomersListPage() {
       setActionDataLoading(true);
       try {
         setActionPackages(
-          await loadActionPackages(actionCustomer, actionType, frequency)
+          await loadActionPackages(
+            actionCustomer,
+            actionType,
+            frequency,
+            frequency === "custom" ? actionCustomPeriodDays : ""
+          )
         );
       } catch (e) {
         toaster.create({
@@ -768,12 +902,42 @@ export function CustomersListPage() {
       return;
     }
     if (
-      actionType === "upgrade" &&
+      (actionType === "upgrade" || actionType === "downgrade") &&
+      actionCustomer &&
+      actionPaymentFrequency === "custom"
+    ) {
+      setActionProductId("");
+      setUpgradeQuote(null);
+      setUpgradePaymentMethod("");
+      if (Number(value) >= 1) {
+        setActionDataLoading(true);
+        void loadActionPackages(
+          actionCustomer,
+          actionType,
+          "custom",
+          value
+        )
+          .then(setActionPackages)
+          .catch((e) => {
+            toaster.create({
+              title: "Failed to load packages",
+              description: e instanceof Error ? e.message : "Please try again",
+              type: "error",
+            });
+          })
+          .finally(() => setActionDataLoading(false));
+      } else {
+        setActionPackages([]);
+      }
+      return;
+    }
+    if (
+      (actionType === "upgrade" || actionType === "downgrade") &&
       actionProductId &&
       actionCustomer &&
       Number(value) >= 1
     ) {
-      void loadUpgradeQuote(actionCustomer.id, actionProductId, {
+      void loadPackageChangeQuote(actionCustomer.id, actionProductId, actionType, {
         paymentFrequency: actionPaymentFrequency,
         customPeriodDays: Number(value),
       });
@@ -785,8 +949,16 @@ export function CustomersListPage() {
 
   function handleActionProductChange(productId: string) {
     setActionProductId(productId);
-    if (actionType === "upgrade" && actionCustomer && productId) {
-      void loadUpgradeQuote(actionCustomer.id, productId);
+    if (
+      (actionType === "upgrade" || actionType === "downgrade") &&
+      actionCustomer &&
+      productId
+    ) {
+      void loadPackageChangeQuote(
+        actionCustomer.id,
+        productId,
+        actionType
+      );
     } else {
       setUpgradeQuote(null);
       setUpgradePaymentMethod("");
@@ -903,7 +1075,21 @@ export function CustomersListPage() {
             Number(actionProductId),
             billingOptions()
           );
-          if (res.tisp && !res.tisp.ok) {
+          if (res.creditNoteError) {
+            toaster.create({
+              title: "Package downgraded",
+              description: `Zoho credit note failed: ${res.creditNoteError}`,
+              type: "warning",
+              duration: 10000,
+            });
+          } else if (res.creditNote?.creditNoteNumber) {
+            toaster.create({
+              title: "Package downgraded",
+              description: `Zoho credit note ${res.creditNote.creditNoteNumber} raised for ${formatCurrency(res.quote?.creditAmount ?? res.creditNote.total ?? 0)}`,
+              type: "success",
+              duration: 10000,
+            });
+          } else if (res.tisp && !res.tisp.ok) {
             toaster.create({
               title: "Package downgraded",
               description: `TISP sync failed: ${res.tisp.error}`,

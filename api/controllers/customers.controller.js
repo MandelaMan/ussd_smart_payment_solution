@@ -17,14 +17,21 @@ const {
 } = require("../utils/customerImportTemplate");
 const {
   calculateUpgradeQuote,
+  calculateDowngradeQuote,
   estimateDueDateFromLastPayment,
 } = require("../utils/upgradeQuote");
+const {
+  classifyPackageChangeByPrice,
+  resolveBaselinePriceAtFrequency,
+} = require("../utils/packageChange");
 const { initiateSTKPush } = require("./mpesa.controller");
 const {
   getCustomerByCompanyName_JS,
   createInvoice_JS,
+  createCreditNote_JS,
   createContact_JS,
 } = require("./zoho.controller");
+const zohoEntityRepo = require("../repositories/zohoEntity.repository");
 const pendingUpgradeStore = require("../services/pendingUpgradeStore");
 const {
   normalizeSubscriptionStatus,
@@ -256,6 +263,7 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
           currency: "KES",
         }));
         const unpaid = mapped.filter((inv) => (inv.balanceDue || 0) > 0);
+        const creditBalance = Number(stored.creditBalance) || 0;
         const result = {
           linked: true,
           zohoContactId: stored.zohoContactId,
@@ -263,6 +271,7 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
           invoiceCount: mapped.length,
           unpaidCount: unpaid.length,
           totalBalanceDue: unpaid.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0),
+          creditBalance: creditBalance > 0 ? creditBalance : 0,
           fromSnapshot: true,
           lastSyncedAt: stored.syncedAt,
           cacheFresh: true,
@@ -378,6 +387,9 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     : mapped;
 
   const unpaid = displayInvoices.filter((inv) => (inv.balanceDue || 0) > 0);
+  const receivable = Number(zohoContact.outstanding_receivable_amount);
+  const creditBalance =
+    Number.isFinite(receivable) && receivable < 0 ? Math.abs(receivable) : 0;
 
   const result = {
     linked: true,
@@ -386,6 +398,7 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     invoiceCount: displayInvoices.length,
     unpaidCount: unpaid.length,
     totalBalanceDue: unpaid.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0),
+    creditBalance,
     lastPaymentDate,
     ...(isB2BCustomer(customer) ? b2bBillingMeta(customer, agency) : {}),
   };
@@ -927,28 +940,44 @@ async function buildUpgradeQuote(customerId, productId, billingOverrides = {}) {
   if (!newProduct) {
     return { error: "Product not found", status: 404 };
   }
-  if (newProduct.mbps <= current.product_mbps) {
-    return {
-      error: "Select a higher Mbps package to upgrade",
-      status: 400,
-    };
-  }
-
-  const customerRow = await store.getCustomerById(customerId);
 
   const { paymentFrequency, customPeriodDays } = resolveBillingOptions(
     current,
     billingOverrides
   );
 
+  const baselinePrice = await resolveBaselinePriceAtFrequency(
+    store,
+    current,
+    paymentFrequency,
+    customPeriodDays
+  );
+  const newPrice = store.resolvePackagePrice(
+    newProduct,
+    paymentFrequency,
+    customPeriodDays
+  );
+  const change = classifyPackageChangeByPrice(baselinePrice, newPrice);
+  if (!change.isUpgrade) {
+    return {
+      error:
+        "Select a higher-priced package for this billing frequency to upgrade",
+      status: 400,
+    };
+  }
+
+  const customerRow = await store.getCustomerById(customerId);
+
   let dueDate = null;
   let subscriptionStatus = customerRow.subscriptionStatus;
 
+  // Days remaining must be measured against the CURRENT billing period,
+  // not the target frequency (e.g. keep monthly when upgrading to yearly).
   if (customerRow.lastPaymentDate) {
     dueDate = estimateDueDateFromLastPayment(
       customerRow.lastPaymentDate,
-      paymentFrequency,
-      customPeriodDays
+      current.payment_frequency,
+      current.custom_period_days
     );
   }
 
@@ -976,23 +1005,14 @@ async function buildUpgradeQuote(customerId, productId, billingOverrides = {}) {
     }
   }
 
-  const currentProduct = await store.getProductById(current.product_id);
-  const currentPrice = store.resolvePackagePrice(
-    currentProduct,
-    paymentFrequency,
-    customPeriodDays
-  );
-  const newPrice = store.resolvePackagePrice(
-    newProduct,
-    paymentFrequency,
-    customPeriodDays
-  );
-
+  const currentPackagePrice = Math.round(Number(current.package_price) || 0);
   const quote = calculateUpgradeQuote({
-    currentPrice,
+    currentPrice: currentPackagePrice,
     newPrice,
     paymentFrequency,
     customPeriodDays,
+    currentPaymentFrequency: current.payment_frequency,
+    currentCustomPeriodDays: current.custom_period_days,
     subscriptionStatus,
     dueDate,
     customerType: current.customer_type,
@@ -1035,6 +1055,144 @@ async function getUpgradeQuote(req, res, next) {
     }
 
     const result = await buildUpgradeQuote(
+      Number(req.params.id),
+      productId,
+      billingOverrides
+    );
+    if (result.error) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
+    return res.json({ quote: result.quote });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
+async function buildDowngradeQuote(customerId, productId, billingOverrides = {}) {
+  const current = await store.getCustomerContext(customerId);
+  if (!current) {
+    return { error: "Customer not found", status: 404 };
+  }
+
+  const newProduct = await store.getProductById(productId);
+  if (!newProduct) {
+    return { error: "Product not found", status: 404 };
+  }
+
+  const { paymentFrequency, customPeriodDays } = resolveBillingOptions(
+    current,
+    billingOverrides
+  );
+
+  const baselinePrice = await resolveBaselinePriceAtFrequency(
+    store,
+    current,
+    paymentFrequency,
+    customPeriodDays
+  );
+  const newPrice = store.resolvePackagePrice(
+    newProduct,
+    paymentFrequency,
+    customPeriodDays
+  );
+  const change = classifyPackageChangeByPrice(baselinePrice, newPrice);
+  if (!change.isDowngrade) {
+    return {
+      error:
+        "Select a lower-priced package for this billing frequency to downgrade",
+      status: 400,
+    };
+  }
+
+  const customerRow = await store.getCustomerById(customerId);
+
+  let dueDate = null;
+  let subscriptionStatus = customerRow.subscriptionStatus;
+
+  if (customerRow.lastPaymentDate) {
+    dueDate = estimateDueDateFromLastPayment(
+      customerRow.lastPaymentDate,
+      current.payment_frequency,
+      current.custom_period_days
+    );
+  }
+
+  if (!dueDate) {
+    const quoteTispTimeoutMs = Number(process.env.TISP_QUOTE_TIMEOUT_MS || 5_000);
+    try {
+      const tisp = await Promise.race([
+        getTISPCustomer(customerRow.customerNumber),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("TISP quote lookup timed out")),
+            quoteTispTimeoutMs
+          )
+        ),
+      ]);
+      dueDate = tisp?.dueDate ?? tisp?.duedate ?? null;
+      const tispStatus = tisp?.status ?? tisp?.Status ?? null;
+      if (tispStatus) {
+        subscriptionStatus = normalizeSubscriptionStatus(String(tispStatus));
+        await store.updateCustomerSubscriptionStatus(customerId, subscriptionStatus);
+        customerRow.subscriptionStatus = subscriptionStatus;
+      }
+    } catch {
+      /* use stored billing data when TISP is slow or unreachable */
+    }
+  }
+
+  const currentPackagePrice = Math.round(Number(current.package_price) || 0);
+  const quote = calculateDowngradeQuote({
+    currentPrice: currentPackagePrice,
+    newPrice,
+    paymentFrequency,
+    customPeriodDays,
+    currentPaymentFrequency: current.payment_frequency,
+    currentCustomPeriodDays: current.custom_period_days,
+    subscriptionStatus,
+    dueDate,
+    customerType: current.customer_type,
+  });
+
+  return {
+    quote: {
+      ...quote,
+      customerNumber: customerRow.customerNumber,
+      currentMbps: current.product_mbps,
+      newMbps: newProduct.mbps,
+      newProductName: newProduct.name,
+      paymentFrequency,
+      customPeriodDays,
+    },
+    current,
+    newProduct,
+    customerRow,
+  };
+}
+
+async function getDowngradeQuote(req, res, next) {
+  try {
+    const productId = Number(req.query.productId);
+    if (!productId) {
+      return res.status(400).json({ error: "productId query is required" });
+    }
+
+    const billingOverrides = {};
+    if (req.query.paymentFrequency) {
+      billingOverrides.paymentFrequency = String(req.query.paymentFrequency);
+    }
+    if (req.query.customPeriodDays != null && req.query.customPeriodDays !== "") {
+      billingOverrides.customPeriodDays = Number(req.query.customPeriodDays);
+    } else if (
+      req.query.customPeriodMonths != null &&
+      req.query.customPeriodMonths !== ""
+    ) {
+      billingOverrides.customPeriodDays = Number(req.query.customPeriodMonths) * 30;
+    }
+
+    const result = await buildDowngradeQuote(
       Number(req.params.id),
       productId,
       billingOverrides
@@ -1107,6 +1265,83 @@ async function createUpgradeInvoice(customer, quote) {
     invoiceId: invoice?.invoice_id ? String(invoice.invoice_id) : null,
     invoiceNumber: invoice?.invoice_number || null,
     total: quote.topUpAmount,
+  };
+}
+
+async function createDowngradeCreditNote(customer, quote) {
+  const creditAmount = Math.round(Number(quote.creditAmount) || 0);
+  if (creditAmount <= 0) {
+    return null;
+  }
+
+  let zohoContact;
+  let referenceNumber = customer.customerNumber;
+
+  if (isB2BCustomer(customer)) {
+    const agency = await resolveAgencyForCustomer(customer, store);
+    zohoContact = await findZohoContactForCustomer({
+      ...customer,
+      agencyName: agency.name,
+    });
+    if (!zohoContact?.contact_id) {
+      const { ensureZohoContactForAgency } = require("./agencies.controller");
+      zohoContact = await ensureZohoContactForAgency(agency);
+    }
+    referenceNumber = `${agency.name} — ${customer.customerNumber} downgrade credit`;
+  } else {
+    zohoContact = await findZohoContactForCustomer(customer);
+  }
+
+  if (!zohoContact?.contact_id) {
+    throw new Error("Customer is not linked in Zoho — cannot create credit note");
+  }
+
+  const daysLeft =
+    quote.daysRemainingInPeriod != null
+      ? `${quote.daysRemainingInPeriod}d unused`
+      : "unused period";
+  const description = isB2BCustomer(customer)
+    ? `Package downgrade credit (B2B via ${customer.agencyName}): ${quote.currentMbps} → ${quote.newMbps} Mbps · ${daysLeft} (${customer.customerNumber})`
+    : `Package downgrade credit: ${quote.currentMbps} → ${quote.newMbps} Mbps · ${daysLeft} (${customer.customerNumber})`;
+
+  const lineItem = {
+    name: `Package downgrade credit — ${quote.currentMbps} → ${quote.newMbps} Mbps`,
+    rate: creditAmount,
+    quantity: 1,
+    description,
+  };
+  if (ZOHO_VAT_TAX_ID) {
+    lineItem.tax_id = ZOHO_VAT_TAX_ID;
+  }
+
+  const creditNote = await createCreditNote_JS({
+    customer_id: zohoContact.contact_id,
+    items: [lineItem],
+    is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    reference_number: referenceNumber,
+    notes: quote.explanation || description,
+  });
+
+  if (creditNote) {
+    try {
+      await zohoEntityRepo.upsertCreditNoteRecord(creditNote);
+    } catch (persistErr) {
+      console.error(
+        "zoho credit note local upsert failed:",
+        persistErr.message
+      );
+    }
+  }
+
+  return {
+    creditNoteId: creditNote?.creditnote_id
+      ? String(creditNote.creditnote_id)
+      : creditNote?.credit_note_id
+        ? String(creditNote.credit_note_id)
+        : null,
+    creditNoteNumber:
+      creditNote?.creditnote_number || creditNote?.credit_note_number || null,
+    total: creditAmount,
   };
 }
 
@@ -1325,12 +1560,21 @@ async function downgradePackage(req, res, next) {
       await pendingUpgradeStore.cancelPendingUpgrade(pendingUpgrade.id);
     }
 
-    const newProduct = await store.getProductById(productId);
-    if (newProduct.mbps >= current.product_mbps) {
-      return res
-        .status(400)
-        .json({ error: "Select a lower Mbps package to downgrade" });
+    const billingOverrides = {};
+    if (paymentFrequency) billingOverrides.paymentFrequency = paymentFrequency;
+    if (customPeriodDays !== undefined) {
+      billingOverrides.customPeriodDays = customPeriodDays;
     }
+
+    const built = await buildDowngradeQuote(
+      customerId,
+      Number(productId),
+      billingOverrides
+    );
+    if (built.error) {
+      return res.status(built.status).json({ error: built.error });
+    }
+    const { quote, newProduct, customerRow } = built;
 
     if (paymentFrequency) {
       await store.updateCustomerBillingCycle(
@@ -1345,6 +1589,17 @@ async function downgradePackage(req, res, next) {
       Number(productId),
       "downgrade"
     );
+
+    let creditNote = null;
+    let creditNoteError = null;
+    if ((quote.creditAmount || 0) > 0) {
+      try {
+        creditNote = await createDowngradeCreditNote(customerRow, quote);
+      } catch (e) {
+        creditNoteError = e.message || "Failed to create Zoho credit note";
+        console.error("downgrade credit note failed:", e.message, e.zoho || "");
+      }
+    }
 
     const ctx = await store.getCustomerContext(customerId);
     let tispError = null;
@@ -1361,19 +1616,49 @@ async function downgradePackage(req, res, next) {
       await logActivity({
         eventType: "customer_downgraded",
         title: "Customer package downgraded",
-        message: `${customer?.customerNumber}: ${current.product_mbps} → ${newProduct.mbps} Mbps`,
-        source: "tisp",
-        status: tispError ? "failed" : "success",
+        message: `${customer?.customerNumber}: ${current.product_mbps} → ${newProduct.mbps} Mbps${
+          creditNote?.creditNoteNumber
+            ? ` · credit note ${creditNote.creditNoteNumber} (${formatCurrency(quote.creditAmount)})`
+            : (quote.creditAmount || 0) > 0
+              ? ` · credit ${formatCurrency(quote.creditAmount)}${
+                  creditNoteError ? ` (Zoho failed: ${creditNoteError})` : ""
+                }`
+              : ""
+        }`,
+        source: creditNote ? "zoho" : "tisp",
+        status: tispError || creditNoteError ? "failed" : "success",
         customerRef: customer?.customerNumber,
+        amount: (quote.creditAmount || 0) > 0 ? quote.creditAmount : undefined,
+        referenceId: creditNote?.creditNoteId || null,
       });
     } catch (logErr) {
       console.error("activity log (downgrade) failed:", logErr.message);
+    }
+
+    if (creditNote?.creditNoteId) {
+      try {
+        await logActivity({
+          eventType: "zoho_credit_note_created",
+          title: "Downgrade credit note created",
+          message: `${customer?.customerNumber}: ${formatCurrency(quote.creditAmount)} credit for ${quote.currentMbps} → ${quote.newMbps} Mbps`,
+          source: "zoho",
+          status: "success",
+          customerRef: customer?.customerNumber,
+          amount: quote.creditAmount,
+          referenceId: creditNote.creditNoteId,
+        });
+      } catch (logErr) {
+        console.error("activity log (downgrade credit note) failed:", logErr.message);
+      }
     }
 
     return res.json({
       ok: true,
       customer,
       product,
+      quote,
+      creditNote,
+      creditNoteError: creditNoteError || undefined,
       tisp: tispError ? { ok: false, error: tispError } : { ok: true },
       zoho,
     });
@@ -2215,6 +2500,7 @@ async function getCustomerInvoices(req, res, next) {
       lastSyncedAt: zoho.lastSyncedAt || null,
       fromSnapshot: zoho.fromSnapshot === true,
       cacheFresh: zoho.cacheFresh === true,
+      creditBalance: Number(zoho.creditBalance) > 0 ? Number(zoho.creditBalance) : 0,
     });
   } catch (err) {
     return next(err);
@@ -2365,6 +2651,7 @@ module.exports = {
   refreshCustomerStatus,
   retryBillingOnboarding,
   getUpgradeQuote,
+  getDowngradeQuote,
   createCustomer,
   updateCustomer,
   convertCustomerType: convertCustomerTypeHandler,

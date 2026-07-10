@@ -122,7 +122,9 @@ function mapCustomerRow(row) {
     productName: row.product_name,
     productMbps: row.product_mbps,
     productExtraBandwidth: row.product_extra_bandwidth,
-    planName: row.plan_name,
+    planId: row.plan_id != null ? Number(row.plan_id) : null,
+    planName: row.plan_name || null,
+    planSortOrder: row.plan_sort_order != null ? Number(row.plan_sort_order) : null,
     agencyId: row.agency_id,
     agencyName: row.agency_name,
     customerNumber: row.customer_number,
@@ -188,7 +190,9 @@ const CUSTOMER_SELECT = `
          p.mbps AS product_mbps,
          p.extra_bandwidth AS product_extra_bandwidth,
          p.has_dstv AS product_has_dstv,
+         pl.id AS plan_id,
          pl.name AS plan_name,
+         pl.sort_order AS plan_sort_order,
          a.name AS agency_name,
          a.email AS agency_email,
          a.phone AS agency_phone,
@@ -461,6 +465,7 @@ const PRODUCT_LIST_SELECT = `
          p.created_at AS createdAt,
          c.id AS categoryId, c.code AS categoryCode, c.name AS categoryName,
          pl.id AS planId, pl.code AS planCode, pl.name AS planName,
+         pl.sort_order AS planSortOrder,
          c.requires_decoder_fee AS requiresDecoderFee,
          c.decoder_fee_amount AS decoderFeeAmount
   FROM products p
@@ -478,9 +483,12 @@ async function getProductListRow(id) {
 
 async function getProductById(id) {
   const rows = await query(
-    `SELECT p.*, b.name AS building_name, b.c2b_code, b.b2b_code, b.ip_setup
+    `SELECT p.*, b.name AS building_name, b.c2b_code, b.b2b_code, b.ip_setup,
+            pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order
      FROM products p
      JOIN buildings b ON b.id = p.building_id
+     LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
+     LEFT JOIN package_plans pl ON pl.id = v.plan_id
      WHERE p.id = ? LIMIT 1`,
     [id]
   );
@@ -832,7 +840,8 @@ async function getCustomerContext(id) {
             p.name AS product_name, p.mbps AS product_mbps,
             p.extra_bandwidth AS product_extra_bandwidth,
             p.has_dstv AS product_has_dstv,
-            pl.name AS plan_name, cat.name AS category_name,
+            pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order,
+            cat.name AS category_name,
             a.name AS agency_name, a.email AS agency_email,
             a.phone AS agency_phone, a.contact_person AS agency_contact_person
      FROM customers c
@@ -1374,9 +1383,14 @@ async function findProductForBillingFrequency(customer, paymentFrequency) {
          AND cur.id = ?
          AND p.payment_frequency = ?
          AND p.is_active = 1
-       ORDER BY p.id
+       ORDER BY (p.has_dstv = ?) DESC, p.id
        LIMIT 1`,
-      [customer.building_id, currentProduct.plan_variant_id, freqForProduct]
+      [
+        customer.building_id,
+        currentProduct.plan_variant_id,
+        freqForProduct,
+        currentProduct.has_dstv ? 1 : 0,
+      ]
     );
     if (byPlan[0]) return byPlan[0];
   }
@@ -1388,12 +1402,13 @@ async function findProductForBillingFrequency(customer, paymentFrequency) {
        AND p.mbps = ?
        AND p.payment_frequency = ?
        AND p.is_active = 1
-     ORDER BY p.name = ? DESC, p.id
+     ORDER BY (p.has_dstv = ?) DESC, p.name = ? DESC, p.id
      LIMIT 1`,
     [
       customer.building_id,
       currentProduct.mbps,
       freqForProduct,
+      currentProduct.has_dstv ? 1 : 0,
       currentProduct.name,
     ]
   );
@@ -2312,6 +2327,7 @@ module.exports = {
   changeCustomerProduct,
   updateCustomerBillingCycle,
   changeCustomerPaymentFrequency,
+  findProductForBillingFrequency,
   switchCustomerApartment,
   cancelCustomer,
   deleteCustomerCompletely,
