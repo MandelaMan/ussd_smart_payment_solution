@@ -31,7 +31,10 @@ const getPool = () => {
 };
 
 const query = async (sql, params = []) => {
-  const [rows] = await getPool().execute(sql, params);
+  // Use text-protocol query() rather than execute() (prepared statements).
+  // MySQL prepared statements reject or mis-handle LIMIT ? / INTERVAL ? DAY
+  // with ER_WRONG_ARGUMENTS ("Incorrect arguments to mysqld_stmt_execute").
+  const [rows] = await getPool().query(sql, params);
   return rows;
 };
 
