@@ -1,9 +1,8 @@
-// zohoController.optimized.js
-// deps: npm i lru-cache axios
 const axios = require("axios");
 const https = require("https");
 const moment = require("moment");
 const LRU = require("lru-cache");
+const { logApiCall } = require("../utils/apiCallLogger");
 require("dotenv").config();
 
 /** ========= Config ========= **/
@@ -66,11 +65,108 @@ const zoho = axios.create({
   headers: { Accept: "application/json" },
 });
 
-// Attach token per request
+function deriveZohoOperation(url = "", method = "GET") {
+  const path = String(url).replace(/^\//, "");
+  const verb = String(method || "GET").toLowerCase();
+  const parts = path.split("/").filter(Boolean);
+  const resource = parts[0] || "api";
+  if (parts.length <= 1) return `${verb}_${resource}`;
+  return `${verb}_${parts.join("_")}`.slice(0, 100);
+}
+
+function buildZohoEndpoint(url = "") {
+  const path = String(url).startsWith("/") ? url : `/${url}`;
+  return `${ZOHO_BASE_URL || ""}${path}`;
+}
+
+function clipPayload(value, maxLen = 12000) {
+  if (value == null) return null;
+  try {
+    const json = JSON.stringify(value);
+    if (json.length <= maxLen) return value;
+    return { _truncated: true, preview: json.slice(0, maxLen) };
+  } catch {
+    return { _error: "unserializable" };
+  }
+}
+
+function extractZohoLogContext(config = {}) {
+  const meta = config.__logMeta || {};
+  const data = config.data;
+  const parsedData =
+    typeof data === "string"
+      ? (() => {
+          try {
+            return JSON.parse(data);
+          } catch {
+            return {};
+          }
+        })()
+      : data && typeof data === "object"
+        ? data
+        : {};
+
+  const referenceId =
+    meta.referenceId ||
+    parsedData.reference_number ||
+    parsedData.invoice_id ||
+    parsedData.payment_id ||
+    parsedData.customer_id ||
+    parsedData.contact_id ||
+    config.params?.invoice_id ||
+    config.params?.customer_id ||
+    null;
+
+  return {
+    customerNumber: meta.customerNumber || parsedData.customer_number || null,
+    customerId: meta.customerId || null,
+    referenceId: referenceId != null ? String(referenceId) : null,
+  };
+}
+
+async function persistZohoApiLog(config, { response, error } = {}) {
+  if (!config || config.__skipApiLog) return;
+  const httpStatus = response?.status ?? error?.response?.status ?? null;
+  const success = response != null && httpStatus >= 200 && httpStatus < 300;
+  const ctx = extractZohoLogContext(config);
+
+  await logApiCall({
+    service: "zoho",
+    operation: deriveZohoOperation(config.url, config.method),
+    method: String(config.method || "GET").toUpperCase(),
+    endpoint: buildZohoEndpoint(config.url),
+    status: success ? "success" : "failure",
+    httpStatus,
+    requestPayload: clipPayload({
+      params: config.params,
+      data: config.data,
+    }),
+    responsePayload: clipPayload(
+      success ? response?.data : (error?.response?.data ?? null),
+    ),
+    errorMessage: success
+      ? null
+      : error?.response?.data?.message ||
+        error?.message ||
+        (httpStatus ? `HTTP ${httpStatus}` : "Request failed"),
+    customerId: ctx.customerId,
+    customerNumber: ctx.customerNumber,
+    referenceId: ctx.referenceId,
+    retryable:
+      !success &&
+      (httpStatus == null || httpStatus >= 500 || httpStatus === 429),
+    parentLogId: config.__parentLogId ?? null,
+  });
+}
+
+// Attach token per request; enforce daily API budget (Zoho Books: 10k/day)
 zoho.interceptors.request.use(async (config) => {
+  const { getZohoCallPriority } = require("../lib/zohoCallContext");
+  const { assertCanMakeZohoCall } = require("../lib/zohoApiBudget");
+  const priority = config.__zohoPriority || getZohoCallPriority();
+  await assertCanMakeZohoCall(priority, 1);
   const token = await getAccessToken();
   config.headers.Authorization = `Zoho-oauthtoken ${token}`;
-  // Always include org id in query
   config.params = { ...(config.params || {}), organization_id: ZOHO_ORG_ID };
   return config;
 });
@@ -78,7 +174,20 @@ zoho.interceptors.request.use(async (config) => {
 // Simple retry with exponential backoff + jitter; honors Retry-After
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 zoho.interceptors.response.use(
-  (res) => res,
+  async (res) => {
+    const { recordZohoApiCall } = require("../lib/zohoApiBudget");
+    const { recordZohoApiUsage } = require("../lib/zohoApiUsage");
+    const { getZohoCallPriority } = require("../lib/zohoCallContext");
+    recordZohoApiCall(1).catch(() => {});
+    const priority = getZohoCallPriority();
+    recordZohoApiUsage({
+      module: priority === "interactive" ? "interactive" : "scheduled",
+      source: priority,
+      count: 1,
+    }).catch(() => {});
+    persistZohoApiLog(res.config, { response: res }).catch(() => {});
+    return res;
+  },
   async (error) => {
     const cfg = error.config || {};
     cfg.__retryCount = cfg.__retryCount || 0;
@@ -114,6 +223,7 @@ zoho.interceptors.response.use(
       return zoho(cfg);
     }
 
+    persistZohoApiLog(cfg, { error }).catch(() => {});
     return Promise.reject(error);
   },
 );
@@ -188,7 +298,8 @@ const pickLean = (c) => {
 };
 
 /** ========= Small LRU cache for hot lookups ========= **/
-const cache = new LRU({ max: 500, ttl: 5 * 60 * 1000 });
+const CONTACT_CACHE_TTL_MS = Number(process.env.ZOHO_CONTACT_CACHE_TTL_MS || 30 * 60 * 1000);
+const cache = new LRU({ max: 500, ttl: CONTACT_CACHE_TTL_MS });
 
 /** ========= Core JS functions (no req/res, return raw data) ========= **/
 
@@ -209,6 +320,163 @@ const getInvoices_JS = async (params = {}) => {
   } catch (error) {
     console.error(
       "getInvoices_JS error:",
+      error.response?.data || error.message,
+    );
+    return [];
+  }
+};
+
+// Get recurring invoices for a customer (array)
+const getRecurringInvoices_JS = async (params = {}) => {
+  try {
+    const customer_id = params.customer_id;
+    if (!customer_id) return [];
+
+    const page = Number(params.page || 1);
+    const per_page = Math.min(Number(params.per_page || 50), 200);
+    const zohoParams = { customer_id, page, per_page };
+
+    const data = await withTimeout(
+      callZoho("recurringinvoices", "GET", null, zohoParams),
+      10_000,
+      "get-recurring-invoices",
+    );
+
+    return data.recurringinvoices || data.recurring_invoices || [];
+  } catch (error) {
+    console.error(
+      "getRecurringInvoices_JS error:",
+      error.response?.data || error.message,
+    );
+    return [];
+  }
+};
+
+// Resume a stopped recurring invoice
+const resumeRecurringInvoice_JS = async (recurringInvoiceId) => {
+  if (!recurringInvoiceId) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(
+        `recurringinvoices/${recurringInvoiceId}/status/resume`,
+        "POST",
+        {},
+      ),
+      10_000,
+      "resume-recurring-invoice",
+    );
+    return data.recurringinvoice || data;
+  } catch (error) {
+    console.error(
+      "resumeRecurringInvoice_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
+const stopRecurringInvoice_JS = async (recurringInvoiceId) => {
+  if (!recurringInvoiceId) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(
+        `recurringinvoices/${recurringInvoiceId}/status/stop`,
+        "POST",
+        {},
+      ),
+      10_000,
+      "stop-recurring-invoice",
+    );
+    return data.recurringinvoice || data.recurring_invoice || data;
+  } catch (error) {
+    console.error(
+      "stopRecurringInvoice_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
+const createRecurringInvoice_JS = async ({
+  customer_id,
+  recurrence_name,
+  reference_number,
+  start_date,
+  recurrence_frequency,
+  repeat_every,
+  line_items,
+  is_inclusive_tax,
+}) => {
+  if (!customer_id || !line_items?.length) return null;
+  const payload = {
+    customer_id,
+    recurrence_name,
+    reference_number,
+    start_date,
+    recurrence_frequency,
+    repeat_every,
+    line_items,
+  };
+  if (is_inclusive_tax != null) {
+    payload.is_inclusive_tax = Boolean(is_inclusive_tax);
+  }
+
+  const createResult = await withTimeout(
+    callZoho("recurringinvoices", "POST", payload),
+    12_000,
+    "create-recurring-invoice",
+  );
+  return (
+    createResult.recurring_invoice ||
+    createResult.recurringinvoice ||
+    createResult
+  );
+};
+
+const updateRecurringInvoice_JS = async (recurringInvoiceId, payload) => {
+  if (!recurringInvoiceId) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(`recurringinvoices/${recurringInvoiceId}`, "PUT", payload),
+      12_000,
+      "update-recurring-invoice",
+    );
+    return data.recurring_invoice || data.recurringinvoice || data;
+  } catch (error) {
+    console.error(
+      "updateRecurringInvoice_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
+// Get customer payments (array)
+const getCustomerPayments_JS = async (params = {}) => {
+  try {
+    const customer_id = params.customer_id;
+    if (!customer_id) return [];
+
+    const page = Number(params.page || 1);
+    const per_page = Math.min(Number(params.per_page || 50), 200);
+    const zohoParams = {
+      customer_id,
+      page,
+      per_page,
+      sort_column: "date",
+      sort_order: "D",
+    };
+
+    const data = await withTimeout(
+      callZoho("customerpayments", "GET", null, zohoParams),
+      10_000,
+      "get-customer-payments",
+    );
+
+    return data.customerpayments || data.payments || [];
+  } catch (error) {
+    console.error(
+      "getCustomerPayments_JS error:",
       error.response?.data || error.message,
     );
     return [];
@@ -480,6 +748,68 @@ const getInvoiceTemplates_JS = async () => {
   }
 };
 
+// Create contact (object or null)
+const createContact_JS = async (payload) => {
+  try {
+    if (!payload?.contact_name) {
+      return null;
+    }
+
+    const createResult = await withTimeout(
+      callZoho("contacts", "POST", payload),
+      12_000,
+      "create-contact",
+    );
+    const contact = pickLean(createResult.contact);
+    if (contact?.contact_id) {
+      cache.set(norm(contact.contact_name || contact.company_name || ""), contact);
+      if (contact.company_name) {
+        cache.set(norm(contact.company_name), contact);
+      }
+    }
+    return contact;
+  } catch (error) {
+    const msg =
+      error.response?.data?.message ||
+      error.response?.data?.code ||
+      error.message ||
+      "";
+    if (/already exists|duplicate contact|contact name already/i.test(String(msg))) {
+      return null;
+    }
+    console.error(
+      "createContact_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
+const updateContact_JS = async (contactId, payload) => {
+  if (!contactId || !payload) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(`contacts/${contactId}`, "PUT", payload),
+      12_000,
+      "update-contact",
+    );
+    const contact = pickLean(data.contact);
+    if (contact?.contact_id) {
+      cache.set(norm(contact.contact_name || contact.company_name || ""), contact);
+      if (contact.company_name) {
+        cache.set(norm(contact.company_name), contact);
+      }
+    }
+    return contact;
+  } catch (error) {
+    console.error(
+      "updateContact_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
 // Create invoice (object or null)
 const createInvoice_JS = async ({
   customer_id,
@@ -487,6 +817,11 @@ const createInvoice_JS = async ({
   template_id,
   is_inclusive_tax,
   reference_number,
+  invoice_number,
+  discount,
+  discount_type = "entity_level",
+  is_discount_before_tax,
+  due_date,
 }) => {
   try {
     if (!customer_id || !items?.length) {
@@ -498,15 +833,32 @@ const createInvoice_JS = async ({
       date: moment().format("YYYY-MM-DD"),
       line_items: items,
     };
+    if (due_date) {
+      invoiceData.due_date = String(due_date).slice(0, 10);
+    }
     if (is_inclusive_tax != null) {
       invoiceData.is_inclusive_tax = Boolean(is_inclusive_tax);
     }
     if (reference_number) {
       invoiceData.reference_number = String(reference_number);
     }
+    if (invoice_number) {
+      invoiceData.invoice_number = String(invoice_number);
+    }
+    if (discount != null && Number(discount) > 0) {
+      invoiceData.discount = Number(discount);
+      invoiceData.discount_type = discount_type;
+      if (is_discount_before_tax != null) {
+        invoiceData.is_discount_before_tax = Boolean(is_discount_before_tax);
+      }
+    }
+
+    const extraParams = invoice_number
+      ? { ignore_auto_number_generation: true }
+      : {};
 
     const createResult = await withTimeout(
-      callZoho("invoices", "POST", invoiceData),
+      callZoho("invoices", "POST", invoiceData, extraParams),
       12_000,
       "create-invoice",
     );
@@ -526,11 +878,50 @@ const createInvoice_JS = async ({
 
     return invoice;
   } catch (error) {
+    const zohoError =
+      error.response?.data?.message ||
+      error.response?.data?.code ||
+      error.message;
     console.error(
       "createInvoice_JS error:",
       error.response?.data || error.message,
     );
-    return null;
+    const err = new Error(
+      typeof zohoError === "string" ? zohoError : "Zoho invoice creation failed",
+    );
+    err.zoho = error.response?.data || null;
+    throw err;
+  }
+};
+
+/** Email a Zoho Books invoice to the customer (1 API call). */
+const emailInvoice_JS = async ({ invoice_id, to_mail_ids, cc_mail_ids, subject, body }) => {
+  try {
+    if (!invoice_id) return false;
+    const recipients = (Array.isArray(to_mail_ids) ? to_mail_ids : [to_mail_ids])
+      .map((e) => String(e || "").trim())
+      .filter(Boolean);
+    if (!recipients.length) return false;
+
+    const payload = {
+      to_mail_ids: recipients,
+    };
+    if (cc_mail_ids?.length) payload.cc_mail_ids = cc_mail_ids;
+    if (subject) payload.subject = subject;
+    if (body) payload.body = body;
+
+    await withTimeout(
+      callZoho(`invoices/${invoice_id}/email`, "POST", payload),
+      12_000,
+      "email-invoice",
+    );
+    return true;
+  } catch (error) {
+    console.error(
+      "emailInvoice_JS error:",
+      error.response?.data || error.message,
+    );
+    return false;
   }
 };
 
@@ -840,6 +1231,12 @@ module.exports = {
 
   // Programmatic/core JS functions
   getInvoices_JS,
+  getRecurringInvoices_JS,
+  resumeRecurringInvoice_JS,
+  stopRecurringInvoice_JS,
+  createRecurringInvoice_JS,
+  updateRecurringInvoice_JS,
+  getCustomerPayments_JS,
   getZohoCustomers_JS,
   getSpecificCustomer_JS,
   getCustomerByCompanyName_JS,
@@ -847,6 +1244,9 @@ module.exports = {
   getItemsByAllowedSkuPrefixes_JS,
   getInvoiceTemplates_JS,
   createInvoice_JS,
+  emailInvoice_JS,
+  createContact_JS,
+  updateContact_JS,
   markInvoiceAsPaid_JS,
 
   // Extra helpers if you want them elsewhere

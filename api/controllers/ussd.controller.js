@@ -4,7 +4,7 @@ const { initiateSTKPush } = require("./mpesa.controller");
 const {
   readTransactions,
   findLatestTxnByCheckoutOrPhone,
-} = require("../../utils/transactions");
+} = require("../services/transactionStore");
 const { getSpecificCustomer_JS } = require("./zoho.controller");
 const { getTISPCustomer } = require("./tisp.controller");
 

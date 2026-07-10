@@ -1,0 +1,455 @@
+import { useCallback, useEffect, useState } from "react";
+import {
+  Badge,
+  Box,
+  Button,
+  Flex,
+  Input,
+  Stack,
+  Table,
+  Text,
+} from "@chakra-ui/react";
+import { FiMail, FiEye } from "react-icons/fi";
+import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
+import {
+  api,
+  formatDate,
+  type BillingCommunicationCandidate,
+  type BillingCommunicationPreview,
+  type ListPagination,
+} from "../../lib/api";
+import { FilterField } from "../module/FilterField";
+import { FILTER_FLEX, FilterToolbar } from "../ui/FilterToolbar";
+import { SelectField } from "../ui/SelectField";
+import {
+  DataTable,
+  DataTableCard,
+  DataTableColumnHeader,
+  DATA_TABLE_LEADING_COL_WIDTH,
+  dataTableCellProps,
+} from "../ui/DataTable";
+import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../PageSkeletons";
+import { ReconciliationStatusBadge } from "../reconciliation/ReconciliationStatusBadge";
+import { RowCheckbox } from "../ui/RowCheckbox";
+import { toaster } from "../ui/toaster";
+import { BillingEmailPreviewDialog } from "./BillingEmailPreviewDialog";
+import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../ui/MobileDataList";
+import { EmptyState, PageErrorBanner } from "../ui/pageLayout";
+import { DataTableExportButton } from "../ui/DataTableExportButton";
+import { billingCommunicationExportColumns } from "../../lib/dataTableExportColumns";
+import {
+  exportTableData,
+  fetchAllPaginatedRows,
+  type ExportFormat,
+  type ExportScope,
+} from "../../lib/tableExport";
+
+const PAGE_SIZE = 25;
+
+type Props = {
+  reloadKey?: number;
+  onReload?: () => void;
+  mailConfigured?: boolean;
+};
+
+export function BillingCommunicationsTable({
+  reloadKey = 0,
+  onReload,
+  mailConfigured = false,
+}: Props) {
+  const [searchInput, setSearchInput] = useState("");
+  const { query: debouncedQuery, pending: searchPending } = useDebouncedSearch(searchInput);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [rows, setRows] = useState<BillingCommunicationCandidate[]>([]);
+  const [pagination, setPagination] = useState<ListPagination>({
+    page: 1,
+    limit: PAGE_SIZE,
+    total: 0,
+    pages: 1,
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [sending, setSending] = useState(false);
+  const [preview, setPreview] = useState<BillingCommunicationPreview | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const tableBusy = loading || searchPending;
+
+  useEffect(() => {
+    if (debouncedQuery === search) return;
+    setSearch(debouncedQuery);
+    setPage(1);
+  }, [debouncedQuery, search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.listBillingCommunications({
+        page: String(page),
+        limit: String(PAGE_SIZE),
+        search: search || undefined,
+        status: statusFilter || undefined,
+      });
+      setRows(res.data);
+      setPagination(res.pagination);
+      setSelected(new Set());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, statusFilter, reloadKey]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleExport(scope: ExportScope, format: ExportFormat) {
+    setExporting(true);
+    try {
+      await exportTableData({
+        scope,
+        format,
+        filenameBase: "billing-communications",
+        columns: billingCommunicationExportColumns,
+        viewRows: rows,
+        fetchAllRows: () =>
+          fetchAllPaginatedRows((pageNum, limit) =>
+            api.listBillingCommunications({
+              page: String(pageNum),
+              limit: String(limit),
+              search: search || undefined,
+              status: statusFilter || undefined,
+            }).then((res) => ({
+              data: res.data,
+              pagination: res.pagination,
+            }))
+          ),
+      });
+    } catch (e) {
+      toaster.error({
+        title: "Export failed",
+        description: e instanceof Error ? e.message : "Unknown error",
+      });
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const colSpan = 9;
+  const allOnPageSelected = rows.length > 0 && rows.every((r) => selected.has(r.customerId));
+  const sendableSelected = rows.filter((r) => selected.has(r.customerId) && r.canSend);
+
+  function toggleAll() {
+    if (allOnPageSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(rows.filter((r) => r.canSend).map((r) => r.customerId)));
+    }
+  }
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function openPreview(customerId: number) {
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      setPreview(await api.previewBillingCommunication(customerId));
+    } catch (e) {
+      setPreviewOpen(false);
+      toaster.error({
+        title: "Preview failed",
+        description: e instanceof Error ? e.message : "Unknown error",
+      });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function sendOne(customerId: number) {
+    setSending(true);
+    try {
+      const result = await api.sendBillingCommunication(customerId);
+      toaster.success({ title: "Email sent", description: result.message });
+      load();
+      onReload?.();
+    } catch (e) {
+      toaster.error({
+        title: "Send failed",
+        description: e instanceof Error ? e.message : "Unknown error",
+      });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function sendSelected() {
+    const ids = [...selected].filter((id) => rows.find((r) => r.customerId === id)?.canSend);
+    if (!ids.length) return;
+    setSending(true);
+    try {
+      const result = await api.sendBulkBillingCommunications(ids);
+      toaster.success({
+        title: "Bulk send complete",
+        description: `${result.sent} sent, ${result.failed} failed`,
+      });
+      load();
+      onReload?.();
+    } catch (e) {
+      toaster.error({
+        title: "Bulk send failed",
+        description: e instanceof Error ? e.message : "Unknown error",
+      });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Stack gap={3}>
+      {!mailConfigured && (
+        <Box py={2} px={3} bg="orange.50" border="1px solid" borderColor="orange.100" borderRadius="md">
+          <Text fontSize="sm" color="orange.800">
+            Zoho Mail is not configured — set ZOHO_MAIL_ACCOUNT_ID and ZOHO_MAIL_FROM_ADDRESS in server
+            .env (OAuth token needs ZohoMail.messages.CREATE scope).
+          </Text>
+        </Box>
+      )}
+
+      <FilterToolbar>
+        <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <Input
+            size="sm"
+            placeholder="Customer number or name…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </FilterField>
+        <FilterField label="Billing gap" flex={FILTER_FLEX.standard} minW={0}>
+          <SelectField
+            size="sm"
+            fieldProps={{
+              value: statusFilter,
+              onChange: (e) => setStatusFilter(e.target.value),
+            }}
+          >
+            <option value="">All gaps</option>
+            <option value="overdue">Overdue</option>
+            <option value="missing_invoice,stale_billing">Missing invoice</option>
+            <option value="recurring_invoice_stopped">Recurring invoice</option>
+            <option value="no_zoho_link">Not in Zoho Books</option>
+            <option value="disconnected_not_invoiced">Disconnected, not invoiced</option>
+            <option value="paid_but_disconnected">Paid but disconnected</option>
+            <option value="connected_without_payment">Connected without payment</option>
+            <option value="payment_under_review">Payment under review</option>
+          </SelectField>
+        </FilterField>
+        <Box flexShrink={0} ml="auto">
+          <DataTableExportButton
+            entityLabel="communications"
+            viewCount={rows.length}
+            totalCount={pagination.total}
+            loading={exporting}
+            onExport={handleExport}
+          />
+        </Box>
+      </FilterToolbar>
+
+      {sendableSelected.length > 0 && (
+        <Flex justify="flex-end">
+          <Button
+            size="sm"
+            colorPalette="brand"
+            loading={sending}
+            onClick={sendSelected}
+          >
+            <FiMail />
+            Send to {sendableSelected.length} selected
+          </Button>
+        </Flex>
+      )}
+
+      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
+
+      {tableBusy ? (
+        <DataTableCard pagination={pagination} onPageChange={setPage} loading>
+          <ResponsiveListViews
+            fill
+            mobile={<MobileCardListSkeleton fill variant="card" />}
+            desktop={<DataTableLoadingSkeleton columns={colSpan} fill />}
+          />
+        </DataTableCard>
+      ) : (
+        <DataTableCard pagination={pagination} onPageChange={setPage}>
+          {rows.length === 0 ? (
+            <EmptyState>No billing communications match your filters</EmptyState>
+          ) : (
+          <ResponsiveListViews
+            mobile={
+              <MobileDataList
+                items={rows}
+                getKey={(row) => row.customerId}
+                renderCard={(row) => (
+                  <MobileDataCard
+                    title={row.customerName}
+                    subtitle={row.customerNumber}
+                    trailing={<ReconciliationStatusBadge status={row.primaryStatus} />}
+                    showChevron={false}
+                    fields={[
+                      { label: "Template", value: row.templateLabel || "—" },
+                      { label: "Email", value: row.email || "No email" },
+                      {
+                        label: "Last sent",
+                        value: row.lastSentAt ? formatDate(row.lastSentAt) : "—",
+                      },
+                    ]}
+                    footer={
+                      <Flex gap={2} wrap="wrap">
+                        <Button size="sm" variant="ghost" onClick={() => openPreview(row.customerId)}>
+                          <FiEye />
+                          Preview
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorPalette="brand"
+                          disabled={!row.canSend}
+                          loading={sending}
+                          onClick={() => sendOne(row.customerId)}
+                        >
+                          <FiMail />
+                          Send
+                        </Button>
+                      </Flex>
+                    }
+                  />
+                )}
+              />
+            }
+            desktop={
+          <DataTable fixedLayout>
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader w="40px">
+                  <RowCheckbox
+                    checked={allOnPageSelected}
+                    onChange={toggleAll}
+                    aria-label="Select all sendable on page"
+                  />
+                </Table.ColumnHeader>
+                <Table.ColumnHeader w={DATA_TABLE_LEADING_COL_WIDTH} />
+                <DataTableColumnHeader>Customer</DataTableColumnHeader>
+                <DataTableColumnHeader>Gap</DataTableColumnHeader>
+                <DataTableColumnHeader>Template</DataTableColumnHeader>
+                <DataTableColumnHeader>Email</DataTableColumnHeader>
+                <DataTableColumnHeader>Last sent</DataTableColumnHeader>
+                <DataTableColumnHeader>Actions</DataTableColumnHeader>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {rows.map((row) => (
+                <Table.Row key={row.customerId}>
+                  <Table.Cell {...dataTableCellProps}>
+                    <RowCheckbox
+                      checked={selected.has(row.customerId)}
+                      disabled={!row.canSend}
+                      onChange={() => toggleOne(row.customerId)}
+                      aria-label={`Select ${row.customerNumber}`}
+                    />
+                  </Table.Cell>
+                  <Table.Cell {...dataTableCellProps} />
+                  <Table.Cell {...dataTableCellProps}>
+                    <Text fontWeight="medium" fontSize="sm">
+                      {row.customerName}
+                    </Text>
+                    <Text fontSize="xs" color="gray.500">
+                      {row.customerNumber}
+                    </Text>
+                  </Table.Cell>
+                  <Table.Cell {...dataTableCellProps}>
+                    <ReconciliationStatusBadge status={row.primaryStatus} />
+                  </Table.Cell>
+                  <Table.Cell {...dataTableCellProps} fontSize="xs">
+                    {row.templateLabel || "—"}
+                  </Table.Cell>
+                  <Table.Cell {...dataTableCellProps} fontSize="xs">
+                    {row.email ? (
+                      <Stack gap={0}>
+                        <Text>{row.email}</Text>
+                        {row.emailSource && (
+                          <Badge size="sm" variant="subtle" colorPalette="gray">
+                            {row.emailSource}
+                          </Badge>
+                        )}
+                      </Stack>
+                    ) : (
+                      <Text color="orange.600">No email</Text>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell {...dataTableCellProps} fontSize="xs">
+                    {row.lastSentAt ? formatDate(row.lastSentAt) : "—"}
+                  </Table.Cell>
+                  <Table.Cell {...dataTableCellProps}>
+                    <Flex gap={1}>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => openPreview(row.customerId)}
+                      >
+                        <FiEye />
+                        Preview
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="brand"
+                        disabled={!row.canSend}
+                        loading={sending}
+                        onClick={() => sendOne(row.customerId)}
+                      >
+                        <FiMail />
+                        Send
+                      </Button>
+                    </Flex>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </DataTable>
+            }
+          />
+          )}
+        </DataTableCard>
+      )}
+
+      <BillingEmailPreviewDialog
+        open={previewOpen}
+        onOpenChange={(e) => setPreviewOpen(e.open)}
+        preview={preview}
+        loading={previewLoading}
+        onSend={async () => {
+          if (!preview) return;
+          await sendOne(preview.customerId);
+          setPreviewOpen(false);
+        }}
+        sending={sending}
+      />
+    </Stack>
+  );
+}

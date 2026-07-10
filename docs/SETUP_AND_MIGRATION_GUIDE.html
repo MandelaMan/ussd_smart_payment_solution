@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>USSD Smart Payment Solution — Setup &amp; Migration Guide</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-2: #243044;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #9aa8bc;
+      --accent: #3b82f6;
+      --accent-dim: #1e3a5f;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #0d1117;
+      --radius: 10px;
+      --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: "Cascadia Code", "Fira Code", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    nav#toc {
+      width: 300px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 1.5rem 1rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    nav#toc h2 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    nav#toc a {
+      display: block;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      padding: 0.35rem 0.6rem;
+      border-radius: 6px;
+      margin-bottom: 2px;
+    }
+
+    nav#toc a:hover { background: var(--surface-2); color: var(--text); }
+    nav#toc a.sub { padding-left: 1.2rem; font-size: 0.82rem; }
+
+    main {
+      flex: 1;
+      max-width: 920px;
+      padding: 2.5rem 3rem 4rem;
+    }
+
+    header.doc-header {
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header.doc-header h1 {
+      font-size: 1.85rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.02em;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .meta span {
+      background: var(--surface);
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+    }
+
+    section {
+      margin-bottom: 2.75rem;
+      scroll-margin-top: 1.5rem;
+    }
+
+    h2 {
+      font-size: 1.35rem;
+      margin-bottom: 0.85rem;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    h2 .num {
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-size: 0.8rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      margin: 1.25rem 0 0.6rem;
+      color: #d4dce8;
+    }
+
+    p, li { color: #c5d0de; margin-bottom: 0.65rem; }
+    ul, ol { padding-left: 1.4rem; margin-bottom: 1rem; }
+    li { margin-bottom: 0.35rem; }
+
+    .callout {
+      border-radius: var(--radius);
+      padding: 1rem 1.15rem;
+      margin: 1rem 0;
+      border-left: 4px solid;
+      font-size: 0.92rem;
+    }
+
+    .callout.info { background: #1a2744; border-color: var(--accent); }
+    .callout.warn { background: #2a2210; border-color: var(--warning); }
+    .callout.danger { background: #2a1515; border-color: var(--danger); }
+    .callout.success { background: #142a1a; border-color: var(--success); }
+    .callout strong { color: #fff; }
+
+    pre, code {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.15rem;
+      overflow-x: auto;
+      margin: 0.75rem 0 1rem;
+      line-height: 1.5;
+    }
+
+    code {
+      background: var(--code-bg);
+      padding: 0.12rem 0.4rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    pre code { background: none; border: none; padding: 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.88rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--border);
+    }
+
+    th { background: var(--surface-2); color: #fff; font-weight: 600; }
+    td { background: var(--surface); }
+
+    .checklist { list-style: none; padding-left: 0; }
+    .checklist li {
+      padding: 0.45rem 0 0.45rem 1.75rem;
+      position: relative;
+      border-bottom: 1px solid var(--border);
+    }
+    .checklist li::before {
+      content: "☐";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+    }
+
+    .arch-diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.45;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--muted);
+    }
+
+    .env-group { margin-bottom: 1.25rem; }
+    .env-group h4 {
+      font-size: 0.9rem;
+      color: var(--accent);
+      margin-bottom: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    @media (max-width: 900px) {
+      body { flex-direction: column; }
+      nav#toc {
+        width: 100%;
+        height: auto;
+        position: relative;
+        max-height: 40vh;
+      }
+      main { padding: 1.5rem; }
+    }
+
+    @media print {
+      body { background: #fff; color: #000; }
+      nav#toc { display: none; }
+      main { max-width: 100%; }
+      pre, .callout, table td, table th { border-color: #ccc; }
+      .callout { background: #f5f5f5; }
+    }
+  </style>
+</head>
+<body>
+
+<nav id="toc">
+  <h2>Contents</h2>
+  <a href="#overview">Overview</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#prerequisites">Prerequisites</a>
+  <a href="#clone">1. Clone repository</a>
+  <a href="#env">2. Environment (.env)</a>
+  <a class="sub" href="#env-core">Core &amp; server</a>
+  <a class="sub" href="#env-mysql">MySQL</a>
+  <a class="sub" href="#env-auth">Admin auth</a>
+  <a class="sub" href="#env-zoho">Zoho Books</a>
+  <a class="sub" href="#env-mpesa">M-Pesa / Daraja</a>
+  <a class="sub" href="#env-tisp">TISP</a>
+  <a class="sub" href="#env-xtream">Xtream Codes</a>
+  <a class="sub" href="#env-reconciliation">Billing &amp; reconciliation</a>
+  <a class="sub" href="#env-redis">Redis &amp; sync</a>
+  <a class="sub" href="#env-mail">Zoho Mail</a>
+  <a href="#mysql-setup">3. MySQL / MariaDB (Docker)</a>
+  <a href="#redis-setup">4. Redis (Docker)</a>
+  <a href="#install">5. Install dependencies</a>
+  <a href="#migrate">6. Database migrations</a>
+  <a href="#seed">7. Seed admin &amp; data</a>
+  <a href="#build-admin">8. Build admin UI</a>
+  <a href="#local-dev">9. Local development</a>
+  <a href="#production">10. Production deployment</a>
+  <a href="#workers">11. Background workers</a>
+  <a href="#integrations">12. External integrations</a>
+  <a class="sub" href="#admin-billing">Admin Billing UI</a>
+  <a href="#webhooks">13. Webhooks &amp; public URLs</a>
+  <a class="sub" href="#zoho-webhook-onetime">Zoho webhook (one-time)</a>
+  <a href="#ussd">14. USSD endpoints</a>
+  <a href="#rbac">15. Roles &amp; access</a>
+  <a href="#data-migration">16. Data migration scripts</a>
+  <a href="#xtream-scheduler">17. Xtream daily scheduler</a>
+  <a href="#verification">18. Verification &amp; tests</a>
+  <a href="#cicd">19. CI/CD (GitHub Actions)</a>
+  <a href="#logs">20. Log files</a>
+  <a href="#troubleshooting">21. Troubleshooting</a>
+  <a href="#maintenance">22. Maintaining this document</a>
+</nav>
+
+<main>
+  <header class="doc-header">
+    <h1>USSD Smart Payment Solution</h1>
+    <p style="color: var(--muted); margin-bottom: 1rem;">
+      Complete step-by-step guide for first-time setup, environment migration, and production deployment.
+    </p>
+    <div class="meta">
+      <span>Last updated: <strong>2026-07-10</strong> (Docker Compose for local MySQL/MariaDB + Redis; XAMPP restore)</span>
+      <span>App version: <strong>1.0.0</strong></span>
+      <span>Node.js: <strong>18+</strong> (CI uses 18)</span>
+      <span>Also see root <a href="../README.md"><code>README.md</code></a> for a short local-dev quick start.</span>
+    </div>
+  </header>
+
+  <!-- OVERVIEW -->
+  <section id="overview">
+    <h2><span class="num">§</span> Overview</h2>
+    <p>
+      <strong>USSD Smart Payment Solution</strong> (Stalynx Utility) is a billing and customer-management platform
+      that connects M-Pesa payments, Zoho Books invoicing, TISP ISP provisioning, and Xtream Codes streaming.
+      It exposes a REST API, serves a React admin dashboard at <code>/admin</code>, handles USSD payment flows,
+      and runs background synchronization via BullMQ and Redis.
+    </p>
+    <p><strong>What this guide covers:</strong></p>
+    <ul>
+      <li>Fresh install on a new server or developer machine</li>
+      <li>Local databases via Docker Compose (<code>yarn docker:up</code>) — MySQL/MariaDB + Redis</li>
+      <li>Migrating from an older deployment (database, logs, environment), including XAMPP → Docker</li>
+      <li>All required services, environment variables, and external registrations</li>
+      <li>Production process layout (API, worker, optional Xtream scheduler)</li>
+      <li>Post-deploy verification and ongoing maintenance</li>
+      <li>Billing reconciliation UI, Zoho/TISP onboarding behaviour, and integration snapshot caching</li>
+    </ul>
+    <div class="callout danger">
+      <strong>Security:</strong> Never commit <code>.env</code> or real credentials. The template
+      <code>.env.dist</code> contains example values — replace every secret before going live.
+      Rotate JWT, M-Pesa, and Zoho tokens after migration.
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section id="architecture">
+    <h2><span class="num">§</span> Architecture</h2>
+    <div class="arch-diagram">┌─────────────────────────────────────────────────────────────────┐
+│                         Clients / Integrations                   │
+│  Admin browser   USSD gateway   Safaricom Daraja   Zoho Books    │
+└────────┬──────────────┬─────────────────┬────────────────┬────────┘
+         │              │                 │                │
+         ▼              ▼                 ▼                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Express API (index.js)  —  PORT (default 4000)                  │
+│  • /api/* REST routes    • /admin/* static React build           │
+│  • Socket.IO /api/socket.io (sync progress)                      │
+│  • Health: GET /api/health                                       │
+└────────┬───────────────────────────────┬────────────────────────┘
+         │                               │
+         ▼                               ▼
+┌─────────────────┐              ┌─────────────────┐
+│  MySQL/MariaDB  │              │  Redis          │
+│  (Docker local  │              │  (Docker local  │
+│   or managed)   │              │   or managed)   │
+│  customers,     │              │  BullMQ queues  │
+│  payments,      │              │  job scheduling │
+│  sync_jobs,     │              └────────┬────────┘
+│  reconciliation │                       │
+└─────────────────┘                       ▼
+                                 ┌─────────────────┐
+                                 │  Worker process │
+                                 │  workers/index  │
+                                 │  (production)   │
+                                 └────────┬────────┘
+                                          │
+         ┌────────────────────────────────┼────────────────────────┐
+         ▼                ▼               ▼                        ▼
+   Zoho Books API    TISP WebISP     M-Pesa Daraja           Xtream panel
+   (invoices, CRM)   (SetClient…)    (STK, C2B, B2C)         (port 25461)</div>
+
+    <h3>Production processes (required)</h3>
+    <table>
+      <thead>
+        <tr><th>Process</th><th>Command</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>API server</td>
+          <td><code>yarn start</code> / PM2 <code>index.js</code></td>
+          <td>HTTP API, admin static files, Socket.IO, enqueues sync jobs</td>
+        </tr>
+        <tr>
+          <td>Worker</td>
+          <td><code>yarn worker</code></td>
+          <td>Processes BullMQ jobs (customers, invoices, payments, reconciliation, products)</td>
+        </tr>
+        <tr>
+          <td>Xtream scheduler (optional)</td>
+          <td><code>yarn xtream:daily</code></td>
+          <td>Daily Xtream user sync; separate from main worker</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout warn">
+      <strong>Important:</strong> The GitHub Actions deploy workflow (<code>.github/workflows/deploy.yml</code>)
+      currently starts only the API via PM2. You must add a separate PM2 app for <code>workers/index.js</code>
+      in production, or set <code>WORKER_INLINE=true</code> (dev only — not recommended for production).
+    </div>
+  </section>
+
+  <!-- PREREQUISITES -->
+  <section id="prerequisites">
+    <h2><span class="num">§</span> Prerequisites</h2>
+    <ul class="checklist">
+      <li><strong>Node.js 18+</strong> and <strong>Yarn</strong> (Corepack: <code>corepack enable</code>)</li>
+      <li><strong>Docker Desktop</strong> (local development) — provides MariaDB + Redis via <code>docker-compose.yml</code></li>
+      <li><strong>MySQL 8+</strong> / <strong>MariaDB 10.11+</strong> (InnoDB, utf8mb4) — Docker for local; managed instance for production</li>
+      <li><strong>Redis 6+</strong> — required when <code>SYNC_ENABLED=true</code> (Docker for local)</li>
+      <li><strong>Git</strong> for cloning and deployments</li>
+      <li>XAMPP MySQL is <strong>not</strong> required; prefer Docker. Use <code>yarn db:restore-xampp</code> only to migrate old XAMPP data once.</li>
+      <li><strong>PM2</strong> (production) — installed globally or per-user on the server</li>
+      <li><strong>HTTPS reverse proxy</strong> (nginx, Caddy, or load balancer) for production M-Pesa/Zoho callbacks</li>
+      <li>Outbound network access to Safaricom Daraja, Zoho APIs, TISP host, Xtream panel</li>
+      <li>Safaricom Daraja app (sandbox or production) with STK Push and C2B URLs registered</li>
+      <li>Zoho Books organization with OAuth app (client ID, secret, refresh token)</li>
+      <li>TISP WebISPService endpoint reachability (HTTP — HTTPS may fail TLS on this host)</li>
+      <li>Xtream Codes panel API (port <strong>25461</strong>) whitelisted for the billing server IP</li>
+    </ul>
+  </section>
+
+  <!-- STEP 1 -->
+  <section id="clone">
+    <h2><span class="num">1</span> Clone repository</h2>
+    <pre><code>git clone https://github.com/MandelaMan/ussd_smart_payment_solution.git
+cd ussd_smart_payment_solution</code></pre>
+    <p>For production, deploy to a fixed path (example: <code>/var/www/ussd_smart_payment_solution</code>).
+    The CI pipeline uses the <code>DEPLOY_PATH</code> secret for this location.</p>
+  </section>
+
+  <!-- STEP 2 ENV -->
+  <section id="env">
+    <h2><span class="num">2</span> Environment configuration</h2>
+    <p>Create <code>.env</code> from the template. Every variable below is used by the application.</p>
+    <pre><code>cp .env.dist .env</code></pre>
+    <div class="callout info">
+      Use <code>KEY=value</code> with <strong>no spaces</strong> around <code>=</code>.
+    </div>
+
+    <h3 id="env-core">Core &amp; server</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>PORT</code></td><td>4000</td><td>API listen port (<code>api/config/env.js</code> default matches). Vite dev proxy targets 4000.</td></tr>
+        <tr><td><code>NODE_ENV</code></td><td>development</td><td>Set <code>production</code> on live servers (secure cookies, etc.).</td></tr>
+        <tr><td><code>ERROR_LOG_DIR</code></td><td>&lt;project&gt;/logs</td><td>Optional absolute path for daily error logs.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-mysql">MySQL / MariaDB</h3>
+    <p>Local Docker defaults (from <code>.env.dist</code> / <code>docker-compose.yml</code>):</p>
+    <table>
+      <thead><tr><th>Variable</th><th>Local Docker default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>MYSQL_HOST</code></td><td><code>127.0.0.1</code></td><td>Database host</td></tr>
+        <tr><td><code>MYSQL_PORT</code></td><td><code>3307</code></td><td>Host port mapped from container <code>3306</code> (avoids conflict with XAMPP on 3306). Production typically uses <code>3306</code>.</td></tr>
+        <tr><td><code>MYSQL_USER</code> / <code>MYSQL_PASSWORD</code></td><td><code>root</code> / <code>root</code></td><td>Matches compose <code>MARIADB_ROOT_PASSWORD</code>. Use a dedicated non-root user in production.</td></tr>
+        <tr><td><code>MYSQL_DATABASE</code></td><td><code>ussd_smart_payment_solution</code></td><td>Database name (created by compose)</td></tr>
+        <tr><td><code>MYSQL_CONNECTION_LIMIT</code></td><td>10</td><td>Pool size</td></tr>
+      </tbody>
+    </table>
+    <div class="callout info">
+      If host port <code>3306</code> is free, you may change compose to <code>"3306:3306"</code> and set <code>MYSQL_PORT=3306</code>.
+    </div>
+
+    <h3 id="env-auth">Admin authentication &amp; test users</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>JWT_SECRET</code></td><td><strong>Required.</strong> Long random string; app refuses to start auth without it.</td></tr>
+        <tr><td><code>JWT_EXPIRES_IN</code></td><td>Token lifetime (default <code>8h</code>)</td></tr>
+        <tr><td><code>ADMIN_ORIGIN</code></td><td>Admin UI origin for CORS/Socket.IO. Dev: <code>http://localhost:5173</code>. Prod: <code>https://app.sulsolutions.biz</code></td></tr>
+        <tr><td><code>ADMIN_*</code></td><td>Administrator seed user (<code>yarn db:seed</code>)</td></tr>
+        <tr><td><code>SUPPORT_*</code></td><td>Customer support seed user</td></tr>
+        <tr><td><code>CFO_*</code></td><td>CFO seed user</td></tr>
+        <tr><td><code>PARTNER_*</code></td><td>Partner seed user (read-only dashboard)</td></tr>
+      </tbody>
+    </table>
+    <p>Each role uses <code>NAME</code>, <code>EMAIL</code>, and <code>PASSWORD</code> suffixes. See <code>.env.dist</code> for defaults. <strong>Development only</strong> — change all passwords before production.</p>
+
+    <h3 id="env-zoho">Zoho Books</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>ZOHO_CLIENT_ID</code>, <code>ZOHO_CLIENT_SECRET</code>, <code>ZOHO_REFRESH_TOKEN</code></td><td>OAuth credentials</td></tr>
+        <tr><td><code>ZOHO_ORG_ID</code></td><td>Books organization ID</td></tr>
+        <tr><td><code>ZOHO_BASE_URL</code></td><td><code>https://www.zohoapis.com/books/v3</code></td></tr>
+        <tr><td><code>ZOHO_AUTH_URL</code></td><td><code>https://accounts.zoho.com/oauth/v2/token</code></td></tr>
+        <tr><td><code>ZOHO_PAYMENT_MODE</code></td><td>Must match a Zoho Books payment mode (e.g. <code>Mobile Money</code>)</td></tr>
+        <tr><td><code>ZOHO_INVOICE_TAX_INCLUSIVE</code></td><td><code>true</code> — M-Pesa amounts are VAT-inclusive</td></tr>
+        <tr><td><code>ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED</code></td><td><code>false</code> — when <code>true</code>, the app emails signup invoices via Zoho API; leave off if Zoho Books already sends invoice mail (avoids double-send)</td></tr>
+        <tr><td><code>ZOHO_RECURRING_ON_SIGNUP</code></td><td><code>false</code> — when <code>true</code>, creates a Zoho recurring profile on new customer signup (default: one signup invoice only)</td></tr>
+        <tr><td><code>ZOHO_DSTV_ONE_TIME_FEE</code></td><td><code>2900</code> — one-time DSTV decoder line item (KES) on the <strong>first</strong> signup invoice only for DSTV packages; not billed monthly</td></tr>
+        <tr><td><code>ZOHO_VAT_TAX_ID</code></td><td>Optional tax ID if inclusive flag alone is insufficient</td></tr>
+        <tr><td><code>ZOHO_WEBHOOK_SECRET</code></td><td>Shared secret for <code>POST /api/public/zoho/webhook</code>. Required for the one-time Zoho Books workflow setup (see <a href="#zoho-webhook-onetime">§13</a>). Extends TISP when a customer pays directly in Zoho Books — zero outbound Zoho API calls.</td></tr>
+        <tr><td><code>ZOHO_DAILY_API_LIMIT</code></td><td>Default 10000 (Books API daily budget)</td></tr>
+        <tr><td><code>ZOHO_DAILY_API_RESERVE</code></td><td>Calls reserved for user actions (default 1500)</td></tr>
+        <tr><td><code>ZOHO_API_BUDGET_ENABLED</code></td><td>Enable API budget throttling</td></tr>
+        <tr><td><code>ZOHO_CALLS_PER_CUSTOMER_ESTIMATE</code></td><td>Budget estimation (default 4)</td></tr>
+        <tr><td><code>ZOHO_SYNC_CONCURRENCY</code></td><td>Parallel Zoho calls during sync (default 2)</td></tr>
+        <tr><td><code>ZOHO_SYNC_MODE</code></td><td><code>minimal</code> — scheduled sync only contacts + invoices; webhooks and manual refresh for the rest</td></tr>
+        <tr><td><code>ZOHO_SCHEDULED_MODULES</code></td><td>Comma list, e.g. <code>zoho-contacts,invoices</code></td></tr>
+        <tr><td><code>ZOHO_BACKGROUND_SYNC_ENABLED</code></td><td>Enable scheduled Zoho background sync</td></tr>
+        <tr><td><code>ZOHO_SYNC_MAX_PAGES</code></td><td>Max list API pages per background run (budget aware)</td></tr>
+        <tr><td><code>RECONCILIATION_FULL_ZOHO_SCHEDULED</code></td><td><code>false</code> — full per-customer Zoho scan on schedule (use manual Sync when needed)</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-mpesa">M-Pesa / Safaricom Daraja</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>TOKEN_URL</code></td><td>OAuth token endpoint (sandbox or production)</td></tr>
+        <tr><td><code>STK_PUSH_ENDPOINT</code></td><td>STK Push process request URL</td></tr>
+        <tr><td><code>MPESA_CONSUMER_KEY</code>, <code>MPESA_CONSUMER_SECRET</code>, <code>MPESA_PASS_KEY</code></td><td>App credentials</td></tr>
+        <tr><td><code>MPESA_SHORTCODE</code></td><td>Paybill / till number</td></tr>
+        <tr><td><code>MPESA_CALLBACK_URL</code></td><td>STK callback: <code>POST /api/payment/callback</code></td></tr>
+        <tr><td><code>MPESA_CONFIRMATION_URL</code></td><td>C2B confirmation: <code>POST /api/payment/confirmation</code></td></tr>
+        <tr><td><code>MPESA_VALIDATION_URL</code></td><td>C2B validation: <code>POST /api/payment/validation</code></td></tr>
+        <tr><td><code>MPESA_STK_USE_LIVE_AMOUNT</code></td><td><code>true</code> to charge real subscription amount on STK</td></tr>
+        <tr><td><code>DEFAULT_ACCOUNT_REFERENCE</code></td><td>Optional fallback STK/C2B account reference (default <code>Starlynx Utility</code>)</td></tr>
+        <tr><td><code>MPESA_C2B_REGISTER_URL</code></td><td>Optional override for Daraja C2B URL registration API</td></tr>
+        <tr><td><code>MPESA_C2B_SIMULATE_URL</code></td><td>Optional override for Daraja C2B simulation API</td></tr>
+        <tr><td><code>MPESA_B2C_*</code></td><td>B2C payout for transaction split (endpoint, party, initiator, security credential, result/timeout URLs, remarks, occasion)</td></tr>
+        <tr><td><code>MPESA_B2C_ORIGINATOR_CONVERSATION_ID</code></td><td>Optional B2C idempotency / tracking id</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-tisp">TISP WebISPService</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>TISP_CLIENT_STATUS_URL</code></td><td>ClientStatus endpoint (use HTTP)</td></tr>
+        <tr><td><code>TISP_SET_CLIENT_URL</code></td><td>SetClientDetails endpoint</td></tr>
+        <tr><td><code>ISP_PAYMENT_URL</code></td><td>SetISPPayment endpoint</td></tr>
+        <tr><td><code>TISP_REQUEST_TIMEOUT_MS</code></td><td>Default 15000</td></tr>
+        <tr><td><code>TISP_QUOTE_TIMEOUT_MS</code></td><td>Default 5000 (upgrade quotes)</td></tr>
+        <tr><td><code>TISP_SHORTCODE</code></td><td>Must be <code>000000</code> for SetClientDetails INSERT (not the M-Pesa paybill)</td></tr>
+      </tbody>
+    </table>
+    <p><strong>TISP create payload behaviour</strong> (see <code>api/controllers/tisp.controller.js</code>):</p>
+    <ul>
+      <li><code>BillingCycle</code> is always sent as <code>Monthly</code> on INSERT — TISP renews monthly regardless of customer billing frequency (yearly/quarterly/custom).</li>
+      <li><code>Router</code> and <code>Location</code> use the customer’s <strong>building name</strong> from the database (uppercased). Building name is required — registration fails if the building record has no name.</li>
+      <li>Due date on create is start of day in <code>TZ</code> (default <code>Africa/Nairobi</code>).</li>
+    </ul>
+
+    <h3 id="env-xtream">Xtream Codes</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>XTREAM_BASE_URL</code></td><td>API base, e.g. <code>http://HOST:25461/</code> (not admin UI port 25500)</td></tr>
+        <tr><td><code>XTREAM_DEVELOPER_USERNAME</code>, <code>XTREAM_DEVELOPER_PASSWORD</code></td><td>Panel API credentials</td></tr>
+        <tr><td><code>XTREAM_SYNC_ENABLED</code></td><td>Enable sync jobs (default true)</td></tr>
+        <tr><td><code>XTREAM_SYNC_INTERVAL_MS</code></td><td>Daily scheduler interval (default 86400000 = 24h)</td></tr>
+        <tr><td><code>XTREAM_REQUEST_TIMEOUT_MS</code></td><td>Default 20000</td></tr>
+        <tr><td><code>XTREAM_TEST_CUSTOMERS_FILE</code></td><td>Optional path override for test customer JSON</td></tr>
+      </tbody>
+    </table>
+    <p>Also configure <code>config/xtream-sync.json</code> (bouquets, connection limits) and optionally
+    <code>config/xtream-test-customers.json</code> (copy from <code>config/xtream-test-customers.json.dist</code>).</p>
+
+    <h3 id="env-reconciliation">Billing &amp; reconciliation</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>RECONCILIATION_ZOHO_CONCURRENCY</code></td><td>3</td><td>Parallel Zoho API calls during reconciliation scans</td></tr>
+        <tr><td><code>RECONCILIATION_BROWSE_BATCH</code></td><td>10</td><td>Customers shown on billing-gaps browse before search (local data only; no Zoho API)</td></tr>
+        <tr><td><code>INTEGRATION_SNAPSHOT_MAX_AGE_HOURS</code></td><td>168 (7 days)</td><td>Max age of cached Zoho/TISP snapshots in MySQL before an optional API refresh</td></tr>
+      </tbody>
+    </table>
+    <p>Snapshots are stored in tables created by migration <code>019_integration_snapshots.sql</code>
+    (<code>zoho_customer_contacts</code>, <code>zoho_customer_payments</code>, <code>zoho_recurring_invoices</code>,
+    <code>tisp_customer_snapshots</code>). Invoices remain in <code>zoho_customer_invoices</code> (migration 018).
+    The API reads snapshots first via <code>api/repositories/integrationSnapshot.repository.js</code> and refreshes from Zoho/TISP only when data is missing, stale (per <code>INTEGRATION_SNAPSHOT_MAX_AGE_HOURS</code>), or the user explicitly syncs/searches.</p>
+
+    <h3 id="env-redis">Redis &amp; background sync</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>REDIS_HOST</code></td><td>127.0.0.1</td><td>Redis host (Docker or local install)</td></tr>
+        <tr><td><code>REDIS_PORT</code></td><td>6379</td><td>Redis port. If a host Redis already uses 6379, Docker Redis may fail to bind — the existing instance is fine.</td></tr>
+        <tr><td><code>REDIS_PASSWORD</code></td><td>(empty)</td><td>Set in production</td></tr>
+        <tr><td><code>REDIS_DB</code></td><td>0</td><td>Redis database index</td></tr>
+        <tr><td><code>SYNC_ENABLED</code></td><td>true</td><td>Master switch for BullMQ sync</td></tr>
+        <tr><td><code>SYNC_SCHEDULER_ENABLED</code></td><td>true</td><td>Register repeatable cron-style jobs</td></tr>
+        <tr><td><code>WORKER_INLINE</code></td><td>false</td><td>Run workers inside API process (<strong>dev only</strong>)</td></tr>
+        <tr><td><code>CUSTOMER_SYNC_INTERVAL_MS</code></td><td>900000 (15 min)</td><td>Customer sync from Zoho/TISP</td></tr>
+        <tr><td><code>INVOICE_SYNC_INTERVAL_MS</code></td><td>1800000 (30 min)</td><td>Invoice sync (Zoho budget aware)</td></tr>
+        <tr><td><code>PAYMENT_SYNC_INTERVAL_MS</code></td><td>120000 (2 min)</td><td>Payment sync</td></tr>
+        <tr><td><code>RECONCILIATION_SYNC_INTERVAL_MS</code></td><td>900000 (15 min)</td><td>Quick reconciliation (no full Zoho)</td></tr>
+        <tr><td><code>RECONCILIATION_FULL_ZOHO_INTERVAL_MS</code></td><td>86400000 (24 h)</td><td>Full Zoho reconciliation scan (only if <code>RECONCILIATION_FULL_ZOHO_SCHEDULED=true</code>)</td></tr>
+        <tr><td><code>PRODUCTS_SYNC_INTERVAL_MS</code></td><td>3600000 (1 h)</td><td>Product catalog sync</td></tr>
+        <tr><td><code>API_TIMEOUT_MS</code></td><td>30000</td><td>External API timeout</td></tr>
+        <tr><td><code>API_CONCURRENCY</code></td><td>5</td><td>Parallel external API calls</td></tr>
+        <tr><td><code>MAX_RETRIES</code></td><td>3</td><td>Job retry attempts</td></tr>
+        <tr><td><code>RETRY_BASE_DELAY_MS</code></td><td>2000</td><td>Exponential backoff base</td></tr>
+        <tr><td><code>CACHE_TTL_SECONDS</code></td><td>300</td><td>In-memory/Redis cache TTL</td></tr>
+        <tr><td><code>WORKER_CONCURRENCY</code></td><td>2</td><td>Concurrent jobs per worker queue</td></tr>
+        <tr><td><code>SYNC_PAGE_SIZE</code></td><td>100</td><td>Pagination for sync batches</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-mail">Zoho Mail (billing communications)</h3>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>ZOHO_MAIL_REFRESH_TOKEN</code></td><td>Optional; needs <code>ZohoMail.messages.CREATE</code> scope</td></tr>
+        <tr><td><code>ZOHO_MAIL_API_BASE</code></td><td><code>https://mail.zoho.com/api</code></td></tr>
+        <tr><td><code>ZOHO_MAIL_ACCOUNT_ID</code></td><td>Sending mailbox account</td></tr>
+        <tr><td><code>ZOHO_MAIL_FROM_ADDRESS</code>, <code>ZOHO_MAIL_FROM_NAME</code></td><td>From header for customer emails</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- STEP 3 MYSQL -->
+  <section id="mysql-setup">
+    <h2><span class="num">3</span> MySQL / MariaDB setup</h2>
+
+    <h3>3.1 Local development (Docker — recommended)</h3>
+    <p>Stop XAMPP MySQL if it is running and conflicting with ports. Then from the repo root:</p>
+    <pre><code>yarn docker:up
+# MariaDB listens on host port 3307 → container 3306
+# Redis listens on host port 6379
+
+yarn db:setup   # migrate + seed test users</code></pre>
+    <p>Compose file: <code>docker-compose.yml</code> (image <code>mariadb:10.11</code>, volume <code>mysql_data</code>).
+    Yarn helpers: <code>yarn docker:up</code>, <code>yarn docker:down</code>, <code>yarn docker:logs</code>.</p>
+    <div class="callout warn">
+      <strong>Migrating from XAMPP:</strong> Old data under <code>C:\xampp\mysql\data</code> is not used automatically.
+      After Docker is healthy, run <code>yarn db:restore-xampp</code> once to dump/import into the Docker database,
+      then leave XAMPP MySQL stopped.
+    </div>
+
+    <h3>3.2 Production / managed MySQL</h3>
+    <ol>
+      <li>Install MySQL 8+ or MariaDB and ensure the server is running (or use a managed instance).</li>
+      <li>Create the database and a dedicated application user:</li>
+    </ol>
+    <pre><code>CREATE DATABASE ussd_smart_payment_solution CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE USER 'ussd_app'@'localhost' IDENTIFIED BY 'strong_password_here';
+GRANT ALL PRIVILEGES ON ussd_smart_payment_solution.* TO 'ussd_app'@'localhost';
+FLUSH PRIVILEGES;</code></pre>
+    <p>Update <code>.env</code> with the new credentials (<code>MYSQL_PORT</code> is usually <code>3306</code>). For remote DB hosts, adjust the host grant accordingly.</p>
+    <div class="callout info">
+      The connection pool enables <code>multipleStatements: true</code> so <code>db/schema.sql</code> and migration files
+      can run multi-statement scripts in a single transaction.
+    </div>
+  </section>
+
+  <!-- STEP 4 REDIS -->
+  <section id="redis-setup">
+    <h2><span class="num">4</span> Redis setup</h2>
+
+    <h3>4.1 Local development (Docker)</h3>
+    <p><code>yarn docker:up</code> starts Redis 7 Alpine on port <code>6379</code>. Confirm with health check after the API is running:</p>
+    <pre><code>curl http://localhost:4000/api/health
+# expect redis: "connected"</code></pre>
+    <p>If port 6379 is already taken by a host Redis install, Docker Redis may fail to bind — keep using the existing Redis and leave <code>REDIS_HOST=127.0.0.1</code>.</p>
+
+    <h3>4.2 Production / standalone Redis</h3>
+    <ol>
+      <li>Install Redis 6+ (<code>redis-server</code>) or use a managed Redis.</li>
+      <li>Start Redis and confirm: <code>redis-cli ping</code> → <code>PONG</code>.</li>
+      <li>Set <code>REDIS_HOST</code>, <code>REDIS_PORT</code>, and <code>REDIS_PASSWORD</code> in <code>.env</code>.</li>
+    </ol>
+    <p>If Redis is unavailable, the API falls back to inline reconciliation scheduling but <strong>BullMQ workers will not run</strong>.
+    Production requires Redis for reliable background sync.</p>
+  </section>
+
+  <!-- STEP 5 INSTALL -->
+  <section id="install">
+    <h2><span class="num">5</span> Install dependencies</h2>
+    <p>From the project root:</p>
+    <pre><code>corepack enable
+yarn install</code></pre>
+    <p>Admin dependencies are installed automatically during <code>yarn build</code>, or manually:</p>
+    <pre><code>cd admin && yarn install && cd ..</code></pre>
+  </section>
+
+  <!-- STEP 6 MIGRATE -->
+  <section id="migrate">
+    <h2><span class="num">6</span> Database migrations</h2>
+    <p>The migration runner (<code>api/config/migrate.js</code>) applies:</p>
+    <ol>
+      <li><code>db/schema.sql</code> once (recorded as <code>000_base_schema.sql</code>)</li>
+      <li>All <code>db/migrations/*.sql</code> in sorted filename order</li>
+    </ol>
+    <pre><code># Check connectivity and pending migrations
+yarn db:status
+
+# Apply all pending migrations
+yarn db:migrate</code></pre>
+
+    <h3>Migration files (current)</h3>
+    <table>
+      <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>000_base_schema.sql</code></td><td>Placeholder (legacy ledger tables removed); real schema starts at <code>001</code></td></tr>
+        <tr><td><code>001_admin_users.sql</code></td><td>Admin users table</td></tr>
+        <tr><td><code>002_payment_transactions.sql</code></td><td>M-Pesa payment records</td></tr>
+        <tr><td><code>003_integration_events.sql</code></td><td>Zoho/TISP integration event log</td></tr>
+        <tr><td><code>004_activity_logs.sql</code></td><td>Dashboard activity feed</td></tr>
+        <tr><td><code>005_customers_module.sql</code></td><td>Buildings, agencies, products, customers</td></tr>
+        <tr><td><code>006_building_ip_prefixes.sql</code></td><td>Per-building IP prefix JSON</td></tr>
+        <tr><td><code>007_customer_tisp_sync.sql</code></td><td>TISP sync metadata on customers</td></tr>
+        <tr><td><code>008_api_call_logs.sql</code></td><td>Outbound API call audit</td></tr>
+        <tr><td><code>009_package_catalog.sql</code></td><td>Package categories, plans, variants</td></tr>
+        <tr><td><code>010_package_base_mbps.sql</code></td><td>Base Mbps on package plans</td></tr>
+        <tr><td><code>011_pending_upgrades.sql</code></td><td>Pending package upgrade workflow</td></tr>
+        <tr><td><code>012_custom_period_days.sql</code></td><td>Custom billing period support</td></tr>
+        <tr><td><code>013_enaki_ip_prefixes.sql</code></td><td>Enaki building IP data seed</td></tr>
+        <tr><td><code>014_customer_type_change.sql</code></td><td>Customer type conversion fields</td></tr>
+        <tr><td><code>015_dstv_decoder_serial.sql</code></td><td>DSTV decoder serial on customers</td></tr>
+        <tr><td><code>015_rbac_roles.sql</code></td><td>Roles: admin, support, cfo</td></tr>
+        <tr><td><code>016_dstv_serial_unique.sql</code></td><td>Unique constraint on DSTV serial</td></tr>
+        <tr><td><code>017_billing_reconciliation.sql</code></td><td>Reconciliation sync runs and actions</td></tr>
+        <tr><td><code>018_sync_infrastructure.sql</code></td><td>sync_jobs, integration_sync_state, zoho_customer_invoices</td></tr>
+        <tr><td><code>019_integration_snapshots.sql</code></td><td>Zoho contact/payment/recurring snapshots; TISP customer snapshots</td></tr>
+        <tr><td><code>019_partner_role.sql</code></td><td>Adds <code>partner</code> role to <code>admin_users</code></td></tr>
+        <tr><td><code>020_zoho_incremental_sync.sql</code></td><td>Zoho incremental sync cursor fields</td></tr>
+        <tr><td><code>021_product_extra_bandwidth.sql</code></td><td>Extra bandwidth column on products</td></tr>
+        <tr><td><code>022_products_unique_price_per_building.sql</code></td><td>Unique product price per building/variant</td></tr>
+        <tr><td><code>023_customer_zoho_billing_status.sql</code></td><td>Zoho billing onboarding status on customers</td></tr>
+        <tr><td><code>024_customer_zoho_invoice_seq.sql</code></td><td>Per-customer Zoho invoice number sequence</td></tr>
+        <tr><td><code>025_customer_signup_invoice_tracking.sql</code></td><td>Tracks signup invoice ID and email-sent timestamp (prevents duplicate emails)</td></tr>
+      </tbody>
+    </table>
+    <div class="callout warn">
+      <strong>Production deploys:</strong> The CI/CD pipeline does <em>not</em> run migrations automatically.
+      After each deploy that includes new migration files, SSH to the server and run <code>yarn db:migrate</code>.
+    </div>
+    <div class="callout info">
+      Additional reconciliation cache tables may be created at runtime by
+      <code>api/services/reconciliationStore.js</code> (<code>ensureReconciliationSchema</code>).
+    </div>
+  </section>
+
+  <!-- STEP 7 SEED -->
+  <section id="seed">
+    <h2><span class="num">7</span> Seed users &amp; optional data</h2>
+    <h3>Test users for all roles (development)</h3>
+    <pre><code>yarn db:seed</code></pre>
+    <p>Creates one user per role if the email does not already exist:</p>
+    <table>
+      <thead><tr><th>Role</th><th>Env prefix</th><th>Default email</th></tr></thead>
+      <tbody>
+        <tr><td><code>admin</code></td><td><code>ADMIN_*</code></td><td>admin@sulsolutions.biz</td></tr>
+        <tr><td><code>support</code></td><td><code>SUPPORT_*</code></td><td>support@sulsolutions.biz</td></tr>
+        <tr><td><code>cfo</code></td><td><code>CFO_*</code></td><td>cfo@sulsolutions.biz</td></tr>
+        <tr><td><code>partner</code></td><td><code>PARTNER_*</code></td><td>partner@sulsolutions.biz</td></tr>
+      </tbody>
+    </table>
+    <p>Login at <code>http://localhost:5173/admin/login</code> (dev) or <code>https://YOUR_HOST/admin/</code> (prod).
+    <strong>Change all passwords before production.</strong> In production, create real users via admin Settings instead of relying on seed defaults.</p>
+
+    <h3>Optional: demo dashboard data</h3>
+    <pre><code>yarn db:seed-dummy</code></pre>
+    <p>Inserts sample M-Pesa transactions for dashboard demos — not for production.</p>
+
+    <h3>Optional: backfill activity feed</h3>
+    <pre><code>yarn db:backfill-activity</code></pre>
+    <p>Populates <code>activity_logs</code> from existing payment and integration data (one-time).</p>
+  </section>
+
+  <!-- STEP 8 BUILD -->
+  <section id="build-admin">
+    <h2><span class="num">8</span> Build admin UI</h2>
+    <p>The React admin app lives in <code>admin/</code> and is served by Express at <code>/admin</code>.</p>
+    <pre><code>yarn build
+# equivalent to: cd admin && npm install && npm run build</code></pre>
+    <p>Output: <code>admin/dist/</code>. Vite is configured with <code>base: "/admin/"</code>.</p>
+    <p>In development, use the Vite dev server instead (proxies <code>/api</code> to port 4000):</p>
+    <pre><code>yarn dev:admin   # http://localhost:5173/admin/</code></pre>
+  </section>
+
+  <!-- STEP 9 LOCAL DEV -->
+  <section id="local-dev">
+    <h2><span class="num">9</span> Local development</h2>
+    <p>Start databases first, then run these three processes in separate terminals:</p>
+    <pre><code>yarn docker:up
+yarn db:setup   # first time only (or after empty volume)</code></pre>
+    <table>
+      <thead><tr><th>Terminal</th><th>Command</th><th>URL</th></tr></thead>
+      <tbody>
+        <tr><td>1 — API</td><td><code>yarn dev</code></td><td><code>http://localhost:4000</code></td></tr>
+        <tr><td>2 — Admin UI</td><td><code>yarn dev:admin</code></td><td><code>http://localhost:5173/admin/</code></td></tr>
+        <tr><td>3 — Worker</td><td><code>yarn worker:dev</code></td><td>Processes BullMQ jobs</td></tr>
+      </tbody>
+    </table>
+    <p>Alternative for quick API-only testing with inline workers:</p>
+    <pre><code>WORKER_INLINE=true yarn dev</code></pre>
+    <p>Verify health:</p>
+    <pre><code>curl http://localhost:4000/api/health</code></pre>
+    <p>Expected response includes <code>db: "connected"</code> and <code>redis: "connected"</code> when both services are up.
+    Confirm <code>.env</code> uses <code>MYSQL_PORT=3307</code> (Docker) and that containers are running: <code>docker compose ps</code>.</p>
+  </section>
+
+  <!-- STEP 10 PRODUCTION -->
+  <section id="production">
+    <h2><span class="num">10</span> Production deployment</h2>
+
+    <h3>10.1 Server preparation</h3>
+    <ul class="checklist">
+      <li>Ubuntu/Debian server with Node 18+, MySQL, Redis, PM2</li>
+      <li>HTTPS certificate (Let's Encrypt) on public hostname</li>
+      <li>Firewall: allow 80/443 inbound; MySQL and Redis not publicly exposed</li>
+      <li>Create deploy user and app directory</li>
+      <li>Copy <code>.env</code> to server (never via git — protected during rsync)</li>
+      <li>Create writable <code>logs/</code> directory</li>
+    </ul>
+
+    <h3>10.2 Reverse proxy (nginx example)</h3>
+    <p>Terminate TLS at nginx and proxy to Node on <code>PORT</code>:</p>
+    <pre><code>server {
+    listen 443 ssl;
+    server_name app.sulsolutions.biz;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}</code></pre>
+    <p>Socket.IO uses path <code>/api/socket.io</code> — the <code>Upgrade</code> headers above are required.</p>
+
+    <h3>10.3 Build and start with PM2</h3>
+    <pre><code>cd /var/www/ussd_smart_payment_solution
+yarn install
+yarn build
+yarn db:migrate          # run after deploys with new migrations
+yarn db:seed             # first time only
+
+# API process
+pm2 start index.js --name ussd_smart_payment_solution
+
+# Worker process (REQUIRED for background sync)
+pm2 start workers/index.js --name ussd_worker
+
+# Optional: Xtream daily scheduler
+pm2 start jobs/xtreamDailyScheduler.js --name xtream_daily
+
+pm2 save
+pm2 startup              # follow printed instructions</code></pre>
+
+    <h3>10.4 Recommended PM2 ecosystem file</h3>
+    <p>Create <code>ecosystem.config.js</code> on the server (deploy workflow creates a minimal API-only version):</p>
+    <pre><code>module.exports = {
+  apps: [
+    {
+      name: "ussd_smart_payment_solution",
+      script: "index.js",
+      instances: 1,
+      exec_mode: "fork",
+      env: { NODE_ENV: "production" },
+    },
+    {
+      name: "ussd_worker",
+      script: "workers/index.js",
+      instances: 1,
+      exec_mode: "fork",
+      env: { NODE_ENV: "production" },
+    },
+  ],
+};</code></pre>
+
+    <h3>10.5 Production environment checklist</h3>
+    <ul class="checklist">
+      <li><code>NODE_ENV=production</code></li>
+      <li><code>ADMIN_ORIGIN</code> matches public HTTPS admin URL</li>
+      <li><code>JWT_SECRET</code> is unique and strong</li>
+      <li><code>WORKER_INLINE=false</code></li>
+      <li>Separate worker PM2 process is running</li>
+      <li>All M-Pesa callback URLs use HTTPS production host</li>
+      <li>Redis password set</li>
+      <li>MySQL user has least privilege</li>
+    </ul>
+  </section>
+
+  <!-- STEP 11 WORKERS -->
+  <section id="workers">
+    <h2><span class="num">11</span> Background workers &amp; sync</h2>
+    <p>BullMQ manages five integration queues:</p>
+    <table>
+      <thead><tr><th>Integration</th><th>Queue name</th><th>Default interval</th></tr></thead>
+      <tbody>
+        <tr><td>customers</td><td><code>customer-sync</code></td><td>15 min</td></tr>
+        <tr><td>invoices</td><td><code>invoice-sync</code></td><td>30 min</td></tr>
+        <tr><td>payments</td><td><code>payment-sync</code></td><td>2 min</td></tr>
+        <tr><td>reconciliation (quick)</td><td><code>reconciliation-sync</code></td><td>15 min</td></tr>
+        <tr><td>reconciliation (full Zoho)</td><td><code>reconciliation-sync</code></td><td>24 h (off by default — <code>RECONCILIATION_FULL_ZOHO_SCHEDULED=false</code>)</td></tr>
+        <tr><td>products</td><td><code>products-sync</code></td><td>1 hour</td></tr>
+      </tbody>
+    </table>
+    <p>Admin UI: <strong>Synchronization</strong> page (<code>/admin/synchronization</code>) shows job status.
+    API: <code>GET /api/admin/sync/overview</code> (admin, cfo, support roles).</p>
+    <p>Manual trigger: <code>POST /api/admin/sync/:integration/trigger</code></p>
+    <p>Real-time updates via Socket.IO events on channel <code>sync-updates</code>.</p>
+  </section>
+
+  <!-- STEP 12 INTEGRATIONS -->
+  <section id="integrations">
+    <h2><span class="num">12</span> External integrations setup</h2>
+
+    <h3>12.1 Zoho Books</h3>
+    <ol>
+      <li>Create a Zoho API console application (Server-based application).</li>
+      <li>Generate a refresh token with Books scopes.</li>
+      <li>Set <code>ZOHO_ORG_ID</code> from Books → Settings → Organization Profile.</li>
+      <li>Configure payment mode <strong>Mobile Money</strong> in Books → Settings → Payments.</li>
+      <li>Set <code>ZOHO_INVOICE_TAX_INCLUSIVE=true</code> so M-Pesa amounts are not double-VAT'd.</li>
+      <li><strong>New customer billing</strong> (<code>api/services/customerBillingOnboarding.js</code>) when admin creates a customer:
+        <ul>
+          <li>Creates or links a Zoho contact using the customer’s <strong>full name</strong> as Bill To (C2B), not the customer number.</li>
+          <li>Creates <strong>one signup invoice</strong> with ad-hoc line items (package rate from dashboard; no Zoho catalog <code>item_id</code> required).</li>
+          <li>DSTV packages: adds a <strong>one-time</strong> <code>DSTV one-time fee</code> line (default KES 2,900 via <code>ZOHO_DSTV_ONE_TIME_FEE</code>) on the first invoice only — not a recurring monthly DSTV charge.</li>
+          <li>Recurring Zoho profile on signup is <strong>off</strong> by default (<code>ZOHO_RECURRING_ON_SIGNUP=false</code>) to avoid a second invoice.</li>
+          <li>Signup invoice email from this app is <strong>off</strong> by default (<code>ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED=false</code>) — enable only if Zoho Books is not already emailing invoices.</li>
+          <li>Invoice numbers use per-customer sequences (migration <code>024</code>); reference number remains the customer number for M-Pesa matching.</li>
+        </ul>
+      </li>
+      <li>M-Pesa paybill allocation uses the customer number as bill reference; Zoho contact lookup still uses customer number for existing contacts.</li>
+      <li>Integration snapshots persist contact, invoices, payments, and recurring data in MySQL after API fetches — see <a href="#env-reconciliation">Billing &amp; reconciliation env</a>.</li>
+      <li><strong>One-time:</strong> Set up the Zoho Invoice Paid webhook — see <a href="#zoho-webhook-onetime">§13 Zoho webhook (one-time)</a>. Needed when customers pay invoices directly in Zoho Books (not via M-Pesa).</li>
+    </ol>
+
+    <h3>12.2 Safaricom Daraja (M-Pesa)</h3>
+    <ol>
+      <li>Register app on Daraja portal (sandbox first, then production).</li>
+      <li>Configure STK Push callback URL → <code>https://YOUR_HOST/api/payment/callback</code></li>
+      <li>Register C2B URLs:
+        <ul>
+          <li>Validation → <code>https://YOUR_HOST/api/payment/validation</code></li>
+          <li>Confirmation → <code>https://YOUR_HOST/api/payment/confirmation</code></li>
+        </ul>
+      </li>
+      <li>After deployment, admin can register C2B URLs via <code>POST /api/payment/register</code> (admin role).</li>
+      <li>Switch <code>TOKEN_URL</code>, <code>STK_PUSH_ENDPOINT</code>, and credentials from sandbox to production URLs.</li>
+    </ol>
+
+    <h3>12.3 TISP WebISPService</h3>
+    <ol>
+      <li>Confirm HTTP connectivity to <code>TISP_CLIENT_STATUS_URL</code>, <code>TISP_SET_CLIENT_URL</code>, <code>ISP_PAYMENT_URL</code>.</li>
+      <li>Use HTTP only — HTTPS may fail TLS verification on the TISP host.</li>
+      <li>Ensure <code>TISP_SHORTCODE=000000</code> for new client inserts (using the M-Pesa paybill here causes <code>ShortCode Missing</code> errors).</li>
+      <li>Every customer must have a building with a valid <strong>building name</strong> — TISP <code>Router</code>/<code>Location</code> fields use that name.</li>
+      <li><code>BillingCycle</code> is always <code>Monthly</code> on TISP create, even for yearly dashboard billing.</li>
+      <li>Configure building IP rules in admin (<strong>Buildings</strong>) or legacy rules in <code>api/config/buildingIpRules.js</code>.</li>
+      <li>On M-Pesa or Zoho webhook payment, <code>SetISPPayment</code> extends the customer’s TISP due date.</li>
+    </ol>
+
+    <h3>12.4 Xtream Codes</h3>
+    <ol>
+      <li>Whitelist billing server IP on the Xtream panel.</li>
+      <li>Set <code>XTREAM_BASE_URL</code> to API port <strong>25461</strong> (not admin UI 25500).</li>
+      <li>Configure bouquets in <code>config/xtream-sync.json</code>.</li>
+      <li>Test connectivity: <code>yarn xtream:check</code></li>
+      <li>Live API test (creates temp user): <code>yarn xtream:test</code></li>
+    </ol>
+
+    <h3>12.5 Zoho Mail (billing gap emails)</h3>
+    <ol>
+      <li>Obtain OAuth refresh token with <code>ZohoMail.messages.CREATE</code> scope.</li>
+      <li>Set <code>ZOHO_MAIL_ACCOUNT_ID</code> and from-address variables.</li>
+      <li>Used by Billing → <strong>Customer Communications</strong> module (manual reminder emails — separate from signup invoice email).</li>
+    </ol>
+
+    <h3 id="admin-billing">12.6 Admin Billing UI</h3>
+    <p>Finance roles (admin, cfo) access <strong>Billing</strong> in the sidebar (<code>/admin/billing</code>). The nav label is shortened to <strong>Billing</strong>; the page title remains <strong>Billing Reconciliation</strong>.</p>
+    <table>
+      <thead><tr><th>Route</th><th>Module</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>/billing</code></td><td>Overview</td><td>Financial stats, issue module cards, and expandable <strong>How to fix issues</strong> tutorial guides</td></tr>
+        <tr><td><code>/billing/unallocated-mpesa</code></td><td>Unallocated M-Pesa</td><td>Paybill payments not applied to Zoho invoices</td></tr>
+        <tr><td><code>/billing/billing-gaps</code></td><td>Billing Gaps</td><td>Dashboard customers missing or incomplete on Zoho — browse 10 local rows; search triggers per-customer Zoho enrich</td></tr>
+        <tr><td><code>/billing/manual-review</code></td><td>Manual Review</td><td>Sync errors and cases needing human verification</td></tr>
+        <tr><td><code>/billing/communications</code></td><td>Customer Communications</td><td>Zoho Mail notices for billing gaps</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Billing Gaps performance:</strong> <code>RECONCILIATION_BROWSE_BATCH</code> (default 10) limits browse mode to local/MySQL data with no Zoho API calls. Search by customer number or name fetches live Zoho/TISP detail (~4 API calls per match) and persists snapshots for later.</p>
+    <p><strong>Tutorial guides</strong> on the overview page explain how to resolve each issue type and where to check in the dashboard (Customers, Transactions, Synchronization, Logs).</p>
+    <p>API: reconciliation summary and customer lists under <code>/api/admin/reconciliation/*</code>. Real-time sync progress via Socket.IO.</p>
+  </section>
+
+  <!-- STEP 13 WEBHOOKS -->
+  <section id="webhooks">
+    <h2><span class="num">13</span> Webhooks &amp; public URLs</h2>
+    <p>View configured URLs in admin <strong>Settings</strong> (<code>GET /api/admin/settings</code>).</p>
+    <table>
+      <thead><tr><th>Endpoint</th><th>Method</th><th>Source</th><th>Auth</th></tr></thead>
+      <tbody>
+        <tr><td><code>/api/payment/callback</code></td><td>POST</td><td>Safaricom STK Push</td><td>Public</td></tr>
+        <tr><td><code>/api/payment/confirmation</code></td><td>POST</td><td>Safaricom C2B Paybill</td><td>Public</td></tr>
+        <tr><td><code>/api/payment/validation</code></td><td>POST</td><td>Safaricom C2B validation</td><td>Public</td></tr>
+        <tr><td><code>/api/payment/b2c/result</code></td><td>POST</td><td>Safaricom B2C result</td><td>Public</td></tr>
+        <tr><td><code>/api/payment/b2c/timeout</code></td><td>POST</td><td>Safaricom B2C timeout</td><td>Public</td></tr>
+        <tr><td><code>/api/public/zoho/webhook</code></td><td>POST</td><td>Zoho Books Invoice Paid workflow</td><td><code>x-zoho-webhook-secret</code> header</td></tr>
+        <tr><td><code>/api/public/login-stats</code></td><td>GET</td><td>Public login statistics</td><td>Public</td></tr>
+        <tr><td><code>/api/ussd</code></td><td>POST</td><td>USSD gateway</td><td>Public</td></tr>
+      </tbody>
+    </table>
+    <h3 id="zoho-webhook-onetime">Zoho webhook setup (one-time)</h3>
+    <p>
+      Configure this <strong>once per environment</strong> (sandbox/production) so that when a customer pays an
+      invoice directly in Zoho Books, the app extends their TISP subscription without polling the Zoho API.
+      M-Pesa paybill and STK flows do <em>not</em> use this webhook — they use <code>/api/payment/confirmation</code>
+      and <code>/api/payment/callback</code> instead.
+    </p>
+    <div class="callout info">
+      After deploy, open admin <strong>Settings</strong> (<code>/admin/settings</code>) to copy the exact
+      <code>invoicePaid</code> webhook URL and confirm <code>secretConfigured: true</code> once
+      <code>ZOHO_WEBHOOK_SECRET</code> is set.
+    </div>
+    <ol>
+      <li>Generate a long random string and set <code>ZOHO_WEBHOOK_SECRET</code> in <code>.env</code> on the server.</li>
+      <li>Restart the API (<code>pm2 reload ussd_smart_payment_solution</code>) so the secret is loaded.</li>
+      <li>In Zoho Books → <strong>Settings → Automation → Workflow Rules</strong>, create a rule:
+        <ul>
+          <li><strong>Module:</strong> Invoices</li>
+          <li><strong>When:</strong> Invoice Paid (or equivalent paid status)</li>
+          <li><strong>Action:</strong> Webhook — POST the invoice JSON payload</li>
+        </ul>
+      </li>
+      <li>Webhook URL: <code>https://YOUR_HOST/api/public/zoho/webhook</code>
+        (copy from Settings page in admin)</li>
+      <li>Request header: <code>x-zoho-webhook-secret: YOUR_SECRET</code>
+        (alternatives accepted: <code>x-webhook-secret</code> header or <code>?secret=</code> query param)</li>
+      <li>Test by marking a test invoice paid in Zoho Books and confirming TISP/subscription updates in the admin customer record.</li>
+    </ol>
+    <p><strong>Handler:</strong> <code>api/controllers/public.controller.js</code> → <code>zohoWebhook</code>.
+    On success, completes pending upgrades or runs <code>handleSubscriptionPaymentReceived</code> for reconciliation.</p>
+  </section>
+
+  <!-- STEP 14 USSD -->
+  <section id="ussd">
+    <h2><span class="num">14</span> USSD endpoints</h2>
+    <p>Configure your USSD aggregator to POST to:</p>
+    <table>
+      <thead><tr><th>Path</th><th>Method</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>/api/ussd</code></td><td>POST</td><td>Main USSD session handler (<code>initiateUSSD</code>)</td></tr>
+        <tr><td><code>/api/ussd/customer-details</code></td><td>POST</td><td>Customer lookup</td></tr>
+        <tr><td><code>/api/ussd/customer</code></td><td>POST</td><td>Alias for customer-details</td></tr>
+      </tbody>
+    </table>
+    <p>STK Push payments initiated via USSD use the M-Pesa callback at <code>/api/payment/callback</code>.</p>
+  </section>
+
+  <!-- STEP 15 RBAC -->
+  <section id="rbac">
+    <h2><span class="num">15</span> Roles &amp; access control</h2>
+    <table>
+      <thead><tr><th>Role</th><th>Home dashboard</th><th>Access</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>admin</code></td>
+          <td>Finance dashboard</td>
+          <td>Full access: users, settings, logs, customers, config, finance, billing, sync, reports</td>
+        </tr>
+        <tr>
+          <td><code>support</code></td>
+          <td>Support dashboard</td>
+          <td>Customers (read/write), buildings, products, agencies; pricing hidden; no finance, billing, reports, logs, or settings</td>
+        </tr>
+        <tr>
+          <td><code>cfo</code></td>
+          <td>Finance dashboard</td>
+          <td>Transactions, Billing (<code>/billing/*</code>), sync; reports; read-only customers (with financials)</td>
+        </tr>
+        <tr>
+          <td><code>partner</code></td>
+          <td>Partner dashboard</td>
+          <td>Read-only customer list (no financial detail), reports (<code>/admin/reports</code>), partner metrics API (<code>/api/admin/partner/dashboard</code>); no edits, billing, or transactions</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Admin UI routes by role</h3>
+    <table>
+      <thead><tr><th>Route</th><th>admin</th><th>support</th><th>cfo</th><th>partner</th></tr></thead>
+      <tbody>
+        <tr><td><code>/</code> (home)</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td><code>/customers</code></td><td>✓ write</td><td>✓ write</td><td>✓ read</td><td>✓ read</td></tr>
+        <tr><td><code>/products</code>, <code>/buildings</code>, <code>/agencies</code>, <code>/apartments</code></td><td>✓</td><td>✓</td><td>—</td><td>—</td></tr>
+        <tr><td><code>/transactions</code>, <code>/billing/*</code>, <code>/synchronization</code></td><td>✓</td><td>—</td><td>✓</td><td>—</td></tr>
+        <tr><td><code>/reports</code></td><td>✓</td><td>—</td><td>✓</td><td>✓</td></tr>
+        <tr><td><code>/settings</code>, <code>/logs</code></td><td>✓</td><td>—</td><td>—</td><td>—</td></tr>
+      </tbody>
+    </table>
+    <p>Route guards: <code>admin/src/components/ProtectedRoute.tsx</code> and <code>admin/src/lib/rbac.ts</code>.
+    Reports use a separate <code>ReportsRoute</code> (admin, cfo, partner) — not nested under finance routes.</p>
+    <p>Manage users in admin <strong>Settings → Users</strong> (<code>POST /api/admin/users</code>, admin only).
+    Role changes, password reset, and activate/deactivate are available from each row’s actions menu.
+    Administrator accounts cannot be deactivated.</p>
+    <p>Auth uses HTTP-only cookie <code>admin_token</code> (JWT). Login: <code>POST /api/auth/login</code>.</p>
+  </section>
+
+  <!-- STEP 16 DATA MIGRATION -->
+  <section id="data-migration">
+    <h2><span class="num">16</span> Data migration scripts</h2>
+    <p>Use these when migrating from a legacy deployment that used file-based logs:</p>
+
+    <h3>16.1 Import legacy logs to MySQL</h3>
+    <pre><code># Copy logs/ directory from old server first
+yarn db:import-logs</code></pre>
+    <p>Imports from <code>logs/transactions-trail.jsonl</code>, <code>logs/transactions.json</code>,
+    and integration event files into <code>payment_transactions</code> and <code>integration_events</code>.</p>
+
+    <h3>16.2 Backfill activity feed</h3>
+    <pre><code>yarn db:backfill-activity</code></pre>
+
+    <h3>16.3 Preserve server-only files during deploy</h3>
+    <p>The deploy rsync:</p>
+    <ul>
+      <li><strong>Protects</strong> <code>.env</code> and the entire <code>logs/</code> directory</li>
+      <li><strong>Includes</strong> <code>logs/transactionSplitConfig.json</code> when present (B2B split rules)</li>
+    </ul>
+    <p>Manually migrate <code>logs/transactionSplitConfig.json</code> if using transaction split payouts.</p>
+
+    <h3>16.4 Migrating MySQL data</h3>
+    <ol>
+      <li>On old server: <code>mysqldump -u ... ussd_smart_payment_solution > backup.sql</code></li>
+      <li>On new server: create empty DB, restore dump, then run <code>yarn db:migrate</code> for any new migrations</li>
+      <li>Verify <code>yarn db:status</code> shows all migrations applied</li>
+    </ol>
+
+    <h3>16.5 Migrating from local XAMPP MySQL to Docker</h3>
+    <p>When moving local development from XAMPP to the Compose stack:</p>
+    <pre><code>yarn docker:up
+yarn db:restore-xampp</code></pre>
+    <p>This starts a temporary recovery container against <code>C:\xampp\mysql\data</code>, dumps
+    <code>ussd_smart_payment_solution</code>, and imports it into the Docker MariaDB container
+    (script: <code>scripts/restore-from-xampp.ps1</code>). After a successful restore, stop XAMPP MySQL permanently.</p>
+  </section>
+
+  <!-- STEP 17 XTREAM SCHEDULER -->
+  <section id="xtream-scheduler">
+    <h2><span class="num">17</span> Xtream daily scheduler</h2>
+    <p>Separate from BullMQ — runs <code>jobs/xtreamSyncJob.js --sync</code> on an interval:</p>
+    <pre><code># Run once (cron-friendly)
+yarn xtream:daily:once
+
+# Continuous scheduler (production)
+yarn xtream:daily</code></pre>
+    <p>Controlled by <code>XTREAM_SYNC_ENABLED</code> and <code>XTREAM_SYNC_INTERVAL_MS</code>.</p>
+    <p>For test customer sync from config file:</p>
+    <pre><code>cp config/xtream-test-customers.json.dist config/xtream-test-customers.json
+# edit customers, then:
+yarn xtream:sync</code></pre>
+  </section>
+
+  <!-- STEP 18 VERIFICATION -->
+  <section id="verification">
+    <h2><span class="num">18</span> Verification &amp; tests</h2>
+    <ul class="checklist">
+      <li><code>curl https://YOUR_HOST/api/health</code> — db and redis connected</li>
+      <li>Login at <code>https://YOUR_HOST/admin/</code> with seeded admin</li>
+      <li>Admin Settings page shows correct webhook URLs</li>
+      <li><code>yarn test:smoke</code> — core module load test</li>
+      <li><code>yarn test:xtream-spec</code> — Xtream client unit tests (offline)</li>
+      <li><code>yarn xtream:check</code> — Xtream panel connectivity</li>
+      <li><code>yarn paybill:simulate</code> — simulated C2B → Zoho payment flow</li>
+      <li>Synchronization page shows jobs completing</li>
+      <li>Test STK push in sandbox with a real phone number</li>
+    </ul>
+    <p>See <code>SIMULATIONS.txt</code> in the repo root for detailed simulation commands and log file locations.</p>
+  </section>
+
+  <!-- STEP 19 CICD -->
+  <section id="cicd">
+    <h2><span class="num">19</span> CI/CD (GitHub Actions)</h2>
+    <p>Workflow: <code>.github/workflows/deploy.yml</code> — triggers on push to <code>main</code>.</p>
+    <h3>Required GitHub secrets</h3>
+    <table>
+      <thead><tr><th>Secret</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>DO_SSH_PRIVATE_KEY</code></td><td>SSH private key for deploy user</td></tr>
+        <tr><td><code>DEPLOY_HOST</code></td><td>Server hostname or IP</td></tr>
+        <tr><td><code>DEPLOY_USER</code></td><td>SSH username</td></tr>
+        <tr><td><code>DEPLOY_PATH</code></td><td>Absolute app path on server</td></tr>
+      </tbody>
+    </table>
+    <h3>Deploy pipeline steps</h3>
+    <ol>
+      <li>Checkout repo, setup Node 18</li>
+      <li>SSH: clean destination (keeps <code>.env</code> and <code>logs/</code>)</li>
+      <li>rsync code to server (checksum-based)</li>
+      <li><code>yarn install</code> + <code>yarn build</code></li>
+      <li>PM2 reload/start API only</li>
+    </ol>
+    <div class="callout warn">
+      <strong>Manual post-deploy steps:</strong> Run <code>yarn db:migrate</code> when migrations changed.
+      Ensure worker PM2 process is running. Reload worker after deploy:
+      <code>pm2 reload ussd_worker</code>.
+    </div>
+  </section>
+
+  <!-- STEP 20 LOGS -->
+  <section id="logs">
+    <h2><span class="num">20</span> Log files</h2>
+    <p>All logs live under <code>logs/</code> (gitignored except optional <code>transactionSplitConfig.json</code>).</p>
+    <table>
+      <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>errors-YYYY-MM-DD.log</code></td><td>Structured error log (path override: <code>ERROR_LOG_DIR</code>)</td></tr>
+        <tr><td><code>runtime.log</code></td><td>Server runtime events</td></tr>
+        <tr><td><code>deployments.log</code></td><td>Deploy audit trail (written by CI)</td></tr>
+        <tr><td><code>transactions.json</code></td><td>M-Pesa STK transaction state</td></tr>
+        <tr><td><code>transactions-trail.jsonl</code></td><td>M-Pesa transaction audit trail</td></tr>
+        <tr><td><code>zoho-mpesa-payments.jsonl</code></td><td>Live M-Pesa → Zoho payment results</td></tr>
+        <tr><td><code>paybill-simulate.jsonl</code></td><td>Paybill simulation results</td></tr>
+        <tr><td><code>xtream-sync.jsonl</code></td><td>Xtream API / sync events</td></tr>
+        <tr><td><code>xtream-customer-map.json</code></td><td>Customer → Xtream user mapping</td></tr>
+        <tr><td><code>tisp-set-isp-payment.jsonl</code></td><td>TISP SetISPPayment attempts</td></tr>
+        <tr><td><code>transactionSplits.jsonl</code></td><td>B2C revenue share payout log</td></tr>
+        <tr><td><code>transactionSplitConfig.json</code></td><td>Transaction split configuration (deployed)</td></tr>
+      </tbody>
+    </table>
+    <p>API call logs and activity are also stored in MySQL (<code>api_call_logs</code>, <code>activity_logs</code>).</p>
+  </section>
+
+  <!-- STEP 21 TROUBLESHOOTING -->
+  <section id="troubleshooting">
+    <h2><span class="num">21</span> Troubleshooting</h2>
+
+    <h3>Database connection fails</h3>
+    <ul>
+      <li>Verify <code>MYSQL_*</code> in <code>.env</code> and that the database exists</li>
+      <li>Local Docker: confirm <code>MYSQL_PORT=3307</code>, run <code>yarn docker:up</code>, then <code>docker compose ps</code> (MySQL should be healthy)</li>
+      <li>Check MySQL user host grants (<code>'user'@'localhost'</code> vs <code>'user'@'%'</code>)</li>
+      <li>Run <code>yarn db:status</code> for a connectivity test</li>
+      <li>Empty dashboard after switching to Docker is expected until you seed or run <code>yarn db:restore-xampp</code></li>
+    </ul>
+
+    <h3>Redis disconnected in health check</h3>
+    <ul>
+      <li>Local: <code>yarn docker:up</code> (or start host Redis: <code>redis-cli ping</code>)</li>
+      <li>Check <code>REDIS_HOST</code>, password, firewall</li>
+      <li>If Docker Redis fails with “port already allocated”, another process owns 6379 — use that Redis instead</li>
+      <li>Worker process will exit if Redis is unreachable</li>
+    </ul>
+
+    <h3>Sync jobs not running</h3>
+    <ul>
+      <li>Confirm <code>SYNC_ENABLED=true</code> and worker PM2 process is up</li>
+      <li>Do not rely on <code>WORKER_INLINE</code> in production</li>
+      <li>Check admin Synchronization page and <code>sync_jobs</code> table</li>
+    </ul>
+
+    <h3>CORS / login issues</h3>
+    <ul>
+      <li><code>ADMIN_ORIGIN</code> must exactly match the browser origin (scheme + host + port)</li>
+      <li>In production, access admin via HTTPS; cookies use <code>secure: true</code></li>
+    </ul>
+
+    <h3>M-Pesa callbacks not received</h3>
+    <ul>
+      <li>URLs must be publicly reachable over HTTPS</li>
+      <li>Register URLs in Daraja portal and via <code>POST /api/payment/register</code></li>
+      <li>Check nginx passes POST body and does not block Safaricom IPs</li>
+    </ul>
+
+    <h3>Zoho payments not applying</h3>
+    <ul>
+      <li>Verify <code>ZOHO_PAYMENT_MODE</code> exists in Books</li>
+      <li>M-Pesa bill reference must match the customer number; Zoho contact may be stored under the customer’s name — lookup uses customer number keys</li>
+      <li>Check <code>logs/zoho-mpesa-payments.jsonl</code></li>
+      <li>Confirm <code>ZOHO_INVOICE_TAX_INCLUSIVE=true</code></li>
+      <li>B2B customers are billed via agency contacts — agency invoice must exist before M-Pesa allocation</li>
+    </ul>
+
+    <h3>Zoho signup / duplicate invoices or emails</h3>
+    <ul>
+      <li>Default: one signup invoice only (<code>ZOHO_RECURRING_ON_SIGNUP=false</code>)</li>
+      <li>Default: app does not email signup invoices (<code>ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED=false</code>) — use Zoho Books automation or enable the env var, not both</li>
+      <li>Migration <code>025</code> tracks <code>zoho_signup_invoice_id</code> and email-sent time to avoid resending</li>
+      <li>Retry billing from customer detail reuses an open signup invoice when one already exists</li>
+    </ul>
+
+    <h3>TISP errors</h3>
+    <ul>
+      <li>Use HTTP URLs, not HTTPS</li>
+      <li><code>ShortCode Missing</code> — set <code>TISP_SHORTCODE=000000</code> (not the M-Pesa paybill)</li>
+      <li><code>BillingCycle Missing</code> / <code>Router Missing</code> — ensure building has a name; billing cycle is always sent as Monthly on create</li>
+      <li>Check timeouts: <code>TISP_REQUEST_TIMEOUT_MS</code></li>
+      <li>Review <code>logs/tisp-set-isp-payment.jsonl</code> and customer <code>tisp_sync_error</code> on the profile</li>
+    </ul>
+
+    <h3>Zoho webhook not firing</h3>
+    <ul>
+      <li>Confirm <code>ZOHO_WEBHOOK_SECRET</code> is set and API was restarted after changing it</li>
+      <li>Check admin Settings → <code>secretConfigured: true</code> and copy the exact <code>invoicePaid</code> URL</li>
+      <li>Workflow must trigger on <strong>Invoice Paid</strong> and POST JSON (not email-only action)</li>
+      <li>Header must be <code>x-zoho-webhook-secret</code> matching your <code>.env</code> value</li>
+      <li>URL must be publicly reachable over HTTPS</li>
+    </ul>
+
+    <h3>Admin UI 404 in production</h3>
+    <ul>
+      <li>Run <code>yarn build</code> — <code>admin/dist</code> must exist</li>
+      <li>Access at <code>/admin/</code> (trailing slash handled by Express)</li>
+    </ul>
+  </section>
+
+  <!-- STEP 22 MAINTENANCE -->
+  <section id="maintenance">
+    <h2><span class="num">22</span> Maintaining this document</h2>
+    <p>
+      Update <code>docs/SETUP_AND_MIGRATION_GUIDE.html</code> whenever any of the following change:
+    </p>
+    <ul>
+      <li>New or removed environment variables in <code>.env.dist</code> or <code>api/config/env.js</code></li>
+      <li>New database migrations in <code>db/migrations/</code> (currently through <code>025_customer_signup_invoice_tracking.sql</code>)</li>
+      <li>Changes to deploy workflow, PM2 layout, or required processes</li>
+      <li>New external integrations, webhooks, or API routes</li>
+      <li>Changes to admin build path, port defaults, or auth/CORS behavior</li>
+      <li>New yarn scripts in <code>package.json</code> (including <code>docker:*</code>, <code>db:setup</code>, <code>db:restore-xampp</code>)</li>
+      <li>Local infrastructure changes (<code>docker-compose.yml</code>, MySQL/Redis ports)</li>
+      <li>RBAC role changes</li>
+    </ul>
+    <p>When updating, change the <strong>Last updated</strong> date in the document header and add a brief note in your commit message.</p>
+
+    <h3>Runtime dependencies (root <code>package.json</code>)</h3>
+    <p>Core stack: Express, MySQL2, Redis (ioredis), BullMQ, Socket.IO, JWT + bcrypt auth, axios, moment, exceljs/pdfkit (reports), lru-cache (Zoho token cache).
+    No longer included: <code>bcryptjs</code>, <code>uuid</code>, <code>uuidv4</code> (removed in 2026-07-06 cleanup).</p>
+
+    <h3>Removed dead code (2026-07-06 cleanup)</h3>
+    <ul>
+      <li>Legacy ledger tables from <code>db/schema.sql</code> (unused <code>users</code>/<code>accounts</code>/<code>transactions</code>)</li>
+      <li><code>utils/transactions.js</code> shim — imports now use <code>api/services/transactionStore</code> directly</li>
+      <li><code>api/middleware/requestLogger.js</code> (unused; app uses morgan)</li>
+      <li>Orphaned admin assets: <code>hero.png</code>, <code>react.svg</code>, <code>vite.svg</code></li>
+      <li>Unused components: <code>TispSyncBadge</code>, <code>ReconciliationIssueTile</code>, <code>UsersPageSkeleton</code></li>
+      <li>Empty <code>utils/helperFunctions.js</code> and root <code>utils/</code> folder</li>
+      <li>Duplicate <code>RECONCILIATION_SYNC_INTERVAL_MS</code> in <code>.env.dist</code></li>
+    </ul>
+
+    <h3>Quick setup checklist (printable)</h3>
+    <ul class="checklist">
+      <li>Clone repo</li>
+      <li>Copy <code>.env.dist</code> → <code>.env</code> and fill all secrets</li>
+      <li>Install Docker Desktop (local) or provision MySQL + Redis (production)</li>
+      <li><code>yarn docker:up</code> (local) — MariaDB on <code>:3307</code>, Redis on <code>:6379</code></li>
+      <li>Optional: <code>yarn db:restore-xampp</code> if migrating from XAMPP</li>
+      <li><code>yarn install</code></li>
+      <li><code>yarn db:migrate</code> (or <code>yarn db:setup</code>)</li>
+      <li><code>yarn db:seed</code> (all four dev roles) if not restoring existing data</li>
+      <li><code>yarn build</code></li>
+      <li>Configure Daraja, Zoho OAuth, TISP, Xtream external portals</li>
+      <li>Set up Zoho Invoice Paid webhook (one-time) — <a href="#zoho-webhook-onetime">§13</a></li>
+      <li>Start API + worker (+ optional Xtream scheduler)</li>
+      <li>Configure HTTPS reverse proxy</li>
+      <li>Run health check and smoke tests</li>
+      <li>Change default admin password</li>
+    </ul>
+  </section>
+
+</main>
+</body>
+</html>

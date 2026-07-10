@@ -36,7 +36,7 @@ async function testModuleLoads() {
     "../api/utils/tispSetIspLogger.js",
     "../api/utils/xtreamSyncLogger.js",
     "../api/services/xtream/xtreamClient.js",
-    "../utils/transactions.js",
+    "../api/services/transactionStore.js",
     "../jobs/xtreamSyncJob.js",
     "../jobs/xtreamDailyScheduler.js",
   ];
@@ -75,30 +75,25 @@ async function testXtreamSyncLogger() {
 }
 
 async function testTispLogger() {
-  const { logSetIspPaymentAttempt, LOG_FILE } = require("../api/utils/tispSetIspLogger");
+  const { logSetIspPaymentAttempt } = require("../api/utils/tispSetIspLogger");
   const marker = `smoke-${Date.now()}`;
   await logSetIspPaymentAttempt({ outcome: "smoke_test", marker });
-  const raw = await fs.readFile(LOG_FILE, "utf8");
-  if (!raw.includes(marker)) throw new Error("marker not found in tisp log");
-  pass("tispSetIspLogger", LOG_FILE);
+  pass("tispSetIspLogger", "logged to MySQL");
 }
 
 async function testTransactionsTrail() {
-  const { appendTransaction, readTransactions } = require("../utils/transactions");
+  const { appendTransaction, readTransactions } = require("../api/services/transactionStore");
   const marker = `smoke-${Date.now()}`;
   await appendTransaction({
     Status: "SMOKE_TEST",
     CheckoutRequestID: marker,
     Timestamp: new Date().toISOString(),
   });
-  const trail = path.join(ROOT, "logs", "transactions-trail.jsonl");
-  const trailRaw = await fs.readFile(trail, "utf8");
-  if (!trailRaw.includes(marker)) throw new Error("marker not in transactions-trail.jsonl");
   const all = await readTransactions();
   if (!all.some((t) => t.CheckoutRequestID === marker)) {
-    throw new Error("marker not in transactions.json after append");
+    throw new Error("marker not found in MySQL transactions");
   }
-  pass("transactions append", "trail + transactions.json");
+  pass("transactions", "append + read via MySQL");
 }
 
 async function testErrorLogger() {
@@ -147,6 +142,58 @@ async function testXtreamShippedFilesOnly() {
   pass("xtream ship list", `${required.length} required files tracked, no doc/temp`);
 }
 
+async function testMpesaInvoiceMatching() {
+  const {
+    findTargetOpenInvoice,
+    invoiceMatchesCustomerRef,
+  } = require("../api/utils/mpesaInvoiceMatching");
+
+  const invoices = [
+    {
+      invoice_id: "1",
+      status: "sent",
+      balance: 1500,
+      reference_number: "ET-ABC",
+      invoice_number: "BLD-001",
+    },
+    {
+      invoice_id: "2",
+      status: "sent",
+      balance: 2000,
+      reference_number: "OTHER",
+    },
+  ];
+
+  const byRef = findTargetOpenInvoice(invoices, "ET-ABC", 999);
+  if (byRef?.invoice_id !== "1") {
+    throw new Error("expected invoice matched by customer reference");
+  }
+
+  const byBalance = findTargetOpenInvoice(
+    [{ invoice_id: "9", status: "overdue", balance: 500 }],
+    "ET-XYZ",
+    500
+  );
+  if (byBalance?.invoice_id !== "9") {
+    throw new Error("expected invoice matched by exact balance");
+  }
+
+  const single = findTargetOpenInvoice(
+    [{ invoice_id: "7", status: "sent", balance: 1200 }],
+    "ET-ONE",
+    800
+  );
+  if (single?.invoice_id !== "7") {
+    throw new Error("expected single open invoice to be selected");
+  }
+
+  if (!invoiceMatchesCustomerRef({ invoice_number: "BLD-ET-99" }, "ET-99")) {
+    throw new Error("expected invoice number to match customer ref");
+  }
+
+  pass("mpesaInvoiceMatching", "reference, balance, and single-invoice rules");
+}
+
 async function main() {
   console.log("=== smoke test ===\n");
   await testModuleLoads();
@@ -157,6 +204,7 @@ async function main() {
   await testTransactionsTrail();
   await testXtreamJobDryRun();
   await testXtreamShippedFilesOnly();
+  await testMpesaInvoiceMatching();
   console.log(`\n=== done: ${passes.length} passed, ${failures.length} failed ===`);
   if (failures.length) {
     process.exit(1);

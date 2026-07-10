@@ -1,53 +1,169 @@
 const axios = require("axios");
-const moment = require("moment");
+const moment = require("moment-timezone");
 require("dotenv").config();
 
 const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
+const { logApiCall } = require("../utils/apiCallLogger");
+const {
+  ISP_PAYMENT_URL,
+  TISP_SET_CLIENT_URL,
+  TISP_CLIENT_STATUS_URL,
+} = require("../utils/tispUrls");
 
-const ISP_PAYMENT_URL =
-  process.env.ISP_PAYMENT_URL ||
-  "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
+const SET_CLIENT_URL = TISP_SET_CLIENT_URL;
+
+const TISP_REQUEST_TIMEOUT_MS = Number(
+  process.env.TISP_REQUEST_TIMEOUT_MS || 15_000
+);
+
+/** TISP SetClientDetails only accepts "000000" (Postman reference payload). */
+const TISP_DEFAULT_SHORTCODE = process.env.TISP_SHORTCODE || "000000";
+const { DEFAULT_TZ } = require("../utils/billingPeriod");
+
+/** TISP expects compact JSON: no space after colons or commas. */
+function stringifyTispPayload(data) {
+  const json = typeof data === "string" ? data : JSON.stringify(data);
+  return json.replace(/":\s+/g, '":').replace(/,\s+/g, ",");
+}
+
+/** Exact field order for TISP INSERT (matches working Postman payload). */
+const TISP_CREATE_FIELD_ORDER = [
+  "TransactionType",
+  "PackageType",
+  "FirstName",
+  "MiddleName",
+  "LastName",
+  "Telephone",
+  "Email",
+  "ContactPerson",
+  "Location",
+  "AccountNumber",
+  "Package",
+  "Router",
+  "StaticIPAddress",
+  "BillingCycle",
+  "DueDate",
+  "PppoeUsername",
+  "PppoePassword",
+  "PppoeRemoteAddress",
+  "ShortCode",
+  "AllowedPppoeDevices",
+];
+
+function stringifyTispCreatePayload(payload) {
+  const parts = TISP_CREATE_FIELD_ORDER.map((key) => {
+    const value = payload[key] ?? "";
+    return `"${key}":${JSON.stringify(String(value))}`;
+  });
+  return `{${parts.join(",")}}`;
+}
+
+async function postTispJson(url, payload, { timeout = 30_000, wireFormat = "default" } = {}) {
+  const body =
+    wireFormat === "create"
+      ? stringifyTispCreatePayload(payload)
+      : stringifyTispPayload(payload);
+  return axios.post(url, body, {
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    },
+    timeout,
+    validateStatus: () => true,
+    transformRequest: [],
+  });
+}
 
 /**
  * POST payment notification to TISP SetISPPayment (M-Pesa success → ISP ledger).
  * @param {Record<string, string>} payload - TransactionType, TransID, TransTime, TransAmount, etc.
  */
-async function postSetISPPayment(payload) {
-  try {
-    const r = await axios.post(ISP_PAYMENT_URL, payload, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 20_000,
-      validateStatus: () => true,
-      transformRequest: [(data) => JSON.stringify(data)],
-    });
+async function postSetISPPayment(payload, meta = {}) {
+  let httpStatus = null;
+  let responseData = null;
+  let logged = false;
 
+  try {
+    const r = await postTispJson(ISP_PAYMENT_URL, payload, { timeout: 20_000 });
+
+    httpStatus = r.status;
+    responseData = r.data;
     const ok = r.status >= 200 && r.status < 300;
+    const parsed = parseTispOperationResponse(responseData);
+    const success = ok && parsed.ok;
+
     await logSetIspPaymentAttempt({
-      outcome: ok ? "success" : "failure",
+      outcome: success ? "success" : "failure",
       httpStatus: r.status,
       url: ISP_PAYMENT_URL,
       request: payload,
-      response: r.data,
+      response: responseData,
+      errorMessage: success ? null : parsed.message,
+      customer_no: meta.customerNumber || payload.BillRefNumber,
+      transactionId: meta.referenceId || payload.TransID,
+      amount: meta.amount || payload.TransAmount,
+      channel: meta.channel,
+      checkoutRequestId: meta.checkoutRequestId,
+    });
+    logged = true;
+
+    await logApiCall({
+      service: "tisp",
+      operation: "set_isp_payment",
+      method: "POST",
+      endpoint: ISP_PAYMENT_URL,
+      status: success ? "success" : "failure",
+      httpStatus: r.status,
+      requestPayload: payload,
+      responsePayload: responseData,
+      errorMessage: success ? null : parsed.message,
+      customerNumber: meta.customerNumber || payload.BillRefNumber || null,
+      referenceId: meta.referenceId || payload.TransID || null,
+      retryable: true,
+      parentLogId: meta.parentLogId ?? null,
     });
 
-    if (!ok) {
+    if (!success) {
       const err = new Error(
-        `SetISPPayment HTTP ${r.status}: ${JSON.stringify(r.data)}`,
+        parsed.message ||
+          `SetISPPayment HTTP ${r.status}: ${JSON.stringify(responseData)}`,
       );
       err._setIspLogged = true;
+      err._apiCallLogged = true;
       throw err;
     }
 
-    return r.data;
+    return responseData;
   } catch (e) {
     if (!e._setIspLogged) {
       await logSetIspPaymentAttempt({
         outcome: "failure",
-        httpStatus: e.response?.status ?? null,
+        httpStatus: e.response?.status ?? httpStatus,
         url: ISP_PAYMENT_URL,
         request: payload,
-        response: e.response?.data ?? null,
+        response: e.response?.data ?? responseData,
         errorMessage: e.message,
+        customer_no: meta.customerNumber || payload.BillRefNumber,
+        transactionId: meta.referenceId || payload.TransID,
+        amount: meta.amount || payload.TransAmount,
+        channel: meta.channel,
+        checkoutRequestId: meta.checkoutRequestId,
+      });
+    }
+    if (!e._apiCallLogged) {
+      await logApiCall({
+        service: "tisp",
+        operation: "set_isp_payment",
+        method: "POST",
+        endpoint: ISP_PAYMENT_URL,
+        status: "failure",
+        httpStatus: e.response?.status ?? httpStatus,
+        requestPayload: payload,
+        responsePayload: e.response?.data ?? responseData,
+        errorMessage: e.message,
+        customerNumber: meta.customerNumber || payload.BillRefNumber || null,
+        referenceId: meta.referenceId || payload.TransID || null,
+        retryable: true,
       });
     }
     throw e;
@@ -58,11 +174,12 @@ async function callTISP(method = "POST", data = null, params = {}) {
   try {
     const config = {
       method,
-      url: process.env.TISP_CLIENT_STATUS_URL,
+      url: TISP_CLIENT_STATUS_URL,
       headers: {
         "Content-Type": "application/json",
       },
       params,
+      timeout: TISP_REQUEST_TIMEOUT_MS,
     };
 
     if (data) {
@@ -83,9 +200,57 @@ function parseTispResponseBody(data) {
   if (typeof data === "string") {
     const trimmed = data.trim();
     if (!trimmed) return null;
-    return JSON.parse(trimmed);
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return { message: trimmed };
+      }
+    }
+    return { message: trimmed };
   }
   return null;
+}
+
+function parseTispOperationResponse(data) {
+  if (data == null || data === "") {
+    return { ok: true, message: "" };
+  }
+
+  if (typeof data === "object" && !Array.isArray(data)) {
+    const err =
+      data.error ??
+      data.Error ??
+      data.message ??
+      data.Message ??
+      data.result ??
+      data.Result;
+    if (err != null && String(err).trim()) {
+      const text = String(err).trim();
+      return { ok: !isTispErrorText(text), message: text };
+    }
+    if (data.status && String(data.status).toUpperCase() === "ACTIVE") {
+      return { ok: true, message: JSON.stringify(data) };
+    }
+    return { ok: true, message: JSON.stringify(data) };
+  }
+
+  const text = String(data).trim();
+  if (!text) return { ok: true, message: "" };
+  return { ok: !isTispErrorText(text), message: text };
+}
+
+function isTispErrorText(text) {
+  const lower = String(text).toLowerCase();
+  return (
+    lower.includes("missing") ||
+    lower.includes("not found") ||
+    lower.includes("length cannot") ||
+    lower.includes("parameter name") ||
+    lower.includes("invalid") ||
+    lower.includes("failed") ||
+    lower.includes("error")
+  );
 }
 
 /**
@@ -113,6 +278,20 @@ function normalizeTispClientPayload(parsed) {
   };
 }
 
+async function accountExistsOnTisp(customerNumber) {
+  try {
+    const data = await callTISP("POST", {
+      client: String(customerNumber ?? "").trim().toUpperCase(),
+    });
+    const parsed = parseTispResponseBody(data);
+    if (!parsed) return false;
+    if (parsed.message && isTispErrorText(parsed.message)) return false;
+    return Boolean(parsed.status ?? parsed.Status ?? parsed.package ?? parsed.Package);
+  } catch {
+    return false;
+  }
+}
+
 const getTISPCustomer = async (clientNo) => {
   const client = String(clientNo ?? "").trim().toUpperCase();
   if (!client) {
@@ -122,12 +301,337 @@ const getTISPCustomer = async (clientNo) => {
   try {
     const data = await callTISP("POST", { client });
     const parsed = parseTispResponseBody(data);
+    if (parsed?.message && isTispErrorText(parsed.message)) {
+      throw new Error(parsed.message);
+    }
     return normalizeTispClientPayload(parsed);
   } catch (error) {
     console.error("Failed to get TISP customer:", error.message);
     throw error;
   }
 };
+
+/**
+ * Register or update a client on TISP (SetClientDetails).
+ */
+async function postSetClientDetails(payload, meta = {}) {
+  let httpStatus = null;
+  let responseData = null;
+
+  try {
+    const r = await postTispJson(SET_CLIENT_URL, payload, {
+      wireFormat:
+        meta.operation === "set_client_create" ||
+        meta.operation === "set_client_update"
+          ? "create"
+          : "default",
+    });
+
+    httpStatus = r.status;
+    responseData = r.data;
+    const httpOk = r.status >= 200 && r.status < 300;
+    let parsed = parseTispOperationResponse(responseData);
+
+    if (httpOk && !parsed.ok && meta.customerNumber) {
+      const exists = await accountExistsOnTisp(meta.customerNumber);
+      if (exists) {
+        parsed = { ok: true, message: "Account verified on TISP" };
+      }
+    }
+
+    const success = httpOk && parsed.ok;
+
+    await logApiCall({
+      service: "tisp",
+      operation: meta.operation || "set_client_details",
+      method: "POST",
+      endpoint: SET_CLIENT_URL,
+      status: success ? "success" : "failure",
+      httpStatus: r.status,
+      requestPayload: payload,
+      responsePayload: responseData,
+      errorMessage: success ? null : parsed.message,
+      customerId: meta.customerId ?? null,
+      customerNumber:
+        meta.customerNumber ??
+        payload.AccountNumber ??
+        payload.clientaccountnumber ??
+        null,
+      retryable: true,
+      parentLogId: meta.parentLogId ?? null,
+    });
+
+    if (!success) {
+      const err = new Error(
+        parsed.message ||
+          `SetClientDetails HTTP ${r.status}: ${JSON.stringify(responseData)}`,
+      );
+      err.response = r;
+      err._apiCallLogged = true;
+      throw err;
+    }
+
+    return responseData;
+  } catch (e) {
+    if (!e._apiCallLogged) {
+      await logApiCall({
+        service: "tisp",
+        operation: meta.operation || "set_client_details",
+        method: "POST",
+        endpoint: SET_CLIENT_URL,
+        status: "failure",
+        httpStatus: e.response?.status ?? httpStatus,
+        requestPayload: payload,
+        responsePayload: e.response?.data ?? responseData,
+        errorMessage: e.message,
+        customerId: meta.customerId ?? null,
+        customerNumber:
+        meta.customerNumber ??
+        payload.AccountNumber ??
+        payload.clientaccountnumber ??
+        null,
+        retryable: true,
+        parentLogId: meta.parentLogId ?? null,
+      });
+    }
+    throw e;
+  }
+}
+
+function formatTispError(err, responseData) {
+  const fromResponse = err?.response?.data ?? responseData;
+  const parsed = parseTispOperationResponse(fromResponse);
+  if (!parsed.ok && parsed.message) return parsed.message;
+
+  if (fromResponse != null) {
+    if (typeof fromResponse === "string" && fromResponse.trim()) {
+      return fromResponse.trim();
+    }
+    if (typeof fromResponse === "object") {
+      const msg =
+        fromResponse.error ??
+        fromResponse.Error ??
+        fromResponse.message ??
+        fromResponse.Message ??
+        fromResponse.result ??
+        fromResponse.Result;
+      if (msg != null && String(msg).trim()) return String(msg).trim();
+      try {
+        return JSON.stringify(fromResponse);
+      } catch {
+        return String(fromResponse);
+      }
+    }
+  }
+  return err?.message || "TISP SetClientDetails failed";
+}
+
+function tispNamePart(value) {
+  const s = String(value ?? "").trim();
+  return s || "-";
+}
+
+function formatTispDueDate(date = new Date()) {
+  return moment.tz(date, DEFAULT_TZ).startOf("day").format("DD MMM YYYY hh:mm A");
+}
+
+function formatTispTelephone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.startsWith("254") && digits.length === 12) return digits;
+  if (digits.startsWith("0") && digits.length === 10) return `254${digits.slice(1)}`;
+  if (digits.length === 9) return `254${digits}`;
+  return digits;
+}
+
+/** TISP create API always uses Monthly — TISP renews monthly regardless of customer billing frequency. */
+function tispCreateBillingCycle(_frequency) {
+  return "Monthly";
+}
+
+function tispRouterLocation(buildingName) {
+  const location = String(buildingName ?? "").trim();
+  if (!location) {
+    throw new Error("Building name is required for TISP Router and Location");
+  }
+  return location.toUpperCase();
+}
+
+function tispPersonName(value) {
+  return String(value ?? "").trim();
+}
+
+function billingcycleValue(_frequency) {
+  return "monthly";
+}
+
+/**
+ * Production: "BASIC + 100 + INTERNET + APARTONET CHANNELS"
+ * Development: "10MBPS"
+ */
+function buildTispPackageLabel({ planName, mbps, categoryName, productName }) {
+  if (process.env.NODE_ENV === "development") {
+    return "10MBPS";
+  }
+
+  const speed = Number(mbps);
+  const plan = String(planName || "").trim().toUpperCase();
+  const category = String(categoryName || "").trim().toUpperCase();
+
+  if (plan && category && speed > 0) {
+    return `${plan} + ${speed} + ${category}`;
+  }
+
+  if (productName) {
+    const parts = String(productName)
+      .split(/\s*[·•―–—-]\s*|\s*\?\?\s*/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (parts.length >= 2 && speed > 0) {
+      return `${parts[0].toUpperCase()} + ${speed} + ${parts[1].toUpperCase()}`;
+    }
+    return String(productName).trim().toUpperCase();
+  }
+
+  return speed > 0 ? `${speed}MBPS` : "10MBPS";
+}
+
+function collectTispClientInput({
+  firstName,
+  middleName,
+  lastName,
+  buildingName,
+  customerNumber,
+  customerType,
+  ipSetup,
+  planName,
+  mbps,
+  categoryName,
+  productName,
+  apartmentNumber,
+  tispPassword,
+  ipAddress,
+  email,
+  phone,
+  paymentFrequency,
+  isVatExempt,
+  contactPerson,
+  agencyName,
+  agencyContactPerson,
+}) {
+  const packagetype = ipSetup === "PPOE" ? "Ppoe" : "IP";
+  const hasIp = Boolean(ipAddress);
+  const billingcycle = billingcycleValue(
+    paymentFrequency === "custom" ? "monthly" : paymentFrequency,
+  );
+  const packageLabel = buildTispPackageLabel({
+    planName,
+    mbps,
+    categoryName,
+    productName,
+  });
+
+  return {
+    packagetype,
+    hasIp,
+    billingcycle,
+    packageLabel,
+    shortCode: String(TISP_DEFAULT_SHORTCODE).trim(),
+    firstName: tispNamePart(firstName),
+    middleName: tispNamePart(middleName),
+    lastName: tispNamePart(lastName),
+    buildingName,
+    customerNumber,
+    customerType,
+    apartmentNumber,
+    tispPassword,
+    ipAddress: ipAddress || "",
+    email: email || "",
+    phone,
+    isVatExempt,
+    contactPerson: tispNamePart(contactPerson || agencyContactPerson || firstName),
+    agencyName: agencyName || "",
+  };
+}
+
+/**
+ * TISP SetClientDetails payload — PascalCase fields (INSERT and UPDATE).
+ */
+function buildTispSetClientPayload(input, transactionType) {
+  const {
+    firstName,
+    middleName,
+    lastName,
+    buildingName,
+    customerNumber,
+    ipSetup,
+    planName,
+    mbps,
+    categoryName,
+    productName,
+    apartmentNumber,
+    tispPassword,
+    ipAddress,
+    email,
+    phone,
+  } = input;
+
+  const packageType = ipSetup === "PPOE" ? "PPPOE" : "IP";
+  const first = tispPersonName(firstName).toUpperCase();
+  const middle = tispPersonName(middleName);
+  const last = tispPersonName(lastName).toUpperCase();
+  const resolvedIp = String(ipAddress || "").trim();
+  const routerLocation = tispRouterLocation(buildingName);
+  const packageLabel = buildTispPackageLabel({
+    planName,
+    mbps,
+    categoryName,
+    productName,
+  });
+
+  return {
+    TransactionType: transactionType,
+    PackageType: packageType,
+    FirstName: first,
+    MiddleName: middle,
+    LastName: last,
+    Telephone: formatTispTelephone(phone),
+    Email: email ? String(email).trim() : "",
+    ContactPerson: tispPersonName(
+      input.contactPerson || input.agencyContactPerson || first
+    ).toUpperCase(),
+    Location: routerLocation,
+    AccountNumber: customerNumber,
+    Package: packageLabel,
+    Router: routerLocation,
+    StaticIPAddress: resolvedIp,
+    BillingCycle: tispCreateBillingCycle(),
+    DueDate: formatTispDueDate(),
+    PppoeUsername: String(apartmentNumber || ""),
+    PppoePassword: String(tispPassword || ""),
+    PppoeRemoteAddress: resolvedIp,
+    ShortCode: String(TISP_DEFAULT_SHORTCODE).trim(),
+    AllowedPppoeDevices: "1",
+  };
+}
+
+/**
+ * New customer registration on TISP (official INSERT payload — matches Postman).
+ */
+function buildTispCreateClientPayload(input) {
+  return buildTispSetClientPayload(input, "INSERT");
+}
+
+/**
+ * Update existing TISP client — same PascalCase payload as create, TransactionType UPDATE.
+ */
+function buildTispUpdateClientDetailsPayload(input) {
+  return buildTispSetClientPayload(input, "UPDATE");
+}
+
+/** @deprecated Use buildTispCreateClientPayload or buildTispUpdateClientDetailsPayload */
+function buildSetClientDetailsPayload(input) {
+  return buildTispUpdateClientDetailsPayload(input);
+}
 
 const test = async (req, res) => {
   const { customer_no } = req.body;
@@ -140,5 +644,15 @@ const test = async (req, res) => {
 module.exports = {
   getTISPCustomer,
   postSetISPPayment,
+  postSetClientDetails,
+  buildTispCreateClientPayload,
+  buildTispUpdateClientDetailsPayload,
+  buildSetClientDetailsPayload,
+  buildTispPackageLabel,
+  stringifyTispPayload,
+  stringifyTispCreatePayload,
+  formatTispError,
+  parseTispOperationResponse,
+  accountExistsOnTisp,
   test,
 };

@@ -8,10 +8,22 @@ const {
   appendTransaction,
   upsertByCheckoutId,
   findLatestTxnByCheckoutOrPhone,
-} = require("../../utils/transactions");
+  recordC2BConfirmation,
+} = require("../services/transactionStore");
 const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
+const { insertIntegrationEvent } = require("../services/integrationEventStore");
+const { logActivity } = require("../services/activityLogStore");
 const { logError } = require("../utils/errorLogger");
 const { appendJsonLine, readJsonLineEntries } = require("../utils/appendJsonLine");
+const pendingUpgradeStore = require("../services/pendingUpgradeStore");
+const customerStore = require("../services/customerModuleStore");
+const { isB2BCustomer, resolveAgencyForCustomer, filterAgencyInvoicesForCustomer } = require("../utils/b2bBilling");
+const {
+  roundMoney,
+  amountsEqual,
+  invoiceOutstandingBalance,
+  findTargetOpenInvoice,
+} = require("../utils/mpesaInvoiceMatching");
 
 // 👇 ADD: import Zoho helpers (adjust path if needed)
 const {
@@ -20,7 +32,9 @@ const {
   getInvoices_JS,
   markInvoiceAsPaid_JS,
 } = require("./zoho.controller"); // or "../zoho/zoho.controller" etc.
-const { postSetISPPayment } = require("./tisp.controller");
+const { postSetISPPayment, getTISPCustomer } = require("./tisp.controller");
+const { ISP_PAYMENT_URL } = require("../utils/tispUrls");
+const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
 
 /* ================================================================== */
 /*                         ENV & CONSTANTS                            */
@@ -50,10 +64,7 @@ const MPESA_CALLBACK_URL = process.env.MPESA_CALLBACK_URL;
 const MPESA_CONFIRMATION_URL = process.env.MPESA_CONFIRMATION_URL;
 const MPESA_VALIDATION_URL = process.env.MPESA_VALIDATION_URL;
 
-/** ISP endpoints */
-const ISP_PAYMENT_URL =
-  process.env.ISP_PAYMENT_URL ||
-  "https://daraja.teqworthsystems.com/starlynxservice/WebISPService.svc/SetISPPayment";
+/** ISP endpoints — URL resolved in ../utils/tispUrls (HTTP only) */
 const B2C_ENDPOINT =
   process.env.MPESA_B2C_ENDPOINT ||
   "https://sandbox.safaricom.co.ke/mpesa/b2c/v1/paymentrequest";
@@ -86,8 +97,6 @@ const SUBS_TRAIL_FILE = path.join(LOGS_DIR, "updatedSubscriptions-trail.jsonl");
 const SPLIT_CONFIG_FILE = path.join(LOGS_DIR, "transactionSplitConfig.json");
 const SPLIT_LOG_FILE = path.join(LOGS_DIR, "transactionSplits.jsonl");
 const SPLIT_LOG_LEGACY = path.join(LOGS_DIR, "transactionSplits.json");
-const ZOHO_MPESA_LOG_FILE = path.join(LOGS_DIR, "zoho-mpesa-payments.jsonl");
-
 let _splitLegacyMigrated = false;
 let _splitMigratePromise = null;
 async function migrateSplitLogLegacyOnce() {
@@ -390,6 +399,30 @@ function formatC2BTime(raw) {
   return moment.tz(TZ).format("DD MMM YYYY hh:mm A");
 }
 
+function parseMpesaTransactionDate(raw) {
+  try {
+    const s = String(raw || "").trim();
+    if (/^[0-9]{14}$/.test(s)) {
+      return moment.tz(s, "YYYYMMDDHHmmss", TZ).format("YYYY-MM-DD");
+    }
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const parsed = moment(s);
+    if (parsed.isValid()) return parsed.tz(TZ).format("YYYY-MM-DD");
+  } catch (_) {}
+  return moment.tz(TZ).format("YYYY-MM-DD");
+}
+
+async function recordLastPaymentForAccount(accountRef, transTime) {
+  try {
+    await customerStore.recordCustomerLastPayment(
+      accountRef,
+      parseMpesaTransactionDate(transTime)
+    );
+  } catch (e) {
+    console.error("last payment update failed:", e.message);
+  }
+}
+
 /** Convert 2547xxxxxxxx -> 07xxxxxxxx (optional cosmetic) */
 function normalizeMsisdn(msisdn) {
   const s = String(msisdn || "");
@@ -475,6 +508,10 @@ async function postISPPayment(payload) {
       url: ISP_PAYMENT_URL,
       request: payload,
       response: r.data,
+      customerAccount: payload.CustomerAccount || payload.BillRefNumber,
+      amount: payload.TransAmount || payload.Amount,
+      transactionId: payload.TransID || payload.ThirdPartyTransID,
+      channel: "C2B",
     });
     if (!ok) {
       const err = new Error(
@@ -495,6 +532,10 @@ async function postISPPayment(payload) {
         request: payload,
         response: e.response?.data ?? null,
         errorMessage: e.message,
+        customerAccount: payload.CustomerAccount || payload.BillRefNumber,
+        amount: payload.TransAmount || payload.Amount,
+        transactionId: payload.TransID || payload.ThirdPartyTransID,
+        channel: "C2B",
       });
     }
     throw e;
@@ -640,63 +681,25 @@ async function processTransactionSplit({ source, transactionId, totalAmount }) {
 /*                   ZOHO INVOICE INTEGRATION HELPERS                  */
 /* ================================================================== */
 
-function isUnpaidLikeInvoice(inv) {
-  const s = String(inv?.status || "").toLowerCase();
-  return ["sent", "overdue", "partially_paid", "unpaid"].includes(s);
-}
-
-function invoiceOrderRef(inv) {
-  return String(
-    inv?.order_number ||
-      inv?.salesorder_number ||
-      inv?.reference_number ||
-      ""
-  )
-    .trim()
-    .toUpperCase();
-}
-
-function roundMoney(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 100) / 100;
-}
-
-function invoiceOutstandingBalance(inv) {
-  const balance = Number(inv?.balance);
-  if (Number.isFinite(balance) && balance >= 0) return roundMoney(balance);
-  const total = Number(inv?.total);
-  if (Number.isFinite(total) && total >= 0) return roundMoney(total);
-  return 0;
-}
-
-function amountsEqual(a, b) {
-  return Math.abs(roundMoney(a) - roundMoney(b)) < 0.01;
-}
-
-function invoiceBalanceMatchesPayment(inv, paymentAmount) {
-  const bal = invoiceOutstandingBalance(inv);
-  return bal > 0 && amountsEqual(bal, paymentAmount);
-}
-
-/** Only match invoices explicitly tied to this payment — never auto-pick receivable/open invoices. */
-function findTargetOpenInvoice(invoices, customerNumber, paymentAmount) {
-  const list = (Array.isArray(invoices) ? invoices : []).filter(isUnpaidLikeInvoice);
-  if (!list.length) return null;
-
-  const normalizedRef = String(customerNumber || "").trim().toUpperCase();
-  if (normalizedRef) {
-    const byOrder = list.find((inv) => invoiceOrderRef(inv) === normalizedRef);
-    if (byOrder) return byOrder;
+async function findOpenInvoiceForPayment({
+  customerNumber,
+  customer_id,
+  paymentAmount,
+  billedViaAgency = false,
+}) {
+  let customerInvoices = await getInvoices_JS({
+    customer_id,
+    per_page: 200,
+    page: 1,
+  });
+  if (billedViaAgency) {
+    customerInvoices = filterAgencyInvoicesForCustomer(
+      customerInvoices,
+      customerNumber
+    );
   }
-
-  const byBalance = list.find((inv) => invoiceBalanceMatchesPayment(inv, paymentAmount));
-  if (byBalance) return byBalance;
-
-  return null;
+  return findTargetOpenInvoice(customerInvoices, customerNumber, paymentAmount);
 }
-
-/** Plan how much of an M-Pesa payment to apply to an invoice (Zoho keeps excess as customer credit). */
 function planInvoicePayment(paymentAmount, invoiceBalance) {
   const pay = roundMoney(paymentAmount);
   const balance = roundMoney(invoiceBalance);
@@ -734,21 +737,13 @@ function planInvoicePayment(paymentAmount, invoiceBalance) {
   };
 }
 
-async function findOpenInvoiceForPayment({ customerNumber, customer_id, paymentAmount }) {
-  const customerInvoices = await getInvoices_JS({
-    customer_id,
-    per_page: 200,
-    page: 1,
-  });
-  return findTargetOpenInvoice(customerInvoices, customerNumber, paymentAmount);
-}
-
 async function createInvoiceForExactAmount({
   companyName,
   customer_id,
   paymentAmount,
   transactionId,
   source,
+  referenceNumber,
 }) {
   const description = `M-Pesa payment for ${companyName} (Tx: ${
     transactionId || "N/A"
@@ -769,7 +764,7 @@ async function createInvoiceForExactAmount({
     customer_id,
     items: [lineItem],
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
-    reference_number: companyName,
+    reference_number: referenceNumber || companyName,
   });
 }
 
@@ -793,12 +788,52 @@ async function recordInvoicePayment({
 
 async function logZohoMpesaPaymentResult(result, meta = {}) {
   try {
-    await appendJsonLine(ZOHO_MPESA_LOG_FILE, {
-      loggedAt: new Date().toISOString(),
-      event: "zoho_mpesa_payment",
-      live: true,
-      ...meta,
-      result,
+    const paid = result?.paid === true;
+    const customerRef = meta.accountRef || meta.customerNumber || null;
+    const amount = meta.amount;
+    const referenceId =
+      meta.transactionId || result?.invoice_id || result?.invoice_number || null;
+
+    await insertIntegrationEvent({
+      source: "zoho",
+      status: paid ? "paid" : "failed",
+      customerNo: customerRef,
+      amount,
+      referenceId,
+      outcome: result?.reason || (paid ? "paid" : "failed"),
+      channel: meta.channel || null,
+      checkoutRequestId: meta.checkoutRequestId || null,
+      rawPayload: { result, meta, event: "zoho_mpesa_payment", live: true },
+    });
+
+    const strategy = result?.strategy || "";
+    let eventType = "zoho_invoice_failed";
+    let title = "Zoho invoice failed";
+    let message = result?.reason || "Could not process invoice";
+
+    if (paid) {
+      if (strategy === "created_and_paid") {
+        eventType = "zoho_invoice_created";
+        title = "Zoho invoice created";
+        message = `Invoice ${result.invoice_number || result.invoice_id || ""} created and marked paid`.trim();
+      } else {
+        eventType = "zoho_invoice_updated";
+        title = "Zoho invoice updated";
+        message = `Invoice ${result.invoice_number || result.invoice_id || ""} marked as paid`.trim();
+      }
+    }
+
+    await logActivity({
+      eventType,
+      title,
+      message,
+      source: "zoho",
+      status: paid ? "success" : "failed",
+      customerRef,
+      amount,
+      referenceId,
+      checkoutRequestId: meta.checkoutRequestId || null,
+      metadata: { strategy, channel: meta.channel, result },
     });
   } catch (e) {
     console.error("zoho-mpesa payment log failed:", e.message);
@@ -810,6 +845,7 @@ async function applyZohoPaymentForMpesa({
   amount,
   transactionId,
   source,
+  forceInvoiceId = null,
 }) {
   const companyName = String(customerNumber || "").trim();
   const paymentAmount = roundMoney(amount);
@@ -817,17 +853,68 @@ async function applyZohoPaymentForMpesa({
     return { paid: false, reason: "invalid_input" };
   }
 
-  const customer = await getCustomerByCompanyName_JS(companyName);
+  let zohoLookupName = companyName;
+  let billedViaAgency = false;
+  let agencyName = null;
+
+  const dbCustomer = await customerStore.findCustomerByNumber(companyName);
+  if (dbCustomer && isB2BCustomer(dbCustomer)) {
+    try {
+      const agency = await resolveAgencyForCustomer(dbCustomer, customerStore);
+      zohoLookupName = agency.name;
+      billedViaAgency = true;
+      agencyName = agency.name;
+    } catch (e) {
+      return {
+        paid: false,
+        reason: "b2b_agency_missing",
+        customerNumber: companyName,
+        message: e.message,
+      };
+    }
+  }
+
+  const customer = await getCustomerByCompanyName_JS(zohoLookupName);
   if (!customer || typeof customer === "string" || !customer.contact_id) {
-    return { paid: false, reason: "customer_not_found" };
+    return {
+      paid: false,
+      reason: billedViaAgency ? "agency_not_found_in_zoho" : "customer_not_found",
+      customerNumber: companyName,
+      agencyName,
+    };
   }
 
   const customer_id = customer.contact_id;
-  const openInvoice = await findOpenInvoiceForPayment({
-    customerNumber: companyName,
-    customer_id,
-    paymentAmount,
-  });
+  let openInvoice = null;
+
+  if (forceInvoiceId) {
+    const customerInvoices = await getInvoices_JS({
+      customer_id,
+      per_page: 200,
+      page: 1,
+    });
+    const pool = billedViaAgency
+      ? filterAgencyInvoicesForCustomer(customerInvoices, companyName)
+      : customerInvoices;
+    openInvoice = (pool || []).find(
+      (inv) => String(inv.invoice_id) === String(forceInvoiceId)
+    );
+    if (!openInvoice?.invoice_id) {
+      return {
+        paid: false,
+        reason: "invoice_not_found",
+        customerNumber: companyName,
+        invoice_id: forceInvoiceId,
+      };
+    }
+  } else {
+    openInvoice = await findOpenInvoiceForPayment({
+      customerNumber: companyName,
+      customer_id,
+      paymentAmount,
+      billedViaAgency,
+    });
+  }
 
   if (!openInvoice?.invoice_id) {
     const created = await createInvoiceForExactAmount({
@@ -836,6 +923,7 @@ async function applyZohoPaymentForMpesa({
       paymentAmount,
       transactionId,
       source,
+      referenceNumber: companyName,
     });
     if (!created?.invoice_id) {
       return { paid: false, reason: "create_failed" };
@@ -876,6 +964,24 @@ async function applyZohoPaymentForMpesa({
         reason: "created_mark_paid_failed",
         invoice_id: created.invoice_id,
       };
+    }
+
+    if (dbCustomer?.id) {
+      try {
+        const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
+        await integrationSnapshot.recordZohoPaymentSnapshot(dbCustomer.id, {
+          invoiceId: created.invoice_id,
+          invoiceNumber: created.invoice_number,
+          paymentId: payment.payment_id,
+          amount: plan.payment_amount,
+          referenceId: transactionId,
+          remainingBalance: plan.remaining_balance ?? 0,
+        });
+        const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
+        invalidateCustomerZoho(dbCustomer.id);
+      } catch (e) {
+        console.warn("Zoho payment snapshot update failed:", e.message);
+      }
     }
 
     return {
@@ -923,6 +1029,24 @@ async function applyZohoPaymentForMpesa({
     excess_amount: plan.excess_amount || 0,
   });
 
+  if (dbCustomer?.id) {
+    try {
+      const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
+      await integrationSnapshot.recordZohoPaymentSnapshot(dbCustomer.id, {
+        invoiceId: openInvoice.invoice_id,
+        invoiceNumber: openInvoice.invoice_number,
+        paymentId: payment.payment_id,
+        amount: plan.payment_amount,
+        referenceId: transactionId,
+        remainingBalance: plan.remaining_balance ?? 0,
+      });
+      const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
+      invalidateCustomerZoho(dbCustomer.id);
+    } catch (e) {
+      console.warn("Zoho payment snapshot update failed:", e.message);
+    }
+  }
+
   return {
     paid: true,
     strategy: plan.outcome,
@@ -937,9 +1061,112 @@ async function applyZohoPaymentForMpesa({
   };
 }
 
-/* ================================================================== */
-/*            C2B Validation / Confirmation (Paybill)                  */
-/* ================================================================== */
+/** Build SetISPPayment payload from a stored payment_transactions row (reconciliation retry). */
+function buildISPPayloadFromStoredPayment(row) {
+  const channel = String(row.channel || "").toUpperCase();
+  const accountRef = row.account_reference;
+  if (channel.includes("STK")) {
+    return buildISPPayloadFromSTK(
+      {
+        MpesaReceiptNumber: row.mpesa_receipt,
+        TransactionDate: row.transaction_date,
+        Amount: row.amount,
+        PhoneNumber: row.phone,
+        CheckoutRequestID: row.checkout_request_id,
+      },
+      accountRef
+    );
+  }
+  return buildISPPayloadFromConfirmation({
+    TransID: row.mpesa_receipt,
+    TransTime: row.transaction_date,
+    TransAmount: row.amount,
+    BillRefNumber: accountRef,
+    AccountReference: accountRef,
+    MSISDN: row.phone,
+  });
+}
+
+async function processUnallocatedMpesaPayment(row, meta = {}) {
+  const accountRef = String(row.account_reference || "").trim();
+  if (!accountRef) {
+    return { ok: false, reason: "no_account_reference", message: "Payment has no account reference" };
+  }
+
+  const amount = row.amount != null ? Number(row.amount) : 0;
+  const receipt = row.mpesa_receipt || null;
+  if (!receipt || amount <= 0) {
+    return { ok: false, reason: "invalid_payment", message: "Invalid M-Pesa payment record" };
+  }
+
+  const zohoResult = await applyZohoPaymentForMpesa({
+    customerNumber: accountRef,
+    amount,
+    transactionId: receipt,
+    source: row.channel || meta.source || "reconciliation",
+  });
+
+  await logZohoMpesaPaymentResult(zohoResult, {
+    channel: row.channel || meta.source || "reconciliation",
+    accountRef,
+    amount,
+    transactionId: receipt,
+    msisdn: row.phone,
+  });
+
+  if (!zohoResult.paid) {
+    return {
+      ok: false,
+      reason: zohoResult.reason || "zoho_failed",
+      message:
+        zohoResult.message ||
+        `Could not apply payment in Zoho (${zohoResult.reason || "unknown"})`,
+      zoho: zohoResult,
+    };
+  }
+
+  let tispPosted = false;
+  let tispError = null;
+  try {
+    const ispPayload = buildISPPayloadFromStoredPayment(row);
+    await postISPPayment(ispPayload);
+    tispPosted = true;
+  } catch (e) {
+    tispError = e.message || "TISP post failed";
+  }
+
+  await recordLastPaymentForAccount(accountRef, row.transaction_date || row.created_at);
+
+  let customer = null;
+  try {
+    customer = await customerStore.findCustomerByNumber(accountRef);
+    if (customer) {
+      const tisp = await getTISPCustomer(customer.customerNumber);
+      const status = tisp?.status ?? tisp?.Status ?? null;
+      if (status) {
+        await customerStore.updateCustomerSubscriptionStatus(
+          customer.id,
+          normalizeSubscriptionStatus(String(status))
+        );
+      }
+    }
+  } catch (e) {
+    console.warn("[mpesa-allocation] TISP refresh skipped:", e.message);
+  }
+
+  return {
+    ok: true,
+    zoho: zohoResult,
+    tispPosted,
+    tispError,
+    customerId: customer?.id ?? null,
+    customerNumber: accountRef,
+    message: tispPosted
+      ? `Invoice ${zohoResult.invoice_number || zohoResult.invoice_id || ""} marked paid · TISP updated`.trim()
+      : `Invoice marked paid in Zoho · TISP post failed: ${tispError}`,
+  };
+}
+
 const mpesaValidation = (req, res) => {
   // If external validation is enabled on your Paybill, this fires BEFORE debit.
   // Put business rules here; return ResultCode=0 to accept.
@@ -1002,6 +1229,37 @@ const mpesaConfirmation = async (req, res) => {
       tx.accountReference ||
       process.env.DEFAULT_ACCOUNT_REFERENCE ||
       "Starlynx Utility";
+
+    try {
+      await logActivity({
+        eventType: "payment_received",
+        title: "Payment received",
+        message: `C2B paybill ${transactionId || "payment"} from ${msisdn || "customer"}`,
+        source: "mpesa",
+        status: "success",
+        customerRef: accountRef,
+        amount,
+        referenceId: transactionId,
+        metadata: { channel: "C2B", shortCode },
+      });
+    } catch (e) {
+      console.error("activity log (C2B) failed:", e.message);
+    }
+
+    await recordLastPaymentForAccount(accountRef, transTime);
+
+    try {
+      await recordC2BConfirmation({
+        mpesaReceipt: transactionId,
+        phone: msisdn,
+        amount,
+        accountReference: accountRef,
+        transactionDate: transTime,
+        rawPayload: tx,
+      });
+    } catch (e) {
+      console.warn("C2B payment_transactions record failed:", e.message);
+    }
 
     const ispPayload = buildISPPayloadFromConfirmation({
       ...tx,
@@ -1093,12 +1351,16 @@ const mpesaConfirmation = async (req, res) => {
 /* ================================================================== */
 /*                         STK Push Initiation                         */
 /* ================================================================== */
-const initiateSTKPush = async (accountNumber, phone, amount) => {
+const initiateSTKPush = async (accountNumber, phone, amount, options = {}) => {
   try {
-    // Dev/pre-production: always charge 1 KES. TODO(live): use Math.round(Number(amount)) when going live.
-    const stkAmount = 1;
-    const rawAmount = Number(amount);
-    if (Number.isFinite(rawAmount) && rawAmount !== stkAmount) {
+    const rawAmount = Math.round(Number(amount));
+    const useLiveAmount =
+      options.liveAmount === true ||
+      String(process.env.MPESA_STK_USE_LIVE_AMOUNT || "").toLowerCase() === "true";
+    const stkAmount = useLiveAmount
+      ? Math.max(1, Number.isFinite(rawAmount) ? rawAmount : 1)
+      : 1;
+    if (!useLiveAmount && Number.isFinite(rawAmount) && rawAmount !== stkAmount) {
       console.info(
         `[MPESA STK] fixed Amount=${stkAmount} (subscription amount would be ${rawAmount})`,
       );
@@ -1151,6 +1413,7 @@ const initiateSTKPush = async (accountNumber, phone, amount) => {
         ResultCode: null,
         ResultDesc: "Awaiting customer PIN",
         Timestamp: new Date().toISOString(),
+        channel: "STK",
       });
     } catch (e) {
       logError(e, {
@@ -1203,9 +1466,42 @@ const mpesaCallback = async (req, res) => {
     } else {
       transaction.Status = "FAILED";
     }
+    transaction.channel = "STK";
 
     // Update existing PENDING by CheckoutRequestID; if not found, append
     await upsertByCheckoutId(transaction.CheckoutRequestID, transaction);
+
+    const accountRefEarly =
+      (await findLatestTxnByCheckoutOrPhone(
+        transaction.CheckoutRequestID,
+        transaction.PhoneNumber
+      ))?.AccountReference || null;
+
+    try {
+      await logActivity({
+        eventType:
+          transaction.Status === "SUCCESS"
+            ? "payment_received"
+            : "payment_failed",
+        title:
+          transaction.Status === "SUCCESS"
+            ? "Payment received"
+            : "Payment failed",
+        message:
+          transaction.Status === "SUCCESS"
+            ? `M-Pesa ${transaction.MpesaReceiptNumber || "payment"} from ${transaction.PhoneNumber || "customer"}`
+            : transaction.ResultDesc || "STK push was not completed",
+        source: "mpesa",
+        status: transaction.Status === "SUCCESS" ? "success" : "failed",
+        customerRef: accountRefEarly,
+        amount: transaction.Amount,
+        referenceId: transaction.MpesaReceiptNumber,
+        checkoutRequestId: transaction.CheckoutRequestID,
+        metadata: { channel: "STK", resultDesc: transaction.ResultDesc },
+      });
+    } catch (e) {
+      console.error("activity log (mpesa STK) failed:", e.message);
+    }
 
     // If SUCCESS, persist FULL tx + POST to ISP + create Zoho invoice
     if (transaction.Status === "SUCCESS") {
@@ -1221,13 +1517,45 @@ const mpesaCallback = async (req, res) => {
         ? String(existing.AccountReference)
         : process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
 
-      // Zoho invoice before posting to ISP (live STK flow)
+      await recordLastPaymentForAccount(
+        accountRef,
+        transaction.TransactionDate
+      );
+
+      const pendingUpgrade = await pendingUpgradeStore.findPendingByCheckoutRequestId(
+        transaction.CheckoutRequestID
+      );
+      let upgradeCompleted = false;
+      if (pendingUpgrade) {
+        try {
+          const upgradeResult =
+            await pendingUpgradeStore.tryCompleteUpgradeFromStk({
+              checkoutRequestId: transaction.CheckoutRequestID,
+            });
+          upgradeCompleted = upgradeResult.completed === true;
+          if (upgradeCompleted) {
+            console.log(
+              "Pending upgrade completed after STK payment:",
+              pendingUpgrade.id
+            );
+          }
+        } catch (e) {
+          console.error("Pending upgrade completion failed (STK):", e.message);
+        }
+      }
+
+      // Zoho invoice before posting to ISP (create or mark existing invoice paid)
       try {
+        const forceInvoiceId =
+          upgradeCompleted && pendingUpgrade?.zohoInvoiceId
+            ? pendingUpgrade.zohoInvoiceId
+            : null;
         const zohoResult = await applyZohoPaymentForMpesa({
           customerNumber: accountRef,
           amount: transaction.Amount,
           transactionId: transaction.MpesaReceiptNumber,
           source: "STK",
+          forceInvoiceId,
         });
         console.log("Zoho result (STK):", zohoResult);
         await logZohoMpesaPaymentResult(zohoResult, {
@@ -1269,18 +1597,42 @@ const mpesaCallback = async (req, res) => {
             url: ISP_PAYMENT_URL,
             request: ispPayload,
             transKey: idemKey,
+            accountRef,
+            amount: transaction.Amount,
+            transactionId: transaction.MpesaReceiptNumber,
+            checkoutRequestId: transaction.CheckoutRequestID,
+            channel: "STK",
           });
           tispOk = true;
         } else {
           await postSetISPPayment(ispPayload);
           if (idemKey) _postedTransIds.add(idemKey);
           tispOk = true;
+          await logSetIspPaymentAttempt({
+            outcome: "success",
+            accountRef,
+            amount: transaction.Amount,
+            transactionId: transaction.MpesaReceiptNumber,
+            checkoutRequestId: transaction.CheckoutRequestID,
+            channel: "STK",
+            request: ispPayload,
+          });
         }
       } catch (e) {
         console.error(
           "TISP SetISPPayment failed (STK)",
           e?.response?.data || e.message,
         );
+        await logSetIspPaymentAttempt({
+          outcome: "failure",
+          accountRef,
+          amount: transaction.Amount,
+          transactionId: transaction.MpesaReceiptNumber,
+          checkoutRequestId: transaction.CheckoutRequestID,
+          channel: "STK",
+          errorMessage: e.message,
+          request: ispPayload,
+        });
       }
 
       if (tispOk) {
@@ -1475,4 +1827,7 @@ module.exports = {
   getAccessToken,
   initiateSTKPush,
   test,
+  applyZohoPaymentForMpesa,
+  processUnallocatedMpesaPayment,
+  logZohoMpesaPaymentResult,
 };

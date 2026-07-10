@@ -12,6 +12,7 @@ const {
   b2cResult,
   b2cTimeout,
 } = require("../controllers/mpesa.controller");
+const { authenticate, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -33,11 +34,11 @@ router.post("/callback", mpesaCallback);
 router.post("/validation", mpesaValidation);
 router.post("/confirmation", mpesaConfirmation);
 
-router.post("/register", registerC2BUrls);
-router.post("/simulate", simulateC2B);
-router.get("/split/config", getTransactionSplitConfig);
-router.put("/split/config", updateTransactionSplitConfig);
-router.get("/split/logs", getTransactionSplitLog);
+router.post("/register", authenticate, requireRole("admin"), registerC2BUrls);
+router.post("/simulate", authenticate, requireRole("admin"), simulateC2B);
+router.get("/split/config", authenticate, getTransactionSplitConfig);
+router.put("/split/config", authenticate, requireRole("admin"), updateTransactionSplitConfig);
+router.get("/split/logs", authenticate, getTransactionSplitLog);
 router.post("/b2c/result", b2cResult);
 router.post("/b2c/timeout", b2cTimeout);
 

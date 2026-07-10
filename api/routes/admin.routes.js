@@ -1,0 +1,229 @@
+const express = require("express");
+const {
+  getStats,
+  getSupportStats,
+  getRevenueChart,
+  listMpesaTransactions,
+  getMpesaTransaction,
+  listZohoEvents,
+  listTispEvents,
+  exportMpesaTransactions,
+  exportIntegrationEvents,
+  getActivityFeed,
+  listUnifiedTransactions,
+  exportUnifiedTransactions,
+  getIntegrationEvent,
+} = require("../controllers/admin.controller");
+const { listUsers, createUser, updateUser, resetUserPassword } = require("../controllers/auth.controller");
+const { listBuildings, createBuilding, updateBuilding } = require("../controllers/buildings.controller");
+const {
+  listProducts,
+  createProduct,
+  updateProduct,
+} = require("../controllers/products.controller");
+const { getPackageCatalog } = require("../controllers/packageCatalog.controller");
+const {
+  listAgencies,
+  createAgency,
+  getAgency,
+  getAgencyInvoices,
+  createAgencyInvoice,
+  updateAgency,
+} = require("../controllers/agencies.controller");
+const {
+  listCustomers,
+  exportCustomers,
+  getCustomer,
+  getCustomerTransactions,
+  getCustomerInvoices,
+  getCustomerPayments,
+  refreshCustomerStatus,
+  retryBillingOnboarding,
+  getUpgradeQuote,
+  createCustomer,
+  updateCustomer,
+  convertCustomerType,
+  upgradePackage,
+  cancelPendingUpgrade,
+  downgradePackage,
+  changePaymentFrequency,
+  switchApartment,
+  cancelSubscription,
+  deleteCustomerPermanently,
+  apartmentHistory,
+  downloadImportTemplate,
+  importCustomers,
+  bulkCancelSubscriptions,
+} = require("../controllers/customers.controller");
+const {
+  listLogs,
+  getLog,
+  retryLog,
+} = require("../controllers/logs.controller");
+const { listReports, downloadReport, getAnalytics } = require("../controllers/reports.controller");
+const { getDashboard: getBiDashboard, exportSection: exportBiSection } = require("../controllers/bi.controller");
+const { exportTableReport } = require("../controllers/tableExport.controller");
+const { getSettings } = require("../controllers/settings.controller");
+const {
+  getSummary: getReconciliationSummary,
+  getSyncStatus: getReconciliationSyncStatus,
+  runSync: runReconciliationSync,
+  listCustomers: listReconciliationCustomers,
+  getCustomerDetail: getReconciliationCustomerDetail,
+  listUnmatchedMpesa: listReconciliationUnmatchedMpesa,
+  getUnmatchedMpesaDetail: getReconciliationUnmatchedMpesaDetail,
+  allocateUnmatchedMpesa: allocateReconciliationUnmatchedMpesa,
+  executeAction: executeReconciliationAction,
+  exportReconciliation,
+  listStatuses: listReconciliationStatuses,
+  listCommunications: listReconciliationCommunications,
+  previewCommunication: previewReconciliationCommunication,
+  sendCommunication: sendReconciliationCommunication,
+  sendBulkCommunications: sendReconciliationBulkCommunications,
+  getCommunicationTemplates: getReconciliationCommunicationTemplates,
+} = require("../controllers/reconciliation.controller");
+const { getDashboard: getPartnerDashboard } = require("../controllers/partner.controller");
+const {
+  listApartmentHistoryRecords,
+  checkApartmentOccupancy,
+} = require("../controllers/apartments.controller");
+
+const { authenticate } = require("../middleware/auth");
+const {
+  requireAdmin,
+  requireFinance,
+  requireCustomerRead,
+  requireCustomerWrite,
+  requireCustomerFinancialRead,
+  requireAgencyWrite,
+  requireConfigRead,
+  requireConfigWrite,
+  requireOps,
+  requirePartnerDashboard,
+  requireReportsAccess,
+} = require("../middleware/rbac");
+
+const router = express.Router();
+
+router.use(authenticate);
+
+router.post("/export/table", exportTableReport);
+
+router.get("/stats", requireFinance, getStats);
+router.get("/support-stats", requireCustomerRead, getSupportStats);
+router.get("/partner/dashboard", requirePartnerDashboard, getPartnerDashboard);
+router.get("/revenue-chart", requireFinance, getRevenueChart);
+router.get("/activity", requireFinance, getActivityFeed);
+router.get("/reports", requireReportsAccess, listReports);
+router.get("/reports/analytics", requireFinance, getAnalytics);
+router.get("/bi/dashboard", requireFinance, getBiDashboard);
+router.get("/bi/export", requireFinance, exportBiSection);
+router.get("/reports/:id/download", requireReportsAccess, downloadReport);
+router.get("/transactions", requireFinance, listUnifiedTransactions);
+router.get("/transactions/export", requireFinance, exportUnifiedTransactions);
+router.get("/transactions/integration/:id", requireFinance, getIntegrationEvent);
+router.get("/transactions/mpesa/export", requireFinance, exportMpesaTransactions);
+router.get("/transactions/mpesa", requireFinance, listMpesaTransactions);
+router.get("/transactions/mpesa/:id", requireFinance, getMpesaTransaction);
+router.get("/transactions/zoho/export", requireFinance, (req, res, next) => {
+  req.params.source = "zoho";
+  return exportIntegrationEvents(req, res, next);
+});
+router.get("/transactions/zoho", requireFinance, listZohoEvents);
+router.get("/transactions/tisp/export", requireFinance, (req, res, next) => {
+  req.params.source = "tisp";
+  return exportIntegrationEvents(req, res, next);
+});
+router.get("/transactions/tisp", requireFinance, listTispEvents);
+
+router.get("/reconciliation/summary", requireFinance, getReconciliationSummary);
+router.get("/reconciliation/sync-status", requireFinance, getReconciliationSyncStatus);
+router.post("/reconciliation/sync", requireFinance, runReconciliationSync);
+router.get("/reconciliation/statuses", requireFinance, listReconciliationStatuses);
+router.get("/reconciliation/unmatched-mpesa", requireFinance, listReconciliationUnmatchedMpesa);
+router.get("/reconciliation/unmatched-mpesa/:id", requireFinance, getReconciliationUnmatchedMpesaDetail);
+router.post("/reconciliation/unmatched-mpesa/:id/allocate", requireFinance, allocateReconciliationUnmatchedMpesa);
+router.get("/reconciliation/export", requireFinance, exportReconciliation);
+router.get("/reconciliation/customers", requireFinance, listReconciliationCustomers);
+router.get("/reconciliation/customers/:id", requireFinance, getReconciliationCustomerDetail);
+router.post("/reconciliation/customers/:id/actions", requireFinance, executeReconciliationAction);
+router.get("/reconciliation/communications/templates", requireFinance, getReconciliationCommunicationTemplates);
+
+router.use("/sync", require("./sync.routes"));
+router.get("/reconciliation/communications", requireFinance, listReconciliationCommunications);
+router.get("/reconciliation/communications/:customerId/preview", requireFinance, previewReconciliationCommunication);
+router.post("/reconciliation/communications/:customerId/send", requireFinance, sendReconciliationCommunication);
+router.post("/reconciliation/communications/bulk-send", requireFinance, sendReconciliationBulkCommunications);
+
+router.get("/logs", requireOps, listLogs);
+router.get("/logs/:id", requireOps, getLog);
+router.post("/logs/:id/retry", requireOps, retryLog);
+
+router.get("/settings", requireAdmin, getSettings);
+
+router.get("/users", requireAdmin, listUsers);
+router.post("/users", requireAdmin, createUser);
+router.patch("/users/:id", requireAdmin, updateUser);
+router.post("/users/:id/reset-password", requireAdmin, resetUserPassword);
+
+router.get("/buildings", requireConfigRead, listBuildings);
+router.post("/buildings", requireConfigWrite, createBuilding);
+router.patch("/buildings/:id", requireConfigWrite, updateBuilding);
+
+router.get("/package-catalog", requireConfigRead, getPackageCatalog);
+router.get("/products", requireConfigRead, listProducts);
+router.post("/products", requireConfigWrite, createProduct);
+router.patch("/products/:id", requireConfigWrite, updateProduct);
+
+router.get("/agencies", requireConfigRead, listAgencies);
+router.post("/agencies", requireAgencyWrite, createAgency);
+router.patch("/agencies/:id", requireAgencyWrite, updateAgency);
+router.get("/agencies/:id", requireConfigRead, getAgency);
+router.get("/agencies/:id/invoices", requireConfigRead, getAgencyInvoices);
+router.post("/agencies/:id/invoices", requireAgencyWrite, createAgencyInvoice);
+
+router.get("/apartments/history", requireConfigRead, listApartmentHistoryRecords);
+router.get("/apartments/check", requireConfigRead, checkApartmentOccupancy);
+
+router.get("/customers/import/template", requireCustomerWrite, downloadImportTemplate);
+router.post(
+  "/customers/import",
+  requireCustomerWrite,
+  express.text({ type: "*/*", limit: "5mb" }),
+  importCustomers
+);
+router.get("/customers", requireCustomerRead, listCustomers);
+router.get("/customers/export", requireCustomerRead, exportCustomers);
+router.post("/customers", requireCustomerWrite, createCustomer);
+router.patch("/customers/:id", requireCustomerWrite, updateCustomer);
+router.post("/customers/:id/convert-type", requireCustomerWrite, convertCustomerType);
+router.post("/customers/bulk-cancel", requireCustomerWrite, bulkCancelSubscriptions);
+router.get("/customers/:id/transactions", requireCustomerFinancialRead, getCustomerTransactions);
+router.get("/customers/:id/invoices", requireCustomerFinancialRead, getCustomerInvoices);
+router.get("/customers/:id/payments", requireCustomerFinancialRead, getCustomerPayments);
+router.post("/customers/:id/refresh", requireCustomerWrite, refreshCustomerStatus);
+router.post(
+  "/customers/:id/retry-billing-onboarding",
+  requireCustomerWrite,
+  retryBillingOnboarding
+);
+router.get("/customers/:id/upgrade-quote", requireCustomerWrite, getUpgradeQuote);
+router.get("/customers/:id", requireCustomerRead, getCustomer);
+router.post("/customers/:id/upgrade", requireCustomerWrite, upgradePackage);
+router.post("/customers/:id/upgrade/cancel", requireCustomerWrite, cancelPendingUpgrade);
+router.post("/customers/:id/downgrade", requireCustomerWrite, downgradePackage);
+router.post(
+  "/customers/:id/change-payment-frequency",
+  requireCustomerWrite,
+  changePaymentFrequency
+);
+router.post("/customers/:id/switch-apartment", requireCustomerWrite, switchApartment);
+router.post("/customers/:id/cancel", requireCustomerWrite, cancelSubscription);
+router.delete("/customers/:id", requireAdmin, deleteCustomerPermanently);
+router.get(
+  "/buildings/:buildingId/apartments/:apartmentNumber/history",
+  requireConfigRead,
+  apartmentHistory
+);
+
+module.exports = router;

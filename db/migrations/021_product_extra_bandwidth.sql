@@ -1,0 +1,2 @@
+ALTER TABLE products
+  ADD COLUMN extra_bandwidth INT UNSIGNED NOT NULL DEFAULT 0 AFTER mbps;

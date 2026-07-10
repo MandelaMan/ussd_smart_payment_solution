@@ -1,4 +1,5 @@
 node_modules
+admin/dist
 .env
 npm-debug.log*
 .DS_Store
@@ -7,9 +8,10 @@ npm-debug.log*
 xtream_ui_r22_backend_api_document-v2.docx
 *.docx
 .tmp_xtream*
-.tmp_*
+.tmp-xampp-restore.sql
 .tmp_xtream_doc/
 .tmp_xtream_doc_extract/
+.tmp-xampp-restore.sql
 
 # Server-only logs (never commit; never rsync on deploy — see deploy.yml)
 logs/errors-*.log

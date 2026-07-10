@@ -1,83 +1,76 @@
-const fs = require("fs/promises");
-const path = require("path");
-const { appendJsonLine, readJsonLineEntries } = require("./appendJsonLine");
-
-const LOG_DIR = path.join(__dirname, "..", "..", "logs");
-const LOG_FILE = path.join(LOG_DIR, "tisp-set-isp-payment.jsonl");
-const LEGACY_LOG_FILE = path.join(LOG_DIR, "tisp-set-isp-payment.json");
-
-let _queue = Promise.resolve();
-function withLock(task) {
-  _queue = _queue.then(task, task);
-  return _queue;
-}
-
-let _legacyMigrated = false;
-let _migratePromise = null;
-
-async function migrateLegacyTispLogOnce() {
-  if (_legacyMigrated) return;
-  if (!_migratePromise) {
-    _migratePromise = (async () => {
-      try {
-        const st = await fs.stat(LOG_FILE).catch(() => null);
-        if (st && st.size > 0) return;
-        const raw = await fs.readFile(LEGACY_LOG_FILE, "utf8");
-        const parsed = JSON.parse(raw || "[]");
-        const arr = Array.isArray(parsed) ? parsed : [];
-        if (!arr.length) return;
-        await fs.mkdir(LOG_DIR, { recursive: true });
-        let blob = "";
-        for (const row of arr) {
-          blob += JSON.stringify(row) + "\n";
-        }
-        await fs.appendFile(LOG_FILE, blob, "utf8");
-        await fs.rename(LEGACY_LOG_FILE, LEGACY_LOG_FILE + ".bak").catch(() => {});
-      } catch {
-        /* no legacy or parse error */
-      } finally {
-        _legacyMigrated = true;
-      }
-    })();
-  }
-  await _migratePromise;
-}
+const { insertIntegrationEvent } = require("../services/integrationEventStore");
+const { logActivity } = require("../services/activityLogStore");
 
 /**
- * Append one SetISPPayment attempt (success or failure) to logs/tisp-set-isp-payment.jsonl
- * @param {Record<string, unknown>} entry — must include outcome: "success" | "failure" | "skipped_duplicate"
+ * Log a TISP SetISPPayment attempt to MySQL + dashboard activity feed.
  */
-function logSetIspPaymentAttempt(entry) {
-  return withLock(async () => {
-    await migrateLegacyTispLogOnce();
-    await appendJsonLine(LOG_FILE, {
-      loggedAt: new Date().toISOString(),
-      ...entry,
+async function logSetIspPaymentAttempt(entry) {
+  const outcome = entry.outcome || "unknown";
+  const status =
+    outcome === "success"
+      ? "success"
+      : outcome === "skipped_duplicate"
+        ? "skipped"
+        : "failed";
+
+  const customerRef =
+    entry.customer_no ||
+    entry.customerNo ||
+    entry.accountRef ||
+    entry.customerAccount ||
+    null;
+  const amount = entry.amount;
+  const referenceId =
+    entry.transactionId || entry.mpesaReceipt || entry.transKey || null;
+
+  await insertIntegrationEvent({
+    source: "tisp",
+    status,
+    customerNo: customerRef,
+    amount,
+    referenceId,
+    outcome,
+    channel: entry.channel || entry.source || null,
+    checkoutRequestId: entry.checkoutRequestId || null,
+    rawPayload: entry,
+  });
+
+  if (outcome === "skipped_duplicate") return;
+
+  const ok = outcome === "success";
+  try {
+    await logActivity({
+      eventType: ok ? "tisp_reconnected" : "tisp_reconnect_failed",
+      title: ok
+        ? "Customer reconnected on TISP"
+        : "TISP reconnection failed",
+      message: ok
+        ? `Service restored for ${customerRef || "customer"}`
+        : entry.errorMessage || "SetISPPayment request failed",
+      source: "tisp",
+      status: ok ? "success" : "failed",
+      customerRef,
+      amount,
+      referenceId,
+      checkoutRequestId: entry.checkoutRequestId || null,
+      metadata: { outcome, channel: entry.channel || entry.source },
     });
-  });
+  } catch (e) {
+    console.error("activity log (tisp) failed:", e.message);
+  }
 }
 
-/**
- * Full history (NDJSON + one-time migrated legacy array).
- */
 async function readTispSetIspLog() {
-  return withLock(async () => {
-    await migrateLegacyTispLogOnce();
-    const lines = await readJsonLineEntries(LOG_FILE);
-    if (lines.length) return lines;
-    try {
-      const raw = await fs.readFile(LEGACY_LOG_FILE, "utf8");
-      const parsed = JSON.parse(raw || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
+  const { listIntegrationEvents } = require("../services/integrationEventStore");
+  const result = await listIntegrationEvents({ source: "tisp", limit: 1000, page: 1 });
+  return result.data.map((e) => ({
+    loggedAt: e.createdAt,
+    outcome: e.outcome,
+    ...e.payload,
+  }));
 }
 
 module.exports = {
   logSetIspPaymentAttempt,
   readTispSetIspLog,
-  LOG_FILE,
-  LEGACY_LOG_FILE,
 };

@@ -1,0 +1,61 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+button,
+a,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 47.99em) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+input[type="date"].date-field-native {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+}
+
+input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit,
+input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit-fields-wrapper,
+input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit-text,
+input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit-month-field,
+input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit-day-field,
+input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit-year-field {
+  color: transparent;
+}
+
+input[type="date"].date-field-native::-webkit-datetime-edit,
+input[type="date"].date-field-native::-webkit-datetime-edit-fields-wrapper {
+  padding: 0;
+  line-height: 1;
+}
+
+input[type="date"].date-field-native::-webkit-datetime-edit-text,
+input[type="date"].date-field-native::-webkit-datetime-edit-month-field,
+input[type="date"].date-field-native::-webkit-datetime-edit-day-field,
+input[type="date"].date-field-native::-webkit-datetime-edit-year-field {
+  padding: 0;
+}
+
+input[type="date"].date-field-native.date-field-has-value::-webkit-datetime-edit,
+input[type="date"].date-field-native:focus::-webkit-datetime-edit {
+  color: var(--chakra-colors-gray-800);
+}

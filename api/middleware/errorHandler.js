@@ -10,7 +10,9 @@ module.exports = (err, req, res, _next) => {
 
   const status = err.status || 500;
   const payload = {
+    error: err.message || "Internal Server Error",
     message: err.message || "Internal Server Error",
+    ...(err.retryAfterSeconds != null && { retryAfterSeconds: err.retryAfterSeconds }),
     // Only include stack in non-production
     ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
   };

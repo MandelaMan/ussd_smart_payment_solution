@@ -1,0 +1,402 @@
+import { Fragment, type FormEvent, useCallback, useEffect, useState } from "react";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { useTableSort } from "../hooks/useTableSort";
+import {
+  Badge,
+  Box,
+  Button,
+  Dialog,
+  Field,
+  Flex,
+  Grid,
+  Heading,
+  Input,
+  Stack,
+  Table,
+  Text,
+} from "@chakra-ui/react";
+import { FiBriefcase, FiChevronDown, FiChevronRight } from "react-icons/fi";
+import { api, type Agency, type ListPagination } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { canMutateAgencies } from "../lib/rbac";
+import { toaster } from "../components/ui/toaster";
+import { AppDialog } from "../components/ui/AppDialog";
+import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
+import { FilterField } from "../components/module/FilterField";
+import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
+import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
+import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
+import { AgencyExpandPanel } from "../components/agencies/AgencyExpandPanel";
+import { DisplayText } from "../components/ui/DisplayText";
+import { DataTableExportButton } from "../components/ui/DataTableExportButton";
+import { agencyExportColumns } from "../lib/dataTableExportColumns";
+import {
+  exportTableData,
+  fetchAllPaginatedRows,
+  type ExportFormat,
+  type ExportScope,
+} from "../lib/tableExport";
+import {
+  DataTable,
+  DataTableCard,
+  DataTableSortHeader,
+  DATA_TABLE_LEADING_COL_WIDTH,
+  dataTableCellProps,
+  dataTableTitleColumnHeaderProps,
+  dataTableExpandRowProps,
+} from "../components/ui/DataTable";
+
+const PAGE_SIZE = 20;
+
+type AgencySortKey = "name" | "contactPerson" | "phone" | "email" | "activeCustomers";
+
+export function AgenciesPage() {
+  const { user } = useAuth();
+  const canMutate = canMutateAgencies(user);
+  const [agencies, setAgencies] = useState<Agency[]>([]);
+  const [pagination, setPagination] = useState<ListPagination>({
+    page: 1,
+    limit: PAGE_SIZE,
+    total: 0,
+    pages: 1,
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const debouncedSearchInput = useDebouncedValue(searchInput);
+  const [page, setPage] = useState(1);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [editing, setEditing] = useState<Agency | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [contactPerson, setContactPerson] = useState("");
+  const { sorts, toggleSort, sortQuery } = useTableSort<AgencySortKey>({
+    sortBy: "name",
+    sortDir: "asc",
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params: Record<string, string> = { page: String(page), limit: String(PAGE_SIZE) };
+      if (search.trim()) params.search = search.trim();
+      params.sortBy = sortQuery.sortBy;
+      params.sortDir = sortQuery.sortDir;
+      const res = await api.listAgencies(params);
+      setAgencies(res.agencies);
+      setPagination(res.pagination);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load agencies");
+    } finally {
+      setLoading(false);
+    }
+  }, [search, page, sortQuery.sortBy, sortQuery.sortDir]);
+
+  function handleSort(
+    column: AgencySortKey,
+    defaultDir: "asc" | "desc" = "asc",
+    additive = false
+  ) {
+    toggleSort(column, defaultDir, additive);
+    setPage(1);
+    setExpanded(null);
+  }
+
+  useEffect(() => {
+    const next = debouncedSearchInput.trim();
+    if (next === search) return;
+    setSearch(next);
+    setPage(1);
+    setExpanded(null);
+  }, [debouncedSearchInput, search]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function resetForm() {
+    setName("");
+    setEmail("");
+    setPhone("");
+    setContactPerson("");
+  }
+
+  function openEdit(agency: Agency) {
+    setEditing(agency);
+    setName(agency.name);
+    setEmail(agency.email);
+    setPhone(agency.phone);
+    setContactPerson(agency.contactPerson || "");
+  }
+
+  function closeEdit() {
+    setEditing(null);
+    resetForm();
+  }
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.createAgency({ name, email, phone, contactPerson: contactPerson || undefined });
+      toaster.create({ title: "Agency created", type: "success" });
+      resetForm();
+      setShowForm(false);
+      load();
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Failed to create agency",
+        type: "error",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleUpdate(e: FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    setEditSubmitting(true);
+    try {
+      await api.updateAgency(editing.id, {
+        name,
+        email,
+        phone,
+        contactPerson: contactPerson || undefined,
+      });
+      toaster.create({ title: "Agency updated", type: "success" });
+      closeEdit();
+      setExpanded(null);
+      load();
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Failed to update agency",
+        type: "error",
+      });
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
+  async function handleExport(scope: ExportScope, format: ExportFormat) {
+    setExporting(true);
+    try {
+      await exportTableData({
+        scope,
+        format,
+        filenameBase: "agencies",
+        columns: agencyExportColumns,
+        viewRows: agencies,
+        fetchAllRows: () =>
+          fetchAllPaginatedRows((pageNum, limit) =>
+            api.listAgencies({
+              page: String(pageNum),
+              limit: String(limit),
+              ...(search.trim() ? { search: search.trim() } : {}),
+              sortBy: sortQuery.sortBy,
+              sortDir: sortQuery.sortDir,
+            }).then((res) => ({
+              data: res.agencies,
+              pagination: res.pagination,
+            }))
+          ),
+      });
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Export failed",
+        type: "error",
+      });
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <Stack gap={PAGE_STACK_GAP}>
+      <Flex justify="space-between" align={{ base: "start", md: "center" }} direction={{ base: "column", md: "row" }} gap={3}>
+        <Box>
+          <Heading size="lg">Agencies</Heading>
+          <Text fontSize="sm" color="gray.500">
+            {canMutate ? "Expand a row to view details and edit" : "View agency reference data"}
+          </Text>
+        </Box>
+        <Flex gap={2} align="center">
+          <DataTableExportButton
+            entityLabel="agencies"
+            viewCount={agencies.length}
+            totalCount={pagination.total}
+            loading={exporting}
+            onExport={handleExport}
+          />
+        {canMutate ? (
+        <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
+          <FiBriefcase />
+          Add Agency
+        </Button>
+        ) : null}
+        </Flex>
+      </Flex>
+
+      <FilterToolbar>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+            <Input size="sm" placeholder="Name, email, phone…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} borderRadius="md" />
+          </FilterField>
+      </FilterToolbar>
+
+      {showForm && (
+        <Box bg="white" borderRadius="lg" border="1px solid" borderColor="gray.100" p={5}>
+          <Heading size="sm" mb={4}>New agency</Heading>
+          <AgencyForm
+            name={name} setName={setName} email={email} setEmail={setEmail}
+            phone={phone} setPhone={setPhone} contactPerson={contactPerson} setContactPerson={setContactPerson}
+            onSubmit={handleCreate} submitting={submitting} onCancel={() => { setShowForm(false); resetForm(); }}
+          />
+        </Box>
+      )}
+
+      {error && <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">{error}</Box>}
+
+      <DataTableCard
+        loading={loading}
+        pagination={pagination}
+        onPageChange={(nextPage) => {
+          setPage(nextPage);
+          setExpanded(null);
+        }}
+        itemLabel="agencies"
+      >
+        {loading ? (
+          <ResponsiveListViews
+            fill
+            mobile={<MobileCardListSkeleton fill variant="card" fieldCount={2} />}
+            desktop={<DataTableLoadingSkeleton columns={5} fill />}
+          />
+        ) : agencies.length === 0 ? (
+          <EmptyState>No agencies found</EmptyState>
+        ) : (
+          <ResponsiveListViews
+            mobile={
+              <MobileDataList
+                items={agencies}
+                getKey={(a) => a.id}
+                expandedId={expanded}
+                renderCard={(a, isOpen) => (
+                  <MobileDataCard
+                    title={a.name}
+                    subtitle={a.contactPerson}
+                    trailing={
+                      <Badge colorPalette="brand" variant="subtle" px={2}>
+                        {a.activeCustomers ?? 0}
+                      </Badge>
+                    }
+                    isOpen={isOpen}
+                    onClick={() => setExpanded(isOpen ? null : a.id)}
+                    fields={[
+                      { label: "Phone", value: a.phone },
+                      { label: "Email", value: a.email },
+                    ]}
+                  />
+                )}
+                renderExpanded={(a) => (
+                  <AgencyExpandPanel agency={a} onEdit={openEdit} canEdit={canMutate} />
+                )}
+              />
+            }
+            desktop={
+          <DataTable fixedLayout>
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader {...dataTableTitleColumnHeaderProps} w={DATA_TABLE_LEADING_COL_WIDTH} />
+                <DataTableSortHeader label="Agency" column="name" sorts={sorts} onSort={handleSort} />
+                <DataTableSortHeader label="Contact" column="contactPerson" sorts={sorts} onSort={handleSort} />
+                <DataTableSortHeader label="Customers" column="activeCustomers" sorts={sorts} onSort={handleSort} defaultDir="desc" />
+                <DataTableSortHeader label="Phone" column="phone" sorts={sorts} onSort={handleSort} />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {agencies.map((a) => {
+                const isOpen = expanded === a.id;
+                return (
+                  <Fragment key={a.id}>
+                    <Table.Row bg={isOpen ? "brand.50" : undefined} cursor="pointer" onClick={() => setExpanded(isOpen ? null : a.id)} _hover={{ bg: isOpen ? "brand.50" : "gray.50" }}>
+                      <Table.Cell {...dataTableCellProps} w={DATA_TABLE_LEADING_COL_WIDTH}>{isOpen ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps} fontWeight="semibold">
+                        <DisplayText value={a.name} fontWeight="semibold" />
+                      </Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        <DisplayText value={a.contactPerson} />
+                      </Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        <Badge colorPalette="brand" variant="subtle" px={2}>
+                          {a.activeCustomers ?? 0}
+                        </Badge>
+                      </Table.Cell>
+                      <Table.Cell {...dataTableCellProps} color="gray.600">{a.phone}</Table.Cell>
+                    </Table.Row>
+                    {isOpen && (
+                      <Table.Row {...dataTableExpandRowProps}>
+                        <Table.Cell colSpan={5} p={3} bg="surface.50" borderBottom="none">
+                          <AgencyExpandPanel agency={a} onEdit={openEdit} canEdit={canMutate} />
+                        </Table.Cell>
+                      </Table.Row>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </Table.Body>
+          </DataTable>
+            }
+          />
+        )}
+      </DataTableCard>
+
+      <AppDialog open={!!editing} onOpenChange={(d) => !d.open && closeEdit()} maxW="lg">
+        <Dialog.Header pr={12}>
+          <Dialog.Title>Edit agency</Dialog.Title>
+        </Dialog.Header>
+        <Dialog.Body>
+          <AgencyForm
+            name={name} setName={setName} email={email} setEmail={setEmail}
+            phone={phone} setPhone={setPhone} contactPerson={contactPerson} setContactPerson={setContactPerson}
+            onSubmit={handleUpdate} submitting={editSubmitting} onCancel={closeEdit} submitLabel="Save changes"
+          />
+        </Dialog.Body>
+      </AppDialog>
+    </Stack>
+  );
+}
+
+function AgencyForm({
+  name, setName, email, setEmail, phone, setPhone, contactPerson, setContactPerson,
+  onSubmit, submitting, onCancel, submitLabel = "Save agency",
+}: {
+  name: string; setName: (v: string) => void;
+  email: string; setEmail: (v: string) => void;
+  phone: string; setPhone: (v: string) => void;
+  contactPerson: string; setContactPerson: (v: string) => void;
+  onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
+  submitLabel?: string;
+}) {
+  return (
+    <form onSubmit={onSubmit}>
+      <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap={4}>
+        <Field.Root required><Field.Label>Agency name</Field.Label><Input value={name} onChange={(e) => setName(e.target.value)} /></Field.Root>
+        <Field.Root required><Field.Label>Contact person</Field.Label><Input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} /></Field.Root>
+        <Field.Root required><Field.Label>Email</Field.Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field.Root>
+        <Field.Root required><Field.Label>Phone</Field.Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></Field.Root>
+      </Grid>
+      <Flex gap={2} mt={4}>
+        <Button type="submit" colorPalette="brand" loading={submitting}>{submitLabel}</Button>
+        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+      </Flex>
+    </form>
+  );
+}
