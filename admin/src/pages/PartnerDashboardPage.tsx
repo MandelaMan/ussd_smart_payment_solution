@@ -137,7 +137,7 @@ export function PartnerDashboardPage() {
             Customers, collections, and package activity
           </Text>
         </Box>
-        <Box minW="160px">
+        <Box minW={{ base: "full", sm: "160px" }} maxW={{ base: "full", sm: "200px" }}>
           <Text fontSize="xs" color="gray.600" mb={1}>
             Period
           </Text>

@@ -126,9 +126,10 @@ function PackageChangeSettlement({
         bg="gray.50"
         borderBottomWidth="1px"
         borderColor="gray.100"
-        align="center"
+        align={{ base: "start", sm: "center" }}
         justify="space-between"
         gap={2}
+        direction={{ base: "column", sm: "row" }}
       >
         <Text fontSize="xs" fontWeight="semibold" color="gray.800">
           {isUpgrade ? "Payment breakdown" : "Credit breakdown"}
@@ -142,26 +143,26 @@ function PackageChangeSettlement({
       </Flex>
 
       <Box px={3} py={2.5}>
-        <Flex gap={2} mb={3}>
+        <Flex gap={2} mb={3} align="stretch">
           <Box flex="1" minW={0} bg="gray.50" borderRadius="md" px={2.5} py={2}>
             <Text fontSize="2xs" color="gray.500" textTransform="uppercase" letterSpacing="wide">
               From
             </Text>
-            <Text fontSize="sm" fontWeight="semibold" color="gray.900" lineHeight="1.3">
+            <Text fontSize="sm" fontWeight="semibold" color="gray.900" lineHeight="1.3" wordBreak="break-word">
               {quote.currentMbps} Mbps
             </Text>
             <Text fontSize="xs" color="gray.600">
               {formatCurrency(quote.currentPrice)}
             </Text>
           </Box>
-          <Flex align="center" color="gray.400" flexShrink={0} aria-hidden>
+          <Flex align="center" color="gray.400" flexShrink={0} aria-hidden px={0.5}>
             →
           </Flex>
           <Box flex="1" minW={0} bg="brand.50" borderRadius="md" px={2.5} py={2}>
             <Text fontSize="2xs" color="brand.700" textTransform="uppercase" letterSpacing="wide">
               To
             </Text>
-            <Text fontSize="sm" fontWeight="semibold" color="brand.800" lineHeight="1.3">
+            <Text fontSize="sm" fontWeight="semibold" color="brand.800" lineHeight="1.3" wordBreak="break-word">
               {quote.newMbps} Mbps
             </Text>
             <Text fontSize="xs" color="brand.700">

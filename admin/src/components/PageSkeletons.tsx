@@ -144,10 +144,6 @@ export function DashboardSkeleton() {
           <SkeletonBlock height="36px" width="140px" />
         </Flex>
 
-        <Box display={{ base: "block", xl: "none" }}>
-          <ActivityPanelSkeleton />
-        </Box>
-
         <DashboardMetricsSkeleton />
 
         <Grid templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }} gap={4}>

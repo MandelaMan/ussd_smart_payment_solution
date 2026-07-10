@@ -50,13 +50,13 @@ export function MetricCard({
     <Box
       bg={style.bg}
       color={style.color}
-      borderRadius="lg"
-      px={3.5}
-      py={3}
-      minH="104px"
+      borderRadius="xl"
+      px={{ base: 4, md: 3.5 }}
+      py={{ base: 4, md: 3 }}
+      minH={{ base: "118px", md: "104px" }}
       display="flex"
       flexDirection="column"
-      gap={1.5}
+      gap={{ base: 2, md: 1.5 }}
       boxShadow="sm"
       position="relative"
       overflow="hidden"
@@ -72,9 +72,9 @@ export function MetricCard({
       }}
     >
       <Text
-        fontSize="xs"
+        fontSize={{ base: "sm", md: "xs" }}
         fontWeight="semibold"
-        lineHeight="1.3"
+        lineHeight="1.35"
         opacity={0.92}
         css={{
           display: "-webkit-box",
@@ -87,7 +87,7 @@ export function MetricCard({
       </Text>
 
       <Text
-        fontSize={{ base: "lg", md: "xl" }}
+        fontSize={{ base: "xl", md: "xl" }}
         fontWeight="bold"
         lineHeight="1.15"
         letterSpacing="-0.02em"
@@ -101,12 +101,12 @@ export function MetricCard({
       {(sub || sub2) && (
         <Box opacity={0.9}>
           {sub && (
-            <Text fontSize="xs" lineHeight="1.35">
+            <Text fontSize={{ base: "sm", md: "xs" }} lineHeight="1.4">
               {sub}
             </Text>
           )}
           {sub2 && (
-            <Text fontSize="xs" lineHeight="1.35" mt={sub ? 0.5 : 0}>
+            <Text fontSize={{ base: "sm", md: "xs" }} lineHeight="1.4" mt={sub ? 0.5 : 0}>
               {sub2}
             </Text>
           )}

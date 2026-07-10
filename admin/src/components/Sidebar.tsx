@@ -21,6 +21,7 @@ import {
   FiSettings,
   FiList,
   FiRefreshCw,
+  FiActivity,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/auth";
@@ -79,6 +80,12 @@ export function Sidebar({ open, onClose }: Props) {
       label: "Apartment History",
       icon: FiLayers,
       visible: canAccessConfig(user),
+    },
+    {
+      to: "/activity",
+      label: "Activity",
+      icon: FiActivity,
+      visible: canAccessFinance(user) || normalizeRole(user?.role) === "support",
     },
     {
       to: "/transactions",
@@ -166,7 +173,7 @@ export function Sidebar({ open, onClose }: Props) {
           >
             <Image
               src="/admin/logo.png"
-              alt="SUL Solutions"
+              alt="SUL Bix"
               boxSize="36px"
               borderRadius="md"
               bg="white"
@@ -175,7 +182,7 @@ export function Sidebar({ open, onClose }: Props) {
             />
             <Box minW={0}>
               <Text fontWeight="semibold" fontSize="sm" color="white" truncate>
-                SUL Solutions
+                SUL Bix
               </Text>
               <Text fontSize="xs" color="whiteAlpha.800" truncate>
                 Utility Admin

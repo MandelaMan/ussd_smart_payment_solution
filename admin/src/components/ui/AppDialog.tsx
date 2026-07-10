@@ -50,19 +50,29 @@ export function AppDialog({
             }
           }}
         />
-        <Dialog.Positioner zIndex={zIndex}>
+        <Dialog.Positioner
+          zIndex={zIndex}
+          display="flex"
+          alignItems={{ base: "flex-end", sm: "center" }}
+          justifyContent="center"
+          p={{ base: 0, sm: 4 }}
+        >
           <Dialog.Content
-            borderRadius="xl"
-            mx={4}
+            borderRadius={{ base: "2xl 2xl 0 0", sm: "xl" }}
+            mx={{ base: 0, sm: 4 }}
+            mb={{ base: 0, sm: undefined }}
             w="full"
-            maxW={maxW}
+            maxW={{ base: "full", sm: maxW }}
+            maxH={{ base: "min(92dvh, 100%)", sm: "calc(100dvh - 2rem)" }}
             overflow="hidden"
+            overflowY="auto"
             bg="white"
             boxShadow="xl"
-            borderWidth="1px"
+            borderWidth={{ base: 0, sm: "1px" }}
             borderColor="gray.200"
             zIndex={zIndex + 1}
             position="relative"
+            pb={{ base: "env(safe-area-inset-bottom, 0px)", sm: 0 }}
           >
             {showCloseButton ? (
               <IconButton

@@ -17,12 +17,6 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
   return (
     <Box
       as="nav"
-      display={{ base: "block", lg: "none" }}
-      position="fixed"
-      bottom={0}
-      left={0}
-      right={0}
-      zIndex={30}
       bg="white"
       borderTop="1px solid"
       borderColor="gray.100"

@@ -24,11 +24,11 @@ export function PackageSubscriptionChart({ data }: { data: PackageItem[] }) {
             borderBottom={index < items.length - 1 ? "1px solid" : undefined}
             borderColor="gray.200"
           >
-            <Flex h="38px" borderRadius="sm" overflow="hidden" bg="gray.100">
+            <Flex h={{ base: "42px", md: "38px" }} borderRadius="md" overflow="hidden" bg="gray.100">
               <Flex
                 bg={BRAND.cerulean}
                 w={`${barWidth}%`}
-                minW="120px"
+                minW={{ base: "96px", md: "120px" }}
                 align="center"
                 justify="space-between"
                 px={3}

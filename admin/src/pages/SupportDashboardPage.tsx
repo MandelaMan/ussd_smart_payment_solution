@@ -221,13 +221,6 @@ export function SupportDashboardPage() {
         py={{ xl: 4 }}
         pr={{ xl: 5 }}
       >
-        <Box display={{ base: "block", xl: "none" }}>
-          <SupportActivityPanel
-            items={stats.activity}
-            loading={loading && stats.activity.length === 0}
-          />
-        </Box>
-
         {loading ? (
           <DashboardMetricsSkeleton />
         ) : (

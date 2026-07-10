@@ -37,16 +37,17 @@ export function ActivityPanel({ items, loading }: Props) {
       w={{ base: "full", xl: "280px" }}
       flexShrink={0}
       bg="white"
-      borderRadius={{ base: "lg", xl: 0 }}
+      borderRadius={{ base: "xl", xl: 0 }}
       border={{ base: "1px solid", xl: "none" }}
       borderLeft={{ xl: "1px solid" }}
       borderColor={{ base: "gray.100", xl: "brand.100" }}
       overflow="hidden"
-      h={{ xl: "100%" }}
-      minH={{ xl: 0 }}
-      flex={{ xl: 1 }}
+      h={{ base: "100%", xl: "100%" }}
+      minH={{ base: "420px", xl: 0 }}
+      flex={{ base: 1, xl: 1 }}
       display="flex"
       flexDirection="column"
+      boxShadow={{ base: "sm", xl: "none" }}
     >
       <Box px={3} py={3} borderBottom="1px solid" borderColor="gray.100">
         <Text fontSize="md" fontWeight="semibold" color="gray.800">

@@ -33,6 +33,7 @@ import { BillingUnallocatedMpesaPage } from "./pages/billing/BillingUnallocatedM
 import { BillingCommunicationsPage } from "./pages/billing/BillingCommunicationsPage";
 import { BusinessIntelligencePage } from "./pages/BusinessIntelligencePage";
 import { SynchronizationPage } from "./pages/SynchronizationPage";
+import { ActivityPage } from "./pages/ActivityPage";
 
 export default function App() {
   return (
@@ -45,6 +46,7 @@ export default function App() {
             <Route element={<ProtectedRoute />}>
               <Route element={<Layout />}>
                 <Route index element={<RoleHomePage />} />
+                <Route path="activity" element={<ActivityPage />} />
                 <Route element={<FinanceRoute />}>
                   <Route path="transactions" element={<TransactionsPage />} />
                   <Route path="synchronization" element={<SynchronizationPage />} />

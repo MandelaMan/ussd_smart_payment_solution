@@ -1,4 +1,5 @@
 import {
+  FiActivity,
   FiBarChart2,
   FiCheckCircle,
   FiCreditCard,
@@ -14,6 +15,7 @@ import {
   canAccessFinance,
   canAccessReports,
   isPartner,
+  normalizeRole,
 } from "./rbac";
 
 export type MobileNavTab = {
@@ -47,7 +49,12 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
   } else if (canAccessFinance(user)) {
     tabs.push(
       { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },
-      { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 }
+      { key: "activity", to: "/activity", label: "Activity", icon: FiActivity }
+    );
+  } else if (normalizeRole(user?.role) === "support") {
+    tabs.push(
+      { key: "activity", to: "/activity", label: "Activity", icon: FiActivity },
+      { key: "packages", to: "/products", label: "Packages", icon: FiPackage }
     );
   } else if (canAccessConfig(user)) {
     tabs.push(
@@ -72,6 +79,7 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
 function configFallbackTab(existing: MobileNavTab[]): MobileNavTab | null {
   const used = new Set(existing.map((t) => t.to));
   const options: MobileNavTab[] = [
+    { key: "activity", to: "/activity", label: "Activity", icon: FiActivity },
     { key: "packages", to: "/products", label: "Packages", icon: FiPackage },
     { key: "buildings", to: "/buildings", label: "Buildings", icon: FiHome },
     { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 },

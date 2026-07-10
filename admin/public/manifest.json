@@ -1,7 +1,7 @@
 {
-  "name": "Starlynx Utility Admin",
-  "short_name": "Starlynx",
-  "description": "Customer management, billing, and payment operations",
+  "name": "SUL Bix",
+  "short_name": "SUL Bix",
+  "description": "A unified hub for customer management and billing",
   "start_url": "/admin/",
   "display": "standalone",
   "orientation": "portrait-primary",

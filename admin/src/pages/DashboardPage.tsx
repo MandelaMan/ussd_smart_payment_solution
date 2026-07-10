@@ -81,9 +81,9 @@ function formatAxisRevenue(value: number) {
 function revenueChartMargin(chartMonth: string) {
   return {
     top: 12,
-    right: 16,
-    left: 8,
-    bottom: chartMonth === "all" ? 28 : 22,
+    right: 8,
+    left: 4,
+    bottom: chartMonth === "all" ? 32 : 26,
   };
 }
 
@@ -271,119 +271,119 @@ export function DashboardPage() {
         flex={1}
         minW={0}
         minH={0}
-        gap={3}
+        gap={{ base: 5, xl: 3 }}
         overflowY={{ xl: "auto" }}
-        px={{ xl: 3 }}
+        px={{ base: 1, xl: 3 }}
         py={{ xl: 3 }}
         pr={{ xl: 4 }}
       >
-        <Box display={{ base: "block", xl: "none" }}>
-          <ActivityPanel items={activity} loading={loading && activity.length === 0} />
-        </Box>
-
         {loading ? (
           <DashboardMetricsSkeleton />
         ) : (
-          <>
-            <Text fontSize="sm" fontWeight="semibold" color="gray.600">
-              Subscribers
-            </Text>
-            <Grid
-              templateColumns={{
-                base: "1fr",
-                sm: "1fr 1fr",
-                lg: "repeat(3, 1fr)",
-                xl: "repeat(5, 1fr)",
-              }}
-              gap={3}
-            >
-              <MetricCard
-                accent="cerulean"
-                label="Total Subscribers"
-                value={subs.total}
-                sub={`${subs.active} active`}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="Total Buildings"
-                value={subs.buildings}
-                sub={`${subs.agencies} agencies`}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="Total C2B Clients"
-                value={subs.c2b}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="Total B2B Clients"
-                value={subs.b2b}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="TISP Active / Suspended"
-                value={`${subs.tispActive} / ${subs.tispSuspended}`}
-                sub={`${subs.tispSuspended} suspended`}
-                sub2={
-                  subs.tispUnknown > 0
-                    ? `${subs.tispUnknown} pending status`
-                    : `${subs.active} active accounts`
-                }
-                to="/customers?status=Active"
-              />
-            </Grid>
+          <Stack gap={{ base: 5, xl: 3 }}>
+            <Box>
+              <Text fontSize="sm" fontWeight="semibold" color="gray.600" mb={3}>
+                Subscribers
+              </Text>
+              <Grid
+                templateColumns={{
+                  base: "1fr 1fr",
+                  lg: "repeat(3, 1fr)",
+                  xl: "repeat(5, 1fr)",
+                }}
+                gap={{ base: 3, xl: 3 }}
+              >
+                <MetricCard
+                  accent="cerulean"
+                  label="Total Subscribers"
+                  value={subs.total}
+                  sub={`${subs.active} active`}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Total Buildings"
+                  value={subs.buildings}
+                  sub={`${subs.agencies} agencies`}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Total C2B Clients"
+                  value={subs.c2b}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Total B2B Clients"
+                  value={subs.b2b}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="TISP Active / Suspended"
+                  value={`${subs.tispActive} / ${subs.tispSuspended}`}
+                  sub={`${subs.tispSuspended} suspended`}
+                  sub2={
+                    subs.tispUnknown > 0
+                      ? `${subs.tispUnknown} pending status`
+                      : `${subs.active} active accounts`
+                  }
+                  to="/customers?status=Active"
+                />
+              </Grid>
+            </Box>
 
-            <Text fontSize="sm" fontWeight="semibold" color="gray.600" mt={2}>
-              Payments
-            </Text>
-            <Grid
-              templateColumns={{
-                base: "1fr",
-                sm: "1fr 1fr",
-                lg: "repeat(3, 1fr)",
-                xl: "repeat(5, 1fr)",
-              }}
-              gap={3}
-            >
-              <MetricCard
-                accent="cerulean"
-                label="Total Collected Amount"
-                value={formatMetricCurrency(stats.mpesa.revenue)}
-                sub={`${stats.mpesa.success} successful payments`}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="Revenue This Month"
-                value={formatMetricCurrency(stats.month.revenue)}
-                sub={`${stats.month.transactions} transactions`}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="Revenue Today"
-                value={formatMetricCurrency(stats.today.revenue)}
-                sub={`${stats.today.transactions} transactions`}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="Returning Payers"
-                value={stats.customers.returning}
-                sub={`${stats.customers.returningRate}% return rate`}
-              />
-              <MetricCard
-                accent="cerulean"
-                label="Success Rate"
-                value={`${successRate}%`}
-                sub={`${stats.mpesa.success} success · ${stats.mpesa.failed} failed`}
-                sub2={`Avg ${formatMetricCurrency(stats.avgTransaction)}`}
-              />
-            </Grid>
-          </>
+            <Box>
+              <Text fontSize="sm" fontWeight="semibold" color="gray.600" mb={3}>
+                Payments
+              </Text>
+              <Grid
+                templateColumns={{
+                  base: "1fr 1fr",
+                  lg: "repeat(3, 1fr)",
+                  xl: "repeat(5, 1fr)",
+                }}
+                gap={{ base: 3, xl: 3 }}
+              >
+                <MetricCard
+                  accent="cerulean"
+                  label="Total Collected Amount"
+                  value={formatMetricCurrency(stats.mpesa.revenue)}
+                  sub={`${stats.mpesa.success} successful payments`}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Revenue This Month"
+                  value={formatMetricCurrency(stats.month.revenue)}
+                  sub={`${stats.month.transactions} transactions`}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Revenue Today"
+                  value={formatMetricCurrency(stats.today.revenue)}
+                  sub={`${stats.today.transactions} transactions`}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Returning Payers"
+                  value={stats.customers.returning}
+                  sub={`${stats.customers.returningRate}% return rate`}
+                />
+                <Box gridColumn={{ base: "1 / -1", xl: "auto" }}>
+                  <MetricCard
+                    accent="cerulean"
+                    label="Success Rate"
+                    value={`${successRate}%`}
+                    sub={`${stats.mpesa.success} success · ${stats.mpesa.failed} failed`}
+                    sub2={`Avg ${formatMetricCurrency(stats.avgTransaction)}`}
+                  />
+                </Box>
+              </Grid>
+            </Box>
+          </Stack>
         )}
 
-        <Grid templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }} gap={3}>
+        <Grid templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }} gap={{ base: 4, xl: 3 }}>
           <Card title="Most Subscribed Packages" accent="cerulean">
             {packageChartData.length === 0 ? (
-              <Flex minH="160px" align="center" justify="center">
+              <Flex minH={{ base: "180px", md: "160px" }} align="center" justify="center">
                 <Text fontSize="sm" color="gray.400">No package data yet</Text>
               </Flex>
             ) : (
@@ -392,7 +392,7 @@ export function DashboardPage() {
           </Card>
 
           <Card title="Payment Insights" accent="cerulean">
-            <Stack gap={3} fontSize="sm">
+            <Stack gap={{ base: 3.5, xl: 3 }} fontSize="sm">
               <Row label="Total transactions" value={String(stats.mpesa.total)} />
               <Row label="Successful payments" value={String(stats.mpesa.success)} />
               <Row label="Failed payments" value={String(stats.mpesa.failed)} />
@@ -411,7 +411,7 @@ export function DashboardPage() {
           </Card>
         </Grid>
 
-        <Grid templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }} gap={3}>
+        <Grid templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }} gap={{ base: 4, xl: 3 }}>
           <Card
             title="Revenue Trend"
             subtitle={monthLabel}
@@ -435,7 +435,7 @@ export function DashboardPage() {
               </SelectField>
             }
           >
-            <Box h={{ base: "180px", md: "200px" }} minH="200px">
+            <Box h={{ base: "240px", md: "200px" }} minH={{ base: "240px", md: "200px" }} mt={1}>
               {chartLoading ? (
                 <ChartSkeleton height="100%" />
               ) : chartIsEmpty ? (
@@ -459,21 +459,21 @@ export function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
                     <XAxis
                       dataKey="label"
-                      tick={{ fontSize: chartMonth === "all" ? 9 : 10, fill: "#64748b" }}
+                      tick={{ fontSize: chartMonth === "all" ? 10 : 11, fill: "#64748b" }}
                       axisLine={false}
                       tickLine={false}
                       interval={chartMonth === "all" ? 0 : monthDayCount > 15 ? 2 : 0}
-                      minTickGap={chartMonth === "all" ? 2 : 6}
+                      minTickGap={chartMonth === "all" ? 4 : 8}
                       tickMargin={10}
-                      height={chartMonth === "all" ? 40 : 36}
-                      padding={{ left: 8, right: 12 }}
+                      height={chartMonth === "all" ? 44 : 40}
+                      padding={{ left: 4, right: 8 }}
                     />
                     <YAxis
                       tick={{ fontSize: 11, fill: "#64748b" }}
                       axisLine={false}
                       tickLine={false}
-                      width={48}
-                      tickMargin={6}
+                      width={44}
+                      tickMargin={4}
                       tickFormatter={formatAxisRevenue}
                       allowDecimals={false}
                     />
@@ -495,7 +495,7 @@ export function DashboardPage() {
                       dataKey="revenue"
                       stroke={BRAND.cerulean}
                       fill="url(#rev)"
-                      strokeWidth={2}
+                      strokeWidth={2.5}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -504,7 +504,7 @@ export function DashboardPage() {
           </Card>
 
           <Card title="By Status" accent="cerulean">
-            <Box h={{ base: "180px", md: "200px" }}>
+            <Box h={{ base: "220px", md: "200px" }} mt={1}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -512,9 +512,9 @@ export function DashboardPage() {
                     dataKey="count"
                     nameKey="status"
                     cx="50%"
-                    cy="50%"
-                    innerRadius={48}
-                    outerRadius={72}
+                    cy="48%"
+                    innerRadius={54}
+                    outerRadius={80}
                     paddingAngle={2}
                   >
                     {stats.statusBreakdown.map((entry) => (
@@ -529,11 +529,14 @@ export function DashboardPage() {
           </Card>
         </Grid>
 
-        <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }} gap={3}>
+        <Grid
+          templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
+          gap={{ base: 4, xl: 3 }}
+        >
           <Card title="By Channel" accent="cerulean">
-            <Box h="160px">
+            <Box h={{ base: "200px", md: "160px" }} mt={1}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.channelBreakdown} margin={{ left: -20 }}>
+                <BarChart data={stats.channelBreakdown} margin={{ left: -8, right: 4, top: 8, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
                   <XAxis dataKey="channel" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
@@ -545,7 +548,7 @@ export function DashboardPage() {
           </Card>
 
           <Card title="Top Buildings" accent="cerulean">
-            <Stack gap={3}>
+            <Stack gap={3.5}>
               {subs.topBuildings.slice(0, 4).map((b) => (
                 <Flex key={b.building} justify="space-between" fontSize="sm" align="center">
                   <DisplayText value={b.building} fontWeight="medium" />
@@ -561,7 +564,7 @@ export function DashboardPage() {
           </Card>
 
           <Card title="Top Payers" accent="cerulean">
-            <Stack gap={3}>
+            <Stack gap={3.5}>
               {stats.topCustomers.slice(0, 4).map((c) => (
                 <Flex key={c.customer} justify="space-between" fontSize="sm" align="center">
                   <Box minW={0}>
@@ -618,8 +621,8 @@ function Card({
     <Box
       bg="white"
       borderRadius="xl"
-      px={3.5}
-      py={3}
+      px={{ base: 4, md: 3.5 }}
+      py={{ base: 4, md: 3 }}
       border="1px solid"
       borderColor="gray.100"
       borderTopWidth="3px"
@@ -630,15 +633,15 @@ function Card({
         justify="space-between"
         align={{ base: "start", sm: "center" }}
         direction={{ base: "column", sm: "row" }}
-        gap={2}
-        mb={2}
+        gap={2.5}
+        mb={{ base: 3.5, md: 2 }}
       >
         <Box>
-          <Text fontSize="md" fontWeight="semibold" color="gray.800">
+          <Text fontSize={{ base: "md", md: "md" }} fontWeight="semibold" color="gray.800">
             {title}
           </Text>
           {subtitle && (
-            <Text fontSize="xs" color="gray.500">
+            <Text fontSize="xs" color="gray.500" mt={0.5}>
               {subtitle}
             </Text>
           )}
