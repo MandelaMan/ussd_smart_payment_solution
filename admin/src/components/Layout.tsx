@@ -52,7 +52,7 @@ export function Layout() {
       </Flex>
 
       {/* Portal to body so fixed is always viewport-relative (not trapped by overflow/transform) */}
-      {typeof document !== "undefined"
+      {typeof document !== "undefined" && !open
         ? createPortal(
             <Box
               className="mobile-bottom-nav-root"

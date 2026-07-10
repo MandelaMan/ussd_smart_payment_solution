@@ -133,7 +133,7 @@ export function Sidebar({ open, onClose }: Props) {
           position="fixed"
           inset={0}
           bg="blackAlpha.500"
-          zIndex={40}
+          zIndex={1100}
           onClick={onClose}
         />
       )}
@@ -148,7 +148,7 @@ export function Sidebar({ open, onClose }: Props) {
         top={0}
         h="100dvh"
         maxH="100dvh"
-        zIndex={50}
+        zIndex={{ base: 1200, lg: 50 }}
         transform={{
           base: open ? "translateX(0)" : "translateX(-100%)",
           lg: "none",
@@ -245,9 +245,13 @@ export function Sidebar({ open, onClose }: Props) {
           flexShrink={0}
           borderTop="1px solid"
           borderColor="brand.100"
-          p={3}
+          px={3}
+          pt={3}
           bg="white"
-          pb="max(0.75rem, env(safe-area-inset-bottom, 0px))"
+          pb={{
+            base: "max(1rem, env(safe-area-inset-bottom, 0px))",
+            lg: 3,
+          }}
         >
           <Text fontSize="sm" fontWeight="medium" truncate color="brand.800">
             {user?.name}

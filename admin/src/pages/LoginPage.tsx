@@ -593,7 +593,7 @@ export function LoginPage() {
     const inputProps = compact ? softInputPropsCompact : softInputProps;
     return (
       <Box as="form" onSubmit={handleSubmit} w="full">
-        <Stack gap={compact ? 3 : 4}>
+        <Stack gap={compact ? 4 : 4}>
           {error ? (
             <Box bg="red.50" color="red.700" px={3} py={2} borderRadius="lg" fontSize="sm">
               {error}
@@ -627,7 +627,7 @@ export function LoginPage() {
             </InputGroup>
           </Field.Root>
 
-          <Flex align="center" justify="space-between" gap={2} flexWrap="nowrap">
+          <Flex align="center" justify="space-between" gap={2} flexWrap="nowrap" pt={compact ? 1 : 0}>
             <Checkbox.Root
               checked={rememberMe}
               onCheckedChange={(d) => setRememberMe(Boolean(d.checked))}
@@ -669,15 +669,99 @@ export function LoginPage() {
             fontSize="md"
             letterSpacing="0.01em"
             loading={submitting}
-            mt={1}
+            mt={compact ? 2 : 1}
             boxShadow="0 10px 24px rgba(22, 106, 130, 0.28)"
           >
-            Login
+            {compact ? "Sign in" : "Login"}
           </Button>
         </Stack>
       </Box>
     );
   };
+
+  const classicDesktopForm = (
+    <Box as="form" onSubmit={handleSubmit} w="full">
+      <Stack gap={4}>
+        {error ? (
+          <Box bg="red.50" color="red.700" px={3} py={2.5} borderRadius="lg" fontSize="sm">
+            {error}
+          </Box>
+        ) : null}
+
+        <Field.Root required>
+          <Field.Label fontWeight="medium" color="gray.700" fontSize="sm" mb={1}>
+            Email address <Field.RequiredIndicator />
+          </Field.Label>
+          <InputGroup startElement={<FiMail color="gray" size={16} />}>
+            <Input
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              placeholder="Enter email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              fontSize="sm"
+              h="44px"
+              borderRadius="lg"
+              bg="white"
+              border="1px solid"
+              borderColor="gray.200"
+              _placeholder={{ color: "gray.400" }}
+              _focusVisible={{
+                borderColor: BRAND.cerulean,
+                boxShadow: `0 0 0 1px ${BRAND.cerulean}`,
+                outline: "none",
+              }}
+            />
+          </InputGroup>
+        </Field.Root>
+
+        <Field.Root required>
+          <Field.Label fontWeight="medium" color="gray.700" fontSize="sm" mb={1}>
+            Password <Field.RequiredIndicator />
+          </Field.Label>
+          <InputGroup startElement={<FiLock color="gray" size={16} />}>
+            <Input
+              type="password"
+              autoComplete="current-password"
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              fontSize="sm"
+              h="44px"
+              borderRadius="lg"
+              bg="white"
+              border="1px solid"
+              borderColor="gray.200"
+              _placeholder={{ color: "gray.400" }}
+              _focusVisible={{
+                borderColor: BRAND.cerulean,
+                boxShadow: `0 0 0 1px ${BRAND.cerulean}`,
+                outline: "none",
+              }}
+            />
+          </InputGroup>
+        </Field.Root>
+
+        <Button
+          type="submit"
+          w="full"
+          bg={BRAND.cerulean}
+          color="white"
+          _hover={{ bg: "brand.700" }}
+          size="md"
+          h="44px"
+          borderRadius="lg"
+          fontWeight="semibold"
+          fontSize="sm"
+          loading={submitting}
+          mt={1}
+        >
+          Sign in
+        </Button>
+      </Stack>
+    </Box>
+  );
 
   return (
     <Flex
@@ -795,48 +879,33 @@ export function LoginPage() {
           mt={2}
           bg="white"
           borderTopRadius="2xl"
-          px={5}
-          pt={4}
-          pb="max(1rem, env(safe-area-inset-bottom, 0px))"
+          px={6}
+          pt={5}
+          pb="max(1.5rem, env(safe-area-inset-bottom, 0px))"
           boxShadow="0 -12px 40px rgba(0,0,0,0.16)"
           overflow="hidden"
         >
-          <Flex justify="center" mb={2.5} flexShrink={0}>
+          <Flex justify="center" mb={4} flexShrink={0}>
             <Box w="36px" h="3px" borderRadius="md" bg="gray.200" />
           </Flex>
 
           <Heading
-            textAlign="center"
             fontSize="2xl"
             fontWeight="bold"
-            color="gray.900"
+            color="gray.800"
             letterSpacing="-0.02em"
-            mb={0.5}
+            mb={2}
             flexShrink={0}
           >
-            Login
+            Welcome back
           </Heading>
-          <Text textAlign="center" fontSize="sm" color="gray.500" mb={4} flexShrink={0}>
-            Don&apos;t Have An Account?{" "}
-            <Button
-              type="button"
-              variant="plain"
-              size="sm"
-              color={BRAND.cerulean}
-              fontWeight="bold"
-              px={0}
-              h="auto"
-              minH="unset"
-              verticalAlign="baseline"
-              onClick={() => notifyAccessHelp("signup")}
-            >
-              Sign Up
-            </Button>
+          <Text fontSize="sm" color="gray.500" mb={6} lineHeight="1.5" flexShrink={0}>
+            Sign in to access your operations dashboard
           </Text>
 
           <Box flexShrink={0}>{formFields(true)}</Box>
 
-          <Text mt="auto" pt={3} fontSize="xs" color="gray.400" textAlign="center" flexShrink={0}>
+          <Text mt="auto" pt={5} fontSize="xs" color="gray.400" textAlign="center" flexShrink={0}>
             {COPYRIGHT}
           </Text>
         </Flex>
@@ -939,46 +1008,32 @@ export function LoginPage() {
         </Box>
       </Flex>
 
+      {/* Desktop: classic white welcome form — hero/tiles unchanged */}
       <Flex
         display={{ base: "none", md: "flex" }}
         flex="1"
         align="center"
         justify="center"
         bg="white"
-        px={{ md: 12, lg: 16 }}
+        px={{ md: 10, lg: 14 }}
         py={10}
         minH="100dvh"
       >
-        <Box w="full" maxW="420px">
+        <Box w="full" maxW="400px">
           <Heading
-            textAlign="center"
-            fontSize="3xl"
+            fontSize="2xl"
             fontWeight="bold"
-            color="gray.900"
+            color="gray.800"
             letterSpacing="-0.02em"
-            mb={1}
+            mb={1.5}
           >
-            Login
+            Welcome back
           </Heading>
-          <Text textAlign="center" fontSize="sm" color="gray.500" mb={8}>
-            Don&apos;t Have An Account?{" "}
-            <Button
-              type="button"
-              variant="plain"
-              size="sm"
-              color={BRAND.cerulean}
-              fontWeight="bold"
-              px={0}
-              h="auto"
-              minH="unset"
-              verticalAlign="baseline"
-              onClick={() => notifyAccessHelp("signup")}
-            >
-              Sign Up
-            </Button>
+          <Text fontSize="sm" color="gray.500" mb={7} lineHeight="1.5">
+            Sign in to access your operations dashboard
           </Text>
-          {formFields()}
-          <Text mt={10} fontSize="xs" color="gray.400" textAlign="center">
+          {classicDesktopForm}
+          <Text mt={8} fontSize="xs" color="gray.400" textAlign="center">
             {COPYRIGHT}
           </Text>
         </Box>
