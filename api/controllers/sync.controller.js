@@ -108,7 +108,11 @@ async function triggerSync(req, res, next) {
         integration === INTEGRATIONS.RECONCILIATION
           ? req.body?.fullZoho !== true
           : undefined,
-      incremental: req.body?.incremental !== false,
+      // Customers (TISP) always full-scans every active customer — TISP has no cursor.
+      incremental:
+        integration === INTEGRATIONS.CUSTOMER
+          ? false
+          : req.body?.incremental !== false,
       metadata: { userEmail: req.user?.email },
     });
 

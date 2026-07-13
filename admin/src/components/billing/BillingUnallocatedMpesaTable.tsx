@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Button, Box, Input, Stack, Table, Text } from "@chakra-ui/react";
-import { FiChevronDown, FiChevronRight } from "react-icons/fi";
+import { FiChevronDown, FiChevronRight, FiRefreshCw } from "react-icons/fi";
 import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
+import { useMobileViewport } from "../../hooks/useMobileViewport";
 import {
   api,
   formatCurrency,
@@ -21,6 +22,7 @@ import {
 } from "../ui/DataTable";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../PageSkeletons";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../ui/MobileDataList";
+import { MobilePageChrome } from "../ui/MobilePageChrome";
 import { DataTableExportButton } from "../ui/DataTableExportButton";
 import { unmatchedMpesaExportColumns } from "../../lib/dataTableExportColumns";
 import {
@@ -29,6 +31,7 @@ import {
   type ExportScope,
 } from "../../lib/tableExport";
 import { UnmatchedMpesaExpandPanel } from "./UnmatchedMpesaExpandPanel";
+import { useBillingReconciliation } from "./BillingReconciliationContext";
 
 const PAGE_SIZE = 25;
 
@@ -38,6 +41,8 @@ type Props = {
 };
 
 export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props) {
+  const isMobile = useMobileViewport();
+  const { syncing, runSync } = useBillingReconciliation();
   const [searchInput, setSearchInput] = useState("");
   const { query: search, pending: searchPending } = useDebouncedSearch(searchInput);
   const [allRows, setAllRows] = useState<UnmatchedMpesaPayment[]>([]);
@@ -93,7 +98,9 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
     pages: Math.ceil(filtered.length / PAGE_SIZE) || 1,
   };
 
-  const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const rows = isMobile
+    ? filtered.slice(0, page * PAGE_SIZE)
+    : filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const colSpan = 8;
 
   function handleAllocated() {
@@ -120,6 +127,20 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
 
   return (
     <Stack gap={3}>
+      <Box display={{ base: "block", lg: "none" }}>
+        <MobilePageChrome
+          title="Unallocated M-Pesa"
+          searchValue={searchInput}
+          onSearchChange={setSearchInput}
+          searchPlaceholder="Receipt, account, phone…"
+          headerActions={
+            <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+              <FiRefreshCw />
+            </Button>
+          }
+        />
+      </Box>
+
       <FilterToolbar
         actions={
           <DataTableExportButton
@@ -131,7 +152,7 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
           />
         }
       >
-        <FilterField label="Search" flex={FILTER_FLEX.search}>
+        <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
           <Input
             size="sm"
             placeholder="Receipt, account ref, phone, customer…"
@@ -148,7 +169,12 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
       )}
 
       {tableBusy ? (
-        <DataTableCard pagination={pagination} onPageChange={setPage} loading>
+        <DataTableCard
+          pagination={pagination}
+          onPageChange={setPage}
+          loading
+          loadedCount={rows.length}
+        >
           <ResponsiveListViews
             fill
             mobile={<MobileCardListSkeleton fill variant="card" />}
@@ -156,7 +182,11 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
           />
         </DataTableCard>
       ) : (
-        <DataTableCard pagination={pagination} onPageChange={setPage}>
+        <DataTableCard
+          pagination={pagination}
+          onPageChange={setPage}
+          loadedCount={rows.length}
+        >
           <ResponsiveListViews
         mobile={
             <MobileDataList
@@ -165,22 +195,23 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
               expandedId={expanded != null ? String(expanded) : null}
               renderCard={(row, isOpen) => (
                 <MobileDataCard
+                  variant="row"
                   title={row.referenceId || "—"}
                   subtitle={row.customerName || row.accountReference || "No account ref"}
+                  trailing={
+                    <Text fontSize="sm" fontWeight="semibold" color="brand.800">
+                      {formatCurrency(row.amount)}
+                    </Text>
+                  }
                   isOpen={isOpen}
                   onClick={() => setExpanded(expanded === row.id ? null : row.id)}
-                  fields={[
-                    { label: "Amount", value: formatCurrency(row.amount) },
-                    { label: "Phone", value: row.phone || "—" },
-                    { label: "Date", value: row.paidAt ? formatDate(row.paidAt) : "—" },
-                  ]}
                 />
               )}
               renderExpanded={(row) => (
                 <UnmatchedMpesaExpandPanel paymentId={row.id} onComplete={handleAllocated} />
               )}
               emptyMessage={
-                <Text fontSize="sm" color="gray.500" py={8} textAlign="center">
+                <Text fontSize="sm" color="fg.muted" py={8} textAlign="center">
                   No unallocated M-Pesa payments
                 </Text>
               }
@@ -222,7 +253,7 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
                           {row.customerName ? (
                             <>
                               <Text fontWeight="medium">{row.customerName}</Text>
-                              <Text fontSize="xs" color="gray.500">
+                              <Text fontSize="xs" color="fg.muted">
                                 {row.accountReference || "—"}
                               </Text>
                             </>

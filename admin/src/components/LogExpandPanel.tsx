@@ -14,15 +14,15 @@ function JsonBlock({ value }: { value: unknown }) {
     <Box
       as="pre"
       fontSize="xs"
-      bg="gray.50"
+      bg="bg.subtle"
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="md"
-      p={3}
+      p={{ base: 2, md: 3 }}
       overflowX="auto"
       whiteSpace="pre-wrap"
       wordBreak="break-word"
-      maxH="320px"
+      maxH={{ base: "220px", md: "320px" }}
       overflowY="auto"
     >
       {text}
@@ -33,7 +33,7 @@ function JsonBlock({ value }: { value: unknown }) {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Box>
-      <Text fontSize="xs" fontWeight="semibold" color="gray.500" mb={0.5}>
+      <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={0.5}>
         {label}
       </Text>
       <Text fontSize="sm">{children}</Text>
@@ -43,8 +43,12 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 export function LogExpandPanel({ log }: { log: ApiCallLog }) {
   return (
-    <Box bg="gray.50" borderRadius="md" p={4}>
-      <Grid templateColumns={{ base: "1fr", md: "repeat(3, 1fr)" }} gap={4} mb={4}>
+    <Box bg="bg.subtle" borderRadius="md" p={{ base: 2, md: 4 }} w="full">
+      <Grid
+        templateColumns={{ base: "1fr 1fr", md: "repeat(3, 1fr)" }}
+        gap={{ base: 2, md: 4 }}
+        mb={{ base: 2.5, md: 4 }}
+      >
         <Field label="Service">{log.service.toUpperCase()}</Field>
         <Field label="Operation">{log.operation}</Field>
         <Field label="HTTP status">{log.httpStatus ?? "—"}</Field>
@@ -54,7 +58,7 @@ export function LogExpandPanel({ log }: { log: ApiCallLog }) {
       </Grid>
 
       {log.errorMessage ? (
-        <Box mb={4}>
+        <Box mb={{ base: 2.5, md: 4 }}>
           <Text fontSize="xs" fontWeight="semibold" color="red.600" mb={1}>
             Error
           </Text>
@@ -64,15 +68,15 @@ export function LogExpandPanel({ log }: { log: ApiCallLog }) {
         </Box>
       ) : null}
 
-      <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={4}>
-        <Box>
-          <Text fontSize="xs" fontWeight="semibold" color="gray.500" mb={1}>
+      <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={{ base: 2.5, md: 4 }}>
+        <Box minW={0}>
+          <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
             Request payload
           </Text>
           <JsonBlock value={log.requestPayload} />
         </Box>
-        <Box>
-          <Text fontSize="xs" fontWeight="semibold" color="gray.500" mb={1}>
+        <Box minW={0}>
+          <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
             Response
           </Text>
           <JsonBlock value={log.responsePayload} />

@@ -8,6 +8,7 @@ const STATUS_COLORS: Record<string, string> = {
   pending: "orange.600",
   suspended: "orange.600",
   unknown: "gray.500",
+  "not on tisp": "gray.500",
   failed: "red.600",
   error: "red.600",
 };
@@ -17,7 +18,7 @@ function resolveColor(status: string) {
   if (STATUS_COLORS[key]) return STATUS_COLORS[key];
   if (key.includes("active")) return "green.600";
   if (key.includes("suspend")) return "orange.600";
-  if (key.includes("unknown")) return "gray.500";
+  if (key.includes("unknown") || key.includes("tisp")) return "gray.500";
   if (key.includes("cancel")) return "gray.500";
   if (key.includes("fail") || key.includes("error")) return "red.600";
   return "gray.700";
@@ -32,12 +33,13 @@ export function TextStatus({
 }) {
   const label = status.trim() || "—";
   const isCaption = variant === "caption";
+  const multiWord = label.includes(" ");
   return (
     <Text
       fontSize={isCaption ? "2xs" : "sm"}
       fontWeight="semibold"
       color={resolveColor(label)}
-      textTransform={isCaption ? "uppercase" : "capitalize"}
+      textTransform={isCaption ? "uppercase" : multiWord ? "none" : "capitalize"}
       letterSpacing={isCaption ? "0.04em" : undefined}
       lineHeight={isCaption ? "1.35" : "1.4"}
     >

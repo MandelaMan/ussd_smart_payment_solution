@@ -5,9 +5,18 @@ const catalogStore = require("./packageCatalogStore");
 const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
 const {
   formatDateOnly,
-  pickLatestPaymentDate,
 } = require("../utils/lastPaymentDate");
 const { computeTrialEndDate } = require("../utils/billingPeriod");
+
+/** Keep sync error columns short — TISP often returns full HTML error pages. */
+function sanitizeSyncError(message, maxLen = 240) {
+  if (message == null || message === "") return null;
+  return String(message)
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLen) || null;
+}
 
 function escapeLike(term) {
   return String(term).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
@@ -139,18 +148,17 @@ function mapCustomerRow(row) {
       !String(row.dstv_decoder_serial || "").trim(),
     subscriptionStatus: normalizeSubscriptionStatus(row.subscription_status),
     tispSyncStatus: row.tisp_sync_status || "pending",
-    tispSyncError: row.tisp_sync_error,
+    tispSyncError: sanitizeSyncError(row.tisp_sync_error),
     zohoBillingStatus: row.zoho_billing_status || "pending",
-    zohoBillingError: row.zoho_billing_error || null,
+    zohoBillingError: sanitizeSyncError(row.zoho_billing_error),
     zohoSignupInvoiceId: row.zoho_signup_invoice_id || null,
     zohoSignupInvoiceEmailedAt: row.zoho_signup_invoice_emailed_at || null,
     trialPeriodEnabled: Boolean(row.trial_period_enabled),
     trialEndsAt: row.trial_ends_at || null,
-    lastPaymentDate: pickLatestPaymentDate(
-      row.last_payment_from_mpesa,
-      row.last_payment_from_zoho,
-      row.last_payment_date
-    ),
+    lastPaymentDate: row.last_payment_date
+      ? String(row.last_payment_date).slice(0, 10)
+      : null,
+    tispDueDate: row.tisp_due_date ? String(row.tisp_due_date) : null,
     status: row.status,
     upgradePaymentStatus: row.upgrade_payment_status || "none",
     createdAt: row.created_at,
@@ -158,30 +166,7 @@ function mapCustomerRow(row) {
   };
 }
 
-const LAST_PAYMENT_MPESA_SUBQUERY = `(
-  SELECT DATE(MAX(pt.created_at))
-  FROM payment_transactions pt
-  WHERE pt.status = 'SUCCESS'
-    AND pt.account_reference IS NOT NULL
-    AND TRIM(pt.account_reference) != ''
-    AND UPPER(TRIM(pt.account_reference)) = UPPER(TRIM(c.customer_number))
-)`;
-
-const LAST_PAYMENT_ZOHO_SUBQUERY = `(
-  SELECT DATE(MAX(ie.created_at))
-  FROM integration_events ie
-  WHERE ie.source = 'zoho'
-    AND LOWER(ie.status) = 'paid'
-    AND ie.customer_no IS NOT NULL
-    AND TRIM(ie.customer_no) != ''
-    AND UPPER(TRIM(ie.customer_no)) = UPPER(TRIM(c.customer_number))
-)`;
-
-const LAST_PAYMENT_SORT_EXPR = `GREATEST(
-  COALESCE(${LAST_PAYMENT_MPESA_SUBQUERY}, '1000-01-01'),
-  COALESCE(${LAST_PAYMENT_ZOHO_SUBQUERY}, '1000-01-01'),
-  COALESCE(c.last_payment_date, '1000-01-01')
-)`;
+const LAST_PAYMENT_SORT_EXPR = `COALESCE(c.last_payment_date, '1000-01-01')`;
 
 const CUSTOMER_SELECT = `
   SELECT c.*,
@@ -197,8 +182,7 @@ const CUSTOMER_SELECT = `
          a.email AS agency_email,
          a.phone AS agency_phone,
          a.contact_person AS agency_contact_person,
-         ${LAST_PAYMENT_MPESA_SUBQUERY} AS last_payment_from_mpesa,
-         ${LAST_PAYMENT_ZOHO_SUBQUERY} AS last_payment_from_zoho
+         ts.due_date AS tisp_due_date
   FROM customers c
   JOIN buildings b ON b.id = c.building_id
   JOIN products p ON p.id = c.product_id
@@ -206,6 +190,7 @@ const CUSTOMER_SELECT = `
   LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
   LEFT JOIN package_plans pl ON pl.id = v.plan_id
   LEFT JOIN package_categories cat ON cat.id = pl.category_id
+  LEFT JOIN tisp_customer_snapshots ts ON ts.customer_id = c.id
 `;
 
 async function listBuildings(filters = {}) {
@@ -794,6 +779,7 @@ async function listCustomers(filters = {}) {
       { key: "productName", sql: "p.name" },
       { key: "paymentFrequency", sql: "c.payment_frequency" },
       { key: "subscriptionStatus", sql: "c.subscription_status" },
+      { key: "tispDueDate", sql: "COALESCE(ts.due_date, '')" },
       { key: "lastPaymentDate", sql: LAST_PAYMENT_SORT_EXPR },
       { key: "packagePrice", sql: "c.package_price" },
     ],
@@ -891,7 +877,7 @@ async function recordCustomerLastPayment(customerNumber, paymentDate) {
 async function updateCustomerTispSync(id, syncStatus, syncError = null) {
   await query(
     `UPDATE customers SET tisp_sync_status = ?, tisp_sync_error = ? WHERE id = ?`,
-    [syncStatus, syncError, id]
+    [syncStatus, sanitizeSyncError(syncError), id]
   );
 }
 
@@ -918,16 +904,20 @@ async function reconcileTispSyncStatus(customerId, hints = {}) {
     [customerId]
   );
   const snapStatus = String(rows[0]?.subscription_status || "").trim();
-  if (snapStatus && snapStatus.toLowerCase() !== "unknown") {
+  const snapNormalized = snapStatus
+    ? normalizeSubscriptionStatus(snapStatus)
+    : "";
+  if (snapNormalized && snapNormalized !== "Not on TISP") {
     await updateCustomerTispSync(customerId, "synced", null);
     return getCustomerById(customerId);
   }
 
   const sub = String(customer.subscriptionStatus || "").trim();
+  const subNormalized = normalizeSubscriptionStatus(sub);
   if (
     customer.tispSyncStatus === "failed" &&
-    sub &&
-    !["unknown", "pending", ""].includes(sub.toLowerCase())
+    subNormalized &&
+    subNormalized !== "Not on TISP"
   ) {
     await updateCustomerTispSync(customerId, "synced", null);
     return getCustomerById(customerId);
@@ -1630,7 +1620,7 @@ async function deleteCustomerCompletely(customerId) {
   return customer;
 }
 
-async function updateCustomerDetails(id, data) {
+async function updateCustomerDetails(id, data, options = {}) {
   const existing = await getCustomerById(id);
   if (!existing) throw new Error("Customer not found");
 
@@ -1680,7 +1670,47 @@ async function updateCustomerDetails(id, data) {
 
   const fullName = [firstName, middleName, lastName].filter(Boolean).join(" ");
 
-  const effectiveProduct = await getProductById(existing.productId);
+  let productId = existing.productId;
+  let paymentFrequency = existing.paymentFrequency;
+  let customPeriodDays = existing.customPeriodDays;
+  let packagePrice = existing.packagePrice;
+  let packageChanged = false;
+
+  if (options.allowPackageEdit) {
+    if (data.paymentFrequency != null) {
+      paymentFrequency = String(data.paymentFrequency).trim().toLowerCase();
+      if (!["monthly", "quarterly", "yearly", "custom"].includes(paymentFrequency)) {
+        throw new Error("Invalid payment frequency");
+      }
+    }
+    if (paymentFrequency === "custom") {
+      customPeriodDays = Number(
+        data.customPeriodDays != null
+          ? data.customPeriodDays
+          : existing.customPeriodDays
+      );
+      if (!customPeriodDays || customPeriodDays < 1) {
+        throw new Error("Custom period must be at least 1 day");
+      }
+    } else {
+      customPeriodDays = null;
+    }
+    if (data.productId != null) {
+      productId = Number(data.productId);
+    }
+    const product = await getProductById(productId);
+    if (!product) throw new Error("Product not found");
+    if (product.building_id !== existing.buildingId) {
+      throw new Error("Package must belong to the same building");
+    }
+    packagePrice = resolvePackagePrice(product, paymentFrequency, customPeriodDays);
+    packageChanged =
+      productId !== existing.productId ||
+      paymentFrequency !== existing.paymentFrequency ||
+      customPeriodDays !== existing.customPeriodDays;
+  }
+
+  const effectiveProduct = await getProductById(productId);
   if (!effectiveProduct) throw new Error("Product not found");
 
   const dstvDecoderSerial =
@@ -1690,11 +1720,19 @@ async function updateCustomerDetails(id, data) {
   assertDstvDecoderSerial(effectiveProduct, dstvDecoderSerial);
   await assertDstvSerialUnique(dstvDecoderSerial, id);
 
+  const contactChanged =
+    firstName !== existing.firstName ||
+    lastName !== existing.lastName ||
+    (middleName || null) !== (existing.middleName || null) ||
+    phone !== existing.phone ||
+    email !== (existing.email || "");
+
   await query(
     `UPDATE customers
      SET first_name = ?, middle_name = ?, last_name = ?, phone = ?, email = ?,
          is_vat_exempt = ?, customer_type = ?, agency_id = ?, ip_address = ?,
-         dstv_decoder_serial = ?
+         dstv_decoder_serial = ?,
+         product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?
      WHERE id = ?`,
     [
       firstName,
@@ -1707,9 +1745,26 @@ async function updateCustomerDetails(id, data) {
       agencyId,
       ipCheck.ip,
       dstvDecoderSerial,
+      productId,
+      paymentFrequency,
+      customPeriodDays,
+      packagePrice,
       id,
     ]
   );
+
+  if (packageChanged) {
+    await query(
+      `INSERT INTO customer_events (customer_id, event_type, old_product_id, new_product_id, notes)
+       VALUES (?, 'upgrade', ?, ?, ?)`,
+      [
+        id,
+        existing.productId,
+        productId,
+        `Local package correction (DB only): ${existing.paymentFrequency} → ${paymentFrequency}`,
+      ]
+    );
+  }
 
   await query(
     `UPDATE apartment_history
@@ -1727,7 +1782,8 @@ async function updateCustomerDetails(id, data) {
     }
   }
 
-  return getCustomerById(id);
+  const customer = await getCustomerById(id);
+  return { customer, contactChanged, packageChanged };
 }
 
 async function convertCustomerType(customerId, targetType, agencyId = null) {
@@ -2182,88 +2238,70 @@ async function importCustomerFromRow(row, batchSeen) {
 }
 
 async function getSubscriberStats(days = 29) {
-  const [row] = await query(`
-    SELECT
-      COUNT(*) AS total,
-      SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count,
-      SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
-      SUM(CASE WHEN customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b_count,
-      SUM(CASE WHEN customer_type = 'B2B' THEN 1 ELSE 0 END) AS b2b_count,
-      SUM(CASE WHEN tisp_sync_status = 'failed' THEN 1 ELSE 0 END) AS tisp_failed,
-      SUM(CASE WHEN tisp_sync_status = 'pending' THEN 1 ELSE 0 END) AS tisp_pending
-    FROM customers
-  `);
-
-  const [newInPeriod] = await query(
-    `SELECT COUNT(*) AS count FROM customers
-     WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
-    [days]
-  );
-
-  const [buildingCount] = await query(`SELECT COUNT(*) AS count FROM buildings`);
-  const [agencyCount] = await query(`SELECT COUNT(*) AS count FROM agencies`);
-
-  const topBuildings = await query(`
-    SELECT b.name AS building, COUNT(*) AS subscribers
-    FROM customers c
-    JOIN buildings b ON b.id = c.building_id
-    WHERE c.status = 'active'
-    GROUP BY b.id, b.name
-    ORDER BY subscribers DESC
-    LIMIT 5
-  `);
-
-  const topPackages = await query(`
-    SELECT p.name AS package_name, p.mbps, COUNT(*) AS subscribers
-    FROM customers c
-    JOIN products p ON p.id = c.product_id
-    WHERE c.status = 'active'
-    GROUP BY p.id, p.name, p.mbps
-    ORDER BY subscribers DESC
-    LIMIT 8
-  `);
-
-  const [avgCustomerPayment] = await query(`
-    SELECT COALESCE(AVG(totals.total_spent), 0) AS avg_payment
-    FROM (
-      SELECT SUM(pt.amount) AS total_spent
-      FROM payment_transactions pt
-      INNER JOIN customers c ON c.customer_number = pt.account_reference
-      WHERE pt.status = 'SUCCESS'
-        AND pt.account_reference IS NOT NULL
-        AND pt.amount IS NOT NULL
-      GROUP BY pt.account_reference
-    ) totals
-  `);
-
-  const [avgPaymentsPerCustomer] = await query(`
-    SELECT COALESCE(AVG(totals.payment_count), 0) AS avg_count
-    FROM (
-      SELECT COUNT(*) AS payment_count
-      FROM payment_transactions pt
-      INNER JOIN customers c ON c.customer_number = pt.account_reference
-      WHERE pt.status = 'SUCCESS'
-        AND pt.account_reference IS NOT NULL
-      GROUP BY pt.account_reference
-    ) totals
-  `);
-
-  const [tispService] = await query(`
-    SELECT
-      SUM(CASE WHEN LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) LIKE '%active%' THEN 1 ELSE 0 END) AS active_count,
-      SUM(CASE WHEN LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) LIKE '%suspend%' THEN 1 ELSE 0 END) AS suspended_count,
-      SUM(CASE
-        WHEN COALESCE(NULLIF(TRIM(ts.subscription_status), ''), NULLIF(TRIM(c.subscription_status), '')) IS NULL
-          OR LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) = 'unknown'
-          OR (
-            LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) NOT LIKE '%active%'
-            AND LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) NOT LIKE '%suspend%'
-          )
-        THEN 1 ELSE 0 END) AS unknown_count
-    FROM customers c
-    LEFT JOIN tisp_customer_snapshots ts ON ts.customer_id = c.id
-    WHERE c.status = 'active'
-  `);
+  const [
+    [row],
+    [newInPeriod],
+    [buildingCount],
+    [agencyCount],
+    topBuildings,
+    topPackages,
+    [tispService],
+  ] = await Promise.all([
+    query(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count,
+        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
+        SUM(CASE WHEN customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b_count,
+        SUM(CASE WHEN customer_type = 'B2B' THEN 1 ELSE 0 END) AS b2b_count,
+        SUM(CASE WHEN tisp_sync_status = 'failed' THEN 1 ELSE 0 END) AS tisp_failed,
+        SUM(CASE WHEN tisp_sync_status = 'pending' THEN 1 ELSE 0 END) AS tisp_pending
+      FROM customers
+    `),
+    query(
+      `SELECT COUNT(*) AS count FROM customers
+       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+      [days]
+    ),
+    query(`SELECT COUNT(*) AS count FROM buildings`),
+    query(`SELECT COUNT(*) AS count FROM agencies`),
+    query(`
+      SELECT b.name AS building, COUNT(*) AS subscribers
+      FROM customers c
+      JOIN buildings b ON b.id = c.building_id
+      WHERE c.status = 'active'
+        AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
+      GROUP BY b.id, b.name
+      ORDER BY subscribers DESC
+      LIMIT 20
+    `),
+    query(`
+      SELECT p.name AS package_name, p.mbps, COUNT(*) AS subscribers
+      FROM customers c
+      JOIN products p ON p.id = c.product_id
+      WHERE c.status = 'active'
+        AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
+      GROUP BY p.id, p.name, p.mbps
+      ORDER BY subscribers DESC
+      LIMIT 8
+    `),
+    query(`
+      SELECT
+        SUM(CASE WHEN LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) LIKE '%active%' THEN 1 ELSE 0 END) AS active_count,
+        SUM(CASE WHEN LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) LIKE '%suspend%' THEN 1 ELSE 0 END) AS suspended_count,
+        SUM(CASE
+          WHEN COALESCE(NULLIF(TRIM(ts.subscription_status), ''), NULLIF(TRIM(c.subscription_status), '')) IS NULL
+            OR LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) IN ('unknown', 'not on tisp', 'not_on_tisp')
+            OR (
+              LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) NOT LIKE '%active%'
+              AND LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) NOT LIKE '%suspend%'
+            )
+          THEN 1 ELSE 0 END) AS unknown_count
+      FROM customers c
+      LEFT JOIN tisp_customer_snapshots ts ON ts.customer_id = c.id
+      WHERE c.status = 'active'
+    `),
+  ]);
 
   return {
     total: Number(row?.total || 0),
@@ -2285,8 +2323,9 @@ async function getSubscriberStats(days = 29) {
       mbps: Number(d.mbps),
       subscribers: Number(d.subscribers),
     })),
-    avgCustomerPayment: Number(avgCustomerPayment?.avg_payment || 0),
-    avgPaymentsPerCustomer: Number(avgPaymentsPerCustomer?.avg_count || 0),
+    // Heavy lifetime payment JOINs removed — unused by the dashboard UI.
+    avgCustomerPayment: 0,
+    avgPaymentsPerCustomer: 0,
     tispActive: Number(tispService?.active_count || 0),
     tispSuspended: Number(tispService?.suspended_count || 0),
     tispUnknown: Number(tispService?.unknown_count || 0),

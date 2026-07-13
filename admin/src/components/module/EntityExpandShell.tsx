@@ -27,10 +27,10 @@ export function EntityExpandShell({
 }: Props) {
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       borderRadius="lg"
       border="1px solid"
-      borderColor="gray.200"
+      borderColor="border"
       overflow="hidden"
       boxShadow="sm"
     >
@@ -38,23 +38,23 @@ export function EntityExpandShell({
         direction={{ base: "column", sm: "row" }}
         align={{ base: "stretch", sm: "center" }}
         justify="space-between"
-        gap={3}
-        px={3}
-        py={3}
-        bg="gray.50"
+        gap={{ base: 2, sm: 3 }}
+        px={{ base: 2.5, md: 3 }}
+        py={{ base: 2, md: 3 }}
+        bg="bg.subtle"
         borderBottom="1px solid"
-        borderColor="gray.100"
+        borderColor="border.muted"
         borderLeft="4px solid"
         borderLeftColor={accent}
         minW={0}
       >
-        <Flex align="center" gap={3} minW={0} flex="1">
+        <Flex align="center" gap={{ base: 2, md: 3 }} minW={0} flex="1">
           <Flex
-            boxSize="36px"
+            boxSize={{ base: "32px", md: "36px" }}
             borderRadius="lg"
-            bg="white"
+            bg="bg.panel"
             border="1px solid"
-            borderColor="gray.200"
+            borderColor="border"
             align="center"
             justify="center"
             color={accent}
@@ -63,11 +63,11 @@ export function EntityExpandShell({
             <Icon size={18} />
           </Flex>
           <Box minW={0} overflow="hidden">
-            <Text fontWeight="semibold" fontSize="sm" color="gray.800" lineClamp={2} overflowWrap="anywhere">
+            <Text fontWeight="semibold" fontSize="sm" color="fg" lineClamp={2} overflowWrap="anywhere">
               {title}
             </Text>
             {subtitle && (
-              <Text fontSize="xs" color="gray.500" truncate>
+              <Text fontSize="xs" color="fg.muted" truncate>
                 {subtitle}
               </Text>
             )}
@@ -87,17 +87,28 @@ export function EntityExpandShell({
           {actions}
         </Flex>
       </Flex>
-      <Box p={3}>{children}</Box>
+      <Box p={{ base: 2, md: 3 }}>{children}</Box>
     </Box>
   );
 }
 
-export function DetailGrid({ children }: { children: ReactNode }) {
+export function DetailGrid({
+  children,
+  columns,
+}: {
+  children: ReactNode;
+  /** Override responsive column template when a section needs a denser or stacked layout. */
+  columns?: Record<string, string> | string;
+}) {
   return (
     <Box
       display="grid"
-      gridTemplateColumns={{ base: "1fr 1fr", md: "repeat(3, 1fr)", lg: "repeat(4, 1fr)" }}
-      gap={3}
+      gridTemplateColumns={
+        columns ?? { base: "1fr 1fr", md: "repeat(3, 1fr)", lg: "repeat(4, 1fr)" }
+      }
+      gap={{ base: 2, md: 3 }}
+      w="full"
+      minW={0}
     >
       {children}
     </Box>
@@ -109,43 +120,50 @@ export function DetailCard({
   value,
   mono,
   highlight,
+  span,
 }: {
   label: string;
   value: ReactNode;
   mono?: boolean;
   highlight?: boolean;
+  /** Span full grid width on selected breakpoints (e.g. long IPs / emails on mobile). */
+  span?: Record<string, string> | string;
 }) {
   return (
     <Box
-      bg={highlight ? "brand.50" : "gray.50"}
+      bg={highlight ? "brand.50" : { base: "bg.subtle", md: "bg.panel" }}
       border="1px solid"
-      borderColor={highlight ? "brand.100" : "gray.100"}
+      borderColor={highlight ? "brand.100" : "border.muted"}
       borderRadius="md"
-      px={3}
-      py={3}
-      minH="56px"
+      px={{ base: 2.5, md: 3 }}
+      py={{ base: 2.5, md: 3 }}
+      minH={{ base: "52px", md: "56px" }}
+      minW={0}
+      w="full"
+      gridColumn={span}
     >
       <Text
         fontSize="2xs"
         fontWeight="semibold"
-        color="gray.500"
+        color="fg.muted"
         textTransform="uppercase"
         letterSpacing="0.04em"
-        mb={1}
+        mb={{ base: 0.5, md: 1 }}
+        lineClamp={{ base: 2, md: 1 }}
       >
         {label}
       </Text>
       <Box
-        fontSize="sm"
+        fontSize={{ base: "sm", md: "sm" }}
         fontWeight="medium"
-        color="gray.800"
+        color="fg"
         fontFamily={mono ? "mono" : undefined}
         wordBreak={mono ? "break-all" : "break-word"}
         overflowWrap="anywhere"
         lineHeight="1.35"
         minW={0}
       >
-        {value || <Text as="span" color="gray.400">—</Text>}
+        {value || <Text as="span" color="fg.subtle">—</Text>}
       </Box>
     </Box>
   );

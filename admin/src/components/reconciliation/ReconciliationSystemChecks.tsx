@@ -16,7 +16,7 @@ const TONE_STYLES: Record<Tone, { border: string; bg: string; status: string }> 
   ok: { border: "green.400", bg: "green.50", status: "green.800" },
   warn: { border: "orange.400", bg: "orange.50", status: "orange.800" },
   error: { border: "red.400", bg: "red.50", status: "red.800" },
-  neutral: { border: "gray.300", bg: "gray.50", status: "gray.700" },
+  neutral: { border: "gray.300", bg: "bg.subtle", status: "gray.700" },
 };
 
 export function buildSystemChecks(detail: ReconciliationCustomerDetail): SystemCheckRow[] {
@@ -171,19 +171,30 @@ export function ReconciliationSystemChecks({ detail }: Props) {
       borderColor={hasIssue ? "orange.200" : "green.200"}
       borderRadius="md"
       overflow="hidden"
-      bg="white"
+      bg="bg.panel"
+      w="full"
     >
       <Box
-        px={3}
-        py={2}
+        px={{ base: 2.5, md: 3 }}
+        py={{ base: 1.5, md: 2 }}
         bg={hasIssue ? "orange.50" : "green.50"}
         borderBottom="1px solid"
         borderColor={hasIssue ? "orange.100" : "green.100"}
       >
-        <Text fontSize="sm" fontWeight="semibold" color={hasIssue ? "orange.900" : "green.900"}>
+        <Text
+          fontSize={{ base: "xs", md: "sm" }}
+          fontWeight="semibold"
+          color={hasIssue ? "orange.900" : "green.900"}
+        >
           System status
         </Text>
-        <Text fontSize="xs" color={hasIssue ? "orange.800" : "green.800"} mt={0.5}>
+        <Text
+          fontSize="2xs"
+          color={hasIssue ? "orange.800" : "green.800"}
+          mt={0.5}
+          lineHeight="1.35"
+          display={{ base: "none", sm: "block" }}
+        >
           Quick read across dashboard, TISP, and Zoho Books
         </Text>
       </Box>
@@ -192,24 +203,42 @@ export function ReconciliationSystemChecks({ detail }: Props) {
         {rows.map((row) => {
           const style = TONE_STYLES[row.tone];
           return (
-            <Flex key={`${row.system}-${row.status}`} gap={0} align="stretch">
+            <Flex key={`${row.system}-${row.status}`} gap={0} align="stretch" w="full">
               <Box w="3px" flexShrink={0} bg={style.border} />
-              <Box flex={1} px={3} py={2.5} bg={row.tone !== "ok" ? style.bg : undefined}>
+              <Box
+                flex={1}
+                minW={0}
+                px={{ base: 2.5, md: 3 }}
+                py={{ base: 2, md: 2.5 }}
+                bg={row.tone !== "ok" ? style.bg : undefined}
+              >
                 <Flex
                   justify="space-between"
-                  align={{ base: "flex-start", sm: "center" }}
+                  align="flex-start"
                   gap={2}
-                  wrap="wrap"
-                  mb={1}
+                  mb={{ base: 0.5, md: 1 }}
                 >
-                  <Text fontSize="sm" fontWeight="semibold" color="brand.800">
+                  <Text
+                    fontSize={{ base: "xs", md: "sm" }}
+                    fontWeight="semibold"
+                    color="brand.800"
+                    flex={1}
+                    minW={0}
+                  >
                     {row.system}
                   </Text>
-                  <Text fontSize="sm" fontWeight="bold" color={style.status}>
+                  <Text
+                    fontSize={{ base: "xs", md: "sm" }}
+                    fontWeight="bold"
+                    color={style.status}
+                    textAlign="right"
+                    flexShrink={0}
+                    maxW="55%"
+                  >
                     {row.status}
                   </Text>
                 </Flex>
-                <Text fontSize="xs" color="gray.700" lineHeight="1.45">
+                <Text fontSize="2xs" color="fg" lineHeight="1.4">
                   {row.explanation}
                 </Text>
               </Box>

@@ -612,7 +612,7 @@ async function buildCustomerRecord(customer, options = {}) {
     }
   }
 
-  let subscriptionStatus = customer.subscriptionStatus || "Unknown";
+    let subscriptionStatus = customer.subscriptionStatus || "Not on TISP";
   let tispDueDate = null;
 
   if (storedSnapshot?.tisp?.subscriptionStatus && options.refreshTisp !== true) {
@@ -1152,7 +1152,7 @@ async function doRunSync({
       title: "Billing reconciliation sync failed",
       message: snapshot.sync.lastError,
       source: "reconciliation",
-      status: "failure",
+      status: "failed",
     });
 
     return { ok: false, error: snapshot.sync.lastError };

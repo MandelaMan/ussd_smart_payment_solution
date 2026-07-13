@@ -142,7 +142,7 @@ export const customerListExportColumns = (
     ? []
     : [{ header: "Price", value: (row: Customer) => formatCurrency(row.packagePrice) }]),
   {
-    header: "Last Payment",
-    value: (row) => (row.lastPaymentDate ? formatDateOnly(row.lastPaymentDate) : ""),
+    header: "Due date",
+    value: (row) => (row.tispDueDate ? formatDateOnly(row.tispDueDate) : ""),
   },
 ];

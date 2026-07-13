@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Box,
   Flex,
@@ -34,6 +34,8 @@ import {
 } from "../components/PageSkeletons";
 import { BRAND } from "../theme";
 import { SelectField } from "../components/ui/SelectField";
+import { useMobileViewport } from "../hooks/useMobileViewport";
+import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: BRAND.cerulean,
@@ -76,6 +78,15 @@ function formatAxisRevenue(value: number) {
   if (value >= 1000) return `${(value / 1000).toFixed(0)}k`;
   if (value > 0) return String(Math.round(value));
   return "0";
+}
+
+/** Calendar month before `now` (1–12) and its year — used as the mobile revenue default. */
+function getPreviousCalendarMonth(now = new Date()) {
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return {
+    month: String(d.getMonth() + 1),
+    year: d.getFullYear(),
+  };
 }
 
 function revenueChartMargin(chartMonth: string) {
@@ -123,25 +134,35 @@ function buildRevenueChartData(
 }
 
 export function DashboardPage() {
+  const isMobile = useMobileViewport();
   const [stats, setStats] = useState<Stats | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [chartData, setChartData] = useState<Stats["chart"]>([]);
   const [chartMonth, setChartMonth] = useState("all");
-  const chartYear = new Date().getFullYear();
+  const [chartYear, setChartYear] = useState(() => new Date().getFullYear());
+  const mobileRevenueDefaultApplied = useRef(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isMobile || mobileRevenueDefaultApplied.current) return;
+    mobileRevenueDefaultApplied.current = true;
+    const previous = getPreviousCalendarMonth();
+    setChartMonth(previous.month);
+    setChartYear(previous.year);
+  }, [isMobile]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
 
-    Promise.all([api.getStats("30d"), api.getActivity(40)])
-      .then(([s, a]) => {
+    api
+      .getStats("30d")
+      .then((s) => {
         if (cancelled) return;
         setStats(s);
-        setActivity(a.data.length ? a.data : s.activityFeed || []);
       })
       .catch((e) => {
         if (!cancelled) setError(e.message);
@@ -154,6 +175,27 @@ export function DashboardPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (isMobile) {
+      setActivity([]);
+      return;
+    }
+
+    let cancelled = false;
+    api
+      .getActivity(40)
+      .then((a) => {
+        if (!cancelled) setActivity(a.data);
+      })
+      .catch(() => {
+        if (!cancelled) setActivity([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isMobile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,8 +255,6 @@ export function DashboardPage() {
     agencies: rawSubs?.agencies ?? 0,
     topBuildings: rawSubs?.topBuildings ?? [],
     topPackages: rawSubs?.topPackages ?? [],
-    avgCustomerPayment: rawSubs?.avgCustomerPayment ?? 0,
-    avgPaymentsPerCustomer: rawSubs?.avgPaymentsPerCustomer ?? 0,
     tispActive: Number(rawSubs?.tispActive ?? rawSubs?.tispConnected ?? 0),
     tispSuspended: Number(rawSubs?.tispSuspended ?? rawSubs?.tispDisconnected ?? 0),
     tispUnknown: Number(rawSubs?.tispUnknown ?? 0),
@@ -256,33 +296,132 @@ export function DashboardPage() {
 
   return (
     <Flex
-      gap={{ base: 4, xl: 0 }}
-      align={{ base: "flex-start", xl: "stretch" }}
+      gap={{ base: 2.5, xl: 0 }}
+      align="stretch"
       direction={{ base: "column", xl: "row" }}
       flex={{ xl: 1 }}
+      w="full"
+      minW={0}
       minH={{ xl: 0 }}
-      alignSelf={{ xl: "stretch" }}
-      overflow={{ xl: "hidden" }}
+      alignSelf="stretch"
+      overflow={{ base: "visible", xl: "hidden" }}
       mx={{ xl: -3 }}
       mt={{ xl: -3 }}
       mb={{ xl: -3 }}
     >
       <Stack
-        flex={1}
+        flex={{ base: "none", xl: 1 }}
+        w="full"
         minW={0}
-        minH={0}
-        gap={{ base: 5, xl: 3 }}
-        overflowY={{ xl: "auto" }}
-        px={{ base: 1, xl: 3 }}
+        minH={{ base: "auto", xl: 0 }}
+        gap={{ base: 4, xl: 3 }}
+        overflow={{ base: "visible", xl: "auto" }}
+        px={{ base: 0, xl: 3 }}
         py={{ xl: 3 }}
         pr={{ xl: 4 }}
+        pb={{ base: 2, xl: 0 }}
       >
+        <MobilePageChrome title="Home" description="Operations overview" />
         {loading ? (
-          <DashboardMetricsSkeleton />
+          <Box mx={{ base: -3, xl: 0 }} px={{ base: 1, xl: 0 }}>
+            <DashboardMetricsSkeleton />
+          </Box>
+        ) : isMobile ? (
+          <Stack gap={4} mx={-3} px={1}>
+            <Box>
+              <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1.5}>
+                Overview
+              </Text>
+              <Grid templateColumns="1fr 1fr" columnGap={2} rowGap={3}>
+                <MetricCard
+                  accent="cerulean"
+                  label="Active subscribers"
+                  value={subs.active}
+                  sub={`${subs.total} total`}
+                  to="/customers?status=Active"
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="New subscribers"
+                  value={subs.newInPeriod}
+                  sub="Last 30 days"
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Churned"
+                  value={subs.cancelled}
+                  sub="Cancelled accounts"
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Revenue (30d)"
+                  value={formatMetricCurrency(stats.period.revenue)}
+                  sub={`${stats.period.transactions} txns`}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Success rate"
+                  value={`${successRate}%`}
+                  sub={`${stats.mpesa.success} success`}
+                />
+                <MetricCard
+                  accent="cerulean"
+                  label="Avg. payment"
+                  value={formatMetricCurrency(stats.avgTransaction)}
+                  sub="Successful payments"
+                />
+              </Grid>
+            </Box>
+
+            <Card title="Subscribers by building" accent="cerulean">
+              <Stack gap={0} divideY="1px" divideColor="gray.100">
+                {subs.topBuildings.length === 0 ? (
+                  <Text fontSize="xs" color="fg.subtle" py={2}>
+                    No subscriber data
+                  </Text>
+                ) : (
+                  subs.topBuildings.map((b) => (
+                    <Flex
+                      key={b.building}
+                      justify="space-between"
+                      align="center"
+                      gap={2}
+                      py={2}
+                      minW={0}
+                    >
+                      <DisplayText
+                        value={b.building}
+                        fontWeight="medium"
+                        fontSize="sm"
+                        maxLength={null}
+                        minW={0}
+                        lineClamp={1}
+                      />
+                      <Text
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        color="brand.700"
+                        flexShrink={0}
+                        whiteSpace="nowrap"
+                      >
+                        {b.subscribers}
+                      </Text>
+                    </Flex>
+                  ))
+                )}
+              </Stack>
+              {subs.topBuildings.length > 0 ? (
+                <Text fontSize="2xs" color="fg.muted" mt={2}>
+                  {subs.topBuildings.length} building
+                  {subs.topBuildings.length === 1 ? "" : "s"} · active subscribers
+                </Text>
+              ) : null}
+            </Card>
+          </Stack>
         ) : (
           <Stack gap={{ base: 5, xl: 3 }}>
             <Box>
-              <Text fontSize="sm" fontWeight="semibold" color="gray.600" mb={3}>
+              <Text fontSize="sm" fontWeight="semibold" color="fg.muted" mb={3}>
                 Subscribers
               </Text>
               <Grid
@@ -322,7 +461,7 @@ export function DashboardPage() {
                   sub={`${subs.tispSuspended} suspended`}
                   sub2={
                     subs.tispUnknown > 0
-                      ? `${subs.tispUnknown} pending status`
+                      ? `${subs.tispUnknown} not on TISP`
                       : `${subs.active} active accounts`
                   }
                   to="/customers?status=Active"
@@ -331,7 +470,7 @@ export function DashboardPage() {
             </Box>
 
             <Box>
-              <Text fontSize="sm" fontWeight="semibold" color="gray.600" mb={3}>
+              <Text fontSize="sm" fontWeight="semibold" color="fg.muted" mb={3}>
                 Payments
               </Text>
               <Grid
@@ -380,11 +519,15 @@ export function DashboardPage() {
           </Stack>
         )}
 
-        <Grid templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }} gap={{ base: 4, xl: 3 }}>
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }}
+          gap={{ base: 4, xl: 3 }}
+          display={{ base: "none", lg: "grid" }}
+        >
           <Card title="Most Subscribed Packages" accent="cerulean">
             {packageChartData.length === 0 ? (
               <Flex minH={{ base: "180px", md: "160px" }} align="center" justify="center">
-                <Text fontSize="sm" color="gray.400">No package data yet</Text>
+                <Text fontSize="sm" color="fg.subtle">No package data yet</Text>
               </Flex>
             ) : (
               <PackageSubscriptionChart data={packageChartData} />
@@ -411,7 +554,106 @@ export function DashboardPage() {
           </Card>
         </Grid>
 
-        <Grid templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }} gap={{ base: 4, xl: 3 }}>
+        {isMobile ? (
+          <Box mx={-3} px={1}>
+          <Card
+            title="Revenue trend"
+            subtitle={monthLabel}
+            accent="cerulean"
+            action={
+              <SelectField
+                w="120px"
+                size="sm"
+                fieldProps={{
+                  value: chartMonth,
+                  onChange: (e) => setChartMonth(e.target.value),
+                  borderRadius: "md",
+                  fontSize: "sm",
+                }}
+              >
+                {REVENUE_MONTH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </SelectField>
+            }
+          >
+            <Box h="180px" minH="180px" mt={0.5}>
+              {chartLoading ? (
+                <ChartSkeleton height="100%" />
+              ) : chartIsEmpty ? (
+                <Flex h="100%" align="center" justify="center">
+                  <Text fontSize="sm" color="fg.subtle">
+                    No revenue for {monthLabel}
+                  </Text>
+                </Flex>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={revenueChartData}
+                    margin={revenueChartMargin(chartMonth)}
+                  >
+                    <defs>
+                      <linearGradient id="rev-mobile" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={BRAND.cerulean} stopOpacity={0.25} />
+                        <stop offset="95%" stopColor={BRAND.cerulean} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: chartMonth === "all" ? 10 : 11, fill: "#64748b" }}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={chartMonth === "all" ? 0 : monthDayCount > 15 ? 2 : 0}
+                      minTickGap={chartMonth === "all" ? 4 : 8}
+                      tickMargin={10}
+                      height={chartMonth === "all" ? 44 : 40}
+                      padding={{ left: 4, right: 8 }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: "#64748b" }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={44}
+                      tickMargin={4}
+                      tickFormatter={formatAxisRevenue}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      formatter={(v) => formatCurrency(Number(v))}
+                      labelFormatter={(_, payload) => {
+                        const day = payload?.[0]?.payload?.day;
+                        if (!day) return "";
+                        return new Date(day).toLocaleDateString("en-KE", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        });
+                      }}
+                      contentStyle={{ fontSize: 13 }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="revenue"
+                      stroke={BRAND.cerulean}
+                      fill="url(#rev-mobile)"
+                      strokeWidth={2.5}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </Box>
+          </Card>
+          </Box>
+        ) : null}
+
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }}
+          gap={{ base: 4, xl: 3 }}
+          display={{ base: "none", lg: "grid" }}
+        >
           <Card
             title="Revenue Trend"
             subtitle={monthLabel}
@@ -440,7 +682,7 @@ export function DashboardPage() {
                 <ChartSkeleton height="100%" />
               ) : chartIsEmpty ? (
                 <Flex h="100%" align="center" justify="center">
-                  <Text fontSize="sm" color="gray.400">
+                  <Text fontSize="sm" color="fg.subtle">
                     No revenue for {monthLabel}
                   </Text>
                 </Flex>
@@ -532,6 +774,7 @@ export function DashboardPage() {
         <Grid
           templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
           gap={{ base: 4, xl: 3 }}
+          display={{ base: "none", lg: "grid" }}
         >
           <Card title="By Channel" accent="cerulean">
             <Box h={{ base: "200px", md: "160px" }} mt={1}>
@@ -558,7 +801,7 @@ export function DashboardPage() {
                 </Flex>
               ))}
               {subs.topBuildings.length === 0 && (
-                <Text fontSize="xs" color="gray.400">No subscriber data</Text>
+                <Text fontSize="xs" color="fg.subtle">No subscriber data</Text>
               )}
             </Stack>
           </Card>
@@ -569,7 +812,7 @@ export function DashboardPage() {
                 <Flex key={c.customer} justify="space-between" fontSize="sm" align="center">
                   <Box minW={0}>
                     <DisplayText value={c.customer} fontWeight="medium" />
-                    <Text color="gray.500">{c.payments} payments</Text>
+                    <Text color="fg.muted">{c.payments} payments</Text>
                   </Box>
                   <Text fontWeight="semibold" color="brand.600" flexShrink={0} ml={2}>
                     {formatCurrency(c.totalSpent)}
@@ -577,7 +820,7 @@ export function DashboardPage() {
                 </Flex>
               ))}
               {stats.topCustomers.length === 0 && (
-                <Text fontSize="xs" color="gray.400">No payment data</Text>
+                <Text fontSize="xs" color="fg.subtle">No payment data</Text>
               )}
             </Stack>
           </Card>
@@ -619,29 +862,30 @@ function Card({
 
   return (
     <Box
-      bg="white"
-      borderRadius="xl"
-      px={{ base: 4, md: 3.5 }}
-      py={{ base: 4, md: 3 }}
+      bg="bg.panel"
+      borderRadius={{ base: "lg", md: "xl" }}
+      px={{ base: 2.5, md: 3.5 }}
+      py={{ base: 2.5, md: 3 }}
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderTopWidth="3px"
       borderTopColor={borderColors[accent]}
       boxShadow="sm"
+      w="full"
     >
       <Flex
         justify="space-between"
         align={{ base: "start", sm: "center" }}
         direction={{ base: "column", sm: "row" }}
-        gap={2.5}
-        mb={{ base: 3.5, md: 2 }}
+        gap={{ base: 1.5, sm: 2.5 }}
+        mb={{ base: 2, md: 2 }}
       >
-        <Box>
-          <Text fontSize={{ base: "md", md: "md" }} fontWeight="semibold" color="gray.800">
+        <Box minW={0}>
+          <Text fontSize="sm" fontWeight="semibold" color="fg" lineHeight="1.3">
             {title}
           </Text>
           {subtitle && (
-            <Text fontSize="xs" color="gray.500" mt={0.5}>
+            <Text fontSize="2xs" color="fg.muted" mt={0.5}>
               {subtitle}
             </Text>
           )}
@@ -656,7 +900,7 @@ function Card({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <Flex justify="space-between">
-      <Text color="gray.600">{label}</Text>
+      <Text color="fg.muted">{label}</Text>
       <Text fontWeight="semibold" color="brand.700">
         {value}
       </Text>

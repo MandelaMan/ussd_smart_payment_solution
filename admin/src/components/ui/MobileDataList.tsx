@@ -53,6 +53,8 @@ type MobileDataCardProps = {
   showChevron?: boolean;
   /** "row" = invoice-style compact row; "card" = legacy expandable card. */
   variant?: "row" | "card";
+  /** Tighter padding / fuller content — billing gaps and dense mobile lists. */
+  compact?: boolean;
 };
 
 export function MobileDataCard({
@@ -70,17 +72,22 @@ export function MobileDataCard({
   opacity,
   showChevron,
   variant = "row",
+  compact = false,
 }: MobileDataCardProps) {
   const resolvedVariant =
     variant ?? (fields && fields.length > 0 && !statusLine ? "card" : "row");
   const useRow = resolvedVariant === "row";
   const showChevronIcon = showChevron ?? !useRow;
+  const rowPadX = compact ? 3 : MOBILE_LIST_ROW.px;
+  const rowPadY = compact ? 2.5 : MOBILE_LIST_ROW.py;
+  const cardPadX = compact ? 2.5 : MOBILE_LIST_CARD.px;
+  const cardPadY = compact ? 2.5 : MOBILE_LIST_CARD.py;
 
   if (useRow) {
     return (
       <Box
-        px={MOBILE_LIST_ROW.px}
-        py={MOBILE_LIST_ROW.py}
+        px={rowPadX}
+        py={rowPadY}
         cursor={onClick ? "pointer" : undefined}
         bg={isOpen ? "brand.50" : "white"}
         opacity={opacity ?? (dimmed ? 0.45 : 1)}
@@ -91,9 +98,9 @@ export function MobileDataCard({
         minW={0}
         overflow="hidden"
       >
-        <Flex align="flex-start" gap={2.5} maxW="100%" minW={0}>
+        <Flex align="flex-start" gap={compact ? 2 : 2.5} maxW="100%" minW={0}>
           {leading ? <Box flexShrink={0} pt={0.5}>{leading}</Box> : null}
-          <Flex flex={1} minW={0} align="flex-start" justify="space-between" gap={3}>
+          <Flex flex={1} minW={0} align="flex-start" justify="space-between" gap={compact ? 2 : 3}>
             <Box flex={1} minW={0} overflow="hidden">
               <Text
                 fontWeight={MOBILE_LIST_ROW.title.fontWeight}
@@ -106,20 +113,35 @@ export function MobileDataCard({
                 {title}
               </Text>
               {subtitle ? (
-                <Text
+                <Box
                   fontSize={MOBILE_LIST_ROW.subtitle.fontSize}
                   lineHeight={MOBILE_LIST_ROW.subtitle.lineHeight}
-                  color="gray.500"
-                  mt={MOBILE_LIST_ROW.subtitle.mt}
-                  lineClamp={2}
+                  color="fg.muted"
+                  mt={compact ? 0.5 : MOBILE_LIST_ROW.subtitle.mt}
                   overflowWrap="anywhere"
                 >
-                  {subtitle}
-                </Text>
+                  {typeof subtitle === "string" || typeof subtitle === "number" ? (
+                    <Text lineClamp={2}>{subtitle}</Text>
+                  ) : (
+                    subtitle
+                  )}
+                </Box>
               ) : null}
-              {statusLine ? <Box mt={MOBILE_LIST_ROW.status.mt}>{statusLine}</Box> : null}
+              {statusLine ? (
+                <Box mt={compact ? 1.5 : MOBILE_LIST_ROW.status.mt} maxW="100%">
+                  {statusLine}
+                </Box>
+              ) : null}
             </Box>
-            <Flex direction="column" align="flex-end" gap={2} flexShrink={0} pt={0.5} maxW="40%">
+            <Flex
+              direction="column"
+              align="flex-end"
+              gap={compact ? 1.5 : 2}
+              flexShrink={0}
+              pt={0.5}
+              maxW={compact ? "46%" : "40%"}
+              minW={0}
+            >
               {trailing ? (
                 <Box maxW="100%" overflow="hidden" textAlign="right">
                   {trailing}
@@ -127,21 +149,21 @@ export function MobileDataCard({
               ) : null}
               {menu ? (
                 <Box
-                  color="gray.400"
+                  color="fg.subtle"
                   onClick={(e) => e.stopPropagation()}
                   lineHeight={0}
                 >
                   {menu}
                 </Box>
               ) : onClick ? (
-                <Box color="gray.400" lineHeight={0} aria-hidden>
+                <Box color="fg.subtle" lineHeight={0} aria-hidden>
                   <FiMoreHorizontal size={18} />
                 </Box>
               ) : null}
             </Flex>
           </Flex>
         </Flex>
-        {footer ? <Box mt={2} maxW="100%" overflow="hidden">{footer}</Box> : null}
+        {footer ? <Box mt={compact ? 1.5 : 2} maxW="100%" overflow="hidden">{footer}</Box> : null}
       </Box>
     );
   }
@@ -152,8 +174,8 @@ export function MobileDataCard({
 
   return (
     <Box
-      px={MOBILE_LIST_CARD.px}
-      py={MOBILE_LIST_CARD.py}
+      px={cardPadX}
+      py={cardPadY}
       cursor={onClick ? "pointer" : undefined}
       bg={isOpen ? "brand.50" : undefined}
       opacity={opacity ?? (dimmed ? 0.45 : 1)}
@@ -164,7 +186,7 @@ export function MobileDataCard({
       minW={0}
       overflow="hidden"
     >
-      <Flex align="flex-start" gap={2} maxW="100%" minW={0}>
+      <Flex align="flex-start" gap={compact ? 1.5 : 2} maxW="100%" minW={0}>
         {showChevronIcon ? (
           <Box flexShrink={0} color={isOpen ? "brand.600" : "gray.500"} mt={0.5}>
             {isOpen ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
@@ -178,22 +200,22 @@ export function MobileDataCard({
                 {title}
               </Text>
               {subtitle ? (
-                <Text fontSize="xs" color="gray.500" mt={1} lineHeight="1.45" lineClamp={2} overflowWrap="anywhere">
+                <Text fontSize="xs" color="fg.muted" mt={compact ? 0.5 : 1} lineHeight="1.45" lineClamp={2} overflowWrap="anywhere">
                   {subtitle}
                 </Text>
               ) : null}
             </Box>
             {trailing ? (
-              <Box flexShrink={0} maxW="40%" overflow="hidden" textAlign="right">
+              <Box flexShrink={0} maxW={compact ? "46%" : "40%"} overflow="hidden" textAlign="right">
                 {trailing}
               </Box>
             ) : null}
           </Flex>
           {visibleFields && visibleFields.length > 0 ? (
-            <Grid templateColumns="repeat(2, minmax(0, 1fr))" gap={2} mt={2.5}>
+            <Grid templateColumns="repeat(2, minmax(0, 1fr))" gap={compact ? 1.5 : 2} mt={compact ? 2 : 2.5}>
               {visibleFields.map((field) => (
                 <Box key={field.label} minW={0}>
-                  <Text fontSize="2xs" color="gray.500" textTransform="uppercase" letterSpacing="0.04em">
+                  <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="0.04em">
                     {field.label}
                   </Text>
                   <Box fontSize="sm" mt={0.5} overflow="hidden" textOverflow="ellipsis">
@@ -203,7 +225,7 @@ export function MobileDataCard({
               ))}
             </Grid>
           ) : null}
-          {footer ? <Box mt={2.5} maxW="100%" overflow="hidden">{footer}</Box> : null}
+          {footer ? <Box mt={compact ? 2 : 2.5} maxW="100%" overflow="hidden">{footer}</Box> : null}
         </Box>
       </Flex>
     </Box>
@@ -246,11 +268,11 @@ export function MobileDataList<T>({
             {renderCard(item, isOpen)}
             {isOpen && renderExpanded ? (
               <Box
-                px={{ base: 3, sm: 4 }}
-                py={3}
+                px={{ base: 2, sm: 3 }}
+                py={2.5}
                 bg="surface.50"
                 borderTop="1px solid"
-                borderColor="gray.100"
+                borderColor="border.muted"
                 maxW="100%"
                 minW={0}
                 overflowX="hidden"

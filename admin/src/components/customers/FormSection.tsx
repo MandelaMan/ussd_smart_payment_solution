@@ -15,16 +15,16 @@ export function FormSection({
   return (
     <Box
       borderWidth="1px"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="lg"
       p={4}
-      bg="gray.50"
+      bg="bg.subtle"
     >
-      <Text fontWeight="semibold" fontSize="sm" color="gray.800">
+      <Text fontWeight="semibold" fontSize="sm" color="fg">
         {title}
       </Text>
       {description && (
-        <Text fontSize="xs" color="gray.500" mt={0.5} mb={3}>
+        <Text fontSize="xs" color="fg.muted" mt={0.5} mb={3}>
           {description}
         </Text>
       )}

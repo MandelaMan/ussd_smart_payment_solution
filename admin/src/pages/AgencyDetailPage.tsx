@@ -19,7 +19,8 @@ import { dataTableRootCss, DataTableColumnHeader, DataTableSortHeader } from "..
 import { useTableSort } from "../hooks/useTableSort";
 import { sortRows } from "../lib/tableSort";
 import { ModuleListPageSkeleton } from "../components/PageSkeletons";
-import { PAGE_STACK_GAP } from "../components/ui/pageLayout";
+import { PAGE_STACK_GAP, mobileStickyHeaderProps } from "../components/ui/pageLayout";
+import { MobileFixedHeader } from "../components/ui/MobileFixedHeader";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MetricCard } from "../components/MetricCard";
 import { TextStatus } from "../components/ui/TextStatus";
@@ -209,15 +210,38 @@ export function AgencyDetailPage() {
         </Button>
       </Flex>
 
+      <MobileFixedHeader headerProps={mobileStickyHeaderProps}>
+        <Flex justify="space-between" align="start" gap={3} wrap="wrap" minW={0}>
+          <Box minW={0}>
+            <Heading size="lg">{formatTitleCase(agency.name)}</Heading>
+            <Text fontSize="sm" color="fg.muted" mt={1}>
+              {agency.contactPerson && `${formatTitleCase(agency.contactPerson)} · `}
+              {agency.email} · {agency.phone}
+            </Text>
+          </Box>
+          {canInvoice && activeBillable.length > 0 ? (
+            <Button
+              colorPalette="brand"
+              size="sm"
+              onClick={() => setInvoiceDialog({ open: true, mode: "consolidated" })}
+            >
+              <FiFileText style={{ marginRight: 6 }} />
+              Create consolidated Zoho invoice
+            </Button>
+          ) : null}
+        </Flex>
+      </MobileFixedHeader>
       <Flex
+        display={{ base: "none", lg: "flex" }}
         justify="space-between"
         align={{ base: "start", md: "center" }}
         gap={3}
         wrap="wrap"
+        minW={0}
       >
-        <Box>
+        <Box minW={0}>
           <Heading size="lg">{formatTitleCase(agency.name)}</Heading>
-          <Text fontSize="sm" color="gray.500" mt={1}>
+          <Text fontSize="sm" color="fg.muted" mt={1}>
             {agency.contactPerson && `${formatTitleCase(agency.contactPerson)} · `}
             {agency.email} · {agency.phone}
           </Text>
@@ -265,12 +289,12 @@ export function AgencyDetailPage() {
         </Grid>
       ) : null}
 
-      <Box bg="white" borderRadius="sm" border="1px solid" borderColor="gray.100" overflow="hidden">
-        <Box px={4} py={3} borderBottom="1px solid" borderColor="gray.100">
+      <Box bg="bg.panel" borderRadius="sm" border="1px solid" borderColor="border.muted" overflow="hidden">
+        <Box px={4} py={3} borderBottom="1px solid" borderColor="border.muted">
           <Flex justify="space-between" align="start" gap={3}>
             <Box>
               <Text fontWeight="medium">Managed customers ({customers.length})</Text>
-              <Text fontSize="xs" color="gray.500">
+              <Text fontSize="xs" color="fg.muted">
                 B2B subscriptions billed to this agency — invoice individually or as one consolidated Zoho invoice
               </Text>
             </Box>
@@ -286,7 +310,7 @@ export function AgencyDetailPage() {
         <ResponsiveListViews
           mobile={
             customers.length === 0 ? (
-              <Text py={8} textAlign="center" color="gray.500" fontSize="sm">
+              <Text py={8} textAlign="center" color="fg.muted" fontSize="sm">
                 No customers linked to this agency
               </Text>
             ) : (
@@ -343,7 +367,7 @@ export function AgencyDetailPage() {
           <Table.Body>
             {customers.length === 0 ? (
               <Table.Row>
-                <Table.Cell colSpan={canInvoice ? 7 : 6} py={8} textAlign="center" color="gray.500">
+                <Table.Cell colSpan={canInvoice ? 7 : 6} py={8} textAlign="center" color="fg.muted">
                   No customers linked to this agency
                 </Table.Cell>
               </Table.Row>
@@ -379,7 +403,7 @@ export function AgencyDetailPage() {
                           Invoice
                         </Button>
                       ) : (
-                        <Text fontSize="xs" color="gray.400">—</Text>
+                        <Text fontSize="xs" color="fg.subtle">—</Text>
                       )}
                     </Table.Cell>
                   ) : null}
@@ -397,11 +421,11 @@ export function AgencyDetailPage() {
             px={4}
             py={3}
             borderTop="1px solid"
-            borderColor="gray.100"
-            bg="gray.50"
+            borderColor="border.muted"
+            bg="bg.subtle"
             gap={4}
           >
-            <Text fontSize="sm" color="gray.600">
+            <Text fontSize="sm" color="fg.muted">
               Active total: <strong>{formatCurrency(billing.totalActiveAmount)}</strong>
             </Text>
           </Flex>
@@ -409,18 +433,18 @@ export function AgencyDetailPage() {
       </Box>
 
       {zoho?.linked ? (
-        <Box bg="white" borderRadius="sm" border="1px solid" borderColor="gray.100" overflow="hidden">
+        <Box bg="bg.panel" borderRadius="sm" border="1px solid" borderColor="border.muted" overflow="hidden">
           <Flex
             justify="space-between"
             align="center"
             px={4}
             py={3}
             borderBottom="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
           >
             <Box>
               <Text fontWeight="medium">Zoho invoices</Text>
-              <Text fontSize="xs" color="gray.500">
+              <Text fontSize="xs" color="fg.muted">
                 Recent invoices for this agency in Zoho Books
               </Text>
             </Box>
@@ -437,7 +461,7 @@ export function AgencyDetailPage() {
           <ResponsiveListViews
             mobile={
               invoices.length === 0 ? (
-                <Text py={6} textAlign="center" color="gray.500" fontSize="sm">
+                <Text py={6} textAlign="center" color="fg.muted" fontSize="sm">
                   {invoicesLoading ? "Loading invoices…" : "No Zoho invoices yet"}
                 </Text>
               ) : (
@@ -476,7 +500,7 @@ export function AgencyDetailPage() {
             <Table.Body>
               {invoices.length === 0 ? (
                 <Table.Row>
-                  <Table.Cell colSpan={5} py={6} textAlign="center" color="gray.500">
+                  <Table.Cell colSpan={5} py={6} textAlign="center" color="fg.muted">
                     {invoicesLoading ? "Loading invoices…" : "No Zoho invoices yet"}
                   </Table.Cell>
                 </Table.Row>
@@ -486,7 +510,7 @@ export function AgencyDetailPage() {
                     <Table.Cell fontWeight="medium">
                       {inv.invoiceNumber || inv.id}
                     </Table.Cell>
-                    <Table.Cell color="gray.600">
+                    <Table.Cell color="fg.muted">
                       {inv.date ? formatDate(inv.date) : "—"}
                     </Table.Cell>
                     <Table.Cell>

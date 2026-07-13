@@ -605,7 +605,7 @@ function buildTispSetClientPayload(input, transactionType) {
     Router: routerLocation,
     StaticIPAddress: resolvedIp,
     BillingCycle: tispCreateBillingCycle(),
-    DueDate: formatTispDueDate(),
+    DueDate: formatTispDueDate(input.dueDate || new Date()),
     PppoeUsername: String(apartmentNumber || ""),
     PppoePassword: String(tispPassword || ""),
     PppoeRemoteAddress: resolvedIp,
@@ -654,5 +654,6 @@ module.exports = {
   formatTispError,
   parseTispOperationResponse,
   accountExistsOnTisp,
+  formatTispDueDate,
   test,
 };

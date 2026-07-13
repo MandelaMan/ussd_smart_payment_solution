@@ -14,7 +14,8 @@ const ALL_SCHEDULES = [
     integration: INTEGRATIONS.CUSTOMER,
     jobId: "repeat-customers",
     intervalMs: env.CUSTOMER_SYNC_INTERVAL_MS,
-    payload: { triggeredBy: "scheduled", incremental: true },
+    // Full TISP ClientStatus scan — no Zoho; TISP has no incremental cursor.
+    payload: { triggeredBy: "scheduled", incremental: false },
     enabled: true,
   },
   {

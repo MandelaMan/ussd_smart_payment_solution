@@ -50,7 +50,10 @@ export function BillingNavGroup({ onNavigate }: Props) {
         <NavLink
           to={BILLING_BASE_PATH}
           end
-          onClick={onNavigate}
+          onClick={() => {
+            if (!onBillingHome) navigate(BILLING_BASE_PATH);
+            onNavigate?.();
+          }}
           style={{ textDecoration: "none", flex: 1, minWidth: 0, overflow: "hidden" }}
         >
           {() => (
@@ -128,10 +131,13 @@ function SubLink({ label, isActive }: { label: string; isActive: boolean }) {
       fontSize="xs"
       fontWeight="medium"
       color={isActive ? "brand.700" : "brand.800"}
-      bg={isActive ? "white" : "transparent"}
+      bg={isActive ? "bg.panel" : "transparent"}
       borderLeft="2px solid"
       borderLeftColor={isActive ? "azure.500" : "transparent"}
-      _hover={{ bg: "white", color: "brand.700" }}
+      _hover={{
+        bg: "bg.panel",
+        color: "brand.700",
+      }}
       whiteSpace="nowrap"
       overflow="hidden"
       textOverflow="ellipsis"

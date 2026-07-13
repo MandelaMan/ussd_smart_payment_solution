@@ -71,10 +71,10 @@ function ScopeOption({ selected, title, detail, onSelect }: ScopeOptionProps) {
     >
       <Flex align="center" justify="space-between" gap={3}>
         <Box minW={0}>
-          <Text fontWeight="semibold" color="gray.900">
+          <Text fontWeight="semibold" color="fg">
             {title}
           </Text>
-          <Text fontSize="sm" color="gray.600" mt={0.5}>
+          <Text fontSize="sm" color="fg.muted" mt={0.5}>
             {detail}
           </Text>
         </Box>
@@ -197,13 +197,13 @@ export function ExportScopeDialog({
         py={3.5}
         pr={12}
         borderBottomWidth="1px"
-        borderColor="gray.100"
+        borderColor="border.muted"
         w="full"
       >
-        <Text fontSize="lg" fontWeight="semibold" color="gray.900" lineHeight="1.25">
+        <Text fontSize="lg" fontWeight="semibold" color="fg" lineHeight="1.25">
           Export {label.toLowerCase()}
         </Text>
-        <Text fontSize="sm" color="gray.500" mt={1} lineHeight="1.4">
+        <Text fontSize="sm" color="fg.muted" mt={1} lineHeight="1.4">
           Choose format, records, and columns to export.
         </Text>
       </Box>
@@ -212,12 +212,12 @@ export function ExportScopeDialog({
         <Stack gap={3}>
           {formats.length > 1 ? (
             <Box>
-              <Text fontSize="sm" fontWeight="medium" color="gray.700" mb={1.5}>
+              <Text fontSize="sm" fontWeight="medium" color="fg" mb={1.5}>
                 Format
               </Text>
               <Flex
                 borderWidth="1px"
-                borderColor="gray.200"
+                borderColor="border"
                 borderRadius="md"
                 overflow="hidden"
                 w="fit-content"
@@ -236,7 +236,7 @@ export function ExportScopeDialog({
                       color={selected ? "brand.700" : "gray.600"}
                       bg={selected ? "brand.50" : "white"}
                       borderRightWidth={item !== formats[formats.length - 1] ? "1px" : undefined}
-                      borderColor="gray.200"
+                      borderColor="border"
                       onClick={() => setFormat(item)}
                     >
                       {formatLabel(item)}
@@ -248,7 +248,7 @@ export function ExportScopeDialog({
           ) : null}
 
           <Box>
-            <Text fontSize="sm" fontWeight="medium" color="gray.700" mb={1.5}>
+            <Text fontSize="sm" fontWeight="medium" color="fg" mb={1.5}>
               Records
             </Text>
             <Stack gap={1.5}>
@@ -270,18 +270,18 @@ export function ExportScopeDialog({
           {columnOptions?.length ? (
             <Box>
               <Flex align="center" justify="space-between" gap={2} mb={1.5}>
-                <Text fontSize="sm" fontWeight="medium" color="gray.700">
+                <Text fontSize="sm" fontWeight="medium" color="fg">
                   Columns
                 </Text>
                 {columnMode === "custom" ? (
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color="fg.muted">
                     {optionalSelectedCount} of {optionalColumns.length} optional selected
                   </Text>
                 ) : null}
               </Flex>
               <Flex
                 borderWidth="1px"
-                borderColor="gray.200"
+                borderColor="border"
                 borderRadius="md"
                 overflow="hidden"
                 w="fit-content"
@@ -292,7 +292,7 @@ export function ExportScopeDialog({
                   label="All columns"
                   onClick={() => setColumnMode("all")}
                 />
-                <Box borderLeftWidth="1px" borderColor="gray.200" />
+                <Box borderLeftWidth="1px" borderColor="border" />
                 <SegmentButton
                   selected={columnMode === "custom"}
                   label="Select columns"
@@ -303,10 +303,10 @@ export function ExportScopeDialog({
               {columnMode === "custom" ? (
                 <Box
                   borderWidth="1px"
-                  borderColor="gray.200"
+                  borderColor="border"
                   borderRadius="md"
                   p={3}
-                  bg="gray.50"
+                  bg="bg.subtle"
                   maxH="220px"
                   overflowY="auto"
                 >
@@ -329,7 +329,7 @@ export function ExportScopeDialog({
                           >
                             {col.label}
                             {col.required ? (
-                              <Text as="span" fontSize="xs" color="gray.500" ml={1}>
+                              <Text as="span" fontSize="xs" color="fg.muted" ml={1}>
                                 (required)
                               </Text>
                             ) : null}
@@ -340,7 +340,7 @@ export function ExportScopeDialog({
                   </Grid>
                 </Box>
               ) : (
-                <Text fontSize="sm" color="gray.600">
+                <Text fontSize="sm" color="fg.muted">
                   All {columnOptions.length} columns will be included.
                 </Text>
               )}
@@ -354,7 +354,7 @@ export function ExportScopeDialog({
         px={5}
         py={3}
         borderTopWidth="1px"
-        borderColor="gray.100"
+        borderColor="border.muted"
         justifyContent="flex-end"
       >
         <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={confirming}>

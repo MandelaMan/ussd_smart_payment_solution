@@ -239,6 +239,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         title={embedded ? "Users" : "User Management"}
         description="Create users and assign roles"
         headingSize={embedded ? "sm" : "lg"}
+        sticky={!embedded}
         actions={
           <Flex gap={2} align="center">
             <DataTableExportButton
@@ -379,7 +380,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps}>{u.email}</Table.Cell>
                       <Table.Cell {...dataTableCellProps}>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color="fg">
                           {roleLabel(u.role)}
                         </Text>
                       </Table.Cell>
@@ -388,7 +389,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                           {u.is_active ? "Active" : "Inactive"}
                         </Badge>
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.500">
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {formatDate(u.created_at)}
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps} textAlign="right" w="56px">
@@ -414,10 +415,10 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         }}
         maxW="md"
       >
-        <Box px={5} py={4} borderBottomWidth="1px" borderColor="gray.100">
+        <Box px={5} py={4} borderBottomWidth="1px" borderColor="border.muted">
           <Heading size="sm">Reset password</Heading>
           {resetUser ? (
-            <Box fontSize="sm" color="gray.600" mt={1}>
+            <Box fontSize="sm" color="fg.muted" mt={1}>
               Set a new password for {resetUser.name} ({resetUser.email})
             </Box>
           ) : null}
@@ -440,7 +441,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           gap={2}
           justify="flex-end"
           borderTopWidth="1px"
-          borderColor="gray.100"
+          borderColor="border.muted"
         >
           <Button variant="ghost" disabled={resetting} onClick={closeResetPassword}>
             Cancel

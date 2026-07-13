@@ -6,7 +6,7 @@ type Props = { summary: ReconciliationSummary };
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <Box px={3} py={2} minW={0} flex="1 1 140px">
-      <Text fontSize="2xs" color="gray.500" fontWeight="medium" textTransform="uppercase" letterSpacing="0.04em">
+      <Text fontSize="2xs" color="fg.muted" fontWeight="medium" textTransform="uppercase" letterSpacing="0.04em">
         {label}
       </Text>
       <Text fontSize="sm" fontWeight="bold" color="brand.800" truncate>

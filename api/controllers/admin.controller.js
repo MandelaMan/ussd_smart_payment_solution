@@ -142,143 +142,8 @@ async function getStats(req, res, next) {
   try {
     const period = req.query.period || "30d";
     const days = period === "7d" ? 6 : period === "90d" ? 89 : 29;
-
-    const [mpesaStats] = await query(`
-      SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
-        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
-        SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count,
-        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS total_revenue
-      FROM payment_transactions
-    `);
-
-    const [todayStats] = await query(`
-      SELECT
-        COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-      FROM payment_transactions
-      WHERE DATE(created_at) = CURDATE()
-    `);
-
-    const [monthStats] = await query(`
-      SELECT
-        COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-      FROM payment_transactions
-      WHERE YEAR(created_at) = YEAR(CURDATE())
-        AND MONTH(created_at) = MONTH(CURDATE())
-    `);
-
-    const [periodStats] = await query(
-      `SELECT COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-       FROM payment_transactions
-       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
-      [days]
-    );
-
-    const [returningCustomers] = await query(`
-      SELECT COUNT(*) AS count FROM (
-        SELECT phone FROM payment_transactions
-        WHERE status = 'SUCCESS' AND phone IS NOT NULL AND phone != ''
-        GROUP BY phone HAVING COUNT(*) > 1
-      ) rc
-    `);
-
-    const [uniqueCustomers] = await query(`
-      SELECT COUNT(DISTINCT account_reference) AS count
-      FROM payment_transactions
-      WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
-    `);
-
-    const [newCustomers] = await query(`
-      SELECT COUNT(*) AS count FROM (
-        SELECT account_reference, MIN(created_at) AS first_pay
-        FROM payment_transactions
-        WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
-        GROUP BY account_reference
-        HAVING first_pay >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-      ) nc
-    `, [days]);
-
-    const [zohoStats] = await query(`
-      SELECT COUNT(*) AS total,
-        SUM(CASE WHEN status IN ('paid', 'success') THEN 1 ELSE 0 END) AS success_count
-      FROM integration_events WHERE source = 'zoho'
-    `);
-
-    const [tispStats] = await query(`
-      SELECT COUNT(*) AS total,
-        SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS success_count
-      FROM integration_events WHERE source = 'tisp'
-    `);
-
-    const recentActivity = await query(`
-      (SELECT id, 'mpesa' AS source, status, amount, phone AS label, created_at
-       FROM payment_transactions ORDER BY created_at DESC LIMIT 6)
-      UNION ALL
-      (SELECT id, source, status, amount, customer_no AS label, created_at
-       FROM integration_events ORDER BY created_at DESC LIMIT 6)
-      ORDER BY created_at DESC LIMIT 10
-    `);
-
-    const activityFeed = await listActivity({ limit: 30 });
-
-    const chart = await query(
-      `SELECT DATE(created_at) AS day,
-        COUNT(*) AS count,
-        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue,
-        SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
-        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
-       FROM payment_transactions
-       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-       GROUP BY DATE(created_at)
-       ORDER BY day ASC`,
-      [days]
-    );
-
-    const statusBreakdown = await query(`
-      SELECT status, COUNT(*) AS count
-      FROM payment_transactions
-      GROUP BY status
-    `);
-
-    const channelBreakdown = await query(`
-      SELECT COALESCE(channel, 'Unknown') AS channel, COUNT(*) AS count,
-        COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-      FROM payment_transactions
-      GROUP BY channel
-    `);
-
-    const integrationBreakdown = await query(`
-      SELECT source,
-        COUNT(*) AS total,
-        SUM(CASE WHEN source = 'zoho' AND status IN ('paid','success') THEN 1
-                 WHEN source = 'tisp' AND outcome = 'success' THEN 1 ELSE 0 END) AS success
-      FROM integration_events
-      GROUP BY source
-    `);
-
-    const topCustomers = await query(`
-      SELECT account_reference AS customer, phone,
-        COUNT(*) AS payments,
-        COALESCE(SUM(amount), 0) AS total_spent,
-        MAX(created_at) AS last_payment
-      FROM payment_transactions
-      WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
-      GROUP BY account_reference, phone
-      ORDER BY total_spent DESC
-      LIMIT 5
-    `);
-
-    const avgTransaction = await query(`
-      SELECT COALESCE(AVG(amount), 0) AS avg_amount
-      FROM payment_transactions WHERE status = 'SUCCESS'
-    `);
-
     const customerStore = require("../services/customerModuleStore");
-    let subscribers = {
+    const emptySubscribers = {
       total: 0,
       active: 0,
       cancelled: 0,
@@ -297,11 +162,126 @@ async function getStats(req, res, next) {
       tispSuspended: 0,
       tispUnknown: 0,
     };
-    try {
-      subscribers = await customerStore.getSubscriberStats(days);
-    } catch {
-      // customers module tables may not be migrated yet
-    }
+
+    // Run independent aggregates in parallel — sequential awaits were the main dashboard bottleneck.
+    // Skip unused chart/recentActivity/activityFeed work (UI uses /revenue-chart + /activity).
+    const [
+      [mpesaStats],
+      [todayStats],
+      [monthStats],
+      [periodStats],
+      [returningCustomers],
+      [uniqueCustomers],
+      [newCustomers],
+      [zohoStats],
+      [tispStats],
+      statusBreakdown,
+      channelBreakdown,
+      integrationBreakdown,
+      topCustomers,
+      avgTransactionRows,
+      subscribers,
+    ] = await Promise.all([
+      query(`
+        SELECT
+          COUNT(*) AS total,
+          SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+          SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
+          SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count,
+          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS total_revenue
+        FROM payment_transactions
+      `),
+      query(`
+        SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
+        FROM payment_transactions
+        WHERE created_at >= CURDATE()
+          AND created_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+      `),
+      query(`
+        SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
+        FROM payment_transactions
+        WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+          AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+      `),
+      query(
+        `SELECT COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
+         FROM payment_transactions
+         WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+        [days]
+      ),
+      query(`
+        SELECT COUNT(*) AS count FROM (
+          SELECT phone FROM payment_transactions
+          WHERE status = 'SUCCESS' AND phone IS NOT NULL AND phone != ''
+          GROUP BY phone HAVING COUNT(*) > 1
+        ) rc
+      `),
+      query(`
+        SELECT COUNT(DISTINCT account_reference) AS count
+        FROM payment_transactions
+        WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
+      `),
+      query(
+        `SELECT COUNT(*) AS count FROM (
+          SELECT account_reference, MIN(created_at) AS first_pay
+          FROM payment_transactions
+          WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
+          GROUP BY account_reference
+          HAVING first_pay >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        ) nc`,
+        [days]
+      ),
+      query(`
+        SELECT COUNT(*) AS total,
+          SUM(CASE WHEN status IN ('paid', 'success') THEN 1 ELSE 0 END) AS success_count
+        FROM integration_events WHERE source = 'zoho'
+      `),
+      query(`
+        SELECT COUNT(*) AS total,
+          SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS success_count
+        FROM integration_events WHERE source = 'tisp'
+      `),
+      query(`
+        SELECT status, COUNT(*) AS count
+        FROM payment_transactions
+        GROUP BY status
+      `),
+      query(`
+        SELECT COALESCE(channel, 'Unknown') AS channel, COUNT(*) AS count,
+          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
+        FROM payment_transactions
+        GROUP BY channel
+      `),
+      query(`
+        SELECT source,
+          COUNT(*) AS total,
+          SUM(CASE WHEN source = 'zoho' AND status IN ('paid','success') THEN 1
+                   WHEN source = 'tisp' AND outcome = 'success' THEN 1 ELSE 0 END) AS success
+        FROM integration_events
+        GROUP BY source
+      `),
+      query(`
+        SELECT account_reference AS customer, phone,
+          COUNT(*) AS payments,
+          COALESCE(SUM(amount), 0) AS total_spent,
+          MAX(created_at) AS last_payment
+        FROM payment_transactions
+        WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
+        GROUP BY account_reference, phone
+        ORDER BY total_spent DESC
+        LIMIT 5
+      `),
+      query(`
+        SELECT COALESCE(AVG(amount), 0) AS avg_amount
+        FROM payment_transactions WHERE status = 'SUCCESS'
+      `),
+      customerStore.getSubscriberStats(days).catch(() => emptySubscribers),
+    ]);
 
     return res.json({
       mpesa: {
@@ -345,10 +325,10 @@ async function getStats(req, res, next) {
         total: Number(tispStats.total || 0),
         success: Number(tispStats.success_count || 0),
       },
-      avgTransaction: Number(avgTransaction[0]?.avg_amount || 0),
-      recentActivity,
-      activityFeed,
-      chart: formatChartRows(chart),
+      avgTransaction: Number(avgTransactionRows[0]?.avg_amount || 0),
+      recentActivity: [],
+      activityFeed: [],
+      chart: [],
       statusBreakdown: statusBreakdown.map((d) => ({
         status: d.status,
         count: Number(d.count),

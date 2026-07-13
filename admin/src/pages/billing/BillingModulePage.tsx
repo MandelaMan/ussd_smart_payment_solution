@@ -79,7 +79,7 @@ export function BillingModulePage() {
       hideSyncBanner
     >
       {module.id === "billing-gaps" && (
-        <Text fontSize="xs" color="gray.600" mb={1}>
+        <Text fontSize="xs" color="fg.muted" mb={1} display={{ base: "none", lg: "block" }}>
           Browse is limited to 10 local records to protect Zoho API limits. Search a customer to
           live-check Zoho invoices, payments, and TISP connection — mismatches are flagged; “No gaps”
           confirms they are up to date.

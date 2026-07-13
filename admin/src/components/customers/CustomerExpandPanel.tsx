@@ -5,6 +5,7 @@ import {
   Button,
   Flex,
   IconButton,
+  Stack,
   Table,
   Text,
 } from "@chakra-ui/react";
@@ -14,7 +15,6 @@ import {
   formatCurrency,
   formatDate,
   type Customer,
-  type CustomerEvent,
   type CustomerPayment,
   type CustomerZohoStatus,
   type ZohoInvoice,
@@ -49,8 +49,8 @@ type Props = {
 
 const ALL_TABS = [
   { id: "package", label: "Package" },
+  { id: "connection", label: "Connection" },
   { id: "contact", label: "Contact info" },
-  { id: "activity", label: "Activity" },
   { id: "invoices", label: "Invoices" },
   { id: "payments", label: "Payments" },
 ] as const;
@@ -187,7 +187,7 @@ function SyncChip({
       minW={0}
       flexShrink={1}
     >
-      <Text fontWeight="medium" color="gray.600" flexShrink={0}>
+      <Text fontWeight="medium" color="fg.muted" flexShrink={0}>
         {label}
       </Text>
       {icon ? (
@@ -229,16 +229,11 @@ export function CustomerExpandPanel({
   const { inCooldown, remainingSeconds, startCooldown } = useSyncCooldown(customerId);
   const [error, setError] = useState("");
   const [customer, setCustomer] = useState<Customer | null>(null);
-  const [events, setEvents] = useState<CustomerEvent[]>([]);
   const [zohoStatus, setZohoStatus] = useState<CustomerZohoStatus | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("package");
   const [payments, setPayments] = useState<CustomerPayment[]>([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState("");
-  const {
-    sorts: eventSorts,
-    toggleSort: toggleEventSort,
-  } = useTableSort<"eventType" | "createdAt">({ sortBy: "createdAt", sortDir: "desc" });
   const {
     sorts: invoiceSorts,
     toggleSort: toggleInvoiceSort,
@@ -253,15 +248,6 @@ export function CustomerExpandPanel({
     sortBy: "paidAt",
     sortDir: "desc",
   });
-
-  const sortedEvents = useMemo(
-    () =>
-      sortRows(events, eventSorts, {
-        eventType: (event) => event.eventType,
-        createdAt: (event) => event.createdAt,
-      }),
-    [events, eventSorts]
-  );
 
   const sortedInvoices = useMemo(
     () =>
@@ -304,7 +290,6 @@ export function CustomerExpandPanel({
       .then((res) => {
         if (cancelled) return;
         setCustomer(res.customer);
-        setEvents(res.events);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -389,7 +374,6 @@ export function CustomerExpandPanel({
     try {
       const res = await api.refreshCustomer(customerId);
       setCustomer(res.customer);
-      setEvents(res.events);
       setZohoStatus(res.zoho);
       onCustomerUpdated?.(res.customer);
 
@@ -426,6 +410,7 @@ export function CustomerExpandPanel({
 
   const canRetryBilling =
     !readOnly &&
+    customer?.customerType !== "B2B" &&
     customer?.status === "active" &&
     (customer.zohoBillingStatus === "pending" ||
       customer.zohoBillingStatus === "failed") &&
@@ -534,7 +519,7 @@ export function CustomerExpandPanel({
     customer.tispSyncStatus === "synced" ||
     Boolean(
       customer.subscriptionStatus &&
-        customer.subscriptionStatus.toLowerCase() !== "unknown" &&
+        normalizeSubscriptionStatus(customer.subscriptionStatus) !== "Not on TISP" &&
         customer.tispSyncStatus !== "pending"
     );
 
@@ -545,35 +530,41 @@ export function CustomerExpandPanel({
         ? "failed"
         : "pending";
 
+  const isB2B = customer.customerType === "B2B";
+
   const zohoLinkedOnly =
+    !isB2B &&
     customer.zohoBillingStatus === "pending" &&
     Boolean(zohoStatus?.linked) &&
     (zohoStatus?.invoiceCount ?? 0) === 0;
 
   const zohoBillingHealthy =
+    isB2B ||
     customer.zohoBillingStatus === "completed" ||
     Boolean(zohoStatus?.linked && (zohoStatus.invoiceCount ?? 0) > 0);
 
-  const zohoSyncState: SyncChipState = zohoLoading
-    ? "loading"
-    : customer.zohoBillingStatus === "failed"
-      ? "failed"
-      : zohoBillingHealthy && zohoStatus?.linked
-        ? "ok"
-        : zohoLinkedOnly
+  const zohoSyncState: SyncChipState = isB2B
+    ? "ok"
+    : zohoLoading
+      ? "loading"
+      : customer.zohoBillingStatus === "failed"
+        ? "failed"
+        : zohoBillingHealthy && zohoStatus?.linked
           ? "ok"
-        : customer.zohoBillingStatus === "pending"
-          ? "pending"
-          : !zohoStatus
-            ? "unknown"
-            : zohoStatus.linked
-              ? "ok"
-              : "failed";
+          : zohoLinkedOnly
+            ? "ok"
+          : customer.zohoBillingStatus === "pending"
+            ? "pending"
+            : !zohoStatus
+              ? "unknown"
+              : zohoStatus.linked
+                ? "ok"
+                : "failed";
 
   return (
     <Box {...shellProps}>
       <Box
-        bg="white"
+        bg="bg.panel"
         borderRadius="lg"
         border="1px solid"
         borderColor="brand.200"
@@ -584,11 +575,11 @@ export function CustomerExpandPanel({
         direction={{ base: "column", sm: "row" }}
         align={{ base: "stretch", sm: "start" }}
         justify="space-between"
-        gap={3}
-        px={{ base: 3, sm: 4 }}
-        py={4}
+        gap={{ base: 2, sm: 3 }}
+        px={{ base: 2.5, sm: 4 }}
+        py={{ base: 2.5, sm: 4 }}
         borderBottom="1px solid"
-        borderColor="gray.100"
+        borderColor="border.muted"
         minW={0}
       >
         <Box minW={0} flex="1" overflow="hidden">
@@ -596,7 +587,7 @@ export function CustomerExpandPanel({
             <Text
               fontSize={{ base: "lg", sm: "xl" }}
               fontWeight="bold"
-              color="gray.900"
+              color="fg"
               lineHeight="1.2"
               textTransform="none"
               overflowWrap="anywhere"
@@ -619,20 +610,24 @@ export function CustomerExpandPanel({
               label="Zoho"
               state={zohoSyncState}
               statusLabel={
-                customer.zohoBillingStatus === "failed"
-                  ? "Setup failed"
-                  : zohoBillingHealthy && zohoStatus?.linked
-                    ? "Synced"
-                    : zohoLinkedOnly
-                      ? "Linked"
-                      : customer.zohoBillingStatus === "pending"
-                        ? "Setup pending"
-                        : customer.zohoBillingStatus === "completed" && zohoStatus?.linked
-                          ? "Synced"
-                          : undefined
+                isB2B
+                  ? "Not required"
+                  : customer.zohoBillingStatus === "failed"
+                    ? "Setup failed"
+                    : zohoBillingHealthy && zohoStatus?.linked
+                      ? "Synced"
+                      : zohoLinkedOnly
+                        ? "Linked"
+                        : customer.zohoBillingStatus === "pending"
+                          ? "Setup pending"
+                          : customer.zohoBillingStatus === "completed" && zohoStatus?.linked
+                            ? "Synced"
+                            : undefined
               }
               detail={
-                customer.zohoBillingStatus === "failed"
+                isB2B
+                  ? "B2B customers are not Zoho Books contacts"
+                  : customer.zohoBillingStatus === "failed"
                   ? customer.zohoBillingError || "Billing setup failed"
                   : zohoBillingHealthy && zohoStatus?.linked
                     ? `${zohoStatus.invoiceCount} invoice${zohoStatus.invoiceCount === 1 ? "" : "s"}`
@@ -664,7 +659,7 @@ export function CustomerExpandPanel({
             >
               {customer.customerType}
             </Badge>
-            <Text fontWeight="bold" fontSize={{ base: "md", sm: "lg" }} color="gray.900" whiteSpace="nowrap">
+            <Text fontWeight="bold" fontSize={{ base: "md", sm: "lg" }} color="fg" whiteSpace="nowrap">
               {hidePricing ? `${customer.productMbps} Mbps` : formatCurrency(customer.packagePrice)}
             </Text>
           </Flex>
@@ -712,10 +707,10 @@ export function CustomerExpandPanel({
 
       {customer.dstvSerialMissing && (
         <Box
-          mx={4}
-          mb={3}
-          px={3}
-          py={2.5}
+          mx={{ base: 2.5, sm: 4 }}
+          mb={2}
+          px={2.5}
+          py={2}
           bg="orange.50"
           border="1px solid"
           borderColor="orange.200"
@@ -727,16 +722,21 @@ export function CustomerExpandPanel({
 
       <TabStrip tabs={tabs} active={activeTab} onChange={(id) => setActiveTab(id as TabId)} />
 
-      <Box p={4} minH="280px">
+      <Box p={{ base: 2.5, md: 4 }} minH={{ base: "auto", md: "280px" }} minW={0}>
         <Box hidden={activeTab !== "package"}>
           <DetailGrid>
             <DetailCard
               label="Package"
               value={formatCustomerPackageLabel(customer.productName, customer.productMbps)}
               highlight
+              span={{ base: "1 / -1", md: "span 1" }}
             />
             <DetailCard label="Customer number" value={customer.customerNumber} mono />
-            <DetailCard label="Building" value={formatTitleCase(customer.buildingName)} />
+            <DetailCard
+              label="Building"
+              value={formatTitleCase(customer.buildingName)}
+              span={{ base: "1 / -1", sm: "span 1" }}
+            />
             <DetailCard label="Apartment number" value={customer.apartmentNumber} mono />
             <DetailCard label="Payment frequency" value={paymentFrequencyLabel} />
             {customer.trialPeriodEnabled && customer.trialEndsAt ? (
@@ -750,6 +750,7 @@ export function CustomerExpandPanel({
                 highlight={
                   new Date(customer.trialEndsAt) >= new Date(new Date().toDateString())
                 }
+                span={{ base: "1 / -1", lg: "span 1" }}
               />
             ) : null}
             <DetailCard
@@ -759,6 +760,7 @@ export function CustomerExpandPanel({
                   ? customer.agencyName
                   : "— (C2B — billed to customer)"
               }
+              span={{ base: "1 / -1", md: "span 1" }}
             />
             {!hidePricing ? (
               <DetailCard label="Package price" value={formatCurrency(customer.packagePrice)} />
@@ -769,6 +771,7 @@ export function CustomerExpandPanel({
                 value={customer.dstvDecoderSerial || "Not set — edit customer to add"}
                 mono={Boolean(customer.dstvDecoderSerial)}
                 highlight={!customer.dstvDecoderSerial}
+                span={{ base: "1 / -1", lg: "span 1" }}
               />
             )}
             <DetailCard label="VAT exempt" value={customer.isVatExempt ? "Yes" : "No"} />
@@ -787,59 +790,73 @@ export function CustomerExpandPanel({
           </DetailGrid>
         </Box>
 
-        <Box hidden={activeTab !== "contact"}>
+        <Box hidden={activeTab !== "connection"}>
           <DetailGrid>
-            <DetailCard label="Phone" value={customer.phone} highlight />
-            <DetailCard label="Email" value={customer.email} />
-            <DetailCard label="IP address" value={customer.ipAddress} mono />
-            <DetailCard label="Customer type" value={customer.customerType} />
-            <DetailCard label="Created" value={formatDate(customer.createdAt)} />
+            <DetailCard
+              label="IP address"
+              value={customer.ipAddress}
+              mono
+              highlight={Boolean(customer.ipAddress)}
+              span={{ base: "1 / -1", md: "span 1" }}
+            />
+            <DetailCard
+              label="Due date"
+              value={customer.tispDueDate ? formatDate(customer.tispDueDate) : null}
+              highlight={Boolean(customer.tispDueDate)}
+            />
+            <DetailCard
+              label="Service status"
+              value={displayCustomerStatus(customer)}
+            />
+            <DetailCard label="Uptime" value={null} />
+            <DetailCard label="Last seen" value={null} />
+            <DetailCard
+              label="OLT / ONU"
+              value={null}
+              span={{ base: "1 / -1", lg: "span 1" }}
+            />
+            <DetailCard
+              label="Signal / RX power"
+              value={null}
+              span={{ base: "1 / -1", sm: "span 1" }}
+            />
+            <DetailCard label="Online status" value={null} />
           </DetailGrid>
+          <Text
+            fontSize="2xs"
+            color="fg.muted"
+            mt={{ base: 2.5, md: 3 }}
+            lineHeight="1.4"
+            px={{ base: 0.5, md: 0 }}
+          >
+            Live uptime and OLT metrics will load from the network NMS when connected.
+          </Text>
         </Box>
 
-        <Box hidden={activeTab !== "activity"}>
-          <Box>
-            <SectionTitle>Recent activity</SectionTitle>
-            {sortedEvents.length === 0 ? (
-              <EmptyState>No activity recorded yet</EmptyState>
-            ) : (
-              <DataTable>
-                <Table.Header>
-                  <Table.Row>
-                    <DataTableSortHeader label="Event" column="eventType" sorts={eventSorts} onSort={toggleEventSort} />
-                    <DataTableSortHeader label="Date" column="createdAt" sorts={eventSorts} onSort={toggleEventSort} defaultDir="desc" />
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {sortedEvents.map((ev) => (
-                    <Table.Row key={ev.id} _hover={{ bg: "gray.50" }}>
-                      <Table.Cell {...dataTableCellProps} fontWeight="medium" textTransform="capitalize">
-                        {ev.eventType.replace(/_/g, " ")}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
-                        {formatDate(ev.createdAt)}
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </DataTable>
-            )}
-          </Box>
+        <Box hidden={activeTab !== "contact"}>
+          <DetailGrid columns={{ base: "1fr", sm: "1fr 1fr" }}>
+            <DetailCard label="Phone" value={customer.phone} highlight />
+            <DetailCard
+              label="Email"
+              value={customer.email}
+              span={{ base: "1 / -1", sm: "span 1" }}
+            />
+          </DetailGrid>
         </Box>
 
         <Box hidden={activeTab !== "invoices"} minH="180px">
           <Box>
             {zohoStatus?.lastSyncedAt ? (
-              <Text fontSize="xs" color="gray.500" mb={2}>
+              <Text fontSize="xs" color="fg.muted" mb={2}>
                 Last updated: {formatRelativeTime(zohoStatus.lastSyncedAt) || "—"}
                 {zohoStatus.cacheFresh ? " (cached)" : ""}
               </Text>
             ) : null}
             {customer.trialPeriodEnabled && customer.trialEndsAt ? (
               <Box
-                mb={3}
-                px={3}
-                py={2}
+                mb={2}
+                px={2.5}
+                py={1.5}
                 bg="purple.50"
                 border="1px solid"
                 borderColor="purple.100"
@@ -859,20 +876,17 @@ export function CustomerExpandPanel({
             ) : null}
             {zohoStatus?.billedViaAgency && (
               <Box
-                mb={3}
-                px={3}
-                py={2}
+                mb={2}
+                px={2.5}
+                py={1.5}
                 bg="blue.50"
                 border="1px solid"
                 borderColor="blue.100"
                 borderRadius="md"
               >
                 <Text fontSize="xs" color="blue.800" fontWeight="medium">
-                  B2B billing via {zohoStatus.agencyName || "agency"}
-                </Text>
-                <Text fontSize="xs" color="blue.700" mt={0.5}>
                   {zohoStatus.billingNote ||
-                    "Invoices are issued to the managing agency, not this customer individually."}
+                    `B2B — invoiced to agency ${zohoStatus.agencyName || "agency"}, not individually`}
                 </Text>
               </Box>
             )}
@@ -923,38 +937,74 @@ export function CustomerExpandPanel({
                 ) : null}
               </Box>
             ) : (
-              <DataTable>
-                <Table.Header>
-                  <Table.Row>
-                    <DataTableSortHeader label="Invoice" column="invoiceNumber" sorts={invoiceSorts} onSort={toggleInvoiceSort} />
-                    <DataTableSortHeader label="Date" column="date" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
-                    <DataTableSortHeader label="Status" column="status" sorts={invoiceSorts} onSort={toggleInvoiceSort} />
-                    <DataTableSortHeader label="Total" column="total" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
-                    <DataTableSortHeader label="Balance" column="balanceDue" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
+              <>
+                <Stack
+                  gap={0}
+                  divideY="1px"
+                  divideColor="gray.100"
+                  border="1px solid"
+                  borderColor="border.muted"
+                  borderRadius="md"
+                  overflow="hidden"
+                  display={{ base: "flex", lg: "none" }}
+                  w="full"
+                >
                   {sortedInvoices.map((invoice) => (
-                    <Table.Row key={invoice.id} _hover={{ bg: "gray.50" }}>
-                      <Table.Cell {...dataTableCellProps} fontFamily="mono" color="brand.700">
-                        {invoice.invoiceNumber || invoice.id}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
-                        {invoice.date ? formatDate(invoice.date) : "—"}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps}>
-                        <TextStatus status={invoice.status} />
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} fontWeight="semibold">
-                        {invoice.total != null ? formatCurrency(invoice.total) : "—"}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
-                        {invoice.balanceDue != null ? formatCurrency(invoice.balanceDue) : "—"}
-                      </Table.Cell>
-                    </Table.Row>
+                    <Flex key={invoice.id} px={2.5} py={2} justify="space-between" gap={2} minW={0}>
+                      <Box flex={1} minW={0}>
+                        <Text fontSize="xs" fontWeight="semibold" color="brand.700" fontFamily="mono" lineClamp={1}>
+                          {invoice.invoiceNumber || invoice.id}
+                        </Text>
+                        <Text fontSize="2xs" color="fg.muted" mt={0.5}>
+                          {invoice.date ? formatDate(invoice.date) : "—"}
+                        </Text>
+                      </Box>
+                      <Box textAlign="right" flexShrink={0}>
+                        <Text fontSize="xs" fontWeight="semibold" whiteSpace="nowrap">
+                          {invoice.balanceDue != null ? formatCurrency(invoice.balanceDue) : "—"}
+                        </Text>
+                        <Box mt={0.5} display="flex" justifyContent="flex-end">
+                          <TextStatus status={invoice.status} />
+                        </Box>
+                      </Box>
+                    </Flex>
                   ))}
-                </Table.Body>
-              </DataTable>
+                </Stack>
+                <Box display={{ base: "none", lg: "block" }}>
+                  <DataTable>
+                    <Table.Header>
+                      <Table.Row>
+                        <DataTableSortHeader label="Invoice" column="invoiceNumber" sorts={invoiceSorts} onSort={toggleInvoiceSort} />
+                        <DataTableSortHeader label="Date" column="date" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
+                        <DataTableSortHeader label="Status" column="status" sorts={invoiceSorts} onSort={toggleInvoiceSort} />
+                        <DataTableSortHeader label="Total" column="total" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
+                        <DataTableSortHeader label="Balance" column="balanceDue" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {sortedInvoices.map((invoice) => (
+                        <Table.Row key={invoice.id} _hover={{ bg: "bg.subtle" }}>
+                          <Table.Cell {...dataTableCellProps} fontFamily="mono" color="brand.700">
+                            {invoice.invoiceNumber || invoice.id}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} color="fg.muted">
+                            {invoice.date ? formatDate(invoice.date) : "—"}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps}>
+                            <TextStatus status={invoice.status} />
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} fontWeight="semibold">
+                            {invoice.total != null ? formatCurrency(invoice.total) : "—"}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} color="fg.muted">
+                            {invoice.balanceDue != null ? formatCurrency(invoice.balanceDue) : "—"}
+                          </Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </DataTable>
+                </Box>
+              </>
             )}
           </Box>
         </Box>
@@ -968,43 +1018,85 @@ export function CustomerExpandPanel({
             ) : payments.length === 0 ? (
               <EmptyState>No payments received for this customer</EmptyState>
             ) : (
-              <DataTable>
-                <Table.Header>
-                  <Table.Row>
-                    <DataTableSortHeader label="Source" column="source" sorts={paymentSorts} onSort={togglePaymentSort} />
-                    <DataTableSortHeader label="Reference" column="referenceId" sorts={paymentSorts} onSort={togglePaymentSort} />
-                    <DataTableSortHeader label="Amount" column="amount" sorts={paymentSorts} onSort={togglePaymentSort} defaultDir="desc" />
-                    <DataTableColumnHeader>Invoice</DataTableColumnHeader>
-                    <DataTableSortHeader label="Date" column="paidAt" sorts={paymentSorts} onSort={togglePaymentSort} defaultDir="desc" />
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
+              <>
+                <Stack
+                  gap={0}
+                  divideY="1px"
+                  divideColor="gray.100"
+                  border="1px solid"
+                  borderColor="border.muted"
+                  borderRadius="md"
+                  overflow="hidden"
+                  display={{ base: "flex", lg: "none" }}
+                  w="full"
+                >
                   {sortedPayments.map((payment) => (
-                    <Table.Row key={payment.id} _hover={{ bg: "gray.50" }}>
-                      <Table.Cell {...dataTableCellProps}>
-                        <Badge
-                          colorPalette={SOURCE_COLORS[payment.source] || "gray"}
-                          variant="subtle"
-                        >
-                          {SOURCE_LABELS[payment.source] || payment.source}
-                        </Badge>
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} fontFamily="mono" color="brand.700">
-                        {payment.referenceId || "—"}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} fontWeight="semibold">
+                    <Flex key={payment.id} px={2.5} py={2} justify="space-between" gap={2} minW={0}>
+                      <Box flex={1} minW={0}>
+                        <Flex align="center" gap={1.5} mb={0.5}>
+                          <Badge
+                            colorPalette={SOURCE_COLORS[payment.source] || "gray"}
+                            variant="subtle"
+                            fontSize="2xs"
+                          >
+                            {SOURCE_LABELS[payment.source] || payment.source}
+                          </Badge>
+                        </Flex>
+                        <Text fontSize="xs" fontFamily="mono" color="brand.700" lineClamp={1}>
+                          {payment.referenceId || "—"}
+                        </Text>
+                        <Text fontSize="2xs" color="fg.muted" mt={0.5}>
+                          {[payment.invoiceNumber, payment.paidAt ? formatDate(payment.paidAt) : null]
+                            .filter(Boolean)
+                            .join(" · ") || "—"}
+                        </Text>
+                      </Box>
+                      <Text fontSize="xs" fontWeight="semibold" whiteSpace="nowrap" flexShrink={0}>
                         {payment.amount != null ? formatCurrency(payment.amount) : "—"}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
-                        {payment.invoiceNumber || "—"}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
-                        {payment.paidAt ? formatDate(payment.paidAt) : "—"}
-                      </Table.Cell>
-                    </Table.Row>
+                      </Text>
+                    </Flex>
                   ))}
-                </Table.Body>
-              </DataTable>
+                </Stack>
+                <Box display={{ base: "none", lg: "block" }}>
+                  <DataTable>
+                    <Table.Header>
+                      <Table.Row>
+                        <DataTableSortHeader label="Source" column="source" sorts={paymentSorts} onSort={togglePaymentSort} />
+                        <DataTableSortHeader label="Reference" column="referenceId" sorts={paymentSorts} onSort={togglePaymentSort} />
+                        <DataTableSortHeader label="Amount" column="amount" sorts={paymentSorts} onSort={togglePaymentSort} defaultDir="desc" />
+                        <DataTableColumnHeader>Invoice</DataTableColumnHeader>
+                        <DataTableSortHeader label="Date" column="paidAt" sorts={paymentSorts} onSort={togglePaymentSort} defaultDir="desc" />
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {sortedPayments.map((payment) => (
+                        <Table.Row key={payment.id} _hover={{ bg: "bg.subtle" }}>
+                          <Table.Cell {...dataTableCellProps}>
+                            <Badge
+                              colorPalette={SOURCE_COLORS[payment.source] || "gray"}
+                              variant="subtle"
+                            >
+                              {SOURCE_LABELS[payment.source] || payment.source}
+                            </Badge>
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} fontFamily="mono" color="brand.700">
+                            {payment.referenceId || "—"}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} fontWeight="semibold">
+                            {payment.amount != null ? formatCurrency(payment.amount) : "—"}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} color="fg.muted">
+                            {payment.invoiceNumber || "—"}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} color="fg.muted">
+                            {payment.paidAt ? formatDate(payment.paidAt) : "—"}
+                          </Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </DataTable>
+                </Box>
+              </>
             )}
           </Box>
         </Box>
@@ -1014,22 +1106,9 @@ export function CustomerExpandPanel({
   );
 }
 
-function SectionTitle({ children }: { children: ReactNode }) {
-  return (
-    <Text
-      fontSize="sm"
-      fontWeight="semibold"
-      color="gray.800"
-      mb={3}
-    >
-      {children}
-    </Text>
-  );
-}
-
 function EmptyState({ children }: { children: ReactNode }) {
   return (
-    <Text fontSize="sm" color="gray.400" py={6} textAlign="center">
+    <Text fontSize="sm" color="fg.subtle" py={6} textAlign="center">
       {children}
     </Text>
   );

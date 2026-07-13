@@ -129,7 +129,7 @@ export function ApartmentHistoryExpandPanel({
 
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       borderRadius="lg"
       border="1px solid"
       borderColor="brand.200"
@@ -139,15 +139,15 @@ export function ApartmentHistoryExpandPanel({
       <Flex
         align="start"
         justify="space-between"
-        gap={3}
-        px={4}
-        py={4}
+        gap={{ base: 2, md: 3 }}
+        px={{ base: 2.5, md: 4 }}
+        py={{ base: 2.5, md: 4 }}
         borderBottom="1px solid"
-        borderColor="gray.100"
+        borderColor="border.muted"
       >
         <Box minW={0}>
           <Flex align="center" gap={2} flexWrap="wrap">
-            <Text fontSize="xl" fontWeight="bold" color="gray.900" lineHeight="1.3">
+            <Text fontSize={{ base: "lg", md: "xl" }} fontWeight="bold" color="fg" lineHeight="1.3">
               {formatTitleCase(entry.customerName)}
             </Text>
             <TextStatus
@@ -157,11 +157,11 @@ export function ApartmentHistoryExpandPanel({
               })}
             />
           </Flex>
-          <Text fontSize="sm" color="gray.500" mt={1} lineHeight="1.45">
+          <Text fontSize={{ base: "xs", md: "sm" }} color="fg.muted" mt={1} lineHeight="1.45">
             {formatTitleCase(entry.buildingName)} · {entry.apartmentNumber} · {entry.customerNumber}
           </Text>
         </Box>
-        <Flex align="center" gap={2} flexShrink={0}>
+        <Flex align="center" gap={2} flexShrink={0} flexWrap="wrap" justify="flex-end">
           <Badge
             colorPalette={entry.customerType === "C2B" ? "brand" : "blue"}
             variant="subtle"
@@ -180,20 +180,20 @@ export function ApartmentHistoryExpandPanel({
         </Flex>
       </Flex>
 
-      <Box p={3}>
-        <Stack gap={4}>
+      <Box p={{ base: 2, md: 3 }}>
+        <Stack gap={{ base: 2.5, md: 4 }}>
           <Box
-            bg="gray.50"
+            bg="bg.subtle"
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="lg"
-            px={{ base: 3, md: 3.5 }}
-            py={3}
+            px={{ base: 2.5, md: 3.5 }}
+            py={{ base: 2, md: 3 }}
           >
-            <Text fontSize="sm" fontWeight="semibold" color="gray.800" mb={1} lineHeight="1.4">
+            <Text fontSize="sm" fontWeight="semibold" color="fg" mb={1} lineHeight="1.4">
               Occupancy timeline — {entry.apartmentNumber}
             </Text>
-            <Text fontSize="xs" color="gray.500" mb={3} lineHeight="1.45">
+            <Text fontSize="2xs" color="fg.muted" mb={2} lineHeight="1.45" display={{ base: "none", sm: "block" }}>
               All tenants for this apartment, oldest on the left. The selected record is highlighted.
             </Text>
             {loadingUnitHistory && unitHistory.length === 0 ? (
@@ -233,13 +233,13 @@ export function ApartmentHistoryExpandPanel({
           </DetailGrid>
 
           <Box>
-            <Text fontSize="sm" fontWeight="semibold" color="gray.800" mb={2} lineHeight="1.4">
+            <Text fontSize="sm" fontWeight="semibold" color="fg" mb={2} lineHeight="1.4">
               Related activity
             </Text>
             {loadingEvents ? (
               <DataTableLoadingSkeleton columns={2} rows={2} fill={false} showHeader={false} />
             ) : relatedEvents.length === 0 ? (
-              <Text fontSize="sm" color="gray.400" py={2} lineHeight="1.45">
+              <Text fontSize="sm" color="fg.subtle" py={2} lineHeight="1.45">
                 No related activity notes recorded
               </Text>
             ) : (
@@ -247,9 +247,9 @@ export function ApartmentHistoryExpandPanel({
                 {relatedEvents.map((event) => (
                   <Box
                     key={event.id}
-                    bg="white"
+                    bg="bg.panel"
                     border="1px solid"
-                    borderColor="gray.100"
+                    borderColor="border.muted"
                     borderRadius="md"
                     px={3}
                     py={2}
@@ -257,23 +257,23 @@ export function ApartmentHistoryExpandPanel({
                     <Text fontSize="sm" fontWeight="medium" textTransform="capitalize" lineHeight="1.4">
                       {event.eventType.replace(/_/g, " ")}
                     </Text>
-                    <Text fontSize="xs" color="gray.500" mt={0.5} lineHeight="1.45">
+                    <Text fontSize="xs" color="fg.muted" mt={0.5} lineHeight="1.45">
                       {formatDate(event.createdAt)}
                     </Text>
                     {event.notes ? (
-                      <Text fontSize="sm" color="gray.600" mt={1} lineHeight="1.45">
+                      <Text fontSize="sm" color="fg.muted" mt={1} lineHeight="1.45">
                         {event.notes}
                       </Text>
                     ) : null}
                     {event.oldApartment || event.newApartment ? (
-                      <Text fontSize="sm" color="gray.600" mt={1} lineHeight="1.45">
+                      <Text fontSize="sm" color="fg.muted" mt={1} lineHeight="1.45">
                         {event.oldApartment && event.newApartment
                           ? `${event.oldApartment} → ${event.newApartment}`
                           : event.oldApartment || event.newApartment}
                       </Text>
                     ) : null}
                     {event.oldProductName || event.newProductName ? (
-                      <Text fontSize="sm" color="gray.600" mt={1} lineHeight="1.45">
+                      <Text fontSize="sm" color="fg.muted" mt={1} lineHeight="1.45">
                         Package:{" "}
                         {event.oldProductName && event.newProductName
                           ? `${event.oldProductName} → ${event.newProductName}`

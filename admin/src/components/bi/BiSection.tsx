@@ -15,9 +15,9 @@ export function BiSection({ title, subtitle, defaultOpen = true, children }: Pro
 
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="xl"
       boxShadow="sm"
       overflow="hidden"
@@ -31,18 +31,18 @@ export function BiSection({ title, subtitle, defaultOpen = true, children }: Pro
           alignItems="center"
           justifyContent="space-between"
           gap={3}
-          bg="gray.50"
+          bg="bg.subtle"
           borderBottomWidth={open ? "1px" : 0}
-          borderColor="gray.100"
+          borderColor="border.muted"
           cursor="pointer"
-          _hover={{ bg: "gray.100" }}
+          _hover={{ bg: "bg.muted" }}
         >
           <Box textAlign="left">
-            <Text fontSize="md" fontWeight="semibold" color="gray.800">
+            <Text fontSize="md" fontWeight="semibold" color="fg">
               {title}
             </Text>
             {subtitle && (
-              <Text fontSize="xs" color="gray.500" mt={0.5}>
+              <Text fontSize="xs" color="fg.muted" mt={0.5}>
                 {subtitle}
               </Text>
             )}

@@ -1,5 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
   Badge,
@@ -90,6 +91,7 @@ type ApartmentHistorySortKey =
   | "customerStatus";
 
 export function ApartmentHistoryPage() {
+  const isMobile = useMobileViewport();
   const [rows, setRows] = useState<ApartmentHistoryEntry[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({
     page: 1,
@@ -100,6 +102,7 @@ export function ApartmentHistoryPage() {
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [buildingsLoading, setBuildingsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -142,11 +145,10 @@ export function ApartmentHistoryPage() {
     [buildings]
   );
 
-  const rowsLengthRef = useRef(0);
-  rowsLengthRef.current = rows.length;
-
   const load = useCallback(async () => {
-    if (rowsLengthRef.current === 0) setLoading(true);
+    const append = isMobile && page > 1;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError("");
     try {
       const params: Record<string, string> = {
@@ -160,7 +162,7 @@ export function ApartmentHistoryPage() {
       params.sortBy = sortQuery.sortBy;
       params.sortDir = sortQuery.sortDir;
       const res = await api.listApartmentHistory(params);
-      setRows(res.data);
+      setRows((prev) => mergeInfinitePage(prev, res.data, page, isMobile, (row) => row.id));
       setPagination(res.pagination);
     } catch (e) {
       const message =
@@ -169,8 +171,9 @@ export function ApartmentHistoryPage() {
       toaster.create({ title: message, type: "error" });
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [search, buildingId, apartmentNumber, currentOnly, page, sortQuery.sortBy, sortQuery.sortDir]);
+  }, [search, buildingId, apartmentNumber, currentOnly, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   function handleSort(
     column: ApartmentHistorySortKey,
@@ -351,6 +354,38 @@ export function ApartmentHistoryPage() {
           { key: "all", label: "All", active: currentOnly === "", onClick: () => { setCurrentOnly(""); setPage(1); setExpanded(null); } },
           { key: "current", label: "Current", active: currentOnly === "true", onClick: () => { setCurrentOnly("true"); setPage(1); setExpanded(null); } },
         ]}
+        filterTitle="Filters"
+        activeFilterCount={(buildingId ? 1 : 0) + (apartmentInput.trim() ? 1 : 0)}
+        onClearFilters={() => {
+          setBuildingId("");
+          setApartmentInput("");
+          setPage(1);
+          setExpanded(null);
+        }}
+        filterContent={advancedFilters}
+        sortOptions={[
+          {
+            key: "movedInAt",
+            label: "Moved in",
+            active: sorts[0]?.sortBy === "movedInAt",
+            direction: sorts[0]?.sortBy === "movedInAt" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("movedInAt", "desc"),
+          },
+          {
+            key: "customerName",
+            label: "Tenant",
+            active: sorts[0]?.sortBy === "customerName",
+            direction: sorts[0]?.sortBy === "customerName" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("customerName"),
+          },
+          {
+            key: "apartmentNumber",
+            label: "Apartment",
+            active: sorts[0]?.sortBy === "apartmentNumber",
+            direction: sorts[0]?.sortBy === "apartmentNumber" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("apartmentNumber"),
+          },
+        ]}
         desktopActions={
           <DataTableExportButton
             entityLabel="apartment history"
@@ -379,21 +414,21 @@ export function ApartmentHistoryPage() {
       {showUnitTimeline ? (
         <Box
           key={activeUnitTimelineKey ?? "unit-timeline"}
-          bg="white"
+          bg="bg.panel"
           borderRadius={{ base: 0, lg: "lg" }}
           borderWidth={{ base: 0, lg: "1px" }}
           borderStyle="solid"
-          borderColor="gray.200"
+          borderColor="border"
           mx={{ base: -4, lg: 0 }}
           px={{ base: 4, lg: 5 }}
           py={5}
           minW={0}
         >
-          <Text fontSize="sm" fontWeight="semibold" color="gray.800" mb={1} lineHeight="1.4">
+          <Text fontSize="sm" fontWeight="semibold" color="fg" mb={1} lineHeight="1.4">
             Occupancy timeline — {apartmentNumber}
             {selectedBuildingName ? ` · ${selectedBuildingName}` : ""}
           </Text>
-          <Text fontSize="xs" color="gray.500" mb={4} lineHeight="1.45">
+          <Text fontSize="xs" color="fg.muted" mb={4} lineHeight="1.45">
             Complete tenant history for this unit. Oldest period on the left, most recent on the right.
           </Text>
           {unitTimelineLoading && visibleUnitTimeline.length === 0 ? (
@@ -418,6 +453,8 @@ export function ApartmentHistoryPage() {
 
       <DataTableCard
         loading={loading && rows.length === 0}
+        loadingMore={loadingMore}
+        loadedCount={rows.length}
         pagination={pagination}
         onPageChange={(nextPage) => {
           setPage(nextPage);
@@ -529,10 +566,10 @@ export function ApartmentHistoryPage() {
                       >
                         {row.customerNumber}
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {formatDate(row.movedInAt)}
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {row.movedOutAt ? formatDate(row.movedOutAt) : "—"}
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps} textTransform="capitalize">

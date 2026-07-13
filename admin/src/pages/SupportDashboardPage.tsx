@@ -29,6 +29,7 @@ import {
 } from "../components/PageSkeletons";
 import { BRAND } from "../theme";
 import { timeAgo } from "../lib/api";
+import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import {
   FiAlertCircle,
   FiCheckCircle,
@@ -64,7 +65,7 @@ function SupportActivityPanel({
     <Box
       w={{ base: "full", xl: "280px" }}
       flexShrink={0}
-      bg="white"
+      bg="bg.panel"
       borderRadius={{ base: "lg", xl: 0 }}
       border={{ base: "1px solid", xl: "none" }}
       borderLeft={{ xl: "1px solid" }}
@@ -76,22 +77,22 @@ function SupportActivityPanel({
       display="flex"
       flexDirection="column"
     >
-      <Box px={3} py={3} borderBottom="1px solid" borderColor="gray.100">
-        <Text fontSize="md" fontWeight="semibold" color="gray.800">
+      <Box px={{ base: 2.5, xl: 3 }} py={{ base: 2, xl: 3 }} borderBottom="1px solid" borderColor="border.muted">
+        <Text fontSize="sm" fontWeight="semibold" color="fg">
           Customer activity
         </Text>
-        <Text fontSize="xs" color="gray.500">
+        <Text fontSize="2xs" color="fg.muted">
           Account and sync events
         </Text>
       </Box>
       <Stack gap={0} flex={1} minH={0} overflowY="auto">
         {loading && (
-          <Text px={3} py={4} fontSize="sm" color="gray.500">
+          <Text px={3} py={4} fontSize="sm" color="fg.muted">
             Loading…
           </Text>
         )}
         {!loading && items.length === 0 && (
-          <Text px={3} py={4} fontSize="sm" color="gray.500">
+          <Text px={3} py={4} fontSize="sm" color="fg.muted">
             No recent customer events
           </Text>
         )}
@@ -119,15 +120,15 @@ function SupportActivityPanel({
                 <Icon size={14} />
               </Flex>
               <Box minW={0}>
-                <Text fontSize="sm" fontWeight="medium" color="gray.800" lineClamp={2}>
+                <Text fontSize="sm" fontWeight="medium" color="fg" lineClamp={2}>
                   {item.title}
                 </Text>
                 {item.message ? (
-                  <Text fontSize="xs" color="gray.500" mt={0.5} lineClamp={2}>
+                  <Text fontSize="xs" color="fg.muted" mt={0.5} lineClamp={2}>
                     {item.message}
                   </Text>
                 ) : null}
-                <Text fontSize="xs" color="gray.400" mt={1}>
+                <Text fontSize="xs" color="fg.subtle" mt={1}>
                   {timeAgo(item.createdAt)}
                   {item.customerRef ? ` · ${item.customerRef}` : ""}
                 </Text>
@@ -200,41 +201,47 @@ export function SupportDashboardPage() {
 
   return (
     <Flex
-      gap={{ base: 4, xl: 0 }}
-      align={{ base: "flex-start", xl: "stretch" }}
+      gap={{ base: 2.5, xl: 0 }}
+      align="stretch"
       direction={{ base: "column", xl: "row" }}
       flex={{ xl: 1 }}
+      w="full"
+      minW={0}
       minH={{ xl: 0 }}
-      alignSelf={{ xl: "stretch" }}
-      overflow={{ xl: "hidden" }}
+      alignSelf="stretch"
+      overflow={{ base: "visible", xl: "hidden" }}
       mx={{ xl: -4 }}
       mt={{ xl: -4 }}
       mb={{ xl: -4 }}
     >
       <Stack
-        flex={1}
+        flex={{ base: "none", xl: 1 }}
+        w="full"
         minW={0}
-        minH={0}
-        gap={4}
-        overflowY={{ xl: "auto" }}
+        minH={{ base: "auto", xl: 0 }}
+        gap={{ base: 2.5, xl: 4 }}
+        overflow={{ base: "visible", xl: "auto" }}
         px={{ xl: 4 }}
         py={{ xl: 4 }}
         pr={{ xl: 5 }}
+        pb={{ base: 2, xl: 0 }}
       >
+        <MobilePageChrome title="Home" description="Support overview" />
         {loading ? (
-          <DashboardMetricsSkeleton />
+          <Box mx={{ base: -3, xl: 0 }} px={{ base: 1, xl: 0 }}>
+            <DashboardMetricsSkeleton />
+          </Box>
         ) : (
-          <>
-            <Text fontSize="sm" fontWeight="semibold" color="gray.600">
+          <Stack gap={2.5} mx={{ base: -3, xl: 0 }} px={{ base: 1, xl: 0 }}>
+            <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={0}>
               Customers
             </Text>
             <Grid
               templateColumns={{
-                base: "1fr",
-                sm: "1fr 1fr",
+                base: "1fr 1fr",
                 lg: "repeat(4, 1fr)",
               }}
-              gap={4}
+              gap={{ base: 1.5, lg: 4 }}
             >
               <MetricCard
                 accent="cerulean"
@@ -261,12 +268,12 @@ export function SupportDashboardPage() {
               />
             </Grid>
 
-            <Text fontSize="sm" fontWeight="semibold" color="gray.600" mt={2}>
+            <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mt={0.5}>
               Service health
             </Text>
             <Grid
-              templateColumns={{ base: "1fr", sm: "1fr 1fr", lg: "repeat(3, 1fr)" }}
-              gap={4}
+              templateColumns={{ base: "1fr 1fr", lg: "repeat(3, 1fr)" }}
+              gap={{ base: 1.5, lg: 4 }}
             >
               <MetricCard
                 accent="cerulean"
@@ -285,26 +292,27 @@ export function SupportDashboardPage() {
                 value={stats.tispSync.pending}
               />
             </Grid>
-          </>
+          </Stack>
         )}
 
-        <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={4}>
+        <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={{ base: 2.5, lg: 4 }}>
           <Box
-            bg="white"
+            bg="bg.panel"
             borderRadius="lg"
             border="1px solid"
-            borderColor="gray.100"
-            p={4}
+            borderColor="border.muted"
+            p={{ base: 2.5, md: 4 }}
+            w="full"
           >
-            <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={3}>
+            <Text fontSize="sm" fontWeight="semibold" color="fg" mb={{ base: 2, md: 3 }}>
               Subscription status (active)
             </Text>
             {subscriptionChartData.length === 0 ? (
-              <Text fontSize="sm" color="gray.500">
+              <Text fontSize="sm" color="fg.muted">
                 No active customers
               </Text>
             ) : (
-              <Box h="220px">
+              <Box h={{ base: "180px", md: "220px" }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -332,23 +340,24 @@ export function SupportDashboardPage() {
           </Box>
 
           <Box
-            bg="white"
+            bg="bg.panel"
             borderRadius="lg"
             border="1px solid"
-            borderColor="gray.100"
-            p={4}
+            borderColor="border.muted"
+            p={{ base: 2.5, md: 4 }}
+            w="full"
           >
-            <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={3}>
+            <Text fontSize="sm" fontWeight="semibold" color="fg" mb={{ base: 2, md: 3 }}>
               Top buildings
             </Text>
             {buildingChartData.length === 0 ? (
-              <Text fontSize="sm" color="gray.500">
+              <Text fontSize="sm" color="fg.muted">
                 No building data
               </Text>
             ) : loading ? (
-              <ChartSkeleton height="220px" />
+              <ChartSkeleton height="200px" />
             ) : (
-              <Box h="220px">
+              <Box h={{ base: "180px", md: "220px" }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={buildingChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -364,16 +373,17 @@ export function SupportDashboardPage() {
         </Grid>
 
         <Box
-          bg="white"
+          bg="bg.panel"
           borderRadius="lg"
           border="1px solid"
-          borderColor="gray.100"
-          p={4}
+          borderColor="border.muted"
+          p={{ base: 2.5, md: 4 }}
+          w="full"
         >
-          <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={3}>
+          <Text fontSize="sm" fontWeight="semibold" color="fg" mb={{ base: 1, md: 3 }}>
             Package distribution
           </Text>
-          <Text fontSize="xs" color="gray.500" mb={3}>
+          <Text fontSize="2xs" color="fg.muted" mb={{ base: 2, md: 3 }}>
             Active subscribers
           </Text>
           <PackageSubscriptionChart data={packageChartData} />

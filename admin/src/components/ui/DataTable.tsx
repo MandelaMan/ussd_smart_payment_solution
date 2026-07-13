@@ -1,8 +1,11 @@
-import { Box, Flex, Stack, Table, type TableColumnHeaderProps } from "@chakra-ui/react";
-import type { ReactNode } from "react";
+import { Box, Flex, Stack, Table, Text, type TableColumnHeaderProps } from "@chakra-ui/react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { FiChevronDown, FiChevronUp } from "react-icons/fi";
 import { formatDataTableColumnLabel } from "../../lib/formatText";
+import { useMobileViewport } from "../../hooks/useMobileViewport";
+import { useMobileSearchOptional } from "../../lib/mobileSearch";
 import { PaginationSkeleton, TABLE_VIEWPORT_MIN_H } from "../PageSkeletons";
+import { InfiniteScrollSentinel } from "./InfiniteScrollSentinel";
 import { PaginationBar } from "./PaginationBar";
 import { SkeletonBlock } from "./SkeletonBlock";
 import type { ListPagination } from "../../lib/api";
@@ -30,7 +33,7 @@ export const dataTableCellProps = {
   px: { base: 2, md: 3 },
   fontSize: "sm",
   borderBottom: "1px solid",
-  borderColor: "gray.100",
+  borderColor: "border.muted",
   verticalAlign: "middle" as const,
   overflow: "hidden",
   whiteSpace: "nowrap" as const,
@@ -177,10 +180,10 @@ export function DataTableSortHeader<T extends string = string>({
 
 const tableRootCss = {
   "& tbody tr:nth-of-type(odd):not([data-expand-panel])": {
-    bg: "gray.50",
+    bg: "bg.subtle",
   },
   "& tbody tr:not([data-expand-panel]):hover": {
-    bg: "gray.100",
+    bg: "bg.muted",
   },
   "& tbody tr:last-child td": {
     borderBottom: "none",
@@ -195,6 +198,10 @@ type DataTableCardProps = {
   onPageChange?: (page: number) => void;
   itemLabel?: string;
   loading?: boolean;
+  /** Mobile infinite-scroll: next page is loading while current rows stay visible. */
+  loadingMore?: boolean;
+  /** Rows currently rendered (for mobile “loaded of total” footer). */
+  loadedCount?: number;
 };
 
 export function DataTableCard({
@@ -203,15 +210,39 @@ export function DataTableCard({
   onPageChange,
   itemLabel = "items",
   loading = false,
+  loadingMore = false,
+  loadedCount,
 }: DataTableCardProps) {
+  const isMobile = useMobileViewport();
+  const mobileSearch = useMobileSearchOptional();
+  const searchIdle =
+    isMobile && Boolean(mobileSearch?.searchOpen) && !mobileSearch?.searchValue.trim();
+  const showPager = Boolean(!loading && !searchIdle && pagination && onPageChange);
+  const hasMore = Boolean(pagination && pagination.page < pagination.pages);
+  const loadLockRef = useRef(false);
+
+  useEffect(() => {
+    if (!loadingMore) loadLockRef.current = false;
+  }, [loadingMore]);
+
+  if (searchIdle) {
+    return (
+      <Box mx={{ base: -4, lg: 0 }} minW={0} py={16} px={6} textAlign="center">
+        <Text fontSize="md" color="fg.subtle">
+          Type to search {itemLabel}
+        </Text>
+      </Box>
+    );
+  }
+
   return (
     <Box mx={{ base: -4, lg: 0 }} minW={0}>
       <Box
-        bg="white"
+        bg="bg.panel"
         borderRadius={{ base: 0, lg: "sm" }}
         borderWidth={{ base: 0, lg: "1px" }}
         borderStyle="solid"
-        borderColor="gray.200"
+        borderColor="border"
         overflow="hidden"
         minH={loading ? TABLE_VIEWPORT_MIN_H : undefined}
         display="flex"
@@ -227,13 +258,27 @@ export function DataTableCard({
       >
         {children}
       </Box>
-      {!loading && pagination && onPageChange ? (
+      {showPager && isMobile ? (
+        <InfiniteScrollSentinel
+          hasMore={hasMore}
+          loading={loadingMore}
+          onLoadMore={() => {
+            if (!pagination || !onPageChange || loadingMore || !hasMore) return;
+            if (loadLockRef.current) return;
+            loadLockRef.current = true;
+            onPageChange(pagination.page + 1);
+          }}
+          itemLabel={itemLabel}
+          total={pagination?.total}
+          loadedCount={loadedCount}
+        />
+      ) : showPager ? (
         <PaginationBar
-          pagination={pagination}
-          onPageChange={onPageChange}
+          pagination={pagination!}
+          onPageChange={onPageChange!}
           itemLabel={itemLabel}
         />
-      ) : loading ? (
+      ) : loading && !isMobile ? (
         <PaginationSkeleton />
       ) : null}
       </Box>
@@ -452,7 +497,7 @@ export function DataTableSkeletonRowsFill({ rows = 10 }: { rows?: number }) {
       flexDirection="column"
       justifyContent="space-evenly"
       borderTop="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       aria-hidden
     >
       {Array.from({ length: rows }).map((_, rowIdx) => (

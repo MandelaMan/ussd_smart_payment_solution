@@ -78,6 +78,11 @@ export function canDeleteCustomer(user: User | null): boolean {
   return normalizeRole(user?.role) === "admin";
 }
 
+/** Admin-only local package/frequency corrections (no Zoho invoice). */
+export function canEditCustomerPackage(user: User | null): boolean {
+  return normalizeRole(user?.role) === "admin";
+}
+
 export function hidePricing(user: User | null): boolean {
   const role = normalizeRole(user?.role);
   return role === "support" || role === "partner";

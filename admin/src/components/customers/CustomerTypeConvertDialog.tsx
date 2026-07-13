@@ -128,11 +128,11 @@ export function CustomerTypeConvertDialog({
 
   return (
     <ModalShell open onClose={onClose} maxW="32rem">
-      <Box px={5} pt={5} pb={4} pr={12} borderBottomWidth="1px" borderColor="gray.100">
-        <Text fontSize="lg" fontWeight="semibold" color="gray.900">
+      <Box px={5} pt={5} pb={4} pr={12} borderBottomWidth="1px" borderColor="border.muted">
+        <Text fontSize="lg" fontWeight="semibold" color="fg">
           Convert to {targetType}
         </Text>
-        <Text fontSize="xs" color="gray.500" mt={0.5}>
+        <Text fontSize="xs" color="fg.muted" mt={0.5}>
           {formatTitleCase(customer.fullName)} · {customer.customerNumber}
         </Text>
       </Box>
@@ -231,7 +231,7 @@ export function CustomerTypeConvertDialog({
                   )}
                 </Stack>
               ) : (
-                <Text fontSize="sm" color="gray.600">
+                <Text fontSize="sm" color="fg.muted">
                   Current agency:{" "}
                   <strong>{customer.agencyName ? formatTitleCase(customer.agencyName) : "—"}</strong>
                 </Text>

@@ -113,29 +113,29 @@ function PackageChangeSettlement({
 
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       borderRadius="md"
       borderWidth="1px"
-      borderColor="gray.200"
+      borderColor="border"
       overflow="hidden"
       w="full"
     >
       <Flex
         px={3}
         py={2}
-        bg="gray.50"
+        bg="bg.subtle"
         borderBottomWidth="1px"
-        borderColor="gray.100"
+        borderColor="border.muted"
         align={{ base: "start", sm: "center" }}
         justify="space-between"
         gap={2}
         direction={{ base: "column", sm: "row" }}
       >
-        <Text fontSize="xs" fontWeight="semibold" color="gray.800">
+        <Text fontSize="xs" fontWeight="semibold" color="fg">
           {isUpgrade ? "Payment breakdown" : "Credit breakdown"}
         </Text>
         {quote.daysRemainingInPeriod != null && quote.daysRemainingInPeriod > 0 ? (
-          <Text fontSize="2xs" color="gray.500">
+          <Text fontSize="2xs" color="fg.muted">
             {quote.daysRemainingInPeriod} day
             {quote.daysRemainingInPeriod === 1 ? "" : "s"} left on current plan
           </Text>
@@ -144,18 +144,18 @@ function PackageChangeSettlement({
 
       <Box px={3} py={2.5}>
         <Flex gap={2} mb={3} align="stretch">
-          <Box flex="1" minW={0} bg="gray.50" borderRadius="md" px={2.5} py={2}>
-            <Text fontSize="2xs" color="gray.500" textTransform="uppercase" letterSpacing="wide">
+          <Box flex="1" minW={0} bg="bg.subtle" borderRadius="md" px={2.5} py={2}>
+            <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide">
               From
             </Text>
-            <Text fontSize="sm" fontWeight="semibold" color="gray.900" lineHeight="1.3" wordBreak="break-word">
+            <Text fontSize="sm" fontWeight="semibold" color="fg" lineHeight="1.3" wordBreak="break-word">
               {quote.currentMbps} Mbps
             </Text>
-            <Text fontSize="xs" color="gray.600">
+            <Text fontSize="xs" color="fg.muted">
               {formatCurrency(quote.currentPrice)}
             </Text>
           </Box>
-          <Flex align="center" color="gray.400" flexShrink={0} aria-hidden px={0.5}>
+          <Flex align="center" color="fg.subtle" flexShrink={0} aria-hidden px={0.5}>
             →
           </Flex>
           <Box flex="1" minW={0} bg="brand.50" borderRadius="md" px={2.5} py={2}>
@@ -175,7 +175,7 @@ function PackageChangeSettlement({
           gap={1.5}
           pt={2}
           borderTopWidth="1px"
-          borderColor="gray.100"
+          borderColor="border.muted"
         >
           <SettlementLine label="New package" value={formatCurrency(quote.newPrice)} />
           {showCreditLine ? (
@@ -196,7 +196,7 @@ function PackageChangeSettlement({
               negative
             />
           ) : null}
-          <Box borderTopWidth="1px" borderColor="gray.200" pt={1.5} mt={0.5}>
+          <Box borderTopWidth="1px" borderColor="border" pt={1.5} mt={0.5}>
             <SettlementLine
               label={resultLabel}
               value={resultValue}
@@ -207,7 +207,7 @@ function PackageChangeSettlement({
         </Stack>
 
         {quote.dueDate ? (
-          <Text fontSize="2xs" color="gray.500" mt={2}>
+          <Text fontSize="2xs" color="fg.muted" mt={2}>
             Current period ends {formatDate(quote.dueDate)}
             {quote.daysUntilDue != null ? ` · ${quote.daysUntilDue}d remaining` : ""}
           </Text>
@@ -265,7 +265,7 @@ function PaymentMethodTile({
             </Badge>
           ) : null}
         </Flex>
-        <Text fontSize="2xs" color="gray.600" lineHeight="1.3">
+        <Text fontSize="2xs" color="fg.muted" lineHeight="1.3">
           {description}
         </Text>
       </Stack>
@@ -422,7 +422,7 @@ export function PackageChangeForm({
       )}
 
       <Box
-        bg="gray.50"
+        bg="bg.subtle"
         borderRadius="md"
         px={2.5}
         py={2}
@@ -430,13 +430,13 @@ export function PackageChangeForm({
         w="full"
         lineHeight="1.4"
       >
-        <Text color="gray.500" fontSize="2xs" textTransform="uppercase" letterSpacing="wide">
+        <Text color="fg.muted" fontSize="2xs" textTransform="uppercase" letterSpacing="wide">
           Current
         </Text>
-        <Text fontWeight="semibold" color="gray.900">
+        <Text fontWeight="semibold" color="fg">
           {customer.productMbps} Mbps · {formatCurrency(customer.packagePrice)} · {billingLabel}
         </Text>
-        <Text color="gray.500" truncate title={customer.productName}>
+        <Text color="fg.muted" truncate title={customer.productName}>
           {customer.productName}
         </Text>
       </Box>
@@ -485,12 +485,12 @@ export function PackageChangeForm({
             {dataLoading ? (
               <Flex align="center" gap={2} h="9">
                 <Spinner size="sm" color="brand.600" />
-                <Text fontSize="xs" color="gray.500">
+                <Text fontSize="xs" color="fg.muted">
                   Loading…
                 </Text>
               </Flex>
             ) : packages.length === 0 ? (
-              <Text fontSize="xs" color="gray.500" py={2}>
+              <Text fontSize="xs" color="fg.muted" py={2}>
                 {isUpgrade
                   ? "No higher-priced packages for this billing frequency."
                   : "No lower-priced packages for this billing frequency."}
@@ -526,12 +526,12 @@ export function PackageChangeForm({
           {dataLoading ? (
             <Flex align="center" gap={2} h="9">
               <Spinner size="sm" color="brand.600" />
-              <Text fontSize="xs" color="gray.500">
+              <Text fontSize="xs" color="fg.muted">
                 Loading…
               </Text>
             </Flex>
           ) : packages.length === 0 ? (
-            <Text fontSize="xs" color="gray.500">
+            <Text fontSize="xs" color="fg.muted">
               {isUpgrade
                 ? "No higher-priced packages for this billing frequency."
                 : "No lower-priced packages for this billing frequency."}
@@ -563,7 +563,7 @@ export function PackageChangeForm({
           {upgradeQuoteLoading ? (
             <Flex align="center" justify="center" gap={2} py={2}>
               <Spinner size="sm" color="brand.600" />
-              <Text fontSize="xs" color="gray.500">
+              <Text fontSize="xs" color="fg.muted">
                 {isUpgrade ? "Calculating top-up…" : "Calculating credit…"}
               </Text>
             </Flex>
@@ -647,7 +647,7 @@ export function PackageChangeForm({
       maxW="md"
       zIndex={NESTED_APP_DIALOG_Z_INDEX}
     >
-      <Dialog.Header borderBottomWidth="1px" borderColor="gray.100" px={4} py={3} pr={12}>
+      <Dialog.Header borderBottomWidth="1px" borderColor="border.muted" px={4} py={3} pr={12}>
         <Dialog.Title fontSize="md">
           {isUpgrade ? "Confirm package upgrade" : "Confirm package downgrade"}
         </Dialog.Title>
@@ -658,7 +658,7 @@ export function PackageChangeForm({
           items={summaryItems}
         />
       </Dialog.Body>
-      <Dialog.Footer px={4} py={3} borderTopWidth="1px" borderColor="gray.100" gap={2}>
+      <Dialog.Footer px={4} py={3} borderTopWidth="1px" borderColor="border.muted" gap={2}>
         <Button variant="ghost" size="sm" disabled={loading} onClick={() => setConfirmOpen(false)}>
           Back
         </Button>

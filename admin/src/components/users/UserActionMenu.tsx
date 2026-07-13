@@ -50,7 +50,7 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
           aria-label={`Actions for ${user.name}`}
           variant="ghost"
           size="sm"
-          color="gray.600"
+          color="fg.muted"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
         >
@@ -63,16 +63,16 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
             minW="200px"
             borderRadius="lg"
             boxShadow="lg"
-            bg="white"
+            bg="bg.panel"
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="border"
             py={1}
             zIndex={1900}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <Menu.ItemGroup>
-              <Menu.ItemGroupLabel fontSize="xs" color="gray.500" px={3} py={1}>
+              <Menu.ItemGroupLabel fontSize="xs" color="fg.muted" px={3} py={1}>
                 Role
               </Menu.ItemGroupLabel>
               {USER_ROLE_OPTIONS.map((opt) => (

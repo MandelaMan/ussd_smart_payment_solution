@@ -24,7 +24,7 @@ function SelectField({
 }) {
   return (
     <Box>
-      <Box as="label" fontSize="xs" fontWeight="medium" color="gray.600" mb={1} display="block">
+      <Box as="label" fontSize="xs" fontWeight="medium" color="fg.muted" mb={1} display="block">
         {label}
       </Box>
       <NativeSelect.Root size="sm" disabled={disabled}>
@@ -47,9 +47,9 @@ export function BiFilters({ filters, options, onChange, onApply, onReset }: Prop
 
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="xl"
       p={4}
       boxShadow="sm"
@@ -59,7 +59,7 @@ export function BiFilters({ filters, options, onChange, onApply, onReset }: Prop
         gap={3}
       >
         <Box>
-          <Box as="label" fontSize="xs" fontWeight="medium" color="gray.600" mb={1} display="block">
+          <Box as="label" fontSize="xs" fontWeight="medium" color="fg.muted" mb={1} display="block">
             From
           </Box>
           <input
@@ -78,7 +78,7 @@ export function BiFilters({ filters, options, onChange, onApply, onReset }: Prop
           />
         </Box>
         <Box>
-          <Box as="label" fontSize="xs" fontWeight="medium" color="gray.600" mb={1} display="block">
+          <Box as="label" fontSize="xs" fontWeight="medium" color="fg.muted" mb={1} display="block">
             To
           </Box>
           <input

@@ -14,7 +14,7 @@ import { api, type AppSettings } from "../lib/api";
 import { TabStrip } from "../components/ui/TabStrip";
 import { UsersPage } from "./UsersPage";
 import { toaster } from "../components/ui/toaster";
-import { PAGE_STACK_GAP } from "../components/ui/pageLayout";
+import { PAGE_STACK_GAP, PageHeader } from "../components/ui/pageLayout";
 
 const TABS = [
   { id: "permissions", label: "Users & permissions" },
@@ -44,21 +44,21 @@ function ConfigRow({
   return (
     <Box
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="lg"
       p={3}
-      bg="white"
+      bg="bg.panel"
     >
       <Flex justify="space-between" align="start" gap={3}>
         <Box flex={1} minW={0}>
-          <Text fontSize="xs" fontWeight="medium" color="gray.500" mb={1}>
+          <Text fontSize="xs" fontWeight="medium" color="fg.muted" mb={1}>
             {label}
           </Text>
           <Text fontSize="sm" fontFamily="mono" wordBreak="break-all">
             {value}
           </Text>
           {hint ? (
-            <Text fontSize="xs" color="gray.500" mt={1}>
+            <Text fontSize="xs" color="fg.muted" mt={1}>
               {hint}
             </Text>
           ) : null}
@@ -68,7 +68,7 @@ function ConfigRow({
           size="xs"
           variant="ghost"
           onClick={copy}
-          color="gray.500"
+          color="fg.muted"
           flexShrink={0}
         >
           <FiCopy size={14} />
@@ -96,7 +96,7 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
         <Heading size="sm" mb={1}>
           M-Pesa callbacks
         </Heading>
-        <Text fontSize="sm" color="gray.500" mb={3}>
+        <Text fontSize="sm" color="fg.muted" mb={3}>
           Register these URLs in the Safaricom Daraja portal for STK push and C2B notifications.
         </Text>
         <Stack gap={2}>
@@ -117,7 +117,7 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
             failLabel="Secret not set"
           />
         </Flex>
-        <Text fontSize="sm" color="gray.500" mb={3}>
+        <Text fontSize="sm" color="fg.muted" mb={3}>
           Point Zoho invoice-paid notifications here. Set{" "}
           <Text as="span" fontFamily="mono" fontSize="xs">
             ZOHO_WEBHOOK_SECRET
@@ -135,7 +135,7 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
         <Heading size="sm" mb={1}>
           Integration flags
         </Heading>
-        <Text fontSize="sm" color="gray.500" mb={3}>
+        <Text fontSize="sm" color="fg.muted" mb={3}>
           Read-only view of server environment toggles. Change these in deployment configuration.
         </Text>
         <Stack gap={2}>
@@ -143,10 +143,10 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
             justify="space-between"
             align="center"
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="lg"
             p={3}
-            bg="white"
+            bg="bg.panel"
           >
             <Text fontSize="sm">Xtream sync enabled</Text>
             <StatusBadge
@@ -159,10 +159,10 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
             justify="space-between"
             align="center"
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="lg"
             p={3}
-            bg="white"
+            bg="bg.panel"
           >
             <Text fontSize="sm">M-Pesa STK uses live amount</Text>
             <StatusBadge
@@ -175,10 +175,10 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
             justify="space-between"
             align="center"
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="lg"
             p={3}
-            bg="white"
+            bg="bg.panel"
           >
             <Text fontSize="sm">Zoho invoices tax-inclusive</Text>
             <StatusBadge
@@ -199,7 +199,7 @@ function RolesPanel({ settings }: { settings: AppSettings }) {
       <Heading size="sm" mb={1}>
         Role definitions
       </Heading>
-      <Text fontSize="sm" color="gray.500" mb={3}>
+      <Text fontSize="sm" color="fg.muted" mb={3}>
         Assign roles when creating or editing users below.
       </Text>
       <Stack gap={2}>
@@ -207,15 +207,15 @@ function RolesPanel({ settings }: { settings: AppSettings }) {
           <Box
             key={role.id}
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="lg"
             p={3}
-            bg="white"
+            bg="bg.panel"
           >
             <Text fontWeight="semibold" fontSize="sm">
               {role.label}
             </Text>
-            <Text fontSize="sm" color="gray.600" mt={0.5}>
+            <Text fontSize="sm" color="fg.muted" mt={0.5}>
               {role.description}
             </Text>
           </Box>
@@ -262,19 +262,18 @@ export function SettingsPage() {
 
   return (
     <Stack gap={0}>
-      <Box mb={5}>
-        <Heading size="lg">Settings</Heading>
-        <Text fontSize="sm" color="gray.500">
-          User permissions, webhook endpoints, and integration configuration
-        </Text>
-      </Box>
+      <PageHeader
+        title="Settings"
+        description="User permissions, webhook endpoints, and integration configuration"
+      />
 
       <Box
         border="1px solid"
-        borderColor="gray.100"
+        borderColor="border.muted"
         borderRadius="lg"
         overflow="hidden"
-        bg="white"
+        bg="bg.panel"
+        mt={{ base: 3, lg: 0 }}
       >
         <TabStrip tabs={[...TABS]} active={activeTab} onChange={(id) => setTab(id as TabId)} />
 
@@ -288,7 +287,7 @@ export function SettingsPage() {
 
           {activeTab === "webhooks" ? (
             loading ? (
-              <Text fontSize="sm" color="gray.500">
+              <Text fontSize="sm" color="fg.muted">
                 Loading webhook configuration…
               </Text>
             ) : error ? (

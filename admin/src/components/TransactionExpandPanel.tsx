@@ -101,10 +101,10 @@ function PanelShell({
 
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       borderRadius="lg"
       border="1px solid"
-      borderColor="gray.200"
+      borderColor="border"
       overflow="hidden"
       boxShadow="sm"
     >
@@ -112,23 +112,23 @@ function PanelShell({
         direction={{ base: "column", sm: "row" }}
         align={{ base: "stretch", sm: "center" }}
         justify="space-between"
-        gap={3}
-        px={3}
-        py={3}
-        bg="gray.50"
+        gap={{ base: 2, sm: 3 }}
+        px={{ base: 2.5, md: 3 }}
+        py={{ base: 2, md: 3 }}
+        bg="bg.subtle"
         borderBottom="1px solid"
-        borderColor="gray.100"
+        borderColor="border.muted"
         borderLeft="4px solid"
         borderLeftColor={meta.accent}
         minW={0}
       >
-        <Flex align="center" gap={3} minW={0} flex="1">
+        <Flex align="center" gap={{ base: 2, md: 3 }} minW={0} flex="1">
           <Flex
-            boxSize="36px"
+            boxSize={{ base: "32px", md: "36px" }}
             borderRadius="lg"
-            bg="white"
+            bg="bg.panel"
             border="1px solid"
-            borderColor="gray.200"
+            borderColor="border"
             align="center"
             justify="center"
             color={meta.accent}
@@ -137,11 +137,11 @@ function PanelShell({
             <Icon size={18} />
           </Flex>
           <Box minW={0} overflow="hidden">
-            <Text fontWeight="semibold" fontSize="sm" color="gray.800">
+            <Text fontWeight="semibold" fontSize="sm" color="fg">
               {meta.title}
             </Text>
             {subtitle && (
-              <Text fontSize="xs" color="gray.500" truncate>
+              <Text fontSize="xs" color="fg.muted" truncate>
                 {subtitle}
               </Text>
             )}
@@ -157,14 +157,14 @@ function PanelShell({
         >
           {badge}
           {amount != null && (
-            <Text fontWeight="bold" fontSize="lg" color="gray.900" letterSpacing="-0.02em" whiteSpace="nowrap">
+            <Text fontWeight="bold" fontSize={{ base: "md", md: "lg" }} color="fg" letterSpacing="-0.02em" whiteSpace="nowrap">
               {formatCurrency(amount)}
             </Text>
           )}
           <StatusBadge status={status} />
         </Flex>
       </Flex>
-      <Box p={3}>{children}</Box>
+      <Box p={{ base: 2, md: 3 }}>{children}</Box>
     </Box>
   );
 }
@@ -173,7 +173,8 @@ function DetailGrid({ children }: { children: ReactNode }) {
   return (
     <Grid
       templateColumns={{ base: "1fr 1fr", md: "repeat(3, 1fr)", lg: "repeat(4, 1fr)" }}
-      gap={3}
+      gap={{ base: 1.5, md: 3 }}
+      w="full"
     >
       {children}
     </Grid>
@@ -197,29 +198,34 @@ function DetailCard({
       border="1px solid"
       borderColor={highlight ? "brand.100" : "gray.100"}
       borderRadius="md"
-      px={3}
-      py={3}
-      minH="56px"
+      px={{ base: 2, md: 3 }}
+      py={{ base: 2, md: 3 }}
+      minH={{ base: "48px", md: "56px" }}
+      minW={0}
+      w="full"
     >
       <Text
         fontSize="2xs"
         fontWeight="semibold"
-        color="gray.500"
+        color="fg.muted"
         textTransform="uppercase"
         letterSpacing="0.04em"
-        mb={1}
+        mb={{ base: 0.5, md: 1 }}
+        lineClamp={1}
       >
         {label}
       </Text>
       <Box
-        fontSize="sm"
+        fontSize={{ base: "xs", md: "sm" }}
         fontWeight="medium"
-        color="gray.800"
+        color="fg"
         fontFamily={mono ? "mono" : undefined}
         wordBreak={mono ? "break-all" : undefined}
-        lineHeight="1.35"
+        overflowWrap="anywhere"
+        lineHeight="1.3"
+        minW={0}
       >
-        {value || <Text as="span" color="gray.400">—</Text>}
+        {value || <Text as="span" color="fg.subtle">—</Text>}
       </Box>
     </Box>
   );
@@ -234,7 +240,7 @@ function IntegrationLinks({
 
   return (
     <Box mt={4}>
-      <Text fontSize="xs" fontWeight="semibold" color="gray.500" mb={2} textTransform="uppercase" letterSpacing="0.04em">
+      <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="0.04em">
         Linked integrations
       </Text>
       <Flex gap={2} flexWrap="wrap">
@@ -243,19 +249,19 @@ function IntegrationLinks({
             key={i.id}
             align="center"
             gap={2}
-            bg="white"
+            bg="bg.panel"
             border="1px solid"
-            borderColor="gray.200"
+            borderColor="border"
             borderRadius="sm"
             pl={3}
             pr={2}
             py={1.5}
             fontSize="sm"
           >
-            <Text textTransform="capitalize" fontWeight="medium" color="gray.700">
+            <Text textTransform="capitalize" fontWeight="medium" color="fg">
               {i.source}
             </Text>
-            <Text fontSize="xs" color="gray.500">
+            <Text fontSize="xs" color="fg.muted">
               {i.outcome || i.status}
             </Text>
             <StatusBadge status={i.status} />

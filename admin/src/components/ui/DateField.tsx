@@ -54,7 +54,7 @@ export function DateField({
       borderWidth="1px"
       borderColor={hasValue ? "brand.200" : "gray.200"}
       borderRadius="md"
-      bg="white"
+      bg="bg.panel"
       boxShadow="sm"
       position="relative"
       transition="border-color 0.15s, box-shadow 0.15s"
@@ -73,7 +73,7 @@ export function DateField({
         {showPlaceholder ? (
           <Text
             fontSize={size === "sm" ? "sm" : "md"}
-            color="gray.400"
+            color="fg.subtle"
             position="absolute"
             left={0}
             right={0}
@@ -144,8 +144,8 @@ export function DateField({
           size="xs"
           minW="24px"
           h="24px"
-          color="gray.400"
-          _hover={{ color: "gray.700", bg: "gray.100" }}
+          color="fg.subtle"
+          _hover={{ color: "fg", bg: "bg.muted" }}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();

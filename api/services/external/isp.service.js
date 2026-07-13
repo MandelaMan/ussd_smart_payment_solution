@@ -10,19 +10,25 @@ async function fetchCustomerStatus(customerNumber, options = {}) {
   const { correlationId, timeoutMs } = options;
   try {
     const result = await getTISPCustomer(customerNumber, { timeoutMs });
+    const rawStatus = result?.status ?? result?.Status ?? result?.subscriptionStatus ?? null;
     return {
       ok: true,
-      status: normalizeSubscriptionStatus(result?.status || result?.subscriptionStatus),
+      status: rawStatus ? normalizeSubscriptionStatus(String(rawStatus)) : null,
       raw: result,
     };
   } catch (err) {
+    const shortError = String(err?.message || "TISP lookup failed")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240);
     syncLog.error("tisp_fetch_failed", {
       integration: "customers",
       customerNumber,
       correlationId,
-      error: err,
+      error: shortError,
     });
-    return { ok: false, error: err.message };
+    return { ok: false, error: shortError };
   }
 }
 

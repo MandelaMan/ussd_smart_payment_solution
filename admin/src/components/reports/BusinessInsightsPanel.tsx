@@ -71,9 +71,9 @@ function ChartCard({
 }) {
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="lg"
       borderTopWidth="3px"
       borderTopColor={BRAND.cerulean}
@@ -81,11 +81,11 @@ function ChartCard({
       boxShadow="sm"
     >
       <Box mb={3}>
-        <Text fontSize="sm" fontWeight="semibold" color="gray.800">
+        <Text fontSize="sm" fontWeight="semibold" color="fg">
           {title}
         </Text>
         {subtitle && (
-          <Text fontSize="xs" color="gray.500" mt={0.5}>
+          <Text fontSize="xs" color="fg.muted" mt={0.5}>
             {subtitle}
           </Text>
         )}
@@ -98,7 +98,7 @@ function ChartCard({
 function EmptyChart({ message }: { message: string }) {
   return (
     <Flex h="100%" minH="200px" align="center" justify="center">
-      <Text fontSize="sm" color="gray.400">
+      <Text fontSize="sm" color="fg.subtle">
         {message}
       </Text>
     </Flex>
@@ -116,22 +116,22 @@ function SummaryMetric({
 }) {
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="lg"
       p={3}
       borderLeftWidth="3px"
       borderLeftColor={BRAND.cerulean}
     >
-      <Text fontSize="xs" color="gray.500" mb={1}>
+      <Text fontSize="xs" color="fg.muted" mb={1}>
         {label}
       </Text>
       <Text fontSize="lg" fontWeight="bold" color="brand.700">
         {value}
       </Text>
       {sub && (
-        <Text fontSize="xs" color="gray.400" mt={0.5}>
+        <Text fontSize="xs" color="fg.subtle" mt={0.5}>
           {sub}
         </Text>
       )}
@@ -199,10 +199,10 @@ export function BusinessInsightsPanel({ data, loading, error }: Props) {
   return (
     <Stack gap={4}>
       <Box>
-        <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+        <Text fontSize="sm" fontWeight="semibold" color="fg">
           Business insights
         </Text>
-        <Text fontSize="xs" color="gray.500" mt={0.5}>
+        <Text fontSize="xs" color="fg.muted" mt={0.5}>
           Visual analytics for {periodLabel} — use these to spot trends, risks, and growth opportunities.
         </Text>
       </Box>

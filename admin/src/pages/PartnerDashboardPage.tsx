@@ -28,6 +28,7 @@ import { PackageSubscriptionChart } from "../components/PackageSubscriptionChart
 import { DashboardSkeleton } from "../components/PageSkeletons";
 import { BRAND } from "../theme";
 import { SelectField } from "../components/ui/SelectField";
+import { PageHeader } from "../components/ui/pageLayout";
 
 const CHANGE_COLORS = [BRAND.cerulean, BRAND.sandyBrown, BRAND.paleAzure, "#805ad5", "#e53e3e"];
 
@@ -53,18 +54,19 @@ function PartnerChartCard({
 }) {
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
       borderColor="brand.100"
-      borderRadius="xl"
-      p={4}
-      minH={`${height + 56}px`}
+      borderRadius={{ base: "lg", md: "xl" }}
+      p={{ base: 2.5, md: 4 }}
+      minH={{ base: "auto", md: `${height + 56}px` }}
+      w="full"
     >
-      <Heading size="sm" mb={subtitle ? 1 : 3}>
+      <Heading size="sm" mb={subtitle ? 1 : { base: 2, md: 3 }}>
         {title}
       </Heading>
       {subtitle ? (
-        <Text fontSize="sm" color="gray.600" mb={3}>
+        <Text fontSize="xs" color="fg.muted" mb={{ base: 2, md: 3 }}>
           {subtitle}
         </Text>
       ) : null}
@@ -123,39 +125,42 @@ export function PartnerDashboardPage() {
   if (!data) {
     return (
       <Box p={6}>
-        <Text color="gray.600">Unable to load partner dashboard.</Text>
+        <Text color="fg.muted">Unable to load partner dashboard.</Text>
       </Box>
     );
   }
 
   return (
-    <Stack gap={4} p={{ base: 3, md: 4 }}>
-      <Flex justify="space-between" align="start" gap={4} flexWrap="wrap">
-        <Box>
-          <Heading size="lg">Partner overview</Heading>
-          <Text color="gray.600" mt={1}>
-            Customers, collections, and package activity
-          </Text>
-        </Box>
-        <Box minW={{ base: "full", sm: "160px" }} maxW={{ base: "full", sm: "200px" }}>
-          <Text fontSize="xs" color="gray.600" mb={1}>
-            Period
-          </Text>
-          <SelectField
-            size="sm"
-            fieldProps={{
-              value: months,
-              onChange: (e) => setMonths(e.target.value),
-            }}
-          >
-            <option value="6">Last 6 months</option>
-            <option value="12">Last 12 months</option>
-            <option value="24">Last 24 months</option>
-          </SelectField>
-        </Box>
-      </Flex>
+    <Stack gap={{ base: 2.5, md: 4 }} p={{ base: 0, md: 4 }}>
+      <PageHeader
+        title="Partner overview"
+        description="Customers, collections, and package activity"
+        actions={
+          <Box minW={{ base: "full", sm: "160px" }} maxW={{ base: "full", sm: "200px" }}>
+            <Text fontSize="xs" color="fg.muted" mb={1}>
+              Period
+            </Text>
+            <SelectField
+              size="sm"
+              fieldProps={{
+                value: months,
+                onChange: (e) => setMonths(e.target.value),
+              }}
+            >
+              <option value="6">Last 6 months</option>
+              <option value="12">Last 12 months</option>
+              <option value="24">Last 24 months</option>
+            </SelectField>
+          </Box>
+        }
+      />
 
-      <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(4, 1fr)" }} gap={4}>
+      <Grid
+        templateColumns={{ base: "1fr 1fr", md: "repeat(2, 1fr)", xl: "repeat(4, 1fr)" }}
+        gap={{ base: 1.5, md: 4 }}
+        mx={{ base: -3, xl: 0 }}
+        px={{ base: 1, xl: 0 }}
+      >
         <MetricCard label="Active customers" value={data.customers.active.toLocaleString()} accent="cerulean" />
         <MetricCard
           label="Collected (period)"
@@ -177,7 +182,7 @@ export function PartnerDashboardPage() {
         />
       </Grid>
 
-      <Grid templateColumns={{ base: "1fr", xl: "1.4fr 1fr" }} gap={4}>
+      <Grid templateColumns={{ base: "1fr", xl: "1.4fr 1fr" }} gap={{ base: 2.5, xl: 4 }}>
         <PartnerChartCard
           title="Collections by month"
           subtitle="Successful M-Pesa"
@@ -215,10 +220,10 @@ export function PartnerDashboardPage() {
         </PartnerChartCard>
       </Grid>
 
-      <Grid templateColumns={{ base: "1fr", lg: "repeat(3, 1fr)" }} gap={4}>
+      <Grid templateColumns={{ base: "1fr", lg: "repeat(3, 1fr)" }} gap={{ base: 2.5, lg: 4 }}>
         <PartnerChartCard title="Package switches" subtitle={`Last ${months} months`} height={240}>
           {packageChangeData.length === 0 ? (
-            <Text color="gray.500" fontSize="sm">No package changes in this period</Text>
+            <Text color="fg.muted" fontSize="sm">No package changes in this period</Text>
           ) : (
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
@@ -256,26 +261,26 @@ export function PartnerDashboardPage() {
         <PartnerChartCard title="Customer mix" subtitle="Active" height={240}>
           <Stack gap={3} pt={2}>
             <Flex justify="space-between">
-              <Text fontSize="sm" color="gray.600">Total active</Text>
+              <Text fontSize="sm" color="fg.muted">Total active</Text>
               <Text fontWeight="semibold">{data.customers.active.toLocaleString()}</Text>
             </Flex>
             <Flex justify="space-between">
-              <Text fontSize="sm" color="gray.600">Residential (C2B)</Text>
+              <Text fontSize="sm" color="fg.muted">Residential (C2B)</Text>
               <Text fontWeight="semibold">{data.customers.c2b.toLocaleString()}</Text>
             </Flex>
             <Flex justify="space-between">
-              <Text fontSize="sm" color="gray.600">Business (B2B)</Text>
+              <Text fontSize="sm" color="fg.muted">Business (B2B)</Text>
               <Text fontWeight="semibold">{data.customers.b2b.toLocaleString()}</Text>
             </Flex>
             <Flex justify="space-between">
-              <Text fontSize="sm" color="gray.600">Cancelled (all time)</Text>
+              <Text fontSize="sm" color="fg.muted">Cancelled (all time)</Text>
               <Text fontWeight="semibold">{data.customers.cancelled.toLocaleString()}</Text>
             </Flex>
           </Stack>
         </PartnerChartCard>
       </Grid>
 
-      <Grid templateColumns={{ base: "1fr", xl: "1fr 1fr" }} gap={4}>
+      <Grid templateColumns={{ base: "1fr", xl: "1fr 1fr" }} gap={{ base: 2.5, xl: 4 }}>
         <PartnerChartCard title="Subscribers by package" subtitle="Active customers">
           <PackageSubscriptionChart
             data={data.packageMix.map((p) => ({

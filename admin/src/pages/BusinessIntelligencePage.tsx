@@ -35,6 +35,7 @@ import {
   formatKpiValue,
 } from "../components/bi/BiDashboardCharts";
 import { ChartSkeleton } from "../components/PageSkeletons";
+import { PageHeader } from "../components/ui/pageLayout";
 import { BRAND } from "../theme";
 
 function defaultFilters(): BiDashboardFilters {
@@ -97,14 +98,10 @@ export function BusinessIntelligencePage() {
 
   return (
     <Stack gap={4} pb={6}>
-      <Box>
-        <Text fontSize={{ base: "xl", md: "2xl" }} fontWeight="bold" color="gray.900">
-          Business Intelligence
-        </Text>
-        <Text fontSize="sm" color="gray.600" mt={1}>
-          Executive analytics across revenue, customers, sales, finance, operations, and network health.
-        </Text>
-      </Box>
+      <PageHeader
+        title="Business Intelligence"
+        description="Executive analytics across revenue, customers, sales, finance, operations, and network health."
+      />
 
       <BiFilters
         filters={draftFilters}
@@ -194,7 +191,7 @@ export function BusinessIntelligencePage() {
       )}
 
       {data?.meta && (
-        <Text fontSize="xs" color="gray.400" textAlign="right">
+        <Text fontSize="xs" color="fg.subtle" textAlign="right">
           Updated {new Date(data.meta.generatedAt).toLocaleString("en-KE")}
           {data.meta.cached ? " · cached" : ""}
         </Text>

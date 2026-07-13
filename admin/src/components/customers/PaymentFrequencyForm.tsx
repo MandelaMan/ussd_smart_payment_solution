@@ -114,7 +114,7 @@ export function PaymentFrequencyForm({
     <>
     <Stack gap={3} w="full" onMouseDown={(e) => e.stopPropagation()}>
       <Box
-        bg="gray.50"
+        bg="bg.subtle"
         borderRadius="md"
         px={2.5}
         py={2}
@@ -122,14 +122,14 @@ export function PaymentFrequencyForm({
         w="full"
         lineHeight="1.4"
       >
-        <Text color="gray.500" fontSize="2xs" textTransform="uppercase" letterSpacing="wide">
+        <Text color="fg.muted" fontSize="2xs" textTransform="uppercase" letterSpacing="wide">
           Current
         </Text>
-        <Text fontWeight="semibold" color="gray.900">
+        <Text fontWeight="semibold" color="fg">
           {customer.productMbps} Mbps · {formatCurrency(customer.packagePrice)} ·{" "}
           {frequencyLabel(customer.paymentFrequency, customer.customPeriodDays)}
         </Text>
-        <Text color="gray.500" truncate title={customer.productName}>
+        <Text color="fg.muted" truncate title={customer.productName}>
           {customer.productName}
         </Text>
       </Box>
@@ -195,7 +195,7 @@ export function PaymentFrequencyForm({
       ) : null}
 
       {!previewProduct && !unchanged && !customDaysInvalid ? (
-        <Text fontSize="xs" color="gray.500">
+        <Text fontSize="xs" color="fg.muted">
           No matching package found for this billing frequency.
         </Text>
       ) : null}
@@ -224,7 +224,7 @@ export function PaymentFrequencyForm({
       maxW="md"
       zIndex={NESTED_APP_DIALOG_Z_INDEX}
     >
-      <Dialog.Header borderBottomWidth="1px" borderColor="gray.100" px={4} py={3} pr={12}>
+      <Dialog.Header borderBottomWidth="1px" borderColor="border.muted" px={4} py={3} pr={12}>
         <Dialog.Title fontSize="md">Confirm billing frequency change</Dialog.Title>
       </Dialog.Header>
       <Dialog.Body px={4} py={3}>
@@ -233,7 +233,7 @@ export function PaymentFrequencyForm({
           items={summaryItems}
         />
       </Dialog.Body>
-      <Dialog.Footer px={4} py={3} borderTopWidth="1px" borderColor="gray.100" gap={2}>
+      <Dialog.Footer px={4} py={3} borderTopWidth="1px" borderColor="border.muted" gap={2}>
         <Button variant="ghost" size="sm" disabled={loading} onClick={() => setConfirmOpen(false)}>
           Back
         </Button>

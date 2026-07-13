@@ -13,6 +13,11 @@ type Props = {
   closeOnBackdropClick?: boolean;
   /** Top-right close control (in addition to footer Cancel actions). */
   showCloseButton?: boolean;
+  /**
+   * `sheet` — edge-to-edge below the `lg` breakpoint (mobile filter/sort panels).
+   * `dialog` — centered card from `sm` up (default).
+   */
+  variant?: "dialog" | "sheet";
 };
 
 export function ModalShell({
@@ -22,6 +27,7 @@ export function ModalShell({
   maxW = "32rem",
   closeOnBackdropClick = false,
   showCloseButton = true,
+  variant = "dialog",
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -39,6 +45,8 @@ export function ModalShell({
 
   if (!open) return null;
 
+  const sheet = variant === "sheet";
+
   return (
     <Portal>
       <Box
@@ -46,10 +54,10 @@ export function ModalShell({
         inset={0}
         zIndex={MODAL_Z_INDEX}
         display="flex"
-        alignItems={{ base: "stretch", sm: "center" }}
+        alignItems={sheet ? { base: "stretch", lg: "center" } : { base: "stretch", sm: "center" }}
         justifyContent="center"
-        px={{ base: 0, sm: 4 }}
-        py={{ base: 0, sm: 4 }}
+        px={sheet ? { base: 0, lg: 4 } : { base: 0, sm: 4 }}
+        py={sheet ? { base: 0, lg: 4 } : { base: 0, sm: 4 }}
         bg="blackAlpha.600"
         overflow="hidden"
         onMouseDown={
@@ -65,19 +73,31 @@ export function ModalShell({
           aria-modal="true"
           position="relative"
           w="full"
-          h={{ base: "100dvh", sm: "auto" }}
-          maxW={{ base: "100%", sm: maxW }}
-          maxH={{ base: "100dvh", sm: "calc(100dvh - 2rem)" }}
-          bg="white"
-          borderRadius={{ base: 0, sm: "xl" }}
+          h={sheet ? { base: "100dvh", lg: "auto" } : { base: "100dvh", sm: "auto" }}
+          maxW={sheet ? { base: "100%", lg: maxW } : { base: "100%", sm: maxW }}
+          maxH={
+            sheet
+              ? { base: "100dvh", lg: "calc(100dvh - 2rem)" }
+              : { base: "100dvh", sm: "calc(100dvh - 2rem)" }
+          }
+          bg="bg.panel"
+          borderRadius={sheet ? { base: 0, lg: "xl" } : { base: 0, sm: "xl" }}
           boxShadow="xl"
-          borderWidth={{ base: "0", sm: "1px" }}
-          borderColor="gray.200"
+          borderWidth={sheet ? { base: "0", lg: "1px" } : { base: "0", sm: "1px" }}
+          borderColor="border"
           overflow="hidden"
           display="flex"
           flexDirection="column"
-          pt={{ base: "env(safe-area-inset-top, 0px)", sm: 0 }}
-          pb={{ base: "env(safe-area-inset-bottom, 0px)", sm: 0 }}
+          pt={
+            sheet
+              ? { base: "env(safe-area-inset-top, 0px)", lg: 0 }
+              : { base: "env(safe-area-inset-top, 0px)", sm: 0 }
+          }
+          pb={
+            sheet
+              ? { base: "env(safe-area-inset-bottom, 0px)", lg: 0 }
+              : { base: "env(safe-area-inset-bottom, 0px)", sm: 0 }
+          }
           onMouseDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
@@ -87,18 +107,22 @@ export function ModalShell({
               variant="ghost"
               size="sm"
               position="absolute"
-              top={{ base: "calc(0.5rem + env(safe-area-inset-top, 0px))", sm: 3 }}
-              right={{ base: 2, sm: 3 }}
+              top={
+                sheet
+                  ? { base: "calc(0.5rem + env(safe-area-inset-top, 0px))", lg: 3 }
+                  : { base: "calc(0.5rem + env(safe-area-inset-top, 0px))", sm: 3 }
+              }
+              right={sheet ? { base: 2, lg: 3 } : { base: 2, sm: 3 }}
               zIndex={2}
-              color="gray.500"
+              color="fg.muted"
               borderRadius="full"
-              _hover={{ bg: "gray.100", color: "gray.700" }}
+              _hover={{ bg: "bg.muted", color: "fg" }}
               onClick={onClose}
             >
               <FiX size={18} />
             </IconButton>
           ) : null}
-          <Box overflowY="auto" flex={1} minH={0}>
+          <Box overflowY="auto" flex={1} minH={0} w="full">
             {children}
           </Box>
         </Box>

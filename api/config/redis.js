@@ -6,10 +6,13 @@ let subscriber = null;
 
 function buildRedisOptions() {
   const env = loadEnv();
+  const password = String(env.REDIS_PASSWORD || "").trim();
   return {
     host: env.REDIS_HOST,
     port: env.REDIS_PORT,
-    password: env.REDIS_PASSWORD || undefined,
+    // Only send AUTH when a password is actually configured. Local Redis often
+    // has no auth; sending one floods warnings and slows connection setup.
+    ...(password ? { password } : {}),
     db: env.REDIS_DB,
     maxRetriesPerRequest: null,
     enableReadyCheck: true,

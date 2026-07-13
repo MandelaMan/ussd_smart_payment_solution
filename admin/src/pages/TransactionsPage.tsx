@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
   Badge,
@@ -65,6 +66,7 @@ type TransactionSortKey =
   | "createdAt";
 
 export function TransactionsPage() {
+  const isMobile = useMobileViewport();
   const [source, setSource] = useState("all");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -75,6 +77,7 @@ export function TransactionsPage() {
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<UnifiedTransaction[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({
@@ -107,18 +110,29 @@ export function TransactionsPage() {
   };
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const append = isMobile && page > 1;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError("");
     try {
       const res = await api.getTransactions(filters());
-      setRows(res.data);
+      setRows((prev) =>
+        mergeInfinitePage(
+          prev,
+          res.data,
+          page,
+          isMobile,
+          (row) => `${row.source}-${row.id}`
+        )
+      );
       setPagination(res.pagination);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [page, search, status, channel, from, to, source, sortQuery.sortBy, sortQuery.sortDir]);
+  }, [page, search, status, channel, from, to, source, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   function handleSort(
     column: TransactionSortKey,
@@ -256,15 +270,46 @@ export function TransactionsPage() {
           { key: "success", label: "Success", active: status === "SUCCESS", onClick: () => { setStatus(status === "SUCCESS" ? "" : "SUCCESS"); setPage(1); setExpanded(null); } },
           { key: "failed", label: "Failed", active: status === "FAILED", onClick: () => { setStatus(status === "FAILED" ? "" : "FAILED"); setPage(1); setExpanded(null); } },
         ]}
-        chipsTrailing={
-          <DataTableExportButton
-            entityLabel="transactions"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        }
+        filterTitle="Filters"
+        activeFilterCount={(channel ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0)}
+        onClearFilters={() => {
+          setChannel("");
+          setFrom("");
+          setTo("");
+          setPage(1);
+          setExpanded(null);
+        }}
+        filterContent={advancedFilters}
+        sortOptions={[
+          {
+            key: "createdAt",
+            label: "Date",
+            active: sorts[0]?.sortBy === "createdAt",
+            direction: sorts[0]?.sortBy === "createdAt" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("createdAt", "desc"),
+          },
+          {
+            key: "amount",
+            label: "Amount",
+            active: sorts[0]?.sortBy === "amount",
+            direction: sorts[0]?.sortBy === "amount" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("amount", "desc"),
+          },
+          {
+            key: "status",
+            label: "Status",
+            active: sorts[0]?.sortBy === "status",
+            direction: sorts[0]?.sortBy === "status" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("status"),
+          },
+          {
+            key: "customerRef",
+            label: "Customer",
+            active: sorts[0]?.sortBy === "customerRef",
+            direction: sorts[0]?.sortBy === "customerRef" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("customerRef"),
+          },
+        ]}
         desktopActions={
           <DataTableExportButton
             entityLabel="transactions"
@@ -318,6 +363,8 @@ export function TransactionsPage() {
 
       <DataTableCard
         loading={loading}
+        loadingMore={loadingMore}
+        loadedCount={rows.length}
         pagination={pagination}
         onPageChange={(nextPage) => {
           setPage(nextPage);
@@ -420,7 +467,7 @@ export function TransactionsPage() {
                       <Table.Cell {...dataTableCellProps}>
                         <TextStatus status={row.status} />
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {formatDate(row.createdAt)}
                       </Table.Cell>
                     </Table.Row>

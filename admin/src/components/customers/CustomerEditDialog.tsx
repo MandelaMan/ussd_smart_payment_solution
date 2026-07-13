@@ -21,13 +21,13 @@ export function CustomerEditDialog({ customer, onClose, onSaved }: Props) {
           pb={4}
           pr={12}
           borderBottomWidth="1px"
-          borderColor="gray.100"
+          borderColor="border.muted"
           flexShrink={0}
         >
-          <Text fontSize="lg" fontWeight="semibold" color="gray.900">
+          <Text fontSize="lg" fontWeight="semibold" color="fg">
             Edit customer
           </Text>
-          <Text fontSize="xs" color="gray.500" mt={0.5}>
+          <Text fontSize="xs" color="fg.muted" mt={0.5}>
             {customer.fullName} · {customer.customerNumber}
             {customer.status === "cancelled" ? " · Cancelled" : ""}
           </Text>

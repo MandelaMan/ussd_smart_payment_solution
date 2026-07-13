@@ -10,17 +10,30 @@ import {
   Text,
 } from "@chakra-ui/react";
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { FiFilter, FiSearch, FiX } from "react-icons/fi";
+import { useEffect, useState } from "react";
+import { FiArrowLeft, FiChevronDown, FiSearch } from "react-icons/fi";
+import { HiOutlineSortDescending } from "react-icons/hi";
 import { Link } from "react-router-dom";
+import { useMobileSearchOptional } from "../../lib/mobileSearch";
+import { MOBILE_BOTTOM_NAV_OFFSET } from "../../lib/mobileNav";
+import { scrollAppToTop } from "../ScrollToTop";
+import { MobileFixedHeader } from "./MobileFixedHeader";
+import { mobileStickyHeaderProps } from "./pageLayout";
 import { MobileFilterSheet } from "./MobileFilterSheet";
-import { MOBILE_BOTTOM_NAV_H } from "../../lib/mobileNav";
 
 export type MobileFilterChip = {
   key: string;
   label: string;
   active?: boolean;
   onClick?: () => void;
+};
+
+export type MobileSortOption = {
+  key: string;
+  label: string;
+  active?: boolean;
+  direction?: "asc" | "desc";
+  onClick: () => void;
 };
 
 type MobilePageChromeProps = {
@@ -36,9 +49,21 @@ type MobilePageChromeProps = {
   activeFilterCount?: number;
   onClearFilters?: () => void;
   filterTitle?: string;
+  /** Sort options shown in a bottom sheet from the chips-row sort control. */
+  sortOptions?: MobileSortOption[];
+  sortTitle?: string;
   headerActions?: ReactNode;
   desktopActions?: ReactNode;
   children?: ReactNode;
+};
+
+const iconBtnBase = {
+  variant: "ghost" as const,
+  size: "md" as const,
+  minW: "40px",
+  h: "40px",
+  borderRadius: "full",
+  flexShrink: 0,
 };
 
 export function MobilePageChrome({
@@ -53,167 +78,275 @@ export function MobilePageChrome({
   activeFilterCount = 0,
   onClearFilters,
   filterTitle = "Filters",
+  sortOptions,
+  sortTitle = "Sort by",
   headerActions,
   desktopActions,
   children,
 }: MobilePageChromeProps) {
-  const [searchOpen, setSearchOpen] = useState(false);
+  const mobileSearch = useMobileSearchOptional();
   const [filterOpen, setFilterOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
   const hasSearch = searchValue !== undefined && onSearchChange !== undefined;
   const hasFilters = Boolean(filterContent);
+  const hasSort = Boolean(sortOptions && sortOptions.length > 0);
+  const hasChipRow =
+    (chips && chips.length > 0) || hasFilters || hasSort || Boolean(chipsTrailing);
+  const searchOpen = Boolean(hasSearch && mobileSearch?.searchOpen);
+  const activeSort = sortOptions?.find((option) => option.active);
+
+  useEffect(() => {
+    if (!mobileSearch || !hasSearch) return;
+    mobileSearch.bindSearchValue(searchValue ?? "");
+  }, [mobileSearch, hasSearch, searchValue]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const main = document.querySelector<HTMLElement>("[data-app-scroll-root]");
+    if (main) {
+      main.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      main.scrollTop = 0;
+    }
+  }, [searchOpen]);
+
+  function openSearch() {
+    mobileSearch?.setSearchOpen(true);
+  }
+
+  function closeSearch() {
+    onSearchChange?.("");
+    mobileSearch?.closeSearch();
+  }
 
   return (
-    <Box mb={{ base: 3, lg: 0 }} minW={0} maxW="100%">
-      <Box display={{ base: "block", lg: "none" }}>
+    <Box mb={{ base: 0, lg: 0 }} minW={0} maxW="100%">
+      <MobileFixedHeader
+        headerProps={{
+          ...mobileStickyHeaderProps,
+          bg: "bg.panel",
+          pb: hasChipRow && !searchOpen ? 3 : 2.5,
+        }}
+      >
         {searchOpen && hasSearch ? (
-          <Flex align="center" gap={2} mb={3}>
+          <Flex align="center" gap={2} py={1}>
+            <IconButton
+              aria-label="Back"
+              {...iconBtnBase}
+              onClick={closeSearch}
+            >
+              <FiArrowLeft size={20} />
+            </IconButton>
             <InputGroup flex={1} startElement={<FiSearch size={16} />}>
               <Input
                 size="md"
+                h="44px"
                 placeholder={searchPlaceholder}
                 value={searchValue}
                 onChange={(e) => onSearchChange(e.target.value)}
                 borderRadius="full"
-                bg="gray.100"
+                bg="bg.muted"
                 border="none"
                 boxShadow="none"
                 autoFocus
                 _focusVisible={{
-                  bg: "gray.100",
-                  boxShadow: "0 0 0 2px var(--chakra-colors-brand-500)",
+                  bg: "bg.panel",
+                  border: "1px solid",
+                  borderColor: "brand.500",
+                  boxShadow: "none",
+                  outline: "none",
                 }}
               />
             </InputGroup>
-            <IconButton
-              aria-label="Close search"
-              variant="ghost"
-              size="sm"
-              borderRadius="full"
-              onClick={() => setSearchOpen(false)}
-            >
-              <FiX />
-            </IconButton>
           </Flex>
         ) : (
-          <Flex align="center" justify="space-between" gap={3} mb={chips?.length || hasFilters ? 3 : 0}>
-            <Heading
-              size="2xl"
-              fontWeight="bold"
-              lineHeight="1.2"
-              letterSpacing="-0.02em"
-            >
-              {title}
-            </Heading>
-            <Flex align="center" gap={1} flexShrink={0}>
-              {headerActions}
-              {hasFilters ? (
-                <Box position="relative">
+          <>
+            <Flex align="center" justify="space-between" gap={3} minH="44px">
+              <Heading
+                size="2xl"
+                fontWeight="bold"
+                lineHeight="1.15"
+                letterSpacing="-0.03em"
+                color="fg"
+                truncate
+              >
+                {title}
+              </Heading>
+              <Flex align="center" gap={1} flexShrink={0}>
+                {headerActions}
+                {hasSearch ? (
                   <IconButton
-                    aria-label="Open filters"
-                    variant="ghost"
-                    size="md"
-                    borderRadius="full"
-                    bg={activeFilterCount > 0 ? "brand.50" : "gray.100"}
-                    color={activeFilterCount > 0 ? "brand.700" : "gray.700"}
-                    onClick={() => setFilterOpen(true)}
-                    _hover={{ bg: activeFilterCount > 0 ? "brand.100" : "gray.200" }}
+                    aria-label="Search"
+                    {...iconBtnBase}
+                    bg={searchValue?.trim() ? "brand.50" : "gray.100"}
+                    color={searchValue?.trim() ? "brand.700" : "gray.700"}
+                    onClick={openSearch}
+                    _hover={{ bg: searchValue?.trim() ? "brand.100" : "gray.200" }}
                   >
-                    <FiFilter size={18} />
+                    <FiSearch size={18} />
                   </IconButton>
-                  {activeFilterCount > 0 ? (
-                    <Badge
-                      position="absolute"
-                      top="-2px"
-                      right="-2px"
-                      colorPalette="brand"
-                      borderRadius="full"
-                      minW="18px"
-                      h="18px"
-                      display="flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      fontSize="2xs"
-                      px={1}
+                ) : null}
+              </Flex>
+            </Flex>
+
+            {hasChipRow ? (
+              <Flex align="center" gap={2} mt={3} minW={0}>
+                {chips && chips.length > 0 ? (
+                  <Flex
+                    flex={1}
+                    gap={2}
+                    overflowX="auto"
+                    py={0.5}
+                    minW={0}
+                    css={{
+                      scrollbarWidth: "none",
+                      "&::-webkit-scrollbar": { display: "none" },
+                      WebkitOverflowScrolling: "touch",
+                    }}
+                  >
+                    {chips.map((chip) => (
+                      <Button
+                        key={chip.key}
+                        type="button"
+                        flexShrink={0}
+                        px={4}
+                        py={1.5}
+                        h="auto"
+                        minH="34px"
+                        borderRadius="full"
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        whiteSpace="nowrap"
+                        lineHeight="1.25"
+                        variant={chip.active ? "solid" : "subtle"}
+                        colorPalette={chip.active ? "brand" : "gray"}
+                        bg={chip.active ? "brand.600" : "gray.100"}
+                        color={chip.active ? "white" : "gray.700"}
+                        onClick={() => {
+                          chip.onClick?.();
+                          scrollAppToTop();
+                          requestAnimationFrame(() => scrollAppToTop());
+                        }}
+                        _hover={{
+                          bg: chip.active ? "brand.700" : "gray.200",
+                        }}
+                      >
+                        {chip.label}
+                      </Button>
+                    ))}
+                  </Flex>
+                ) : (
+                  <Box flex={1} />
+                )}
+
+                {hasFilters ? (
+                  <Box position="relative" flexShrink={0}>
+                    <IconButton
+                      aria-label="More filters"
+                      {...iconBtnBase}
+                      minW="34px"
+                      h="34px"
+                      bg={activeFilterCount > 0 ? "brand.50" : "gray.100"}
+                      color={activeFilterCount > 0 ? "brand.700" : "gray.700"}
+                      onClick={() => setFilterOpen(true)}
+                      _hover={{ bg: activeFilterCount > 0 ? "brand.100" : "gray.200" }}
                     >
-                      {activeFilterCount}
-                    </Badge>
-                  ) : null}
-                </Box>
-              ) : null}
-              {hasSearch ? (
-                <IconButton
-                  aria-label="Search"
-                  variant="ghost"
-                  size="md"
-                  borderRadius="full"
-                  bg={searchValue?.trim() ? "brand.50" : "gray.100"}
-                  color={searchValue?.trim() ? "brand.700" : "gray.700"}
-                  onClick={() => setSearchOpen(true)}
-                  _hover={{ bg: searchValue?.trim() ? "brand.100" : "gray.200" }}
-                >
-                  <FiSearch size={18} />
-                </IconButton>
-              ) : null}
-            </Flex>
-          </Flex>
+                      <FiChevronDown size={18} />
+                    </IconButton>
+                    {activeFilterCount > 0 ? (
+                      <Badge
+                        position="absolute"
+                        top="-2px"
+                        right="-2px"
+                        colorPalette="brand"
+                        borderRadius="full"
+                        minW="16px"
+                        h="16px"
+                        display="flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        fontSize="2xs"
+                        px={1}
+                      >
+                        {activeFilterCount}
+                      </Badge>
+                    ) : null}
+                  </Box>
+                ) : null}
+
+                {hasSort ? (
+                  <IconButton
+                    aria-label={
+                      activeSort
+                        ? `Sort by ${activeSort.label}${activeSort.direction ? `, ${activeSort.direction}` : ""}`
+                        : "Sort"
+                    }
+                    {...iconBtnBase}
+                    minW="34px"
+                    h="34px"
+                    bg={activeSort ? "brand.50" : "transparent"}
+                    color={activeSort ? "brand.700" : "gray.700"}
+                    onClick={() => setSortOpen(true)}
+                    _hover={{ bg: "bg.muted" }}
+                  >
+                    <HiOutlineSortDescending size={20} />
+                  </IconButton>
+                ) : null}
+
+                {chipsTrailing ? <Box flexShrink={0}>{chipsTrailing}</Box> : null}
+              </Flex>
+            ) : null}
+          </>
         )}
+      </MobileFixedHeader>
 
-        {chips && chips.length > 0 && !searchOpen ? (
-          <Flex align="center" gap={2} mx={-1}>
-            <Flex
-              flex={1}
-              gap={2}
-              overflowX="auto"
-              py={0.5}
-              px={1}
-              css={{
-                scrollbarWidth: "none",
-                "&::-webkit-scrollbar": { display: "none" },
-                WebkitOverflowScrolling: "touch",
-              }}
-            >
-              {chips.map((chip) => (
-                <Button
-                  key={chip.key}
-                  type="button"
-                  flexShrink={0}
-                  px={4}
-                  py={1.5}
-                  h="auto"
-                  minH="32px"
-                  borderRadius="full"
-                  fontSize="sm"
-                  fontWeight="semibold"
-                  whiteSpace="nowrap"
-                  lineHeight="1.25"
-                  variant={chip.active ? "solid" : "subtle"}
-                  colorPalette={chip.active ? "brand" : "gray"}
-                  bg={chip.active ? "brand.600" : "gray.100"}
-                  color={chip.active ? "white" : "gray.700"}
-                  onClick={chip.onClick}
-                  _hover={{
-                    bg: chip.active ? "brand.700" : "gray.200",
-                  }}
-                >
-                  {chip.label}
-                </Button>
-              ))}
-            </Flex>
-            {chipsTrailing ? <Box flexShrink={0}>{chipsTrailing}</Box> : null}
+      {hasFilters && !searchOpen ? (
+        <MobileFilterSheet
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          title={filterTitle}
+          onClear={onClearFilters}
+        >
+          {filterContent}
+        </MobileFilterSheet>
+      ) : null}
+
+      {hasSort && !searchOpen ? (
+        <MobileFilterSheet
+          open={sortOpen}
+          onClose={() => setSortOpen(false)}
+          title={sortTitle}
+          clearLabel="Done"
+          onClear={() => setSortOpen(false)}
+        >
+          <Flex direction="column" gap={2}>
+            {sortOptions!.map((option) => (
+              <Button
+                key={option.key}
+                type="button"
+                variant={option.active ? "solid" : "outline"}
+                colorPalette={option.active ? "brand" : "gray"}
+                justifyContent="space-between"
+                borderRadius="lg"
+                h="48px"
+                px={4}
+                onClick={() => {
+                  option.onClick();
+                  setSortOpen(false);
+                  scrollAppToTop();
+                  requestAnimationFrame(() => scrollAppToTop());
+                }}
+              >
+                <Text fontWeight="semibold">{option.label}</Text>
+                {option.active && option.direction ? (
+                  <Text fontSize="xs" opacity={0.85} textTransform="uppercase">
+                    {option.direction}
+                  </Text>
+                ) : null}
+              </Button>
+            ))}
           </Flex>
-        ) : null}
-
-        {hasFilters ? (
-          <MobileFilterSheet
-            open={filterOpen}
-            onClose={() => setFilterOpen(false)}
-            title={filterTitle}
-            onClear={onClearFilters}
-          >
-            {filterContent}
-          </MobileFilterSheet>
-        ) : null}
-      </Box>
+        </MobileFilterSheet>
+      ) : null}
 
       <Flex
         display={{ base: "none", lg: "flex" }}
@@ -225,7 +358,7 @@ export function MobilePageChrome({
         <Box>
           <Heading size="lg">{title}</Heading>
           {description ? (
-            <Text fontSize="sm" color="gray.500" mt={0.5}>
+            <Text fontSize="sm" color="fg.muted" mt={0.5}>
               {description}
             </Text>
           ) : null}
@@ -250,9 +383,12 @@ export function MobileFAB({
   to?: string;
   "aria-label"?: string;
 }) {
+  const mobileSearch = useMobileSearchOptional();
+  if (mobileSearch?.searchOpen) return null;
+
   const shared = {
     position: "fixed" as const,
-    bottom: `calc(${MOBILE_BOTTOM_NAV_H} + 12px + env(safe-area-inset-bottom, 0px))`,
+    bottom: MOBILE_BOTTOM_NAV_OFFSET,
     right: 4,
     zIndex: 25,
     display: { base: "flex", lg: "none" } as const,

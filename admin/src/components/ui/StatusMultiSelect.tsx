@@ -98,7 +98,7 @@ export function StatusMultiSelect({
       >
         <Flex align="center" gap={1} flex={1} minW={0} flexWrap="wrap">
           {value.length === 0 ? (
-            <Text fontSize="sm" color="gray.400" px={1} userSelect="none">
+            <Text fontSize="sm" color="fg.subtle" px={1} userSelect="none">
               {resolvedPlaceholder}
             </Text>
           ) : (
@@ -110,13 +110,13 @@ export function StatusMultiSelect({
                 px={2}
                 py={0.5}
                 borderRadius="md"
-                bg="gray.100"
+                bg="bg.muted"
                 border="1px solid"
-                borderColor="gray.200"
+                borderColor="border"
                 maxW="full"
                 onClick={(e) => e.stopPropagation()}
               >
-                <Text fontSize="xs" fontWeight="semibold" color="gray.700" textTransform="uppercase">
+                <Text fontSize="xs" fontWeight="semibold" color="fg" textTransform="uppercase">
                   {status}
                 </Text>
                 <IconButton
@@ -126,9 +126,9 @@ export function StatusMultiSelect({
                   minW="16px"
                   h="16px"
                   p={0}
-                  color="gray.500"
+                  color="fg.muted"
                   disabled={isDisabled}
-                  _hover={{ color: "gray.800", bg: "gray.200" }}
+                  _hover={{ color: "fg", bg: "gray.200" }}
                   onClick={() => removeOption(status)}
                 >
                   <FiX size={12} />
@@ -165,7 +165,7 @@ export function StatusMultiSelect({
               aria-label="Clear statuses"
               variant="ghost"
               size="xs"
-              color="gray.400"
+              color="fg.subtle"
               disabled={isDisabled}
               onClick={clearAll}
             >
@@ -178,7 +178,7 @@ export function StatusMultiSelect({
             aria-controls={menuId}
             variant="ghost"
             size="xs"
-            color="gray.500"
+            color="fg.muted"
             disabled={isDisabled}
             onClick={() => {
               if (isDisabled) return;
@@ -201,9 +201,9 @@ export function StatusMultiSelect({
             left={0}
             right={0}
             zIndex={1500}
-            bg="white"
+            bg="bg.panel"
             border="1px solid"
-            borderColor="gray.200"
+            borderColor="border"
             borderRadius="md"
             boxShadow="lg"
             py={1}
@@ -211,7 +211,7 @@ export function StatusMultiSelect({
             overflowY="auto"
           >
             {filtered.length === 0 ? (
-              <Text px={3} py={2} fontSize="sm" color="gray.400">
+              <Text px={3} py={2} fontSize="sm" color="fg.subtle">
                 No matches
               </Text>
             ) : (
@@ -233,7 +233,7 @@ export function StatusMultiSelect({
                     onClick={() => toggleOption(option.value)}
                   >
                     <Box w="3px" alignSelf="stretch" borderRadius="full" bg={option.color} flexShrink={0} />
-                    <Text fontSize="sm" fontWeight="medium" color="gray.800" textTransform="uppercase">
+                    <Text fontSize="sm" fontWeight="medium" color="fg" textTransform="uppercase">
                       {option.label}
                     </Text>
                   </Box>

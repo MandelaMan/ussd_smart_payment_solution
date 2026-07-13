@@ -71,20 +71,22 @@ async function getPartnerDashboard({ months = 12 } = {}) {
     ),
     query(`
       SELECT p.name AS package_name, p.mbps,
-        SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS subscribers
+        COUNT(*) AS subscribers
       FROM products p
       JOIN customers c ON c.product_id = p.id
       WHERE c.status = 'active'
+        AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
       GROUP BY p.id, p.name, p.mbps
       ORDER BY subscribers DESC
       LIMIT 10
     `),
     query(`
       SELECT b.name AS building_name,
-        SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS subscribers
+        COUNT(*) AS subscribers
       FROM buildings b
       JOIN customers c ON c.building_id = b.id
       WHERE c.status = 'active'
+        AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
       GROUP BY b.id, b.name
       ORDER BY subscribers DESC
       LIMIT 10

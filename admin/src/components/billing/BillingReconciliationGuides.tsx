@@ -48,14 +48,14 @@ function GuideCard({
     guide.id !== "sync" && guide.id !== "metrics"
       ? BILLING_MODULES.find((m) => m.id === guide.id)
       : null;
-  const [open, setOpen] = useState(active || (count != null && count > 0));
+  const [open, setOpen] = useState(active);
 
   return (
     <Box
       border="1px solid"
       borderColor={active ? "brand.300" : "brand.100"}
       borderRadius="md"
-      bg="white"
+      bg="bg.panel"
       overflow="hidden"
     >
       <Flex
@@ -83,8 +83,8 @@ function GuideCard({
 
       <Collapsible.Root open={open}>
         <Collapsible.Content>
-          <Box px={3} pb={3} pt={0} borderTop="1px solid" borderColor="gray.100">
-            <Text fontSize="xs" color="gray.700" mt={2} lineHeight="1.5">
+          <Box px={3} pb={3} pt={0} borderTop="1px solid" borderColor="border.muted">
+            <Text fontSize="xs" color="fg" mt={2} lineHeight="1.5">
               {guide.whenToUse}
             </Text>
 
@@ -100,7 +100,7 @@ function GuideCard({
             </Text>
             <List.Root
               fontSize="xs"
-              color="gray.700"
+              color="fg"
               gap={1.5}
               pl={4}
               style={{ listStyleType: "decimal" }}
@@ -118,7 +118,7 @@ function GuideCard({
                 Where to check
               </Text>
             </Flex>
-            <List.Root fontSize="xs" color="gray.700" gap={1} pl={4} style={{ listStyleType: "disc" }}>
+            <List.Root fontSize="xs" color="fg" gap={1} pl={4} style={{ listStyleType: "disc" }}>
               {guide.whereToCheck.map((item) => (
                 <List.Item key={item} lineHeight="1.5">
                   {item}
@@ -164,7 +164,7 @@ export function BillingReconciliationGuides({ summary, activeGuideId }: Props) {
             How to fix issues
           </Text>
         </Flex>
-        <Text fontSize="xs" color="gray.600" mt={1} pl={6} lineHeight="1.45">
+        <Text fontSize="xs" color="fg.muted" mt={1} pl={6} lineHeight="1.45">
           Step-by-step guides for each billing problem and where to verify in the dashboard
         </Text>
       </Box>

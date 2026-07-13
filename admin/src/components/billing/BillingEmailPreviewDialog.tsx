@@ -32,7 +32,7 @@ export function BillingEmailPreviewDialog({
           </Flex>
         ) : preview ? (
           <Box>
-            <Text fontSize="xs" color="gray.600" mb={1}>
+            <Text fontSize="xs" color="fg.muted" mb={1}>
               To: {preview.email || "—"} {preview.emailSource ? `(${preview.emailSource})` : ""}
             </Text>
             <Text fontSize="sm" fontWeight="semibold" mb={3}>
@@ -40,10 +40,10 @@ export function BillingEmailPreviewDialog({
             </Text>
             <Box
               border="1px solid"
-              borderColor="gray.200"
+              borderColor="border"
               borderRadius="md"
               p={3}
-              bg="gray.50"
+              bg="bg.subtle"
               maxH="360px"
               overflow="auto"
               fontSize="sm"

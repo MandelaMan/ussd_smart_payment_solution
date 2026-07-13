@@ -54,11 +54,11 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
       boxShadow={isPage ? "none" : { base: "sm", xl: "none" }}
     >
       {!isPage ? (
-        <Box px={3} py={3} borderBottom="1px solid" borderColor="gray.100">
-          <Text fontSize="md" fontWeight="semibold" color="gray.800">
+        <Box px={{ base: 2.5, xl: 3 }} py={{ base: 2, xl: 3 }} borderBottom="1px solid" borderColor="border.muted">
+          <Text fontSize="sm" fontWeight="semibold" color="fg">
             Activity
           </Text>
-          <Text fontSize="xs" color="gray.500">
+          <Text fontSize="2xs" color="fg.muted">
             Payments and integrations
           </Text>
         </Box>
@@ -75,9 +75,9 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
           Array.from({ length: 5 }).map((_, i) => (
             <Flex
               key={i}
-              gap={3}
-              px={isPage ? 0 : 3}
-              py={3}
+              gap={2}
+              px={isPage ? 0 : { base: 2.5, xl: 3 }}
+              py={{ base: 2, xl: 3 }}
               borderBottom={isPage ? "none" : "1px solid"}
               borderColor="gray.50"
               align="flex-start"
@@ -91,7 +91,7 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
           ))}
 
         {!loading && items.length === 0 && (
-          <Text fontSize="xs" color="gray.400" p={isPage ? 0 : 3}>
+          <Text fontSize="xs" color="fg.subtle" p={isPage ? 0 : { base: 2.5, xl: 3 }}>
             No activity yet.
           </Text>
         )}
@@ -104,9 +104,9 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
           return (
             <Flex
               key={item.id}
-              gap={3}
-              px={isPage ? 0 : 3}
-              py={3}
+              gap={{ base: 2, xl: 3 }}
+              px={isPage ? 0 : { base: 2.5, xl: 3 }}
+              py={{ base: 2, xl: 3 }}
               borderBottom={isPage ? "none" : "1px solid"}
               borderColor="gray.50"
               borderRadius={isPage ? "lg" : 0}
@@ -114,7 +114,7 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
               align="flex-start"
             >
               <Flex
-                boxSize="32px"
+                boxSize={{ base: "28px", xl: "32px" }}
                 borderRadius="full"
                 bg={failed ? "red.50" : "brand.50"}
                 color={failed ? "red.500" : iconColor}
@@ -122,29 +122,29 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
                 justify="center"
                 flexShrink={0}
               >
-                <Icon size={15} />
+                <Icon size={14} />
               </Flex>
               <Box flex={1} minW={0}>
-                <Text fontSize="sm" fontWeight="semibold" color="gray.800" lineClamp={2}>
+                <Text fontSize={{ base: "xs", xl: "sm" }} fontWeight="semibold" color="fg" lineClamp={2}>
                   {item.title}
                 </Text>
                 {item.message && (
-                  <Text fontSize="xs" color="gray.500" mt={0.5} lineClamp={2}>
+                  <Text fontSize="2xs" color="fg.muted" mt={0.5} lineClamp={2}>
                     {item.message}
                   </Text>
                 )}
                 <Flex gap={2} mt={1} flexWrap="wrap" align="center">
                   {item.amount != null && (
-                    <Text fontSize="xs" fontWeight="medium" color="brand.700">
+                    <Text fontSize="2xs" fontWeight="medium" color="brand.700">
                       {formatCurrency(item.amount)}
                     </Text>
                   )}
                   {item.customerRef && (
-                    <Text fontSize="xs" color="gray.400">
+                    <Text fontSize="2xs" color="fg.subtle">
                       {item.customerRef}
                     </Text>
                   )}
-                  <Text fontSize="xs" color="gray.400" ml="auto">
+                  <Text fontSize="2xs" color="fg.subtle" ml="auto">
                     {timeAgo(item.createdAt)}
                   </Text>
                 </Flex>

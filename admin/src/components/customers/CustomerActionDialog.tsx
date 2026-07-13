@@ -65,13 +65,13 @@ function ModalHeader({
       pb={compact ? 2.5 : 4}
       pr={compact ? 12 : 14}
       borderBottomWidth="1px"
-      borderColor="gray.100"
+      borderColor="border.muted"
     >
-      <Text fontSize={compact ? "md" : "lg"} fontWeight="semibold" color="gray.900">
+      <Text fontSize={compact ? "md" : "lg"} fontWeight="semibold" color="fg">
         {title}
       </Text>
       {subtitle ? (
-        <Text fontSize="xs" color="gray.500" mt={0.5} truncate title={subtitle}>
+        <Text fontSize="xs" color="fg.muted" mt={0.5} truncate title={subtitle}>
           {subtitle}
         </Text>
       ) : null}
@@ -198,7 +198,7 @@ export function CustomerActionDialog({
 
         {actionType === "switch" && customer ? (
           <Stack gap={4}>
-            <Text fontSize="sm" color="gray.600">
+            <Text fontSize="sm" color="fg.muted">
               Move within <strong>{formatTitleCase(customer.buildingName)}</strong>. Customer number and IP
               rules will be recalculated for the new apartment.
             </Text>
@@ -232,7 +232,8 @@ export function CustomerActionDialog({
             <Stack gap={4}>
               <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
                 This will mark the subscription as cancelled. The customer record is kept for
-                history but will no longer be active.
+                history. TISP due date is set to today, and C2B Zoho contacts are marked inactive
+                (recurring billing stopped).
               </Box>
               <Field.Root w="full">
                 <Field.Label>Notes (optional)</Field.Label>
@@ -307,7 +308,7 @@ export function CustomerActionDialog({
 
         {actionType === "history" ? (
           <Stack gap={4}>
-            <Text fontSize="sm" color="gray.600" lineHeight="1.5">
+            <Text fontSize="sm" color="fg.muted" lineHeight="1.5">
               Occupancy timeline for apartment{" "}
               <strong>{customer?.apartmentNumber}</strong>
               {customer?.buildingName ? (

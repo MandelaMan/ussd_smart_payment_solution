@@ -70,10 +70,10 @@ export function AppDialog({
             overflowY="auto"
             display="flex"
             flexDirection="column"
-            bg="white"
+            bg="bg.panel"
             boxShadow="xl"
             borderWidth={{ base: 0, sm: "1px" }}
-            borderColor="gray.200"
+            borderColor="border"
             zIndex={zIndex + 1}
             position="relative"
             pb={{ base: "env(safe-area-inset-bottom, 0px)", sm: 0 }}
@@ -88,9 +88,9 @@ export function AppDialog({
                 top={{ base: "calc(0.75rem + env(safe-area-inset-top, 0px))", sm: 3 }}
                 right={3}
                 zIndex={2}
-                color="gray.500"
+                color="fg.muted"
                 borderRadius="full"
-                _hover={{ bg: "gray.100", color: "gray.700" }}
+                _hover={{ bg: "bg.muted", color: "fg" }}
                 onClick={requestClose}
               >
                 <FiX size={18} />

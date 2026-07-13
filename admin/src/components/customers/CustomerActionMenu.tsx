@@ -47,7 +47,7 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
           variant="outline"
           size="sm"
           borderRadius="md"
-          bg="white"
+          bg="bg.panel"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
         >
@@ -60,9 +60,9 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
             minW="220px"
             borderRadius="lg"
             boxShadow="lg"
-            bg="white"
+            bg="bg.panel"
             borderWidth="1px"
-            borderColor="gray.200"
+            borderColor="border"
             py={1}
             zIndex={1900}
             onPointerDown={(e) => e.stopPropagation()}

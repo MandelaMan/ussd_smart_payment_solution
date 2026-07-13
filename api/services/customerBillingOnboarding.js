@@ -9,7 +9,6 @@ const { logActivity } = require("./activityLogStore");
 const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
 const {
   isB2BCustomer,
-  resolveAgencyForCustomer,
 } = require("../utils/b2bBilling");
 const { buildSubscriptionLineItems } = require("../utils/zohoInvoiceLineItems");
 const {
@@ -276,16 +275,30 @@ async function onboardNewCustomerBilling(customerId) {
     return { ok: false, error: "Customer not found" };
   }
 
-  let agencyName = null;
+  // B2B customers are not Zoho Books contacts — billing lives on the agency.
   if (isB2BCustomer({ customerType: ctx.customer_type })) {
-    const agency = await resolveAgencyForCustomer(
-      { agencyId: ctx.agency_id },
-      customerStore
-    );
-    agencyName = agency.name;
+    try {
+      await customerStore.updateCustomerZohoBillingStatus(
+        customerId,
+        "completed",
+        null
+      );
+    } catch (persistErr) {
+      console.error("zoho billing status persist failed:", persistErr.message);
+    }
+    return {
+      ok: true,
+      skipped: true,
+      reason: "b2b_no_zoho",
+      linked: false,
+      zohoContactId: null,
+      invoice: null,
+      recurring: null,
+      trial: null,
+    };
   }
 
-  const customer = mapContextToCustomer(ctx, agencyName);
+  const customer = mapContextToCustomer(ctx, null);
   const hasTrial = Boolean(ctx.trial_period_enabled);
   const trialEndsAt =
     ctx.trial_ends_at ||

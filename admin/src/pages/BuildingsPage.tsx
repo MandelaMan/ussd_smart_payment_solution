@@ -1,5 +1,6 @@
 import { Fragment, type FormEvent, useCallback, useEffect, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
   Badge,
@@ -35,6 +36,7 @@ import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
+import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { BuildingExpandPanel } from "../components/buildings/BuildingExpandPanel";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
 import { buildingExportColumns } from "../lib/dataTableExportColumns";
@@ -61,6 +63,7 @@ type BuildingSortKey = "name" | "c2bCode" | "b2bCode" | "ipSetup" | "createdAt";
 
 export function BuildingsPage() {
   const { user } = useAuth();
+  const isMobile = useMobileViewport();
   const canMutate = canMutateConfig(user);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({
@@ -70,6 +73,7 @@ export function BuildingsPage() {
     pages: 1,
   });
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -95,7 +99,9 @@ export function BuildingsPage() {
   });
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const append = isMobile && page > 1;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError("");
     try {
       const params: Record<string, string> = {
@@ -107,14 +113,17 @@ export function BuildingsPage() {
       params.sortBy = sortQuery.sortBy;
       params.sortDir = sortQuery.sortDir;
       const res = await api.listBuildings(params);
-      setBuildings(res.buildings);
+      setBuildings((prev) =>
+        mergeInfinitePage(prev, res.buildings, page, isMobile, (b) => b.id)
+      );
       setPagination(res.pagination);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load buildings");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [search, ipSetup, page, sortQuery.sortBy, sortQuery.sortDir]);
+  }, [search, ipSetup, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   function handleSort(
     column: BuildingSortKey,
@@ -272,32 +281,82 @@ export function BuildingsPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <Flex justify="space-between" align={{ base: "start", md: "center" }} direction={{ base: "column", md: "row" }} gap={3}>
-        <Box>
-          <Heading size="lg">Buildings</Heading>
-          <Text fontSize="sm" color="gray.500">
-            {canMutate ? "Expand a row to view details and edit" : "View building reference data"}
-          </Text>
-        </Box>
-        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
-          <DataTableExportButton
-            entityLabel="buildings"
-            viewCount={buildings.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        {canMutate ? (
-        <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
-          <FiHome />
-          Add Building
-        </Button>
-        ) : null}
-        </Flex>
-      </Flex>
+      <MobilePageChrome
+        title="Buildings"
+        description={canMutate ? "Expand a row to view details and edit" : "View building reference data"}
+        searchValue={searchInput}
+        onSearchChange={setSearchInput}
+        searchPlaceholder="Name or codes…"
+        filterTitle="Filters"
+        activeFilterCount={ipSetup ? 1 : 0}
+        onClearFilters={() => { setIpSetup(""); setPage(1); setExpanded(null); }}
+        filterContent={
+          <FilterField label="IP setup" flex={FILTER_FLEX.standard} minW={0}>
+            <SelectField
+              size="sm"
+              fieldProps={{
+                value: ipSetup,
+                onChange: (e) => { setIpSetup(e.target.value); setPage(1); setExpanded(null); },
+                borderRadius: "md",
+              }}
+            >
+              <option value="">All</option>
+              <option value="STATIC">STATIC</option>
+              <option value="PPOE">PPOE</option>
+            </SelectField>
+          </FilterField>
+        }
+        sortOptions={[
+          {
+            key: "name",
+            label: "Name",
+            active: sorts[0]?.sortBy === "name",
+            direction: sorts[0]?.sortBy === "name" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("name"),
+          },
+          {
+            key: "c2bCode",
+            label: "C2B code",
+            active: sorts[0]?.sortBy === "c2bCode",
+            direction: sorts[0]?.sortBy === "c2bCode" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("c2bCode"),
+          },
+          {
+            key: "ipSetup",
+            label: "IP setup",
+            active: sorts[0]?.sortBy === "ipSetup",
+            direction: sorts[0]?.sortBy === "ipSetup" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("ipSetup"),
+          },
+          {
+            key: "createdAt",
+            label: "Created",
+            active: sorts[0]?.sortBy === "createdAt",
+            direction: sorts[0]?.sortBy === "createdAt" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("createdAt", "desc"),
+          },
+        ]}
+        desktopActions={
+          <Flex gap={2} align="center" flexWrap="wrap">
+            <DataTableExportButton
+              entityLabel="buildings"
+              viewCount={buildings.length}
+              totalCount={pagination.total}
+              loading={exporting}
+              onExport={handleExport}
+            />
+            {canMutate ? (
+              <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
+                <FiHome />
+                Add Building
+              </Button>
+            ) : null}
+          </Flex>
+        }
+      />
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input
               size="sm"
               placeholder="Name or codes…"
@@ -306,7 +365,7 @@ export function BuildingsPage() {
               borderRadius="md"
             />
           </FilterField>
-          <FilterField label="IP setup" flex={FILTER_FLEX.standard} minW={0}>
+          <FilterField label="IP setup" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -323,7 +382,7 @@ export function BuildingsPage() {
       </FilterToolbar>
 
       {showForm && (
-        <Box bg="white" borderRadius="lg" border="1px solid" borderColor="gray.100" p={5}>
+        <Box bg="bg.panel" borderRadius="lg" border="1px solid" borderColor="border.muted" p={5}>
           <Heading size="sm" mb={4}>New building</Heading>
           <BuildingForm
             name={name} setName={setName}
@@ -344,6 +403,8 @@ export function BuildingsPage() {
 
       <DataTableCard
         loading={loading}
+        loadingMore={loadingMore}
+        loadedCount={buildings.length}
         pagination={pagination}
         onPageChange={(nextPage) => {
           setPage(nextPage);
@@ -424,7 +485,7 @@ export function BuildingsPage() {
                           {b.ipSetup}
                         </Badge>
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {b.createdAt ? formatDate(b.createdAt) : "—"}
                       </Table.Cell>
                     </Table.Row>
@@ -529,7 +590,7 @@ function BuildingForm({
               </Flex>
               <Stack gap={1}>
                 {ipPrefixes.map((p, i) => (
-                  <Flex key={p} align="center" justify="space-between" bg="gray.50" px={3} py={1.5} borderRadius="md" fontSize="sm">
+                  <Flex key={p} align="center" justify="space-between" bg="bg.subtle" px={3} py={1.5} borderRadius="md" fontSize="sm">
                     <Text fontFamily="mono">{p.endsWith(".") ? p : `${p}.`}x</Text>
                     <IconButton aria-label="Remove" size="xs" variant="ghost" colorPalette="red" onClick={() => removePrefix(i)}>
                       <FiTrash2 />

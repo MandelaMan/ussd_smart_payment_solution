@@ -35,6 +35,8 @@ import { FormSection } from "./FormSection";
 import { AppDialog, NESTED_APP_DIALOG_Z_INDEX } from "../ui/AppDialog";
 import { FormSubmitSummary, type FormSummaryItem } from "../ui/FormSubmitSummary";
 import { formatCustomerPackageLabel } from "../../lib/formatText";
+import { useAuth } from "../../lib/auth";
+import { canEditCustomerPackage } from "../../lib/rbac";
 
 const PAYMENT_FREQUENCIES = [
   { value: "monthly", label: "Monthly" },
@@ -46,15 +48,15 @@ const PAYMENT_FREQUENCIES = [
 const lockedPackageFieldProps = {
   readOnly: true,
   disabled: true,
-  bg: "gray.50",
-  color: "gray.600",
-  borderColor: "gray.200",
+  bg: "bg.subtle",
+  color: "fg.muted",
+  borderColor: "border",
   cursor: "not-allowed",
   opacity: 1,
   _disabled: {
     opacity: 1,
-    bg: "gray.50",
-    color: "gray.600",
+    bg: "bg.subtle",
+    color: "fg.muted",
     cursor: "not-allowed",
   },
 } as const;
@@ -95,8 +97,11 @@ export function CustomerForm({
   onUpdated,
   onCancel,
 }: Props) {
+  const { user } = useAuth();
+  const canEditPackage = canEditCustomerPackage(user);
   const isEdit = Boolean(customer);
   const isActive = !customer || customer.status === "active";
+  const showPackageEditor = !isEdit || canEditPackage;
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [catalog, setCatalog] = useState<PackageCategory[]>([]);
@@ -164,6 +169,10 @@ export function CustomerForm({
     setBuildingId(String(customer.buildingId));
     setAgencyId(customer.agencyId ? String(customer.agencyId) : "");
     setDstvDecoderSerial(customer.dstvDecoderSerial || "");
+    setProductId(String(customer.productId));
+    if (customer.planId) {
+      setPlanId(String(customer.planId));
+    }
 
     const building = buildings.find((b) => b.id === customer.buildingId);
     const { prefix, lastOctet } = parseIpFromAddress(customer.ipAddress, building);
@@ -171,6 +180,17 @@ export function CustomerForm({
     setIpLastOctet(lastOctet);
     setInitializingEdit(false);
   }, [customer, buildings]);
+
+  useEffect(() => {
+    if (!customer?.planId || !catalog.length) return;
+    for (const cat of catalog) {
+      if (cat.plans?.some((p) => p.id === customer.planId)) {
+        setCategoryId(String(cat.id));
+        setPlanId(String(customer.planId));
+        break;
+      }
+    }
+  }, [customer, catalog]);
 
   const buildingOptions = useMemo(
     () =>
@@ -196,10 +216,10 @@ export function CustomerForm({
   const selectedCategory = catalog.find((c) => String(c.id) === categoryId);
 
   useEffect(() => {
-    if (isEdit) return;
+    if (isEdit && !canEditPackage) return;
     if (!buildingId || !planId) {
       setPackages([]);
-      setProductId("");
+      if (!isEdit) setProductId("");
       setPackagesLoading(false);
       return;
     }
@@ -223,10 +243,10 @@ export function CustomerForm({
       })
       .catch(() => {
         setPackages([]);
-        setProductId("");
+        if (!isEdit) setProductId("");
       })
       .finally(() => setPackagesLoading(false));
-  }, [buildingId, paymentFrequency, categoryId, planId, isEdit]);
+  }, [buildingId, paymentFrequency, categoryId, planId, isEdit, canEditPackage]);
 
   useEffect(() => {
     const apt = apartmentNumber.trim();
@@ -272,19 +292,20 @@ export function CustomerForm({
     }
   }, [selectedBuilding?.id]);
 
-  const selectedPackage = isEdit
-    ? null
-    : packages.find((p) => String(p.id) === productId);
+  const selectedPackage = showPackageEditor
+    ? packages.find((p) => String(p.id) === productId) || null
+    : null;
   const requiresDstvSerial = Boolean(
-    isEdit
+    isEdit && !canEditPackage
       ? customer?.hasDstv
-      : selectedCategory?.hasDstv || selectedPackage?.hasDstv
+      : selectedCategory?.hasDstv || selectedPackage?.hasDstv || customer?.hasDstv
   );
-  const packageAmount = isEdit
-    ? customer?.packagePrice
-    : paymentFrequency === "custom" && selectedPackage && customPeriodDays
-      ? Math.round((selectedPackage.monthlyPrice * Number(customPeriodDays)) / 30)
-      : selectedPackage?.price;
+  const packageAmount =
+    isEdit && !canEditPackage
+      ? customer?.packagePrice
+      : paymentFrequency === "custom" && selectedPackage && customPeriodDays
+        ? Math.round((selectedPackage.monthlyPrice * Number(customPeriodDays)) / 30)
+        : selectedPackage?.price ?? (isEdit ? customer?.packagePrice : undefined);
   const decoderFee =
     selectedCategory?.requiresDecoderFee
       ? selectedCategory.decoderFeeAmount || 2900
@@ -418,7 +439,7 @@ export function CustomerForm({
       });
       return false;
     }
-    if (isActive && !isEdit && !productId) {
+    if (isActive && (!isEdit || canEditPackage) && !productId) {
       toaster.create({ title: "Select a package", type: "error" });
       return false;
     }
@@ -474,6 +495,16 @@ export function CustomerForm({
             : dstvDecoderSerial.trim()
               ? dstvDecoderSerial.trim().toUpperCase()
               : undefined,
+          ...(canEditPackage && isActive
+            ? {
+                paymentFrequency: paymentFrequency as Customer["paymentFrequency"],
+                customPeriodDays:
+                  paymentFrequency === "custom"
+                    ? Number(customPeriodDays)
+                    : undefined,
+                productId: Number(productId),
+              }
+            : {}),
         });
 
         if (res.tisp && !res.tisp.ok) {
@@ -569,7 +600,7 @@ export function CustomerForm({
               <Input
                 value={selectedBuilding?.name || customer?.buildingName || ""}
                 readOnly
-                bg="gray.50"
+                bg="bg.subtle"
               />
             ) : (
               <SearchableSelect
@@ -602,7 +633,7 @@ export function CustomerForm({
               bg={!isActive ? "gray.50" : undefined}
             />
             {isActive && occupancyChecking && apartmentNumber.trim() && buildingId ? (
-              <Text fontSize="xs" color="gray.500" mt={1}>
+              <Text fontSize="xs" color="fg.muted" mt={1}>
                 Checking apartment availability…
               </Text>
             ) : isActive && occupancy && !occupancy.available && occupancy.tenant ? (
@@ -622,28 +653,30 @@ export function CustomerForm({
           title="Package & billing"
           description={
             isEdit
-              ? "Package and billing changes use Upgrade, Downgrade, or Update frequency in customer actions."
+              ? canEditPackage
+                ? "Admins can correct package and frequency in the database only — this does not create a Zoho upgrade or downgrade invoice."
+                : "Package and billing changes use Upgrade, Downgrade, or Update frequency in customer actions."
               : "Choose category, plan, billing frequency, and building price."
           }
         >
-          {isEdit && customer ? (
+          {isEdit && customer && !showPackageEditor ? (
             <>
               <Field.Root opacity={0.92}>
-                <Field.Label color="gray.500">Current package</Field.Label>
+                <Field.Label color="fg.muted">Current package</Field.Label>
                 <Input
                   {...lockedPackageFieldProps}
                   value={formatCustomerPackageLabel(customer.productName, customer.productMbps)}
                 />
               </Field.Root>
               <Field.Root opacity={0.92}>
-                <Field.Label color="gray.500">Price</Field.Label>
+                <Field.Label color="fg.muted">Price</Field.Label>
                 <Input
                   {...lockedPackageFieldProps}
                   value={formatCurrency(customer.packagePrice)}
                 />
               </Field.Root>
               <Field.Root opacity={0.92}>
-                <Field.Label color="gray.500">Payment frequency</Field.Label>
+                <Field.Label color="fg.muted">Payment frequency</Field.Label>
                 <Input {...lockedPackageFieldProps} value={editFrequencyLabel} />
               </Field.Root>
               {customer.hasDstv && (
@@ -927,7 +960,7 @@ export function CustomerForm({
                 ) : (
                   <Field.Root>
                     <Field.Label>Subnet</Field.Label>
-                    <Input value={ipPrefix} readOnly bg="white" fontFamily="mono" />
+                    <Input value={ipPrefix} readOnly bg="bg.panel" fontFamily="mono" />
                   </Field.Root>
                 )}
                 <Field.Root required>
@@ -935,9 +968,9 @@ export function CustomerForm({
                   <Flex
                     align="stretch"
                     borderWidth="1px"
-                    borderColor="gray.200"
+                    borderColor="border"
                     borderRadius="md"
-                    bg="white"
+                    bg="bg.panel"
                     boxShadow="sm"
                     overflow="hidden"
                     _focusWithin={{
@@ -949,11 +982,11 @@ export function CustomerForm({
                       align="center"
                       px={3}
                       fontSize="sm"
-                      color="gray.600"
+                      color="fg.muted"
                       fontFamily="mono"
-                      bg="gray.50"
+                      bg="bg.subtle"
                       borderRightWidth="1px"
-                      borderColor="gray.200"
+                      borderColor="border"
                       flexShrink={0}
                     >
                       {ipPrefix}
@@ -976,7 +1009,7 @@ export function CustomerForm({
               </>
             ) : (
               <Box gridColumn={{ md: "span 2" }}>
-                <Text fontSize="sm" color="gray.600">
+                <Text fontSize="sm" color="fg.muted">
                   {isEdit
                     ? "This building uses PPOE — IP is managed automatically."
                     : "A PPOE password will be generated automatically on create."}
@@ -1018,7 +1051,7 @@ export function CustomerForm({
       maxW="lg"
       zIndex={embedded ? NESTED_APP_DIALOG_Z_INDEX : undefined}
     >
-      <Dialog.Header borderBottomWidth="1px" borderColor="gray.100" px={5} py={4} pr={12}>
+      <Dialog.Header borderBottomWidth="1px" borderColor="border.muted" px={5} py={4} pr={12}>
         <Dialog.Title fontSize="lg">
           {isEdit ? "Confirm customer update" : "Confirm new customer"}
         </Dialog.Title>
@@ -1040,7 +1073,7 @@ export function CustomerForm({
           </Text>
         ) : null}
       </Dialog.Body>
-      <Dialog.Footer px={5} py={4} borderTopWidth="1px" borderColor="gray.100" gap={2}>
+      <Dialog.Footer px={5} py={4} borderTopWidth="1px" borderColor="border.muted" gap={2}>
         <Button variant="ghost" disabled={submitting} onClick={() => setConfirmOpen(false)}>
           Back to edit
         </Button>
@@ -1076,7 +1109,7 @@ export function CustomerForm({
             </Link>
           </Button>
           <Heading size="lg">New customer</Heading>
-          <Text fontSize="sm" color="gray.500" mt={1}>
+          <Text fontSize="sm" color="fg.muted" mt={1}>
             Complete each section — building and billing choices filter available packages.
           </Text>
         </Box>
@@ -1115,7 +1148,7 @@ export function CustomerForm({
         )}
       </Flex>
 
-      <Box bg="white" borderRadius="xl" border="1px solid" borderColor="gray.100" p={5}>
+      <Box bg="bg.panel" borderRadius="xl" border="1px solid" borderColor="border.muted" p={5}>
         {formBody}
       </Box>
     </Stack>

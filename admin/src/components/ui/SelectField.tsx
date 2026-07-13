@@ -36,7 +36,7 @@ export function SelectField({
       >
         {children}
       </NativeSelect.Field>
-      <NativeSelect.Indicator color="gray.500" pointerEvents="none">
+      <NativeSelect.Indicator color="fg.muted" pointerEvents="none">
         <FiChevronDown size={14} />
       </NativeSelect.Indicator>
     </NativeSelect.Root>

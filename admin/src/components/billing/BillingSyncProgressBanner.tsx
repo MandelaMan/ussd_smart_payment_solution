@@ -74,7 +74,7 @@ export function BillingSyncProgressBanner({
           <Text fontSize="sm" fontWeight="semibold" color="brand.800">
             {title}
           </Text>
-          <Text fontSize="xs" color="gray.600" mt={1}>
+          <Text fontSize="xs" color="fg.muted" mt={1}>
             {phaseLabel(progress?.phase)} · {detail}
           </Text>
           {running && total > 0 && (
@@ -84,7 +84,7 @@ export function BillingSyncProgressBanner({
                   <Progress.Range borderRadius="full" />
                 </Progress.Track>
               </Progress.Root>
-              <Text fontSize="2xs" color="gray.500" mt={1}>
+              <Text fontSize="2xs" color="fg.muted" mt={1}>
                 {pct}% complete
               </Text>
             </Box>

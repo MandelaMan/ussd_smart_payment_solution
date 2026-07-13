@@ -193,14 +193,16 @@ async function updateZohoContactDetails(customer, zohoContact) {
 async function pushCustomerBillingToZoho(ctx, options = {}) {
   const syncRecurring = options.syncRecurring !== false;
 
-  let agencyName = ctx.agency_name || null;
   if (isB2BCustomer({ customerType: ctx.customer_type })) {
-    const agency = await resolveAgencyForCustomer(
-      { agencyId: ctx.agency_id },
-      customerStore,
-    );
-    agencyName = agency?.name || agencyName;
+    return {
+      skipped: true,
+      reason: "b2b_no_zoho",
+      contact: null,
+      recurring: null,
+    };
   }
+
+  const agencyName = ctx.agency_name || null;
 
   const customer = mapContextToCustomer(ctx, agencyName);
   const { ensureZohoContactForCustomer } = require("../controllers/customers.controller");

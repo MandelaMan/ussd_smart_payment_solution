@@ -5,7 +5,8 @@ import {
 } from "./ui/DataTable";
 import { SkeletonBlock } from "./ui/SkeletonBlock";
 import { MOBILE_LIST_CARD, MOBILE_LIST_ROW } from "./ui/MobileDataList";
-import { PAGE_STACK_GAP } from "./ui/pageLayout";
+import { MobileFixedHeader } from "./ui/MobileFixedHeader";
+import { PAGE_STACK_GAP, mobileStickyHeaderProps } from "./ui/pageLayout";
 
 /** Main content area — accounts for layout padding and floating bottom nav. */
 export const PAGE_CONTENT_MIN_H = {
@@ -29,8 +30,8 @@ export function PaginationSkeleton() {
       px={4}
       py={3}
       borderTop="1px solid"
-      borderColor="gray.100"
-      bg="gray.50"
+      borderColor="border.muted"
+      bg="bg.subtle"
     >
       <SkeletonBlock height="16px" width="120px" />
       <Flex gap={2} align="center">
@@ -75,15 +76,14 @@ export function DashboardMetricsSkeleton() {
   return (
     <Grid
       templateColumns={{
-        base: "1fr",
-        sm: "1fr 1fr",
+        base: "1fr 1fr",
         lg: "repeat(3, 1fr)",
         xl: "repeat(5, 1fr)",
       }}
-      gap={4}
+      gap={{ base: 1.5, lg: 4 }}
     >
-      {Array.from({ length: 5 }).map((_, i) => (
-        <SkeletonBlock key={i} height="124px" borderRadius="lg" />
+      {Array.from({ length: 6 }).map((_, i) => (
+        <SkeletonBlock key={i} height={{ base: "92px", md: "104px" }} borderRadius="lg" />
       ))}
     </Grid>
   );
@@ -93,15 +93,14 @@ export function BillingMetricsSkeleton() {
   return (
     <Grid
       templateColumns={{
-        base: "1fr",
-        sm: "1fr 1fr",
+        base: "1fr 1fr",
         lg: "repeat(3, 1fr)",
         xl: "repeat(5, 1fr)",
       }}
-      gap={4}
+      gap={{ base: 1.5, lg: 4 }}
     >
       {Array.from({ length: 5 }).map((_, i) => (
-        <SkeletonBlock key={i} height="124px" borderRadius="lg" />
+        <SkeletonBlock key={i} height={{ base: "92px", md: "104px" }} borderRadius="lg" />
       ))}
     </Grid>
   );
@@ -175,7 +174,7 @@ export function ActivityPanelSkeleton() {
   return (
     <Box
       w={{ base: "full", xl: "280px" }}
-      bg="white"
+      bg="bg.panel"
       borderRadius={{ base: "lg", xl: 0 }}
       border={{ base: "1px solid", xl: "none" }}
       borderLeft={{ xl: "1px solid" }}
@@ -187,7 +186,7 @@ export function ActivityPanelSkeleton() {
       display="flex"
       flexDirection="column"
     >
-      <Box px={3} py={3} borderBottom="1px solid" borderColor="gray.100">
+      <Box px={3} py={3} borderBottom="1px solid" borderColor="border.muted">
         <SkeletonBlock height="18px" width="80px" mb={2} />
         <SkeletonBlock height="14px" width="180px" />
       </Box>
@@ -351,24 +350,29 @@ export function MobilePageChromeSkeleton({
   showActions?: boolean;
 }) {
   return (
-    <Box display={{ base: "block", lg: "none" }} mb={3}>
-      <Flex align="center" justify="space-between" gap={3} mb={showChips ? 3 : 0}>
+    <MobileFixedHeader
+      headerProps={{
+        ...mobileStickyHeaderProps,
+        bg: "bg.panel",
+        pb: 3,
+        mb: 0,
+      }}
+    >
+      <Flex align="center" justify="space-between" gap={3} minH="44px" mb={showChips ? 3 : 0}>
         <SkeletonBlock height="32px" width="48%" borderRadius="md" />
-        {showActions ? (
-          <Flex gap={2}>
-            <SkeletonBlock boxSize="40px" borderRadius="full" />
-            <SkeletonBlock boxSize="40px" borderRadius="full" />
-          </Flex>
-        ) : null}
+        {showActions ? <SkeletonBlock boxSize="40px" borderRadius="full" /> : null}
       </Flex>
       {showChips ? (
-        <Flex gap={2} overflow="hidden">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <SkeletonBlock key={i} height="32px" width="72px" borderRadius="full" flexShrink={0} />
+        <Flex gap={2} overflow="hidden" align="center">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonBlock key={i} height="34px" width="72px" borderRadius="full" flexShrink={0} />
           ))}
+          <Box flex={1} />
+          <SkeletonBlock boxSize="34px" borderRadius="full" flexShrink={0} />
+          <SkeletonBlock boxSize="34px" borderRadius="full" flexShrink={0} />
         </Flex>
       ) : null}
-    </Box>
+    </MobileFixedHeader>
   );
 }
 
@@ -378,24 +382,14 @@ export function SynchronizationPageSkeleton() {
       <Flex justify="space-between" align="center" wrap="wrap" gap={3}>
         <Box>
           <SkeletonBlock height="28px" width="200px" mb={2} />
-          <SkeletonBlock height="16px" width="300px" />
+          <SkeletonBlock height="16px" width="280px" display={{ base: "none", lg: "block" }} />
         </Box>
-        <Flex gap={2}>
-          <SkeletonBlock height="32px" width="120px" borderRadius="md" />
-          <SkeletonBlock height="32px" width="88px" borderRadius="md" />
-        </Flex>
+        <SkeletonBlock height="32px" width="40px" borderRadius="md" />
       </Flex>
-      <Grid templateColumns={{ base: "1fr", md: "repeat(4, 1fr)" }} gap={3}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <SkeletonBlock key={i} height="104px" borderRadius="lg" />
-        ))}
-      </Grid>
-      <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={4}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <SkeletonBlock key={i} height="220px" borderRadius="lg" />
-        ))}
-      </Grid>
-      <SkeletonBlock height="280px" borderRadius="lg" />
+      <SkeletonBlock height="72px" borderRadius="lg" />
+      <SkeletonBlock height="220px" borderRadius="lg" />
+      <SkeletonBlock height="180px" borderRadius="lg" />
+      <SkeletonBlock height="200px" borderRadius="lg" />
     </Stack>
   );
 }
@@ -475,11 +469,11 @@ export function ModuleListPageSkeleton({
         flexDirection="column"
       >
         <Box
-          bg="white"
+          bg="bg.panel"
           borderRadius={{ base: 0, lg: "sm" }}
           borderWidth={{ base: 0, lg: "1px" }}
           borderStyle="solid"
-          borderColor="gray.200"
+          borderColor="border"
           overflow="hidden"
           flex={1}
           display="flex"
@@ -501,13 +495,13 @@ export function ModuleListPageSkeleton({
 export function TransactionExpandSkeleton() {
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       borderRadius="lg"
       border="1px solid"
-      borderColor="gray.200"
+      borderColor="border"
       overflow="hidden"
     >
-      <Flex align="center" justify="space-between" gap={3} px={3} py={3} bg="gray.50">
+      <Flex align="center" justify="space-between" gap={3} px={3} py={3} bg="bg.subtle">
         <Flex align="center" gap={3}>
           <SkeletonBlock boxSize="36px" borderRadius="lg" />
           <Box>

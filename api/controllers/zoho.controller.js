@@ -397,6 +397,25 @@ const stopRecurringInvoice_JS = async (recurringInvoiceId) => {
   }
 };
 
+/** Mark a Zoho Books contact inactive (POST /contacts/{id}/inactive). */
+const markContactInactive_JS = async (contactId) => {
+  if (!contactId) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(`contacts/${contactId}/inactive`, "POST", {}),
+      12_000,
+      "mark-contact-inactive",
+    );
+    return data.contact || data;
+  } catch (error) {
+    console.error(
+      "markContactInactive_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
 const createRecurringInvoice_JS = async ({
   customer_id,
   recurrence_name,
@@ -1305,6 +1324,7 @@ module.exports = {
   emailInvoice_JS,
   createContact_JS,
   updateContact_JS,
+  markContactInactive_JS,
   markInvoiceAsPaid_JS,
 
   // Extra helpers if you want them elsewhere

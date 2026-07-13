@@ -1,8 +1,27 @@
 import { Box, Flex, Heading, Text } from "@chakra-ui/react";
 import type { ReactNode } from "react";
+import { MobileFixedHeader } from "./MobileFixedHeader";
 
 /** Standard vertical rhythm for admin list and detail pages. */
 export const PAGE_STACK_GAP = { base: 3, lg: 3 } as const;
+
+/**
+ * Shared mobile page header chrome.
+ * Pinned with `.mobile-page-header` (position:fixed) — sticky fails inside the
+ * overflow:hidden app shell used for the PWA viewport lock.
+ */
+export const mobileStickyHeaderProps = {
+  bg: { base: "bg.panel", lg: "transparent" },
+  px: { base: 4, lg: 0 },
+  pt: {
+    base: "max(0.75rem, calc(env(safe-area-inset-top, 0px) + 0.35rem))",
+    lg: 0,
+  },
+  pb: { base: 3, lg: 0 },
+  borderBottomWidth: { base: "1px", lg: "0px" },
+  borderBottomColor: "border.muted",
+  boxShadow: { base: "0 1px 0 rgba(15, 23, 42, 0.04)", lg: "none" },
+};
 
 /** List page stack — tight on mobile for edge-to-edge lists. */
 export function ListPageStack({ children }: { children: ReactNode }) {
@@ -15,11 +34,11 @@ export function ListPageStack({ children }: { children: ReactNode }) {
 
 /** Inline create/edit form card on list pages. */
 export const inlineFormCardProps = {
-  bg: "white",
+  bg: "bg.panel",
   borderRadius: "lg",
   p: 4,
   border: "1px solid",
-  borderColor: "gray.100",
+  borderColor: "border.muted",
   boxShadow: "sm",
 } as const;
 
@@ -33,7 +52,7 @@ export function PageErrorBanner({ children }: { children: ReactNode }) {
 
 export function EmptyState({ children }: { children: ReactNode }) {
   return (
-    <Text textAlign="center" py={8} color="gray.400" fontSize="sm">
+    <Text textAlign="center" py={8} color="fg.subtle" fontSize="sm">
       {children}
     </Text>
   );
@@ -44,29 +63,69 @@ export function PageHeader({
   description,
   actions,
   headingSize = "lg",
+  sticky = true,
 }: {
   title: string;
   description?: string;
   actions?: ReactNode;
   headingSize?: "sm" | "md" | "lg";
+  /** Fixed on mobile (default). Set false for embedded headers. */
+  sticky?: boolean;
 }) {
-  return (
-    <Flex
-      justify="space-between"
-      align={{ base: "start", md: "center" }}
-      direction={{ base: "column", md: "row" }}
-      gap={2}
-    >
-      <Box>
+  const content = (
+    <>
+      <Box minW={0}>
         <Heading size={headingSize}>{title}</Heading>
         {description ? (
-          <Text fontSize="sm" color="gray.500" mt={0.5} lineHeight="1.4">
+          <Text fontSize="sm" color="fg.muted" mt={0.5} lineHeight="1.4">
             {description}
           </Text>
         ) : null}
       </Box>
-      {actions}
-    </Flex>
+      {actions ? <Box flexShrink={0} w={{ base: "full", md: "auto" }}>{actions}</Box> : null}
+    </>
+  );
+
+  if (!sticky) {
+    return (
+      <Flex
+        justify="space-between"
+        align={{ base: "start", md: "center" }}
+        direction={{ base: "column", md: "row" }}
+        gap={2}
+        minW={0}
+      >
+        {content}
+      </Flex>
+    );
+  }
+
+  return (
+    <>
+      <MobileFixedHeader headerProps={mobileStickyHeaderProps}>
+        <Flex justify="space-between" align="start" direction="column" gap={2} minW={0}>
+          <Box minW={0}>
+            <Heading size={headingSize}>{title}</Heading>
+            {description ? (
+              <Text fontSize="sm" color="fg.muted" mt={0.5} lineHeight="1.4">
+                {description}
+              </Text>
+            ) : null}
+          </Box>
+          {actions ? <Box flexShrink={0} w="full">{actions}</Box> : null}
+        </Flex>
+      </MobileFixedHeader>
+      <Flex
+        display={{ base: "none", lg: "flex" }}
+        justify="space-between"
+        align={{ base: "start", md: "center" }}
+        direction={{ base: "column", md: "row" }}
+        gap={2}
+        minW={0}
+      >
+        {content}
+      </Flex>
+    </>
   );
 }
 
@@ -76,5 +135,5 @@ export const dialogHeaderProps = {
   pt: 4,
   pb: 3,
   borderBottomWidth: "1px",
-  borderColor: "gray.100",
+  borderColor: "border.muted",
 } as const;

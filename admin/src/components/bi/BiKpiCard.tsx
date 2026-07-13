@@ -29,9 +29,9 @@ export function BiKpiCard({
 
   return (
     <Box
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="lg"
       p={3}
       boxShadow="sm"
@@ -52,7 +52,7 @@ export function BiKpiCard({
       }}
     >
       <Flex align="center" justify="space-between" gap={2}>
-        <Text fontSize="xs" fontWeight="semibold" color="gray.600" lineHeight="1.35">
+        <Text fontSize="xs" fontWeight="semibold" color="fg.muted" lineHeight="1.35">
           {title}
         </Text>
         <Flex
@@ -79,17 +79,17 @@ export function BiKpiCard({
       </Text>
 
       {unavailable ? (
-        <Text fontSize="xs" color="gray.400">
+        <Text fontSize="xs" color="fg.subtle">
           Data not tracked yet
         </Text>
       ) : trend != null ? (
         <Flex align="center" gap={1} fontSize="xs" color={trendColor}>
           <Icon as={TrendIcon} boxSize={3.5} />
           <Text fontWeight="semibold">{Math.abs(trendVal)}%</Text>
-          <Text color="gray.500">{trendLabel}</Text>
+          <Text color="fg.muted">{trendLabel}</Text>
         </Flex>
       ) : (
-        <Text fontSize="xs" color="gray.400">
+        <Text fontSize="xs" color="fg.subtle">
           —
         </Text>
       )}

@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { Input, Stack, Table, Text, Box } from "@chakra-ui/react";
-import { FiChevronDown, FiChevronRight } from "react-icons/fi";
+import { Box, Button, Input, Stack, Table, Text } from "@chakra-ui/react";
+import { FiChevronDown, FiChevronRight, FiRefreshCw } from "react-icons/fi";
 import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../../hooks/useMobileViewport";
 import {
   api,
   formatCurrency,
@@ -21,6 +22,7 @@ import { formatTitleCase } from "../../lib/formatText";
 import { FilterField } from "../module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../ui/FilterToolbar";
 import { SelectField } from "../ui/SelectField";
+import { MobilePageChrome } from "../ui/MobilePageChrome";
 import {
   DataTable,
   DataTableCard,
@@ -37,6 +39,7 @@ import { TextStatus } from "../ui/TextStatus";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../ui/MobileDataList";
 import { BillingSyncProgressBanner } from "./BillingSyncProgressBanner";
 import { DataTableExportButton } from "../ui/DataTableExportButton";
+import { useBillingReconciliation } from "./BillingReconciliationContext";
 import type { ExportFormat, ExportScope } from "../../lib/tableExport";
 
 const BROWSE_PAGE_SIZE = 10;
@@ -63,21 +66,14 @@ type Props = {
 
 const DEFAULT_COLUMNS: Column[] = ["issue", "outstanding", "service", "action"];
 
-function issueTypeLabel(row: ReconciliationCustomerRow) {
-  const key = rowBillingGapIssue(row);
-  if (key) return BILLING_GAP_ISSUE_LABELS[key] || key;
-  if (row.primaryStatus === "current" || row.primaryStatus === "paid") {
-    return BILLING_GAP_ISSUE_LABELS.no_gaps;
-  }
-  return row.primaryStatus || "—";
-}
-
 export function BillingCustomerTable({
   module,
   columns = DEFAULT_COLUMNS,
   reloadKey = 0,
   showInvoiceAmountUnderCustomer = false,
 }: Props) {
+  const isMobile = useMobileViewport();
+  const { syncing, runSync } = useBillingReconciliation();
   const [searchInput, setSearchInput] = useState("");
   const { query: debouncedQuery, pending: searchPending } = useDebouncedSearch(searchInput);
   const [search, setSearch] = useState("");
@@ -91,6 +87,7 @@ export function BillingCustomerTable({
     pages: 1,
   });
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<number | null>(null);
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -127,29 +124,49 @@ export function BillingCustomerTable({
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
       if (!baseStatus) return;
-      if (!opts?.silent) setLoading(true);
+      const pageForQuery = searchActive ? page : 1;
+      const append = Boolean(isMobile && searchActive && pageForQuery > 1 && !opts?.silent);
+      if (!opts?.silent) {
+        if (append) setLoadingMore(true);
+        else setLoading(true);
+      }
       setError("");
       try {
         const res = await api.listReconciliationCustomers({
-          page: String(searchActive ? page : 1),
+          page: String(pageForQuery),
           limit: String(pageSize),
           search: searchActive ? search : undefined,
           status: statusForQuery,
           sortBy: "priority",
           sortDir: "desc",
         });
-        setRows(res.data);
-        setPagination(res.pagination);
         setBrowseMode(Boolean(res.browseMode) && !searchActive);
         setSyncStatus(res.sync?.status ?? "idle");
         setSyncProgress(res.sync?.progress ?? null);
+        if (opts?.silent && isMobile && searchActive && pageForQuery > 1) {
+          setPagination(res.pagination);
+        } else {
+          setRows((prev) =>
+            mergeInfinitePage(
+              prev,
+              res.data,
+              pageForQuery,
+              isMobile && searchActive && !opts?.silent,
+              (row) => row.customerId
+            )
+          );
+          setPagination(res.pagination);
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
-        if (!opts?.silent) setLoading(false);
+        if (!opts?.silent) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     },
-    [page, pageSize, search, searchActive, baseStatus, statusForQuery, reloadKey],
+    [page, pageSize, search, searchActive, baseStatus, statusForQuery, reloadKey, isMobile],
   );
 
   useEffect(() => {
@@ -171,7 +188,7 @@ export function BillingCustomerTable({
   const showTable = !tableBusy && rows.length > 0;
   const emptyMessage =
     tableBusy || syncRunning ? null : (
-      <Text fontSize="sm" color="gray.500" py={8} textAlign="center">
+      <Text fontSize="sm" color="fg.muted" py={8} textAlign="center">
         {searchActive
           ? "No active customers match your search"
           : "No billing gaps in the preview batch"}
@@ -239,11 +256,11 @@ export function BillingCustomerTable({
                 </Table.Cell>
                 <Table.Cell {...dataTableCellProps}>
                   <DisplayText value={row.customerName} fontWeight="medium" fontSize="sm" />
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color="fg.muted">
                     {row.customerNumber}
                   </Text>
                   {showInvoiceAmountUnderCustomer && (
-                    <Text fontSize="xs" color="gray.600" fontWeight="medium">
+                    <Text fontSize="xs" color="fg.muted" fontWeight="medium">
                       Invoice {formatCurrency(row.metrics.expectedAmount)}
                     </Text>
                   )}
@@ -291,7 +308,7 @@ export function BillingCustomerTable({
                   </Table.Cell>
                 )}
                 {columns.includes("issue") && (
-                  <Table.Cell {...dataTableCellProps} fontSize="xs" color="gray.700" maxW="280px">
+                  <Table.Cell {...dataTableCellProps} fontSize="xs" color="fg" maxW="280px">
                     <Text lineClamp={2}>{row.issueBasis || "—"}</Text>
                   </Table.Cell>
                 )}
@@ -324,6 +341,8 @@ export function BillingCustomerTable({
       pagination={browseMode ? undefined : pagination}
       onPageChange={setPage}
       loading
+      loadingMore={loadingMore}
+      loadedCount={rows.length}
     >
       <ResponsiveListViews
         fill
@@ -335,6 +354,38 @@ export function BillingCustomerTable({
 
   return (
     <Stack gap={3}>
+      <Box display={{ base: "block", lg: "none" }}>
+        <MobilePageChrome
+          title={module.label}
+          searchValue={searchInput}
+          onSearchChange={setSearchInput}
+          searchPlaceholder="Customer number or name…"
+          chips={
+            showIssueTypeFilter
+              ? [
+                  {
+                    key: "all",
+                    label: "All",
+                    active: !issueTypeFilter,
+                    onClick: () => setIssueTypeFilter(""),
+                  },
+                  ...BILLING_GAP_STATUSES.map((status) => ({
+                    key: status,
+                    label: BILLING_GAP_ISSUE_LABELS[status],
+                    active: issueTypeFilter === status,
+                    onClick: () => setIssueTypeFilter(status),
+                  })),
+                ]
+              : undefined
+          }
+          headerActions={
+            <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+              <FiRefreshCw />
+            </Button>
+          }
+        />
+      </Box>
+
       <FilterToolbar
         actions={
           <DataTableExportButton
@@ -346,7 +397,7 @@ export function BillingCustomerTable({
           />
         }
       >
-        <FilterField label="Search" flex={FILTER_FLEX.search}>
+        <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
           <Input
             size="sm"
             placeholder="Customer number or name…"
@@ -375,14 +426,14 @@ export function BillingCustomerTable({
       </FilterToolbar>
 
       {!inputActive && !tableBusy && (
-        <Text fontSize="xs" color="gray.600">
+        <Text fontSize="xs" color="fg.muted" display={{ base: "none", lg: "block" }}>
           Showing up to {BROWSE_PAGE_SIZE} customers from local data (no Zoho API calls).
           Search by customer number or name to live-check Zoho invoices, payments, and TISP
           status — mismatches are flagged; a clean result confirms no billing gaps.
         </Text>
       )}
       {inputActive && !tableBusy && searchActive && (
-        <Text fontSize="xs" color="gray.600">
+        <Text fontSize="xs" color="fg.muted" display={{ base: "none", lg: "block" }}>
           Live Zoho + TISP check for matching customers. Gap types are flagged; “No gaps”
           means invoices, payments, and TISP connection look consistent.
         </Text>
@@ -408,63 +459,78 @@ export function BillingCustomerTable({
         <ResponsiveListViews
           mobile={
             showTable ? (
-              <MobileDataList
-                items={rows}
-                getKey={(row) => String(row.customerId)}
-                expandedId={expanded != null ? String(expanded) : null}
-                renderCard={(row, isOpen) => (
-                  <MobileDataCard
-                    title={row.customerNumber}
-                    subtitle={
-                      showInvoiceAmountUnderCustomer
-                        ? `${row.customerName} · ${formatCurrency(row.metrics.expectedAmount)}`
-                        : row.customerName
-                    }
-                    isOpen={isOpen}
-                    onClick={() =>
-                      setExpanded(expanded === row.customerId ? null : row.customerId)
-                    }
-                    fields={[
-                      ...(columns.includes("issueType")
-                        ? [{ label: "Gap type", value: issueTypeLabel(row) }]
-                        : []),
-                      { label: "Issue", value: row.issueBasis || "—" },
-                      ...(columns.includes("outstanding")
-                        ? [{ label: "Outstanding", value: formatCurrency(row.metrics.outstandingBalance) }]
-                        : []),
-                      ...(columns.includes("frequency")
-                        ? [{ label: "Frequency", value: formatTitleCase(row.metrics.billingFrequency) }]
-                        : []),
-                      ...(columns.includes("lastInvoice")
-                        ? [{ label: "Last invoice", value: formatDateOnly(row.metrics.lastInvoiceDate) }]
-                        : []),
-                      ...(columns.includes("lastPayment")
-                        ? [{ label: "Last payment", value: formatDateOnly(row.metrics.lastPaymentDate) }]
-                        : []),
-                      ...(columns.includes("tispDue")
-                        ? [{
-                            label: "TISP due",
-                            value: formatDateOnly(row.metrics.tispDueDate),
-                          }]
-                        : []),
-                      ...(columns.includes("service")
-                        ? [{ label: "TISP", value: row.metrics.subscriptionStatus }]
-                        : []),
-                      ...(columns.includes("action")
-                        ? [{ label: "Action", value: row.actionLabel || "—" }]
-                        : []),
-                    ]}
-                  />
-                )}
-                renderExpanded={(row) => (
-                  <ReconciliationExpandPanel
-                    customerId={row.customerId}
-                    initialRow={row}
-                    onActionComplete={() => load()}
-                  />
-                )}
-                emptyMessage={emptyMessage}
-              />
+              <DataTableCard
+                pagination={browseMode ? undefined : pagination}
+                onPageChange={setPage}
+                loadingMore={loadingMore}
+                loadedCount={rows.length}
+              >
+                <MobileDataList
+                  items={rows}
+                  getKey={(row) => String(row.customerId)}
+                  expandedId={expanded != null ? String(expanded) : null}
+                  renderCard={(row, isOpen) => {
+                    const gapStatus = rowBillingGapIssue(row);
+                    const statusForBadge =
+                      gapStatus ||
+                      (row.primaryStatus === "current" || row.primaryStatus === "paid"
+                        ? "no_gaps"
+                        : row.primaryStatus);
+
+                    return (
+                      <MobileDataCard
+                        variant="row"
+                        compact
+                        title={row.customerNumber}
+                        subtitle={
+                          <Box>
+                            <Text fontSize="sm" lineHeight="1.35" lineClamp={2}>
+                              {row.customerName}
+                            </Text>
+                            {showInvoiceAmountUnderCustomer ? (
+                              <Text fontSize="xs" color="fg.muted" fontWeight="medium" mt={0.5}>
+                                Invoice {formatCurrency(row.metrics.expectedAmount)}
+                              </Text>
+                            ) : null}
+                          </Box>
+                        }
+                        statusLine={
+                          columns.includes("issueType") ? (
+                            <ReconciliationStatusBadge status={statusForBadge} />
+                          ) : row.issueBasis ? (
+                            <Text fontSize="xs" color="fg.muted" lineClamp={2}>
+                              {row.issueBasis}
+                            </Text>
+                          ) : undefined
+                        }
+                        trailing={
+                          columns.includes("outstanding") ? (
+                            <Text fontSize="sm" fontWeight="semibold" color="brand.800" whiteSpace="nowrap">
+                              {formatCurrency(row.metrics.outstandingBalance)}
+                            </Text>
+                          ) : (
+                            <ReconciliationStatusBadge status={row.primaryStatus} />
+                          )
+                        }
+                        isOpen={isOpen}
+                        onClick={() =>
+                          setExpanded(expanded === row.customerId ? null : row.customerId)
+                        }
+                      />
+                    );
+                  }}
+                  renderExpanded={(row) => (
+                    <Box mx={{ base: -1, sm: 0 }}>
+                      <ReconciliationExpandPanel
+                        customerId={row.customerId}
+                        initialRow={row}
+                        onActionComplete={() => load()}
+                      />
+                    </Box>
+                  )}
+                  emptyMessage={emptyMessage}
+                />
+              </DataTableCard>
             ) : (
               !syncRunning && emptyMessage
             )
@@ -474,6 +540,8 @@ export function BillingCustomerTable({
               <DataTableCard
                 pagination={browseMode ? undefined : pagination}
                 onPageChange={setPage}
+                loadingMore={loadingMore}
+                loadedCount={rows.length}
               >
                 {tableBody}
               </DataTableCard>

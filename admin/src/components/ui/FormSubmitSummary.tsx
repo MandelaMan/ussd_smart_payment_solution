@@ -21,11 +21,11 @@ export function FormSubmitSummary({ title, description, items }: Props) {
     <Stack gap={3}>
       {title ? (
         <Box>
-          <Text fontWeight="semibold" fontSize="sm" color="gray.900">
+          <Text fontWeight="semibold" fontSize="sm" color="fg">
             {title}
           </Text>
           {description ? (
-            <Text fontSize="xs" color="gray.500" mt={0.5}>
+            <Text fontSize="xs" color="fg.muted" mt={0.5}>
               {description}
             </Text>
           ) : null}
@@ -33,9 +33,9 @@ export function FormSubmitSummary({ title, description, items }: Props) {
       ) : null}
       <Box
         borderWidth="1px"
-        borderColor="gray.100"
+        borderColor="border.muted"
         borderRadius="lg"
-        bg="gray.50"
+        bg="bg.subtle"
         px={4}
         py={3}
       >
@@ -46,10 +46,10 @@ export function FormSubmitSummary({ title, description, items }: Props) {
         >
           {visible.map((item) => (
             <Box key={item.label} display="contents">
-              <Text fontSize="xs" color="gray.500" textTransform="uppercase" letterSpacing="0.04em">
+              <Text fontSize="xs" color="fg.muted" textTransform="uppercase" letterSpacing="0.04em">
                 {item.label}
               </Text>
-              <Text fontSize="sm" color="gray.900" fontWeight="medium" wordBreak="break-word">
+              <Text fontSize="sm" color="fg" fontWeight="medium" wordBreak="break-word">
                 {item.value}
               </Text>
             </Box>

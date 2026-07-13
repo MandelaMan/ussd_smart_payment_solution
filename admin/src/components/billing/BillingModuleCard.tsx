@@ -13,7 +13,7 @@ export function BillingModuleCard({ module, count }: Props) {
     <RouterLink to={`/billing/${module.path}`} style={{ textDecoration: "none" }}>
       <Box
         p={3}
-        bg="white"
+        bg="bg.panel"
         border="1px solid"
         borderColor="brand.100"
         borderRadius="md"
@@ -25,7 +25,13 @@ export function BillingModuleCard({ module, count }: Props) {
           <Text fontSize="sm" fontWeight="semibold" color="brand.800">
             {module.label}
           </Text>
-          <Text fontSize="xs" color="gray.600" mt={0.5} lineClamp={2}>
+          <Text
+            fontSize="xs"
+            color="fg.muted"
+            mt={0.5}
+            lineClamp={2}
+            display={{ base: "none", md: "block" }}
+          >
             {module.description}
           </Text>
         </Box>

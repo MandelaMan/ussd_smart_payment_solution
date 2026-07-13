@@ -40,11 +40,23 @@ export function getDisplayTextFull(
 }
 
 /** Separators used between plan and category in stored product names. */
-const PRODUCT_NAME_SEPARATORS = /\s*(?:·|•|―|–|—|-|\?\?|Â·)\s*/g;
+const PRODUCT_NAME_SEPARATORS =
+  /\s*(?:·|•|―|–|—|-|\?\?|Â·|â€"|â€“|â€”|ΓÇö|ΓÇô|ΓÇ£)\s*/g;
 
-/** Normalize product name separators for display (fixes mojibake like "??" for middle dot). */
+/**
+ * Repair common UTF-8→Latin-1 mojibake that shows up when stage DB/connection
+ * charset differs from local (e.g. em dash — stored/read as "ΓÇö").
+ */
+function repairUtf8Mojibake(value: string): string {
+  return value
+    .replace(/ΓÇö|â€"|â€”/g, "—")
+    .replace(/ΓÇô|â€“/g, "–")
+    .replace(/Â·|ΓÇ£/g, "·");
+}
+
+/** Normalize product name separators for display (fixes mojibake like "ΓÇö" / "??"). */
 export function formatProductNameForDisplay(value: string | null | undefined): string {
-  const raw = String(value || "").trim();
+  const raw = repairUtf8Mojibake(String(value || "").trim());
   if (!raw) return "";
   return raw.replace(PRODUCT_NAME_SEPARATORS, " — ");
 }

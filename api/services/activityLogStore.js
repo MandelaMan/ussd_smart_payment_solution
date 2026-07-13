@@ -21,17 +21,20 @@ async function logActivity({
     paymentTransactionId = await findPaymentTransactionId(checkoutRequestId);
   }
 
+  const normalizedStatus =
+    status === "failure" ? "failed" : String(status || "success");
+
   await query(
     `INSERT INTO activity_logs
       (event_type, title, message, source, status, customer_ref, amount,
        reference_id, payment_transaction_id, metadata)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      eventType,
+      String(eventType || "unknown").slice(0, 64),
       title,
       message,
-      source,
-      status,
+      String(source || "admin").slice(0, 32),
+      normalizedStatus.slice(0, 16),
       customerRef,
       amount != null ? Number(amount) : null,
       referenceId,

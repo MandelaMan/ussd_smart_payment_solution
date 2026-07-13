@@ -64,34 +64,35 @@ export function ProductExpandPanel({ product, onEdit, canEdit = true }: Props) {
       }
       accent="teal.600"
     >
-      <Flex direction={{ base: "column", md: "row" }} gap={3} align="stretch">
+      <Flex direction={{ base: "column", md: "row" }} gap={{ base: 1.5, md: 3 }} align="stretch" w="full">
         <Box
           flex={1}
           bg="brand.50"
           border="1px solid"
           borderColor="brand.100"
           borderRadius="md"
-          px={4}
-          py={3}
+          px={{ base: 2.5, md: 4 }}
+          py={{ base: 2, md: 3 }}
+          minW={0}
         >
           <Text
             fontSize="2xs"
             fontWeight="semibold"
-            color="gray.500"
+            color="fg.muted"
             textTransform="uppercase"
             letterSpacing="0.04em"
-            mb={1}
+            mb={0.5}
           >
             {periodPriceLabel(product.paymentFrequency)} (incl. VAT)
           </Text>
-          <Text fontSize="xl" fontWeight="bold" color="gray.900" lineHeight="1.2">
+          <Text fontSize={{ base: "lg", md: "xl" }} fontWeight="bold" color="fg" lineHeight="1.2">
             {formatCurrency(product.price)}
           </Text>
-          <Text fontSize="sm" color="gray.600" mt={1.5}>
+          <Text fontSize={{ base: "xs", md: "sm" }} color="fg.muted" mt={1}>
             {formatCurrency(exclVat)} excl. VAT · {formatCurrency(vat)} VAT (16%)
           </Text>
           {showMonthlyEquivalent && (
-            <Text fontSize="sm" color="gray.500" mt={2}>
+            <Text fontSize={{ base: "xs", md: "sm" }} color="fg.muted" mt={1.5}>
               ≈ {formatCurrency(product.monthlyPrice)}/month incl. VAT
             </Text>
           )}
@@ -99,29 +100,30 @@ export function ProductExpandPanel({ product, onEdit, canEdit = true }: Props) {
 
         {extras.length > 0 && (
           <Box
-            bg="gray.50"
+            bg="bg.subtle"
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="md"
-            px={4}
-            py={3}
+            px={{ base: 2.5, md: 4 }}
+            py={{ base: 2, md: 3 }}
             minW={{ md: "200px" }}
+            w={{ base: "full", md: "auto" }}
             display="flex"
             flexDirection="column"
             justifyContent="center"
-            gap={1.5}
+            gap={1}
           >
             <Text
               fontSize="2xs"
               fontWeight="semibold"
-              color="gray.500"
+              color="fg.muted"
               textTransform="uppercase"
               letterSpacing="0.04em"
             >
               Add-ons
             </Text>
             {extras.map((line) => (
-              <Text key={line} fontSize="sm" fontWeight="medium" color="gray.800">
+              <Text key={line} fontSize="sm" fontWeight="medium" color="fg">
                 {line}
               </Text>
             ))}

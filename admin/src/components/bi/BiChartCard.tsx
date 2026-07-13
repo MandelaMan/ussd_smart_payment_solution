@@ -67,9 +67,9 @@ export function BiChartCard({
   const card = (
     <Box
       ref={rootRef}
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       borderRadius="lg"
       borderTopWidth="3px"
       borderTopColor={BRAND.cerulean}
@@ -80,11 +80,11 @@ export function BiChartCard({
     >
       <Flex align="flex-start" justify="space-between" gap={2} mb={3}>
         <Box>
-          <Text fontSize="sm" fontWeight="semibold" color="gray.800">
+          <Text fontSize="sm" fontWeight="semibold" color="fg">
             {title}
           </Text>
           {subtitle && (
-            <Text fontSize="xs" color="gray.500" mt={0.5}>
+            <Text fontSize="xs" color="fg.muted" mt={0.5}>
               {subtitle}
             </Text>
           )}
@@ -128,7 +128,7 @@ export function BiChartCard({
       <Box minH={minH}>
         {empty ? (
           <Flex h="100%" minH={minH} align="center" justify="center">
-            <Text fontSize="sm" color="gray.400" textAlign="center" px={4}>
+            <Text fontSize="sm" color="fg.subtle" textAlign="center" px={4}>
               {emptyMessage}
             </Text>
           </Flex>
@@ -148,7 +148,7 @@ export function BiChartCard({
       position="fixed"
       inset={0}
       zIndex={1400}
-      bg="white"
+      bg="bg.panel"
       p={4}
       overflow="auto"
     >

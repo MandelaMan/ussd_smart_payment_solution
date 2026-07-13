@@ -1,60 +1,70 @@
 import { Box, Flex } from "@chakra-ui/react";
-import { Outlet } from "react-router-dom";
-import { useState } from "react";
+import { useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Sidebar } from "./Sidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
-import { MOBILE_BOTTOM_NAV_H } from "../lib/mobileNav";
+import { MobilePageTransition } from "./MobilePageTransition";
+import { MOBILE_BOTTOM_NAV_H, MOBILE_BOTTOM_NAV_OFFSET } from "../lib/mobileNav";
+import { MobileSearchProvider, useMobileSearchOptional } from "../lib/mobileSearch";
 
-export function Layout() {
+function LayoutShell() {
   const [open, setOpen] = useState(false);
+  const mobileSearch = useMobileSearchOptional();
+  const hideBottomNav = Boolean(mobileSearch?.searchOpen);
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    mobileSearch?.closeSearch();
+    // Reset search chrome when navigating between modules.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   return (
     <Flex
-      h="100dvh"
-      maxH="100dvh"
-      minH="100dvh"
+      h="100%"
+      maxH="100%"
+      minH="100%"
       overflow="hidden"
-      bg={{ base: "white", lg: "surface.50" }}
+      bg={{ base: "bg.panel", lg: "bg" }}
     >
       <Sidebar open={open} onClose={() => setOpen(false)} />
 
-      <Flex
-        direction="column"
-        flex="1"
-        minW={0}
-        minH={0}
-        overflow="hidden"
-      >
+      <Flex direction="column" flex="1" minW={0} minH={0} overflow="hidden">
         <Box
           as="main"
           data-app-scroll-root
           flex="1"
           minH={0}
           minW={0}
-          display="flex"
+          // Avoid a flex-column scrollport on mobile — it breaks position:sticky headers.
+          display={{ base: "block", lg: "flex" }}
           flexDirection="column"
           overflow="auto"
           overflowX="hidden"
           WebkitOverflowScrolling="touch"
           p={{ base: 0, lg: 3 }}
-          pt={{
-            base: "max(0.75rem, env(safe-area-inset-top, 0px))",
-            lg: 3,
-          }}
+          pt={{ base: 0, lg: 3 }}
           pb={{
-            base: `calc(${MOBILE_BOTTOM_NAV_H} + env(safe-area-inset-bottom, 0px) + 12px)`,
+            base: hideBottomNav
+              ? "max(1rem, env(safe-area-inset-bottom, 0px))"
+              : MOBILE_BOTTOM_NAV_OFFSET,
             lg: 3,
           }}
         >
-          <Box flex="1" minH={0} minW={0} w="full" overflowX="hidden" px={{ base: 4, lg: 0 }}>
-            <Outlet />
+          <Box
+            flex={{ lg: 1 }}
+            minW={0}
+            w="full"
+            minH={{ lg: 0 }}
+            px={{ base: 4, lg: 0 }}
+          >
+            <MobilePageTransition />
           </Box>
         </Box>
       </Flex>
 
-      {/* Portal to body so fixed is always viewport-relative (not trapped by overflow/transform) */}
-      {typeof document !== "undefined" && !open
+      {typeof document !== "undefined" && !open && !hideBottomNav
         ? createPortal(
             <Box
               className="mobile-bottom-nav-root"
@@ -64,13 +74,14 @@ export function Layout() {
               right={0}
               bottom={0}
               zIndex={1000}
-              bg="white"
+              bg="transparent"
               style={{
                 position: "fixed",
                 left: 0,
                 right: 0,
                 bottom: 0,
                 zIndex: 1000,
+                background: "transparent",
               }}
             >
               <MobileBottomNav onOpenMenu={() => setOpen(true)} />
@@ -79,6 +90,14 @@ export function Layout() {
           )
         : null}
     </Flex>
+  );
+}
+
+export function Layout() {
+  return (
+    <MobileSearchProvider>
+      <LayoutShell />
+    </MobileSearchProvider>
   );
 }
 

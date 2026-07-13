@@ -6,6 +6,7 @@ const {
   buildTispUpdateClientDetailsPayload,
   formatTispError,
   accountExistsOnTisp,
+  formatTispDueDate,
 } = require("./tisp.controller");
 const store = require("../services/customerModuleStore");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
@@ -30,6 +31,9 @@ const {
   createInvoice_JS,
   createCreditNote_JS,
   createContact_JS,
+  getRecurringInvoices_JS,
+  stopRecurringInvoice_JS,
+  markContactInactive_JS,
 } = require("./zoho.controller");
 const zohoEntityRepo = require("../repositories/zohoEntity.repository");
 const pendingUpgradeStore = require("../services/pendingUpgradeStore");
@@ -428,6 +432,10 @@ async function refreshTispStatus(customer) {
       const normalized = normalizeSubscriptionStatus(String(status));
       await store.updateCustomerSubscriptionStatus(customer.id, normalized);
       customer.subscriptionStatus = normalized;
+    } else {
+      // Account payload returned but without a service status — treat as present/active.
+      await store.updateCustomerSubscriptionStatus(customer.id, "Active");
+      customer.subscriptionStatus = "Active";
     }
     try {
       await integrationSnapshot.upsertTispSnapshot(customer.id, tisp);
@@ -435,7 +443,21 @@ async function refreshTispStatus(customer) {
       console.warn("TISP snapshot save failed:", e.message);
     }
     await store.updateCustomerTispSync(customer.id, "synced", null);
-  } catch {
+  } catch (err) {
+    const message = String(err?.message || "").toLowerCase();
+    const notFound =
+      message.includes("not found") ||
+      message.includes("missing") ||
+      message.includes("does not exist") ||
+      message.includes("no client");
+    if (notFound) {
+      try {
+        await store.updateCustomerSubscriptionStatus(customer.id, "Not on TISP");
+        customer.subscriptionStatus = "Not on TISP";
+      } catch (e) {
+        console.warn("TISP not-found status persist failed:", e.message);
+      }
+    }
     try {
       await store.reconcileTispSyncStatus(customer.id);
     } catch (e) {
@@ -466,7 +488,7 @@ async function resolveTispBuildingName(ctx) {
   return name;
 }
 
-function tispPayloadInput(ctx, buildingName) {
+function tispPayloadInput(ctx, buildingName, options = {}) {
   const isB2B = String(ctx.customer_type || "").toUpperCase() === "B2B";
   return {
     firstName: ctx.first_name,
@@ -494,12 +516,15 @@ function tispPayloadInput(ctx, buildingName) {
     contactPerson: isB2B
       ? ctx.agency_contact_person || ctx.first_name
       : ctx.first_name,
+    dueDate: options.dueDate || undefined,
   };
 }
 
 async function createCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
-  const payload = buildTispCreateClientPayload(tispPayloadInput(ctx, buildingName));
+  const payload = buildTispCreateClientPayload(
+    tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate })
+  );
   return postSetClientDetails(payload, {
     customerId: ctx.id,
     customerNumber: ctx.customer_number,
@@ -510,7 +535,9 @@ async function createCustomerOnTisp(ctx, meta = {}) {
 
 async function updateCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
-  const payload = buildTispUpdateClientDetailsPayload(tispPayloadInput(ctx, buildingName));
+  const payload = buildTispUpdateClientDetailsPayload(
+    tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate })
+  );
   return postSetClientDetails(payload, {
     customerId: ctx.id,
     customerNumber: ctx.customer_number,
@@ -564,6 +591,14 @@ async function runZohoSyncForCustomer(customerId, options = {}) {
   const ctx = await store.getCustomerContext(customerId);
   if (!ctx || ctx.status !== "active") {
     return { ok: true, skipped: true };
+  }
+  if (isB2BCustomer({ customerType: ctx.customer_type })) {
+    try {
+      await store.updateCustomerZohoBillingStatus(customerId, "completed", null);
+    } catch {
+      /* ignore */
+    }
+    return { ok: true, skipped: true, reason: "b2b_no_zoho" };
   }
   try {
     const result = await pushCustomerToZoho(ctx, options);
@@ -777,6 +812,17 @@ async function exportCustomers(req, res, next) {
   }
 }
 
+async function attachTispDueDate(customer) {
+  if (!customer?.id) return customer;
+  try {
+    const snap = await integrationSnapshot.getTispSnapshot(customer.id);
+    const dueDate = snap?.due_date || null;
+    return { ...customer, tispDueDate: dueDate ? String(dueDate) : null };
+  } catch {
+    return { ...customer, tispDueDate: customer.tispDueDate ?? null };
+  }
+}
+
 async function getCustomer(req, res, next) {
   try {
     const id = Number(req.params.id);
@@ -789,12 +835,13 @@ async function getCustomer(req, res, next) {
       customer = await store.getCustomerById(id);
     }
 
-    const [events, pendingUpgrade] = await Promise.all([
+    const [events, pendingUpgrade, customerWithDue] = await Promise.all([
       store.getCustomerEvents(id),
       pendingUpgradeStore.getActivePendingUpgrade(id),
+      attachTispDueDate(customer),
     ]);
 
-    return res.json({ customer, events, pendingUpgrade });
+    return res.json({ customer: customerWithDue, events, pendingUpgrade });
   } catch (err) {
     return next(err);
   }
@@ -930,6 +977,62 @@ function resolveBillingOptions(current, overrides = {}) {
   return { paymentFrequency, customPeriodDays };
 }
 
+async function resolveCustomerDueDateFromTisp(customerRow, billingContext) {
+  let dueDate = null;
+  let subscriptionStatus = customerRow.subscriptionStatus;
+
+  try {
+    const snap = await integrationSnapshot.getTispSnapshot(customerRow.id);
+    if (snap?.due_date) dueDate = String(snap.due_date);
+    if (snap?.subscription_status) {
+      subscriptionStatus = normalizeSubscriptionStatus(snap.subscription_status);
+    }
+  } catch {
+    /* ignore snapshot read errors */
+  }
+
+  const quoteTispTimeoutMs = Number(process.env.TISP_QUOTE_TIMEOUT_MS || 5_000);
+  try {
+    const tisp = await Promise.race([
+      getTISPCustomer(customerRow.customerNumber),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("TISP quote lookup timed out")),
+          quoteTispTimeoutMs
+        )
+      ),
+    ]);
+    dueDate = tisp?.dueDate ?? tisp?.duedate ?? dueDate;
+    const tispStatus = tisp?.status ?? tisp?.Status ?? null;
+    if (tispStatus) {
+      subscriptionStatus = normalizeSubscriptionStatus(String(tispStatus));
+      await store.updateCustomerSubscriptionStatus(customerRow.id, subscriptionStatus);
+      customerRow.subscriptionStatus = subscriptionStatus;
+    }
+    try {
+      await integrationSnapshot.upsertTispSnapshot(customerRow.id, tisp);
+    } catch (e) {
+      console.warn("TISP snapshot save failed:", e.message);
+    }
+  } catch {
+    /* keep snapshot / estimate when TISP is slow or unreachable */
+  }
+
+  if (!dueDate && customerRow.lastPaymentDate) {
+    dueDate = estimateDueDateFromLastPayment(
+      customerRow.lastPaymentDate,
+      billingContext?.payment_frequency ||
+        customerRow.paymentFrequency ||
+        customerRow.payment_frequency,
+      billingContext?.custom_period_days ??
+        customerRow.customPeriodDays ??
+        customerRow.custom_period_days
+    );
+  }
+
+  return { dueDate, subscriptionStatus };
+}
+
 async function buildUpgradeQuote(customerId, productId, billingOverrides = {}) {
   const current = await store.getCustomerContext(customerId);
   if (!current) {
@@ -968,42 +1071,13 @@ async function buildUpgradeQuote(customerId, productId, billingOverrides = {}) {
 
   const customerRow = await store.getCustomerById(customerId);
 
-  let dueDate = null;
-  let subscriptionStatus = customerRow.subscriptionStatus;
-
   // Days remaining must be measured against the CURRENT billing period,
   // not the target frequency (e.g. keep monthly when upgrading to yearly).
-  if (customerRow.lastPaymentDate) {
-    dueDate = estimateDueDateFromLastPayment(
-      customerRow.lastPaymentDate,
-      current.payment_frequency,
-      current.custom_period_days
-    );
-  }
-
-  if (!dueDate) {
-    const quoteTispTimeoutMs = Number(process.env.TISP_QUOTE_TIMEOUT_MS || 5_000);
-    try {
-      const tisp = await Promise.race([
-        getTISPCustomer(customerRow.customerNumber),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("TISP quote lookup timed out")),
-            quoteTispTimeoutMs
-          )
-        ),
-      ]);
-      dueDate = tisp?.dueDate ?? tisp?.duedate ?? null;
-      const tispStatus = tisp?.status ?? tisp?.Status ?? null;
-      if (tispStatus) {
-        subscriptionStatus = normalizeSubscriptionStatus(String(tispStatus));
-        await store.updateCustomerSubscriptionStatus(customerId, subscriptionStatus);
-        customerRow.subscriptionStatus = subscriptionStatus;
-      }
-    } catch {
-      /* use stored billing data when TISP is slow or unreachable */
-    }
-  }
+  const { dueDate, subscriptionStatus } = await resolveCustomerDueDateFromTisp(
+    customerRow,
+    current
+  );
+  customerRow.subscriptionStatus = subscriptionStatus;
 
   const currentPackagePrice = Math.round(Number(current.package_price) || 0);
   const quote = calculateUpgradeQuote({
@@ -1108,40 +1182,11 @@ async function buildDowngradeQuote(customerId, productId, billingOverrides = {})
 
   const customerRow = await store.getCustomerById(customerId);
 
-  let dueDate = null;
-  let subscriptionStatus = customerRow.subscriptionStatus;
-
-  if (customerRow.lastPaymentDate) {
-    dueDate = estimateDueDateFromLastPayment(
-      customerRow.lastPaymentDate,
-      current.payment_frequency,
-      current.custom_period_days
-    );
-  }
-
-  if (!dueDate) {
-    const quoteTispTimeoutMs = Number(process.env.TISP_QUOTE_TIMEOUT_MS || 5_000);
-    try {
-      const tisp = await Promise.race([
-        getTISPCustomer(customerRow.customerNumber),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("TISP quote lookup timed out")),
-            quoteTispTimeoutMs
-          )
-        ),
-      ]);
-      dueDate = tisp?.dueDate ?? tisp?.duedate ?? null;
-      const tispStatus = tisp?.status ?? tisp?.Status ?? null;
-      if (tispStatus) {
-        subscriptionStatus = normalizeSubscriptionStatus(String(tispStatus));
-        await store.updateCustomerSubscriptionStatus(customerId, subscriptionStatus);
-        customerRow.subscriptionStatus = subscriptionStatus;
-      }
-    } catch {
-      /* use stored billing data when TISP is slow or unreachable */
-    }
-  }
+  const { dueDate, subscriptionStatus } = await resolveCustomerDueDateFromTisp(
+    customerRow,
+    current
+  );
+  customerRow.subscriptionStatus = subscriptionStatus;
 
   const currentPackagePrice = Math.round(Number(current.package_price) || 0);
   const quote = calculateDowngradeQuote({
@@ -1823,22 +1868,176 @@ async function switchApartment(req, res, next) {
   }
 }
 
+async function stopZohoRecurringForCustomer(contactId, customerNumber) {
+  if (!contactId || !customerNumber) return { stopped: 0 };
+  const list = await getRecurringInvoices_JS({
+    customer_id: contactId,
+    per_page: 50,
+  });
+  const ref = String(customerNumber).trim().toUpperCase();
+  const matches = (list || []).filter((row) => {
+    const status = String(row.status || row.recurrence_status || "").toLowerCase();
+    if (["stopped", "expired", "inactive"].includes(status)) return false;
+    const rowRef = String(row.reference_number || row.recurrence_name || "")
+      .trim()
+      .toUpperCase();
+    return rowRef === ref || rowRef.includes(ref);
+  });
+
+  let stopped = 0;
+  for (const row of matches) {
+    const id = row.recurring_invoice_id || row.recurringinvoice_id;
+    if (!id) continue;
+    try {
+      await stopRecurringInvoice_JS(String(id));
+      stopped += 1;
+    } catch (e) {
+      console.warn(
+        `stop recurring ${id} for ${customerNumber} failed:`,
+        e.message
+      );
+    }
+  }
+  return { stopped, matched: matches.length };
+}
+
+/**
+ * After local cancel: set TISP due date to cancellation day, and for C2B
+ * mark the Zoho contact inactive (stop recurring first). B2B only stops
+ * that customer's recurring on the agency contact — agency stays active.
+ */
+async function syncCancellationIntegrations(customerId, cancellationDate = new Date()) {
+  const ctx = await store.getCustomerContext(customerId);
+  if (!ctx) {
+    return {
+      tisp: { ok: false, error: "Customer not found" },
+      zoho: { ok: false, error: "Customer not found" },
+    };
+  }
+
+  const dueDateLabel = formatTispDueDate(cancellationDate);
+  const result = {
+    tisp: { ok: true, skipped: true },
+    zoho: { ok: true, skipped: true },
+    cancellationDate: dueDateLabel,
+  };
+
+  try {
+    const onTisp = await accountExistsOnTisp(ctx.customer_number);
+    if (onTisp) {
+      await updateCustomerOnTisp(ctx, {
+        dueDate: cancellationDate,
+        skipCooldown: true,
+      });
+      result.tisp = { ok: true, dueDate: dueDateLabel };
+    } else {
+      result.tisp = { ok: true, skipped: true, reason: "not_on_tisp" };
+    }
+  } catch (e) {
+    result.tisp = { ok: false, error: formatTispError(e) };
+  }
+
+  try {
+    const customer = {
+      id: ctx.id,
+      customerNumber: ctx.customer_number,
+      customerType: ctx.customer_type,
+      agencyId: ctx.agency_id,
+      agencyName: ctx.agency_name,
+      firstName: ctx.first_name,
+      lastName: ctx.last_name,
+      middleName: ctx.middle_name,
+      phone: ctx.phone,
+      email: ctx.email,
+    };
+
+    if (isB2BCustomer(customer)) {
+      const agency = await resolveAgencyForCustomer(customer, store);
+      if (!agency?.name) {
+        result.zoho = { ok: true, skipped: true, reason: "b2b_no_agency" };
+      } else {
+        const agencyContact = await getCustomerByCompanyName_JS(agency.name);
+        if (!agencyContact?.contact_id) {
+          result.zoho = { ok: true, skipped: true, reason: "b2b_no_zoho_contact" };
+        } else {
+          const recurring = await stopZohoRecurringForCustomer(
+            agencyContact.contact_id,
+            ctx.customer_number
+          );
+          result.zoho = {
+            ok: true,
+            skipped: false,
+            contactInactivated: false,
+            reason: "b2b_agency_contact_kept",
+            recurringStopped: recurring.stopped,
+          };
+        }
+      }
+    } else {
+      const contact = await findZohoContactForCustomer(customer);
+      if (!contact?.contact_id) {
+        result.zoho = { ok: true, skipped: true, reason: "no_zoho_contact" };
+      } else {
+        const recurring = await stopZohoRecurringForCustomer(
+          contact.contact_id,
+          ctx.customer_number
+        );
+        await markContactInactive_JS(contact.contact_id);
+        invalidateCustomerZoho(customerId);
+        result.zoho = {
+          ok: true,
+          skipped: false,
+          contactInactivated: true,
+          zohoContactId: contact.contact_id,
+          recurringStopped: recurring.stopped,
+        };
+      }
+    }
+  } catch (e) {
+    result.zoho = { ok: false, error: e.message || "Zoho cancellation sync failed" };
+  }
+
+  return result;
+}
+
 async function cancelSubscription(req, res, next) {
   try {
     const { notes } = req.body || {};
-    await store.cancelCustomer(Number(req.params.id), notes);
-    const customer = await store.getCustomerById(Number(req.params.id));
+    const customerId = Number(req.params.id);
+    await store.cancelCustomer(customerId, notes);
+    const cancellationDate = new Date();
+    const integrations = await syncCancellationIntegrations(
+      customerId,
+      cancellationDate
+    );
+    const customer = await store.getCustomerById(customerId);
+
+    const tispOk = integrations.tisp?.ok !== false;
+    const zohoOk = integrations.zoho?.ok !== false;
 
     await logActivity({
       eventType: "customer_cancelled",
       title: "Customer subscription cancelled",
-      message: customer?.customerNumber || "",
-      source: "tisp",
-      status: "success",
+      message: [
+        customer?.customerNumber || "",
+        integrations.tisp?.dueDate
+          ? `TISP due ${integrations.tisp.dueDate}`
+          : null,
+        integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      source: "admin",
+      status: tispOk && zohoOk ? "success" : "failed",
       customerRef: customer?.customerNumber,
     });
 
-    return res.json({ ok: true, customer });
+    return res.json({
+      ok: true,
+      customer,
+      tisp: integrations.tisp,
+      zoho: integrations.zoho,
+    });
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });
     return next(err);
@@ -1905,19 +2104,33 @@ async function bulkCancelSubscriptions(req, res, next) {
     for (const id of uniqueIds) {
       try {
         await store.cancelCustomer(id, notes);
+        const integrations = await syncCancellationIntegrations(id, new Date());
         const customer = await store.getCustomerById(id);
         results.push({
           id,
           ok: true,
           customerNumber: customer?.customerNumber || null,
+          tisp: integrations.tisp,
+          zoho: integrations.zoho,
         });
         try {
           await logActivity({
             eventType: "customer_cancelled",
             title: "Customer subscription cancelled",
-            message: customer?.customerNumber || "",
-            source: "tisp",
-            status: "success",
+            message: [
+              customer?.customerNumber || "",
+              integrations.tisp?.dueDate
+                ? `TISP due ${integrations.tisp.dueDate}`
+                : null,
+              integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            source: "admin",
+            status:
+              integrations.tisp?.ok !== false && integrations.zoho?.ok !== false
+                ? "success"
+                : "failed",
             customerRef: customer?.customerNumber,
           });
         } catch (logErr) {
@@ -2270,26 +2483,49 @@ async function updateCustomer(req, res, next) {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    const updated = await store.updateCustomerDetails(id, {
-      firstName: body.firstName,
-      lastName: body.lastName,
-      middleName: body.middleName,
-      phone: body.phone,
-      email: body.email,
-      isVatExempt: Boolean(body.isVatExempt),
-      customerType: body.customerType,
-      agencyId: body.agencyId,
-      apartmentNumber: body.apartmentNumber,
-      paymentFrequency: body.paymentFrequency,
-      customPeriodDays: body.customPeriodDays,
-      productId: body.productId,
-      ipAddress: body.ipAddress,
-      dstvDecoderSerial: body.dstvDecoderSerial,
-    });
+    const role = String(req.user?.role || "").toLowerCase();
+    const isAdmin = role === "admin";
+    const wantsPackageEdit =
+      body.productId != null ||
+      body.paymentFrequency != null ||
+      body.customPeriodDays != null;
+
+    if (wantsPackageEdit && !isAdmin) {
+      return res.status(403).json({
+        error: "Only administrators can edit package and billing frequency",
+      });
+    }
+
+    const {
+      customer: updated,
+      contactChanged,
+      packageChanged,
+    } = await store.updateCustomerDetails(
+      id,
+      {
+        firstName: body.firstName,
+        lastName: body.lastName,
+        middleName: body.middleName,
+        phone: body.phone,
+        email: body.email,
+        isVatExempt: Boolean(body.isVatExempt),
+        customerType: body.customerType,
+        agencyId: body.agencyId,
+        apartmentNumber: body.apartmentNumber,
+        paymentFrequency: body.paymentFrequency,
+        customPeriodDays: body.customPeriodDays,
+        productId: body.productId,
+        ipAddress: body.ipAddress,
+        dstvDecoderSerial: body.dstvDecoderSerial,
+      },
+      { allowPackageEdit: isAdmin && wantsPackageEdit }
+    );
 
     let tispError = null;
     let zoho = { ok: true, skipped: true };
     if (updated?.status === "active") {
+      // Contact + package corrections stay in DB; TISP is updated so the ISP
+      // matches local data. Zoho Books only receives C2B contact changes.
       try {
         const ctx = await store.getCustomerContext(id);
         await pushCustomerToTisp(ctx);
@@ -2298,7 +2534,17 @@ async function updateCustomer(req, res, next) {
         tispError = formatTispError(e);
         await store.updateCustomerTispSync(id, "failed", tispError);
       }
-      zoho = await runZohoSyncForCustomer(id);
+
+      if (
+        contactChanged &&
+        !isB2BCustomer({ customerType: updated.customerType })
+      ) {
+        zoho = await runZohoSyncForCustomer(id, { syncRecurring: false });
+      } else if (isB2BCustomer({ customerType: updated.customerType })) {
+        zoho = { ok: true, skipped: true, reason: "b2b_no_zoho" };
+      } else if (packageChanged) {
+        zoho = { ok: true, skipped: true, reason: "package_db_only" };
+      }
     }
 
     const customer = await store.getCustomerById(id);
@@ -2308,6 +2554,7 @@ async function updateCustomer(req, res, next) {
       customer,
       tisp: tispError ? { ok: false, error: tispError } : { ok: true },
       zoho,
+      packageChanged: Boolean(packageChanged),
     });
   } catch (err) {
     if (err.message && !err.statusCode) {
@@ -2519,6 +2766,11 @@ async function retryBillingOnboarding(req, res, next) {
         .status(400)
         .json({ error: "Cannot retry billing for a cancelled customer" });
     }
+    if (isB2BCustomer(customer)) {
+      return res.status(400).json({
+        error: "B2B customers do not use Zoho Books contacts",
+      });
+    }
 
     syncCooldown.assertSyncAllowed(id);
     invalidateCustomerZoho(id);
@@ -2611,14 +2863,14 @@ async function refreshCustomerStatus(req, res, next) {
       });
       await store.reconcileTispSyncStatus(id);
 
-      customer = await store.getCustomerById(id);
+      customer = await attachTispDueDate(await store.getCustomerById(id));
 
       return res.json({
         customer,
         events,
         pendingUpgrade,
         zoho,
-        tisp: { refreshed: tispRefreshed },
+        tisp: { refreshed: tispRefreshed, dueDate: customer.tispDueDate || null },
       });
     } finally {
       syncCooldown.recordSync(id);

@@ -58,11 +58,11 @@ export function PaginationBar({
       px={{ base: 3, md: 4 }}
       py={3}
       borderTop="1px solid"
-      borderColor="gray.100"
-      bg="gray.50"
+      borderColor="border.muted"
+      bg="bg.subtle"
       borderBottomRadius="sm"
     >
-      <Text fontSize="sm" color="gray.600" textAlign={{ base: "center", sm: "left" }}>
+      <Text fontSize="sm" color="fg.muted" textAlign={{ base: "center", sm: "left" }}>
         {from}–{to} of {total} {itemLabel}
       </Text>
 
@@ -132,7 +132,7 @@ export function PaginationBar({
             </IconButton>
           </>
         ) : (
-          <Text fontSize="sm" color="gray.500">
+          <Text fontSize="sm" color="fg.muted">
             Page 1
           </Text>
         )}

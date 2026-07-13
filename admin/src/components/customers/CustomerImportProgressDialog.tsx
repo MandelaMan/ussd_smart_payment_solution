@@ -70,7 +70,7 @@ export function CustomerImportProgressDialog({
             <Text fontSize="lg" fontWeight="bold">
               Importing customers
             </Text>
-            <Text fontSize="sm" color="gray.500" mt={1}>
+            <Text fontSize="sm" color="fg.muted" mt={1}>
               {running
                 ? "Please keep this window open while each customer is created and synced."
                 : "Import finished."}
@@ -80,10 +80,10 @@ export function CustomerImportProgressDialog({
           {total > 0 && (
             <Box>
               <Flex justify="space-between" mb={2} fontSize="sm">
-                <Text color="gray.600">
+                <Text color="fg.muted">
                   {processed} of {total} processed
                 </Text>
-                <Text color="gray.600">{progressPct}%</Text>
+                <Text color="fg.muted">{progressPct}%</Text>
               </Flex>
               <Progress.Root value={progressPct} size="sm" colorPalette="brand">
                 <Progress.Track borderRadius="full">
@@ -105,13 +105,13 @@ export function CustomerImportProgressDialog({
               <Flex align="center" gap={2}>
                 <Spinner size="sm" color="brand.600" />
                 <Box minW={0}>
-                  <Text fontSize="sm" fontWeight="semibold" color="gray.800">
+                  <Text fontSize="sm" fontWeight="semibold" color="fg">
                     Row {currentProgress.line}
                     {currentProgress.customerNumber
                       ? ` · ${currentProgress.customerNumber}`
                       : ""}
                   </Text>
-                  <Text fontSize="sm" color="gray.600">
+                  <Text fontSize="sm" color="fg.muted">
                     {currentProgress.message}
                   </Text>
                 </Box>
@@ -125,7 +125,7 @@ export function CustomerImportProgressDialog({
               maxH="280px"
               overflowY="auto"
               border="1px solid"
-              borderColor="gray.100"
+              borderColor="border.muted"
               borderRadius="lg"
               px={3}
               py={3}
@@ -144,7 +144,7 @@ export function CustomerImportProgressDialog({
                       ) : isDone ? (
                         <FiCheck />
                       ) : (
-                        <Spinner size="xs" color="gray.400" />
+                        <Spinner size="xs" color="fg.subtle" />
                       )}
                     </Box>
                     <Box minW={0} flex="1">
@@ -189,7 +189,7 @@ export function CustomerImportProgressDialog({
                 Imported {succeeded} of {total} customers
               </Text>
               {failed > 0 && (
-                <Text fontSize="sm" color="gray.600" mt={1}>
+                <Text fontSize="sm" color="fg.muted" mt={1}>
                   {failed} row(s) failed — review the list above for details.
                 </Text>
               )}

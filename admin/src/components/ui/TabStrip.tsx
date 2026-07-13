@@ -16,10 +16,16 @@ export function TabStrip({ tabs, active, onChange }: Props) {
   const activeLabel = tabs.find((tab) => tab.id === active)?.label ?? "Section";
 
   return (
-    <Box borderBottom="1px solid" borderColor="brand.100" bg="white" w="full">
+    <Box
+      borderBottom="1px solid"
+      borderColor={{ _light: "brand.100", _dark: "border" }}
+      bg="bg.panel"
+      w="full"
+      minW={0}
+    >
       {/* Mobile: section picker — avoids cramped equal-width tabs */}
-      <Box display={{ base: "block", md: "none" }} px={3} py={2.5}>
-        <Text fontSize="2xs" fontWeight="medium" color="gray.500" mb={1.5}>
+      <Box display={{ base: "block", md: "none" }} px={{ base: 2.5, sm: 3 }} py={2}>
+        <Text fontSize="2xs" fontWeight="medium" color="fg.muted" mb={1.5}>
           Section
         </Text>
         <SelectField
@@ -29,10 +35,12 @@ export function TabStrip({ tabs, active, onChange }: Props) {
             "aria-label": `Section: ${activeLabel}`,
             onChange: (e) => onChange(e.target.value),
             borderRadius: "md",
-            bg: "gray.50",
-            borderColor: "gray.200",
+            bg: "bg.subtle",
+            borderColor: "border",
             fontWeight: "semibold",
-            color: "brand.800",
+            color: { _light: "brand.800", _dark: "brand.200" },
+            minH: "44px",
+            fontSize: "16px",
             _focusVisible: {
               borderColor: "brand.500",
               boxShadow: "0 0 0 1px var(--chakra-colors-brand-500)",
@@ -47,9 +55,18 @@ export function TabStrip({ tabs, active, onChange }: Props) {
         </SelectField>
       </Box>
 
-      {/* Desktop: underline tab strip */}
-      <Box display={{ base: "none", md: "block" }} px={4}>
-        <Flex gap={0} w="full" overflow="hidden">
+      {/* Desktop / tablet: scrollable underline tab strip */}
+      <Box
+        display={{ base: "none", md: "block" }}
+        px={{ md: 2, lg: 4 }}
+        overflowX="auto"
+        css={{
+          WebkitOverflowScrolling: "touch",
+          scrollbarWidth: "none",
+          "&::-webkit-scrollbar": { display: "none" },
+        }}
+      >
+        <Flex gap={0} w="max-content" minW="full">
           {tabs.map((tab) => {
             const isActive = tab.id === active;
             return (
@@ -61,18 +78,25 @@ export function TabStrip({ tabs, active, onChange }: Props) {
                 borderRadius={0}
                 flex="none"
                 minW={0}
-                px={4}
+                px={{ md: 3, lg: 4 }}
                 py={3}
                 h="auto"
                 minH="44px"
                 fontWeight={isActive ? "semibold" : "medium"}
                 fontSize="sm"
-                color={isActive ? "brand.700" : "gray.600"}
+                color={
+                  isActive
+                    ? { _light: "brand.700", _dark: "brand.300" }
+                    : "fg.muted"
+                }
                 borderBottom="3px solid"
                 borderColor={isActive ? "brand.600" : "transparent"}
                 mb="-1px"
                 whiteSpace="nowrap"
-                _hover={{ bg: "brand.50", color: "brand.700" }}
+                _hover={{
+                  bg: { _light: "brand.50", _dark: "brand.900" },
+                  color: { _light: "brand.700", _dark: "brand.300" },
+                }}
                 onClick={() => onChange(tab.id)}
               >
                 {tab.label}

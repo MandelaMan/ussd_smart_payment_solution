@@ -177,7 +177,7 @@ export function ReportsPage() {
           alignSelf="flex-end"
           pb={1}
         >
-          <Text fontSize="xs" color="gray.500">
+          <Text fontSize="xs" color="fg.muted">
             {showAnalytics
               ? "Charts and time-based report exports"
               : "Time-based report exports"}
@@ -204,11 +204,11 @@ export function ReportsPage() {
         </Box>
       ) : null}
 
-      <Box borderTop={showAnalytics ? "1px solid" : undefined} borderColor="gray.100" pt={showAnalytics ? 2 : 0}>
+      <Box borderTop={showAnalytics ? "1px solid" : undefined} borderColor="border.muted" pt={showAnalytics ? 2 : 0}>
         <Text fontSize="md" fontWeight="semibold" color="brand.800" mb={1}>
           Downloadable reports
         </Text>
-        <Text fontSize="sm" color="gray.500" mb={4}>
+        <Text fontSize="sm" color="fg.muted" mb={4}>
           {partnerView
             ? "Export subscriber, revenue, and occupancy summaries for your records."
             : "Export detailed data in Excel or PDF for sharing and record-keeping."}
@@ -224,7 +224,7 @@ export function ReportsPage() {
               <Badge colorPalette={CATEGORY_COLORS[category] || "gray"} variant="subtle">
                 {category}
               </Badge>
-              <Text fontSize="xs" color="gray.400">
+              <Text fontSize="xs" color="fg.subtle">
                 {items.length} report{items.length !== 1 ? "s" : ""}
               </Text>
             </Flex>
@@ -235,9 +235,9 @@ export function ReportsPage() {
               {items.map((report) => (
                 <Box
                   key={report.id}
-                  bg="white"
+                  bg="bg.panel"
                   border="1px solid"
-                  borderColor="gray.100"
+                  borderColor="border.muted"
                   borderRadius="lg"
                   p={4}
                   display="flex"
@@ -245,10 +245,10 @@ export function ReportsPage() {
                   gap={3}
                 >
                   <Box flex={1}>
-                    <Text fontWeight="semibold" fontSize="sm" color="gray.800">
+                    <Text fontWeight="semibold" fontSize="sm" color="fg">
                       {report.title}
                     </Text>
-                    <Text fontSize="xs" color="gray.500" mt={1} lineHeight="tall">
+                    <Text fontSize="xs" color="fg.muted" mt={1} lineHeight="tall">
                       {report.description}
                     </Text>
                     {!report.dateFilter && (
@@ -287,7 +287,7 @@ export function ReportsPage() {
       )}
 
       {!loading && reports.length > 0 && (
-        <Flex align="center" gap={2} color="gray.400" fontSize="xs">
+        <Flex align="center" gap={2} color="fg.subtle" fontSize="xs">
           <FiDownload size={12} />
           <Text>
             {reports.length} reports available · Excel (.xlsx) and PDF formats supported

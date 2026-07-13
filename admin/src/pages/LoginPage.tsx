@@ -1,8 +1,7 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import {
   Box,
   Button,
-  Checkbox,
   Field,
   Flex,
   Heading,
@@ -15,7 +14,6 @@ import {
 import { Navigate } from "react-router-dom";
 import { FiActivity, FiLock, FiMail, FiRepeat, FiTrendingUp, FiUsers } from "react-icons/fi";
 import { useAuth } from "../lib/auth";
-import { toaster } from "../components/ui/toaster";
 import { BRAND } from "../theme";
 
 const BRAND_NAME = "SUL Bix";
@@ -23,7 +21,6 @@ const COPYRIGHT = "© 2026 SUL Solutions. All rights reserved.";
 const HERO_HEADLINE = "A unified hub for customer management and billing";
 const HERO_SUBCOPY =
   "Manage subscribers, packages, and buildings; track M-Pesa collections; and keep Zoho and TISP integrations in sync — all in one place.";
-const REMEMBER_EMAIL_KEY = "sul-bix-login-email";
 
 /** Decorative figures for the login hero — not live data */
 const DEMO_TILE_STATS = {
@@ -37,27 +34,21 @@ const DEMO_TILE_STATS = {
 const CHART_BARS = [38, 52, 44, 68, 58, 74, 62, 80, 70, 86, 76, 64];
 const CUSTOMER_BARS = [72, 58, 84, 66, 78, 62, 88, 70, 76, 64, 82, 68];
 
-const softInputProps = {
-  fontSize: "16px" as const,
-  h: "54px",
+const loginInputProps = {
+  // 16px on mobile prevents iOS Safari auto-zoom on focus (sm is ~14.5px).
+  fontSize: { base: "16px", md: "sm" } as const,
+  h: "44px",
   borderRadius: "lg" as const,
-  bg: "gray.50",
+  bg: "bg.panel",
   border: "1px solid" as const,
-  borderColor: "gray.100",
-  _placeholder: { color: "gray.400" },
+  borderColor: "border",
+  boxShadow: "none" as const,
+  _placeholder: { color: "fg.subtle" },
   _focusVisible: {
-    bg: "white",
     borderColor: BRAND.cerulean,
-    boxShadow: `0 0 0 3px rgba(22, 106, 130, 0.15)`,
+    boxShadow: "none",
     outline: "none",
   },
-};
-
-const softInputPropsCompact = {
-  ...softInputProps,
-  h: "44px",
-  fontSize: "16px" as const,
-  borderRadius: "md" as const,
 };
 
 const SPARK_TX = "0,22 8,18 16,20 24,12 32,14 40,8 48,10 56,4";
@@ -545,21 +536,8 @@ export function LoginPage() {
   const { user, loading, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(REMEMBER_EMAIL_KEY);
-      if (saved) {
-        setEmail(saved);
-        setRememberMe(true);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
   if (!loading && user) return <Navigate to="/" replace />;
 
@@ -569,12 +547,6 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      try {
-        if (rememberMe) localStorage.setItem(REMEMBER_EMAIL_KEY, email.trim());
-        else localStorage.removeItem(REMEMBER_EMAIL_KEY);
-      } catch {
-        /* ignore */
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -582,115 +554,9 @@ export function LoginPage() {
     }
   }
 
-  function notifyAccessHelp(kind: "signup" | "forgot") {
-    toaster.create({
-      title: kind === "signup" ? "Account access" : "Password reset",
-      description:
-        kind === "signup"
-          ? "Ask your administrator to create a SUL Bix account for you."
-          : "Ask your administrator to reset your password.",
-      type: "info",
-    });
-  }
-
-  const formFields = (compact = false) => {
-    const inputProps = compact ? softInputPropsCompact : softInputProps;
-    return (
-      <Box as="form" onSubmit={handleSubmit} w="full">
-        <Stack gap={compact ? 3 : 4}>
-          {error ? (
-            <Box bg="red.50" color="red.700" px={3} py={2} borderRadius="md" fontSize="sm">
-              {error}
-            </Box>
-          ) : null}
-
-          <Field.Root required>
-            <InputGroup startElement={<FiMail color="gray" size={compact ? 16 : 18} />}>
-              <Input
-                type="email"
-                autoComplete="email"
-                inputMode="email"
-                placeholder="Enter your email address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                {...inputProps}
-              />
-            </InputGroup>
-          </Field.Root>
-
-          <Field.Root required>
-            <InputGroup startElement={<FiLock color="gray" size={compact ? 16 : 18} />}>
-              <Input
-                type="password"
-                autoComplete="current-password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                {...inputProps}
-              />
-            </InputGroup>
-          </Field.Root>
-
-          <Flex align="center" justify="space-between" gap={2} flexWrap="nowrap">
-            <Checkbox.Root
-              checked={rememberMe}
-              onCheckedChange={(d) => setRememberMe(Boolean(d.checked))}
-              size="sm"
-              colorPalette="brand"
-            >
-              <Checkbox.HiddenInput />
-              <Checkbox.Control borderRadius="sm" />
-              <Checkbox.Label
-                color="gray.500"
-                fontWeight="normal"
-                fontSize={compact ? "xs" : "sm"}
-              >
-                Remember Me
-              </Checkbox.Label>
-            </Checkbox.Root>
-            <Button
-              type="button"
-              variant="plain"
-              size="sm"
-              color={BRAND.cerulean}
-              fontWeight="semibold"
-              fontSize={compact ? "xs" : "sm"}
-              px={0}
-              h="auto"
-              minH="unset"
-              onClick={() => notifyAccessHelp("forgot")}
-            >
-              Forgot Password?
-            </Button>
-          </Flex>
-
-          <Button
-            type="submit"
-            w="full"
-            bg={BRAND.cerulean}
-            color="white"
-            _hover={{ bg: "brand.700" }}
-            _active={{ transform: "scale(0.985)" }}
-            size={compact ? "md" : "lg"}
-            h={compact ? "44px" : "54px"}
-            borderRadius="lg"
-            fontWeight="bold"
-            fontSize={compact ? "sm" : "md"}
-            letterSpacing="0.01em"
-            loading={submitting}
-            mt={compact ? 1 : 1}
-            boxShadow="0 10px 24px rgba(22, 106, 130, 0.28)"
-          >
-            {compact ? "Sign in" : "Login"}
-          </Button>
-        </Stack>
-      </Box>
-    );
-  };
-
-  const classicDesktopForm = (
+  const loginForm = (
     <Box as="form" onSubmit={handleSubmit} w="full">
-      <Stack gap={4}>
+      <Stack gap={{ base: 5, md: 4 }}>
         {error ? (
           <Box bg="red.50" color="red.700" px={3} py={2.5} borderRadius="lg" fontSize="sm">
             {error}
@@ -698,7 +564,13 @@ export function LoginPage() {
         ) : null}
 
         <Field.Root required>
-          <Field.Label fontWeight="medium" color="gray.700" fontSize="sm" mb={1}>
+          <Field.Label
+            display={{ base: "none", md: "block" }}
+            fontWeight="medium"
+            color="fg"
+            fontSize="sm"
+            mb={1}
+          >
             Email address <Field.RequiredIndicator />
           </Field.Label>
           <InputGroup startElement={<FiMail color="gray" size={16} />}>
@@ -709,24 +581,19 @@ export function LoginPage() {
               placeholder="Enter email address"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              fontSize="sm"
-              h="44px"
-              borderRadius="lg"
-              bg="white"
-              border="1px solid"
-              borderColor="gray.200"
-              _placeholder={{ color: "gray.400" }}
-              _focusVisible={{
-                borderColor: BRAND.cerulean,
-                boxShadow: `0 0 0 1px ${BRAND.cerulean}`,
-                outline: "none",
-              }}
+              {...loginInputProps}
             />
           </InputGroup>
         </Field.Root>
 
         <Field.Root required>
-          <Field.Label fontWeight="medium" color="gray.700" fontSize="sm" mb={1}>
+          <Field.Label
+            display={{ base: "none", md: "block" }}
+            fontWeight="medium"
+            color="fg"
+            fontSize="sm"
+            mb={1}
+          >
             Password <Field.RequiredIndicator />
           </Field.Label>
           <InputGroup startElement={<FiLock color="gray" size={16} />}>
@@ -736,18 +603,7 @@ export function LoginPage() {
               placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              fontSize="sm"
-              h="44px"
-              borderRadius="lg"
-              bg="white"
-              border="1px solid"
-              borderColor="gray.200"
-              _placeholder={{ color: "gray.400" }}
-              _focusVisible={{
-                borderColor: BRAND.cerulean,
-                boxShadow: `0 0 0 1px ${BRAND.cerulean}`,
-                outline: "none",
-              }}
+              {...loginInputProps}
             />
           </InputGroup>
         </Field.Root>
@@ -764,7 +620,7 @@ export function LoginPage() {
           fontWeight="semibold"
           fontSize="sm"
           loading={submitting}
-          mt={1}
+          mt={{ base: 1, md: 1 }}
         >
           Sign in
         </Button>
@@ -803,14 +659,14 @@ export function LoginPage() {
           zIndex={1}
           flexShrink={0}
           px={4}
-          pt="max(1.25rem, env(safe-area-inset-top, 0px))"
+          pt="max(2.5rem, calc(env(safe-area-inset-top, 0px) + 1.5rem))"
           pb={6}
         >
           <Flex align="center" gap={3} mb={6}>
             <Flex
               boxSize="48px"
               borderRadius="xl"
-              bg="white"
+              bg="bg.panel"
               align="center"
               justify="center"
               flexShrink={0}
@@ -892,7 +748,7 @@ export function LoginPage() {
           flex="1"
           flexShrink={0}
           mt={2}
-          bg="white"
+          bg="bg.panel"
           borderTopRadius="2xl"
           px={5}
           pt={3.5}
@@ -906,20 +762,20 @@ export function LoginPage() {
           <Heading
             fontSize="lg"
             fontWeight="bold"
-            color="gray.800"
+            color="fg"
             letterSpacing="-0.02em"
             mb={1}
             flexShrink={0}
           >
             Welcome back
           </Heading>
-          <Text fontSize="xs" color="gray.500" mb={3.5} lineHeight="1.4" flexShrink={0}>
+          <Text fontSize="xs" color="fg.muted" mb={5} lineHeight="1.4" flexShrink={0}>
             Sign in to access your operations dashboard
           </Text>
 
-          <Box flexShrink={0}>{formFields(true)}</Box>
+          <Box flexShrink={0}>{loginForm}</Box>
 
-          <Text mt={4} mb={1} fontSize="2xs" color="gray.400" textAlign="center" flexShrink={0}>
+          <Text mt={4} mb={1} fontSize="2xs" color="fg.subtle" textAlign="center" flexShrink={0}>
             {COPYRIGHT}
           </Text>
         </Flex>
@@ -944,7 +800,7 @@ export function LoginPage() {
           <Flex
             boxSize="68px"
             borderRadius="xl"
-            bg="white"
+            bg="bg.panel"
             align="center"
             justify="center"
             flexShrink={0}
@@ -1028,7 +884,7 @@ export function LoginPage() {
         flex="1"
         align="center"
         justify="center"
-        bg="white"
+        bg="bg.panel"
         px={{ md: 10, lg: 14 }}
         py={10}
         minH="100dvh"
@@ -1037,17 +893,17 @@ export function LoginPage() {
           <Heading
             fontSize="2xl"
             fontWeight="bold"
-            color="gray.800"
+            color="fg"
             letterSpacing="-0.02em"
             mb={1.5}
           >
             Welcome back
           </Heading>
-          <Text fontSize="sm" color="gray.500" mb={7} lineHeight="1.5">
+          <Text fontSize="sm" color="fg.muted" mb={7} lineHeight="1.5">
             Sign in to access your operations dashboard
           </Text>
-          {classicDesktopForm}
-          <Text mt={8} fontSize="xs" color="gray.400" textAlign="center">
+          {loginForm}
+          <Text mt={8} fontSize="xs" color="fg.subtle" textAlign="center">
             {COPYRIGHT}
           </Text>
         </Box>

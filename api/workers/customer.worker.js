@@ -3,6 +3,8 @@ const { createProgressReporter, ensureSyncJobRecord } = require("./base.worker")
 const crmService = require("../services/external/crm.service");
 const ispService = require("../services/external/isp.service");
 const customerRepo = require("../repositories/customer.repository");
+const customerStore = require("../services/customerModuleStore");
+const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
 const integrationStateRepo = require("../repositories/integrationState.repository");
 const syncJobRepo = require("../repositories/syncJob.repository");
 const { INTEGRATIONS } = require("../queue/definitions");
@@ -10,13 +12,30 @@ const { emitSyncEvent } = require("../socket");
 const { syncLog } = require("../lib/structuredLogger");
 const { invalidateDashboardCaches } = require("../lib/cache");
 const { mapWithConcurrency } = require("../utils/mapWithConcurrency");
+const {
+  normalizeSubscriptionStatus,
+} = require("../utils/subscriptionStatus");
 
 const env = loadEnv();
 const INTEGRATION = INTEGRATIONS.CUSTOMER;
 
+function isTispNotFoundError(message) {
+  const lower = String(message || "").toLowerCase();
+  return (
+    lower.includes("not found") ||
+    lower.includes("missing") ||
+    lower.includes("does not exist") ||
+    lower.includes("no client")
+  );
+}
+
+/**
+ * Customers (TISP) sync — calls TISP ClientStatus for every non-cancelled
+ * customer. Never touches Zoho. Always full scan (TISP has no incremental cursor).
+ */
 async function processCustomerSyncJob(job) {
   const started = Date.now();
-  const { correlationId, incremental = true } = job.data;
+  const { correlationId } = job.data;
   const syncJobDbId = await ensureSyncJobRecord(job, INTEGRATION);
   await syncJobRepo.markSyncJobRunning(syncJobDbId, job.id);
 
@@ -27,10 +46,8 @@ async function processCustomerSyncJob(job) {
     jobId: job.id,
   });
 
-  const state = await integrationStateRepo.getIntegrationState(INTEGRATION);
-  const updatedAfter =
-    incremental && state?.last_synced_at ? state.last_synced_at : null;
-
+  // Always sync all active customers — TISP has no updated_after filter.
+  const updatedAfter = null;
   const total = await customerRepo.countActiveCustomers(updatedAfter);
   const pageSize = env.SYNC_PAGE_SIZE;
   const totalPages = Math.ceil(total / pageSize) || 1;
@@ -57,20 +74,63 @@ async function processCustomerSyncJob(job) {
 
     await mapWithConcurrency(customers, env.API_CONCURRENCY, async (customer) => {
       try {
-        const result = await ispService.fetchCustomerStatus(
-          customer.customerNumber,
-          { correlationId }
-        );
-        if (result.ok && result.status) {
-          await customerRepo.updateCustomerSubscriptionStatus(
+        const result = await ispService.fetchCustomerStatus(customer.customerNumber, {
+          correlationId,
+        });
+
+        if (result.ok) {
+          const rawStatus =
+            result.raw?.status ??
+            result.raw?.Status ??
+            result.raw?.subscriptionStatus ??
+            null;
+          const normalized = rawStatus
+            ? normalizeSubscriptionStatus(String(rawStatus))
+            : "Active";
+
+          await customerStore.updateCustomerSubscriptionStatus(
             customer.id,
-            result.status
+            normalized
+          );
+          try {
+            await integrationSnapshot.upsertTispSnapshot(customer.id, result.raw);
+          } catch (e) {
+            console.warn("TISP snapshot save failed:", e.message);
+          }
+          await customerStore.updateCustomerTispSync(customer.id, "synced", null);
+          updated += 1;
+        } else if (isTispNotFoundError(result.error)) {
+          await customerStore.updateCustomerSubscriptionStatus(
+            customer.id,
+            "Not on TISP"
+          );
+          await customerStore.updateCustomerTispSync(
+            customer.id,
+            "failed",
+            result.error || "Not found on TISP"
           );
           updated += 1;
         } else {
+          await customerStore.updateCustomerTispSync(
+            customer.id,
+            "failed",
+            result.error || "TISP lookup failed"
+          );
           failed += 1;
         }
-      } catch {
+      } catch (err) {
+        const message = err?.message || "TISP sync failed";
+        try {
+          if (isTispNotFoundError(message)) {
+            await customerStore.updateCustomerSubscriptionStatus(
+              customer.id,
+              "Not on TISP"
+            );
+          }
+          await customerStore.updateCustomerTispSync(customer.id, "failed", message);
+        } catch {
+          /* ignore persist errors */
+        }
         failed += 1;
       } finally {
         processed += 1;

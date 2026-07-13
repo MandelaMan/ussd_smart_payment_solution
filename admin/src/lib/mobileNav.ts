@@ -3,6 +3,7 @@ import {
   FiBarChart2,
   FiCheckCircle,
   FiCreditCard,
+  FiGitMerge,
   FiGrid,
   FiHome,
   FiMenu,
@@ -17,6 +18,7 @@ import {
   isPartner,
   normalizeRole,
 } from "./rbac";
+import { BILLING_BASE_PATH } from "./billingReconciliationNav";
 
 export type MobileNavTab = {
   key: string;
@@ -27,7 +29,19 @@ export type MobileNavTab = {
   action?: "menu";
 };
 
-export const MOBILE_BOTTOM_NAV_H = "60px";
+export const MOBILE_BOTTOM_NAV_H = "56px";
+
+/**
+ * Keep icons flush to the screen edge. Safe-area padding was removed from the
+ * nav root — it left a dead strip under the floating pill.
+ */
+export const MOBILE_BOTTOM_NAV_SAFE_PB = "0px";
+
+/**
+ * Space to reserve above the fixed floating bottom nav so content can scroll clear.
+ * Nav sits 2px off the bottom edge (no safe-area lift).
+ */
+export const MOBILE_BOTTOM_NAV_OFFSET = `calc(${MOBILE_BOTTOM_NAV_H} + 14px)`;
 
 /** Build exactly four navigation destinations before the More tab. */
 export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
@@ -49,7 +63,7 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
   } else if (canAccessFinance(user)) {
     tabs.push(
       { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },
-      { key: "activity", to: "/activity", label: "Activity", icon: FiActivity }
+      { key: "billing", to: BILLING_BASE_PATH, label: "Billing", icon: FiGitMerge }
     );
   } else if (normalizeRole(user?.role) === "support") {
     tabs.push(

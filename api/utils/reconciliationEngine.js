@@ -80,7 +80,7 @@ function isDisconnectedService(subscriptionStatus) {
 }
 
 function isUnknownService(subscriptionStatus) {
-  return normalizeSubscriptionStatus(subscriptionStatus) === "Unknown";
+  return normalizeSubscriptionStatus(subscriptionStatus) === "Not on TISP";
 }
 
 function isOverdueInvoice(invoice) {
@@ -549,7 +549,7 @@ function detectBillingScenarios(ctx) {
       status: "manual_review_required",
       code: "tisp_status_unknown",
       severity: "medium",
-      message: `TISP: Status unknown · Zoho: ${zohoLabel} — cannot confirm service matches billing`,
+      message: `TISP: Not on TISP · Zoho: ${zohoLabel} - cannot confirm service matches billing`,
       recommendations: [rec("refresh_tisp_status")],
     });
   }
@@ -643,7 +643,7 @@ function computeCustomerReconciliation(context = {}) {
   const tispSyncStatus = context.tispSyncStatus ?? customer.tispSyncStatus ?? null;
 
   const subscriptionStatus =
-    customer.subscriptionStatus || customer.subscription_status || "Unknown";
+    customer.subscriptionStatus || customer.subscription_status || "Not on TISP";
   const outstandingBalance = roundMoney(
     context.outstandingBalance ??
       invoices.reduce((sum, inv) => sum + roundMoney(inv.balanceDue ?? inv.balance ?? 0), 0)
@@ -876,7 +876,7 @@ function recordToIssuePreview(record) {
     expectedAmount: roundMoney(record.metrics?.expectedAmount ?? 0),
     amountPaid: roundMoney(record.metrics?.amountPaid ?? 0),
     billingFrequency: record.metrics?.billingFrequency || "monthly",
-    subscriptionStatus: record.metrics?.subscriptionStatus || "Unknown",
+    subscriptionStatus: record.metrics?.subscriptionStatus || "Not on TISP",
     accountStatus: record.metrics?.accountStatus || record.customerStatus || null,
     actionLabel: record.recommendations?.[0]?.label || null,
     issueBasis:

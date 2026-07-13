@@ -102,7 +102,7 @@ export function AgencyInvoiceDialog({
     <AppDialog open={open} onOpenChange={(d) => !d.open && handleClose()} maxW="md">
       <Dialog.Header px={5} pt={5} pb={3} pr={12}>
         <Dialog.Title fontSize="lg">{title}</Dialog.Title>
-        <Dialog.Description fontSize="sm" color="gray.500" mt={1}>
+        <Dialog.Description fontSize="sm" color="fg.muted" mt={1}>
           {mode === "consolidated"
             ? `${billedCount} active customer${billedCount === 1 ? "" : "s"} will be billed to this agency in Zoho`
             : `${customer?.fullName} · ${formatCurrency(subtotal)}`}
@@ -113,24 +113,24 @@ export function AgencyInvoiceDialog({
         <Stack gap={4}>
           <Box
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="lg"
             p={3}
-            bg="gray.50"
+            bg="bg.subtle"
           >
             <Flex justify="space-between" fontSize="sm" mb={1}>
-              <Text color="gray.600">Subtotal</Text>
+              <Text color="fg.muted">Subtotal</Text>
               <Text fontWeight="medium">{formatCurrency(subtotal)}</Text>
             </Flex>
             {discountAmount > 0 ? (
               <Flex justify="space-between" fontSize="sm" mb={1}>
-                <Text color="gray.600">Discount</Text>
+                <Text color="fg.muted">Discount</Text>
                 <Text fontWeight="medium" color="green.700">
                   −{formatCurrency(discountAmount)}
                 </Text>
               </Flex>
             ) : null}
-            <Flex justify="space-between" fontSize="sm" pt={discountAmount > 0 ? 2 : 0} borderTop={discountAmount > 0 ? "1px solid" : undefined} borderColor="gray.200">
+            <Flex justify="space-between" fontSize="sm" pt={discountAmount > 0 ? 2 : 0} borderTop={discountAmount > 0 ? "1px solid" : undefined} borderColor="border">
               <Text fontWeight="semibold">Invoice total</Text>
               <Text fontWeight="semibold">{formatCurrency(netTotal)}</Text>
             </Flex>
@@ -138,17 +138,17 @@ export function AgencyInvoiceDialog({
 
           <Box
             border="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             borderRadius="lg"
             p={3}
-            bg="white"
+            bg="bg.panel"
           >
             <Flex justify="space-between" align="center" mb={discountEnabled ? 3 : 0}>
               <Box>
                 <Text fontWeight="semibold" fontSize="sm">
                   Agency discount
                 </Text>
-                <Text fontSize="xs" color="gray.500">
+                <Text fontSize="xs" color="fg.muted">
                   Optional reduction applied on the Zoho invoice
                 </Text>
               </Box>
@@ -199,7 +199,7 @@ export function AgencyInvoiceDialog({
         </Stack>
       </Dialog.Body>
 
-      <Dialog.Footer px={5} py={4} borderTop="1px solid" borderColor="gray.100">
+      <Dialog.Footer px={5} py={4} borderTop="1px solid" borderColor="border.muted">
         <Flex gap={2} justify="flex-end" w="full">
           <Button variant="ghost" onClick={handleClose} disabled={submitting}>
             Cancel

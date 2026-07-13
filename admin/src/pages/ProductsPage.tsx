@@ -1,5 +1,6 @@
 import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
   Box,
@@ -34,6 +35,7 @@ import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
+import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ProductExpandPanel } from "../components/products/ProductExpandPanel";
 import { DisplayText } from "../components/ui/DisplayText";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
@@ -75,6 +77,7 @@ type ProductSortKey =
 
 export function ProductsPage() {
   const { user } = useAuth();
+  const isMobile = useMobileViewport();
   const canMutate = canMutateConfig(user);
   const [products, setProducts] = useState<Product[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -87,6 +90,7 @@ export function ProductsPage() {
     pages: 1,
   });
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -130,7 +134,9 @@ export function ProductsPage() {
   }, [selectedVariant, mbps]);
 
   const load = useCallback(async (options?: { bustCache?: boolean }) => {
-    setLoading(true);
+    const append = isMobile && page > 1 && !options?.bustCache;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError("");
     try {
       const params: Record<string, string> = {
@@ -145,14 +151,17 @@ export function ProductsPage() {
       params.sortDir = sortQuery.sortDir;
       if (options?.bustCache) params._ts = String(Date.now());
       const res = await api.listProducts(params);
-      setProducts(res.products);
+      setProducts((prev) =>
+        mergeInfinitePage(prev, res.products, page, isMobile && !options?.bustCache, (p) => p.id)
+      );
       setPagination(res.pagination);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load packages");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [search, filterBuildingId, filterPaymentFrequency, page, sortQuery.sortBy, sortQuery.sortDir]);
+  }, [search, filterBuildingId, filterPaymentFrequency, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   function handleSort(
     column: ProductSortKey,
@@ -338,35 +347,66 @@ export function ProductsPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <Flex justify="space-between" align={{ base: "start", md: "center" }} direction={{ base: "column", md: "row" }} gap={3}>
-        <Box>
-          <Heading size="lg">Packages</Heading>
-          <Text fontSize="sm" color="gray.500">
-            Base package structure is fixed per category and plan. Set building-specific prices below.
-          </Text>
-        </Box>
-        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
-          <DataTableExportButton
-            entityLabel="packages"
-            viewCount={products.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        {canMutate ? (
-        <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
-          <FiPackage />
-          Set building price
-        </Button>
-        ) : null}
-        </Flex>
-      </Flex>
+      <MobilePageChrome
+        title="Packages"
+        description="Base package structure is fixed per category and plan. Set building-specific prices below."
+        searchValue={searchInput}
+        onSearchChange={setSearchInput}
+        searchPlaceholder="Package name…"
+        sortOptions={[
+          {
+            key: "categoryName",
+            label: "Category",
+            active: sorts[0]?.sortBy === "categoryName",
+            direction: sorts[0]?.sortBy === "categoryName" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("categoryName"),
+          },
+          {
+            key: "buildingName",
+            label: "Building",
+            active: sorts[0]?.sortBy === "buildingName",
+            direction: sorts[0]?.sortBy === "buildingName" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("buildingName"),
+          },
+          {
+            key: "price",
+            label: "Price",
+            active: sorts[0]?.sortBy === "price",
+            direction: sorts[0]?.sortBy === "price" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("price", "desc"),
+          },
+          {
+            key: "mbps",
+            label: "Speed",
+            active: sorts[0]?.sortBy === "mbps",
+            direction: sorts[0]?.sortBy === "mbps" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("mbps", "desc"),
+          },
+        ]}
+        desktopActions={
+          <Flex gap={2} align="center" flexWrap="wrap">
+            <DataTableExportButton
+              entityLabel="packages"
+              viewCount={products.length}
+              totalCount={pagination.total}
+              loading={exporting}
+              onExport={handleExport}
+            />
+            {canMutate ? (
+              <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
+                <FiPackage />
+                Set building price
+              </Button>
+            ) : null}
+          </Flex>
+        }
+      />
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input size="sm" placeholder="Package name…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} borderRadius="md" />
           </FilterField>
-          <FilterField label="Building" flex={FILTER_FLEX.wide} minW={0}>
+          <FilterField label="Building" flex={FILTER_FLEX.wide} minW={0} hideOnMobile>
             <SearchableSelect
               size="sm"
               value={filterBuildingId}
@@ -382,7 +422,7 @@ export function ProductsPage() {
               emptyLabel="No buildings match"
             />
           </FilterField>
-          <FilterField label="Billing" flex={FILTER_FLEX.standard} minW={0}>
+          <FilterField label="Billing" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -406,7 +446,7 @@ export function ProductsPage() {
       </FilterToolbar>
 
       {showForm && (
-        <Box bg="white" borderRadius="lg" border="1px solid" borderColor="gray.100" p={5}>
+        <Box bg="bg.panel" borderRadius="lg" border="1px solid" borderColor="border.muted" p={5}>
           <Heading size="sm" mb={4}>Set building price</Heading>
           <ProductForm
             catalog={catalog}
@@ -432,6 +472,8 @@ export function ProductsPage() {
 
       <DataTableCard
         loading={loading}
+        loadingMore={loadingMore}
+        loadedCount={products.length}
         pagination={pagination}
         onPageChange={(nextPage) => {
           setPage(nextPage);
@@ -455,7 +497,7 @@ export function ProductsPage() {
                 getKey={(p) => p.id}
                 expandedId={expanded}
                 emptyMessage={
-                  <Text color="gray.400" fontSize="sm">No packages found</Text>
+                  <Text color="fg.subtle" fontSize="sm">No packages found</Text>
                 }
                 renderCard={(p, isOpen) => (
                   <MobileDataCard
@@ -523,7 +565,7 @@ export function ProductsPage() {
                       <Table.Cell {...dataTableCellProps}>
                         <TextStatus status={p.isActive ? "Active" : "Inactive"} />
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600" textTransform="capitalize">{p.paymentFrequency}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps} color="fg.muted" textTransform="capitalize">{p.paymentFrequency}</Table.Cell>
                     </Table.Row>
                     {isOpen && (
                       <Table.Row {...dataTableExpandRowProps}>
@@ -543,7 +585,7 @@ export function ProductsPage() {
       </DataTableCard>
 
       <AppDialog open={!!editing} onOpenChange={(d) => !d.open && closeEdit()} maxW="2xl">
-        <Dialog.Header borderBottomWidth="1px" borderColor="gray.100" pr={12}>
+        <Dialog.Header borderBottomWidth="1px" borderColor="border.muted" pr={12}>
           <Dialog.Title>Edit building price</Dialog.Title>
         </Dialog.Header>
         <Dialog.Body py={5} overflowY="auto" maxH="min(70vh, 640px)" minW={0}>
@@ -709,7 +751,7 @@ function ProductForm({
         {readOnlyStructure && (
           <Field.Root>
             <Field.Label>Building</Field.Label>
-            <Input value={buildings.find((b) => String(b.id) === buildingId)?.name || ""} readOnly bg="gray.50" />
+            <Input value={buildings.find((b) => String(b.id) === buildingId)?.name || ""} readOnly bg="bg.subtle" />
           </Field.Root>
         )}
         <Field.Root required>

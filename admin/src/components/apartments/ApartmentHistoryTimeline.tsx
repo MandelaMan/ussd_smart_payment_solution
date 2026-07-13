@@ -103,7 +103,7 @@ function TimelineStep({ entry, index, total, highlight }: TimelineStepProps) {
         borderRadius="full"
         border="2px solid"
         borderColor={color}
-        bg="white"
+        bg="bg.panel"
         boxShadow={highlight ? `0 4px 16px ${color}44` : "0 2px 10px rgba(0,0,0,0.08)"}
         display="flex"
         alignItems="center"
@@ -127,7 +127,7 @@ function TimelineStep({ entry, index, total, highlight }: TimelineStepProps) {
         mt={4}
         fontSize="xs"
         fontWeight="bold"
-        color="gray.700"
+        color="fg"
         textTransform="uppercase"
         letterSpacing="0.06em"
         lineHeight="1.35"
@@ -140,7 +140,7 @@ function TimelineStep({ entry, index, total, highlight }: TimelineStepProps) {
         mt={1.5}
         fontSize="sm"
         fontWeight="semibold"
-        color="gray.900"
+        color="fg"
         lineHeight="1.4"
         textAlign="center"
         lineClamp={2}
@@ -148,18 +148,18 @@ function TimelineStep({ entry, index, total, highlight }: TimelineStepProps) {
         {formatTitleCase(entry.customerName)}
       </Text>
 
-      <Text mt={1} fontSize="xs" color="gray.500" lineHeight="1.45" textAlign="center">
+      <Text mt={1} fontSize="xs" color="fg.muted" lineHeight="1.45" textAlign="center">
         {dateRange}
       </Text>
 
-      <Text mt={1.5} fontSize="xs" color="gray.500" lineHeight="1.5" textAlign="center" px={1}>
+      <Text mt={1.5} fontSize="xs" color="fg.muted" lineHeight="1.5" textAlign="center" px={1}>
         {entry.customerNumber}
         {entry.productName
           ? ` · ${entry.productMbps ? `${entry.productMbps} Mbps` : entry.productName}`
           : ""}
       </Text>
 
-      <Text mt={1} fontSize="2xs" color="gray.400" lineHeight="1.45" textAlign="center" px={1}>
+      <Text mt={1} fontSize="2xs" color="fg.subtle" lineHeight="1.45" textAlign="center" px={1}>
         {REASON_DESCRIPTIONS[entry.reason] || "Occupancy record for this apartment."}
       </Text>
     </Flex>
@@ -187,7 +187,7 @@ export function ApartmentHistoryTimeline({
 
   if (sorted.length === 0) {
     return (
-      <Text color="gray.500" fontSize="sm" py={6} textAlign="center" lineHeight="1.5">
+      <Text color="fg.muted" fontSize="sm" py={6} textAlign="center" lineHeight="1.5">
         {emptyMessage ?? "No occupancy history recorded"}
       </Text>
     );

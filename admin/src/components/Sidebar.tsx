@@ -7,6 +7,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { NavLink } from "react-router-dom";
+
 import {
   FiGrid,
   FiCreditCard,
@@ -120,8 +121,9 @@ export function Sidebar({ open, onClose }: Props) {
 
   return (
     <>
-      {open && (
+      {open ? (
         <Box
+          className="mobile-sidebar-backdrop"
           display={{ base: "block", lg: "none" }}
           position="fixed"
           inset={0}
@@ -129,14 +131,14 @@ export function Sidebar({ open, onClose }: Props) {
           zIndex={1100}
           onClick={onClose}
         />
-      )}
+      ) : null}
 
       <Box
         as="aside"
         w={{ base: "min(280px, 88vw)", lg: "220px" }}
-        bg="white"
+        bg="sidebar.bg"
         borderRight="1px solid"
-        borderColor="brand.100"
+        borderColor="sidebar.border"
         position={{ base: "fixed", lg: "sticky" }}
         top={0}
         h="100dvh"
@@ -146,12 +148,15 @@ export function Sidebar({ open, onClose }: Props) {
           base: open ? "translateX(0)" : "translateX(-100%)",
           lg: "none",
         }}
-        transition="transform 0.2s"
+        transition="transform 0.32s cubic-bezier(0.22, 1, 0.36, 1)"
         display="flex"
         flexDirection="column"
         flexShrink={0}
         overflow="hidden"
-        boxShadow={{ base: "lg", lg: "none" }}
+        boxShadow={{
+          base: open ? "0 12px 40px rgba(15, 23, 42, 0.28)" : "none",
+          lg: "none",
+        }}
       >
         <NavLink to="/" end onClick={onClose} style={{ textDecoration: "none", flexShrink: 0 }}>
           <Flex
@@ -184,7 +189,7 @@ export function Sidebar({ open, onClose }: Props) {
           </Flex>
         </NavLink>
 
-        <Box flex={1} minH={0} overflowY="auto" bg="brand.50" px={2} py={2}>
+        <Box flex={1} minH={0} overflowY="auto" bg="sidebar.nav" px={2} py={2}>
           <VStack align="stretch" gap={0.5}>
           {links
             .filter((l) => l.visible !== false)
@@ -207,15 +212,16 @@ export function Sidebar({ open, onClose }: Props) {
                       borderRadius="md"
                       fontSize="sm"
                       fontWeight="medium"
-                      color={isActive ? "white" : "brand.800"}
+                      color={isActive ? "white" : "sidebar.fg"}
                       bg={isActive ? "brand.600" : "transparent"}
                       borderLeft="3px solid"
                       borderLeftColor={isActive ? "azure.500" : "transparent"}
                       _hover={{
-                        bg: isActive ? "brand.700" : "white",
-                        color: isActive ? "white" : "brand.700",
+                        bg: isActive ? "brand.700" : "sidebar.hover",
+                        color: isActive ? "white" : "sidebar.fg",
                       }}
-                      transition="background 0.15s, color 0.15s"
+                      _active={{ transform: "scale(0.98)" }}
+                      transition="background 0.15s, color 0.15s, transform 0.15s"
                     >
                       <link.icon size={16} />
                       {link.label}
@@ -237,22 +243,24 @@ export function Sidebar({ open, onClose }: Props) {
         <Box
           flexShrink={0}
           borderTop="1px solid"
-          borderColor="brand.100"
+          borderColor="sidebar.border"
           px={3}
           pt={3}
-          bg="white"
+          bg="sidebar.bg"
           pb={{
             base: "max(1rem, env(safe-area-inset-bottom, 0px))",
             lg: 3,
           }}
         >
-          <Text fontSize="sm" fontWeight="medium" truncate color="brand.800">
-            {user?.name}
-          </Text>
-          <Text fontSize="xs" color="gray.500" truncate>
+          <Text fontSize="xs" color="sidebar.muted" truncate>
             {user?.email}
           </Text>
-          <Text fontSize="xs" color="brand.600" fontWeight="medium" mt={0.5}>
+          <Text
+            fontSize="xs"
+            color="brand.600"
+            fontWeight="medium"
+            mt={0.5}
+          >
             {roleLabel(role)}
           </Text>
           <Button

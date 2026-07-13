@@ -9,8 +9,9 @@ import {
   Table,
   Text,
 } from "@chakra-ui/react";
-import { FiMail, FiEye } from "react-icons/fi";
+import { FiMail, FiEye, FiRefreshCw } from "react-icons/fi";
 import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../../hooks/useMobileViewport";
 import {
   api,
   formatDate,
@@ -21,6 +22,7 @@ import {
 import { FilterField } from "../module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../ui/FilterToolbar";
 import { SelectField } from "../ui/SelectField";
+import { MobilePageChrome } from "../ui/MobilePageChrome";
 import {
   DataTable,
   DataTableCard,
@@ -43,6 +45,7 @@ import {
   type ExportFormat,
   type ExportScope,
 } from "../../lib/tableExport";
+import { useBillingReconciliation } from "./BillingReconciliationContext";
 
 const PAGE_SIZE = 25;
 
@@ -57,6 +60,8 @@ export function BillingCommunicationsTable({
   onReload,
   mailConfigured = false,
 }: Props) {
+  const isMobile = useMobileViewport();
+  const { syncing, runSync } = useBillingReconciliation();
   const [searchInput, setSearchInput] = useState("");
   const { query: debouncedQuery, pending: searchPending } = useDebouncedSearch(searchInput);
   const [search, setSearch] = useState("");
@@ -70,6 +75,7 @@ export function BillingCommunicationsTable({
     pages: 1,
   });
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [sending, setSending] = useState(false);
@@ -90,7 +96,9 @@ export function BillingCommunicationsTable({
   }, [statusFilter]);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const append = isMobile && page > 1;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError("");
     try {
       const res = await api.listBillingCommunications({
@@ -99,15 +107,18 @@ export function BillingCommunicationsTable({
         search: search || undefined,
         status: statusFilter || undefined,
       });
-      setRows(res.data);
+      setRows((prev) =>
+        mergeInfinitePage(prev, res.data, page, isMobile, (row) => row.customerId)
+      );
       setPagination(res.pagination);
-      setSelected(new Set());
+      if (!append) setSelected(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [page, search, statusFilter, reloadKey]);
+  }, [page, search, statusFilter, reloadKey, isMobile]);
 
   useEffect(() => {
     load();
@@ -223,11 +234,28 @@ export function BillingCommunicationsTable({
 
   return (
     <Stack gap={3}>
+      <Box display={{ base: "block", lg: "none" }}>
+        <MobilePageChrome
+          title="Communications"
+          searchValue={searchInput}
+          onSearchChange={setSearchInput}
+          searchPlaceholder="Customer number or name…"
+          headerActions={
+            <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+              <FiRefreshCw />
+            </Button>
+          }
+        />
+      </Box>
+
       {!mailConfigured && (
         <Box py={2} px={3} bg="orange.50" border="1px solid" borderColor="orange.100" borderRadius="md">
-          <Text fontSize="sm" color="orange.800">
+          <Text fontSize="sm" color="orange.800" display={{ base: "none", lg: "block" }}>
             Zoho Mail is not configured — set ZOHO_MAIL_ACCOUNT_ID and ZOHO_MAIL_FROM_ADDRESS in server
             .env (OAuth token needs ZohoMail.messages.CREATE scope).
+          </Text>
+          <Text fontSize="sm" color="orange.800" display={{ base: "block", lg: "none" }}>
+            Zoho Mail is not configured — sending is disabled.
           </Text>
         </Box>
       )}
@@ -243,7 +271,7 @@ export function BillingCommunicationsTable({
           />
         }
       >
-        <FilterField label="Search" flex={FILTER_FLEX.search}>
+        <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
           <Input
             size="sm"
             placeholder="Customer number or name…"
@@ -251,7 +279,7 @@ export function BillingCommunicationsTable({
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </FilterField>
-        <FilterField label="Billing gap" flex={FILTER_FLEX.standard}>
+        <FilterField label="Billing gap" flex={FILTER_FLEX.standard} hideOnMobile>
           <SelectField
             size="sm"
             fieldProps={{
@@ -289,7 +317,13 @@ export function BillingCommunicationsTable({
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       {tableBusy ? (
-        <DataTableCard pagination={pagination} onPageChange={setPage} loading>
+        <DataTableCard
+          pagination={pagination}
+          onPageChange={setPage}
+          loading
+          loadingMore={loadingMore}
+          loadedCount={rows.length}
+        >
           <ResponsiveListViews
             fill
             mobile={<MobileCardListSkeleton fill variant="card" />}
@@ -297,7 +331,12 @@ export function BillingCommunicationsTable({
           />
         </DataTableCard>
       ) : (
-        <DataTableCard pagination={pagination} onPageChange={setPage}>
+        <DataTableCard
+          pagination={pagination}
+          onPageChange={setPage}
+          loadingMore={loadingMore}
+          loadedCount={rows.length}
+        >
           {rows.length === 0 ? (
             <EmptyState>No billing communications match your filters</EmptyState>
           ) : (
@@ -308,18 +347,11 @@ export function BillingCommunicationsTable({
                 getKey={(row) => row.customerId}
                 renderCard={(row) => (
                   <MobileDataCard
+                    variant="row"
                     title={row.customerName}
                     subtitle={row.customerNumber}
                     trailing={<ReconciliationStatusBadge status={row.primaryStatus} />}
                     showChevron={false}
-                    fields={[
-                      { label: "Template", value: row.templateLabel || "—" },
-                      { label: "Email", value: row.email || "No email" },
-                      {
-                        label: "Last sent",
-                        value: row.lastSentAt ? formatDate(row.lastSentAt) : "—",
-                      },
-                    ]}
                     footer={
                       <Flex gap={2} wrap="wrap">
                         <Button size="sm" variant="ghost" onClick={() => openPreview(row.customerId)}>
@@ -379,7 +411,7 @@ export function BillingCommunicationsTable({
                     <Text fontWeight="medium" fontSize="sm">
                       {row.customerName}
                     </Text>
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color="fg.muted">
                       {row.customerNumber}
                     </Text>
                   </Table.Cell>

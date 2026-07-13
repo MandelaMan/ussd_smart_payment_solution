@@ -199,6 +199,7 @@ export type Customer = {
   trialPeriodEnabled: boolean;
   trialEndsAt: string | null;
   lastPaymentDate: string | null;
+  tispDueDate: string | null;
   status: "active" | "cancelled";
   upgradePaymentStatus?: "none" | "payment_pending";
   createdAt: string;
@@ -1203,7 +1204,13 @@ export const api = {
 
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
 
-  me: () => request<{ user: User }>("/auth/me"),
+  me: () => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 8000);
+    return request<{ user: User }>("/auth/me", { signal: controller.signal }).finally(() =>
+      window.clearTimeout(timer)
+    );
+  },
 
   getLoginStats: () =>
     request<{
@@ -1851,7 +1858,19 @@ export const api = {
     ),
 
   cancelCustomer: (id: number, notes?: string) =>
-    request<{ ok: boolean; customer: Customer }>(`/admin/customers/${id}/cancel`, {
+    request<{
+      ok: boolean;
+      customer: Customer;
+      tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+      zoho?: {
+        ok: boolean;
+        skipped?: boolean;
+        contactInactivated?: boolean;
+        recurringStopped?: number;
+        error?: string;
+        reason?: string;
+      };
+    }>(`/admin/customers/${id}/cancel`, {
       method: "POST",
       body: JSON.stringify({ notes }),
     }),
@@ -1872,6 +1891,8 @@ export const api = {
         ok: boolean;
         customerNumber?: string | null;
         error?: string;
+        tisp?: { ok: boolean; error?: string };
+        zoho?: { ok: boolean; error?: string };
       }>;
     }>("/admin/customers/bulk-cancel", {
       method: "POST",

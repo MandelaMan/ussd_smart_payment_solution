@@ -22,9 +22,9 @@ export function PackageSubscriptionChart({ data }: { data: PackageItem[] }) {
             key={item.name}
             py={3}
             borderBottom={index < items.length - 1 ? "1px solid" : undefined}
-            borderColor="gray.200"
+            borderColor="border"
           >
-            <Flex h={{ base: "42px", md: "38px" }} borderRadius="md" overflow="hidden" bg="gray.100">
+            <Flex h={{ base: "42px", md: "38px" }} borderRadius="md" overflow="hidden" bg="bg.muted">
               <Flex
                 bg={BRAND.cerulean}
                 w={`${barWidth}%`}

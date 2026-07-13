@@ -1,12 +1,11 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
   Badge,
-  Box,
   Button,
   Flex,
-  Heading,
   Input,
   Stack,
   Table,
@@ -24,6 +23,7 @@ import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
+import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { SelectField } from "../components/ui/SelectField";
 import {
   DataTable,
@@ -64,6 +64,7 @@ const PAGE_SIZE = 20;
 type LogSortKey = "endpoint" | "service" | "createdAt" | "customerNumber" | "status";
 
 export function LogsPage() {
+  const isMobile = useMobileViewport();
   const [service, setService] = useState("");
   const [status, setStatus] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -71,6 +72,7 @@ export function LogsPage() {
   const debouncedSearchInput = useDebouncedValue(searchInput);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<ApiCallLog[]>([]);
   const [pagination, setPagination] = useState({
@@ -88,7 +90,9 @@ export function LogsPage() {
   });
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const append = isMobile && page > 1;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError("");
     try {
       const params: Record<string, string> = {
@@ -101,14 +105,15 @@ export function LogsPage() {
       params.sortBy = sortQuery.sortBy;
       params.sortDir = sortQuery.sortDir;
       const res = await api.listLogs(params);
-      setRows(res.data);
+      setRows((prev) => mergeInfinitePage(prev, res.data, page, isMobile, (row) => row.id));
       setPagination(res.pagination);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load logs");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [page, search, status, service, sortQuery.sortBy, sortQuery.sortDir]);
+  }, [page, search, status, service, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   function handleSort(
     column: LogSortKey,
@@ -209,35 +214,61 @@ export function LogsPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <Flex
-        justify="space-between"
-        align={{ base: "stretch", md: "center" }}
-        direction={{ base: "column", md: "row" }}
-        gap={3}
-      >
-        <Box>
-          <Heading size="lg">Logs</Heading>
-          <Text fontSize="sm" color="gray.500">
-            API endpoint summary and integration retries — expand a row for payload and response details
-          </Text>
-        </Box>
-        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
-          <DataTableExportButton
-            entityLabel="logs"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        <Button size="sm" variant="outline" onClick={() => load()} loading={loading}>
-          <FiRefreshCw style={{ marginRight: 6 }} />
-          Refresh
-        </Button>
-        </Flex>
-      </Flex>
+      <MobilePageChrome
+        title="Logs"
+        description="API endpoint summary and integration retries — expand a row for payload and response details"
+        searchValue={searchInput}
+        onSearchChange={setSearchInput}
+        searchPlaceholder="Endpoint, customer, error…"
+        sortOptions={[
+          {
+            key: "createdAt",
+            label: "Called",
+            active: sorts[0]?.sortBy === "createdAt",
+            direction: sorts[0]?.sortBy === "createdAt" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("createdAt", "desc"),
+          },
+          {
+            key: "service",
+            label: "Service",
+            active: sorts[0]?.sortBy === "service",
+            direction: sorts[0]?.sortBy === "service" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("service"),
+          },
+          {
+            key: "status",
+            label: "Status",
+            active: sorts[0]?.sortBy === "status",
+            direction: sorts[0]?.sortBy === "status" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("status"),
+          },
+          {
+            key: "endpoint",
+            label: "Endpoint",
+            active: sorts[0]?.sortBy === "endpoint",
+            direction: sorts[0]?.sortBy === "endpoint" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("endpoint"),
+          },
+        ]}
+        desktopActions={
+          <Flex gap={2} align="center" flexWrap="wrap">
+            <DataTableExportButton
+              entityLabel="logs"
+              viewCount={rows.length}
+              totalCount={pagination.total}
+              loading={exporting}
+              onExport={handleExport}
+            />
+            <Button size="sm" variant="outline" onClick={() => load()} loading={loading}>
+              <FiRefreshCw style={{ marginRight: 6 }} />
+              Refresh
+            </Button>
+          </Flex>
+        }
+      />
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input
               size="sm"
               placeholder="Endpoint, customer, error…"
@@ -245,7 +276,7 @@ export function LogsPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </FilterField>
-          <FilterField label="Service" flex={FILTER_FLEX.standard} minW={0}>
+          <FilterField label="Service" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -262,7 +293,7 @@ export function LogsPage() {
               <option value="mpesa">M-Pesa</option>
             </SelectField>
           </FilterField>
-          <FilterField label="Status" flex={FILTER_FLEX.standard} minW={0}>
+          <FilterField label="Status" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -288,6 +319,8 @@ export function LogsPage() {
 
       <DataTableCard
         loading={loading && rows.length === 0}
+        loadingMore={loadingMore}
+        loadedCount={rows.length}
         pagination={pagination}
         onPageChange={setPage}
         itemLabel="logs"
@@ -366,7 +399,7 @@ export function LogsPage() {
               {rows.length === 0 ? (
                 <Table.Row>
                   <Table.Cell colSpan={7} {...dataTableCellProps} borderBottom="none">
-                    <Text py={6} textAlign="center" color="gray.500" fontSize="sm">
+                    <Text py={6} textAlign="center" color="fg.muted" fontSize="sm">
                       No API logs yet
                     </Text>
                   </Table.Cell>
@@ -375,7 +408,7 @@ export function LogsPage() {
                 rows.map((row) => (
                   <Fragment key={row.id}>
                     <Table.Row
-                      _hover={{ bg: "gray.50" }}
+                      _hover={{ bg: "bg.subtle" }}
                       cursor="pointer"
                       onClick={() =>
                         setExpanded((prev) => (prev === row.id ? null : row.id))
@@ -392,7 +425,7 @@ export function LogsPage() {
                         <Text fontWeight="semibold" fontSize="sm">
                           {endpointLabel(row.endpoint)}
                         </Text>
-                        <Text fontSize="xs" color="gray.500" mt={0.5}>
+                        <Text fontSize="xs" color="fg.muted" mt={0.5}>
                           {row.operation}
                         </Text>
                       </Table.Cell>
@@ -405,7 +438,7 @@ export function LogsPage() {
                           {SERVICE_LABELS[row.service] || row.service}
                         </Badge>
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">{formatDate(row.createdAt)}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">{formatDate(row.createdAt)}</Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontFamily="mono" textTransform="uppercase">
                         {row.customerNumber ?? "—"}
                       </Table.Cell>
@@ -430,7 +463,7 @@ export function LogsPage() {
                     </Table.Row>
                     {expanded === row.id ? (
                       <Table.Row {...dataTableExpandRowProps}>
-                        <Table.Cell colSpan={7} p={3} bg="white" borderBottom="none">
+                        <Table.Cell colSpan={7} p={3} bg="bg.panel" borderBottom="none">
                           <LogExpandPanel log={row} />
                         </Table.Cell>
                       </Table.Row>

@@ -1,5 +1,6 @@
 import { Fragment, type FormEvent, useCallback, useEffect, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
   Badge,
@@ -13,7 +14,6 @@ import {
   Input,
   Stack,
   Table,
-  Text,
 } from "@chakra-ui/react";
 import { FiBriefcase, FiChevronDown, FiChevronRight } from "react-icons/fi";
 import { api, type Agency, type ListPagination } from "../lib/api";
@@ -26,6 +26,7 @@ import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
+import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { AgencyExpandPanel } from "../components/agencies/AgencyExpandPanel";
 import { DisplayText } from "../components/ui/DisplayText";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
@@ -52,6 +53,7 @@ type AgencySortKey = "name" | "contactPerson" | "phone" | "email" | "activeCusto
 
 export function AgenciesPage() {
   const { user } = useAuth();
+  const isMobile = useMobileViewport();
   const canMutate = canMutateAgencies(user);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({
@@ -61,6 +63,7 @@ export function AgenciesPage() {
     pages: 1,
   });
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -83,7 +86,9 @@ export function AgenciesPage() {
   });
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const append = isMobile && page > 1;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError("");
     try {
       const params: Record<string, string> = { page: String(page), limit: String(PAGE_SIZE) };
@@ -91,14 +96,17 @@ export function AgenciesPage() {
       params.sortBy = sortQuery.sortBy;
       params.sortDir = sortQuery.sortDir;
       const res = await api.listAgencies(params);
-      setAgencies(res.agencies);
+      setAgencies((prev) =>
+        mergeInfinitePage(prev, res.agencies, page, isMobile, (a) => a.id)
+      );
       setPagination(res.pagination);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load agencies");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [search, page, sortQuery.sortBy, sortQuery.sortDir]);
+  }, [search, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   function handleSort(
     column: AgencySortKey,
@@ -221,38 +229,62 @@ export function AgenciesPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <Flex justify="space-between" align={{ base: "start", md: "center" }} direction={{ base: "column", md: "row" }} gap={3}>
-        <Box>
-          <Heading size="lg">Agencies</Heading>
-          <Text fontSize="sm" color="gray.500">
-            {canMutate ? "Expand a row to view details and edit" : "View agency reference data"}
-          </Text>
-        </Box>
-        <Flex gap={2} align="center" flexWrap="wrap" w={{ base: "full", md: "auto" }}>
-          <DataTableExportButton
-            entityLabel="agencies"
-            viewCount={agencies.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        {canMutate ? (
-        <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
-          <FiBriefcase />
-          Add Agency
-        </Button>
-        ) : null}
-        </Flex>
-      </Flex>
+      <MobilePageChrome
+        title="Agencies"
+        description={canMutate ? "Expand a row to view details and edit" : "View agency reference data"}
+        searchValue={searchInput}
+        onSearchChange={setSearchInput}
+        searchPlaceholder="Name, email, phone…"
+        sortOptions={[
+          {
+            key: "name",
+            label: "Agency",
+            active: sorts[0]?.sortBy === "name",
+            direction: sorts[0]?.sortBy === "name" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("name"),
+          },
+          {
+            key: "contactPerson",
+            label: "Contact",
+            active: sorts[0]?.sortBy === "contactPerson",
+            direction: sorts[0]?.sortBy === "contactPerson" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("contactPerson"),
+          },
+          {
+            key: "activeCustomers",
+            label: "Customers",
+            active: sorts[0]?.sortBy === "activeCustomers",
+            direction: sorts[0]?.sortBy === "activeCustomers" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("activeCustomers", "desc"),
+          },
+        ]}
+        desktopActions={
+          <Flex gap={2} align="center" flexWrap="wrap">
+            <DataTableExportButton
+              entityLabel="agencies"
+              viewCount={agencies.length}
+              totalCount={pagination.total}
+              loading={exporting}
+              onExport={handleExport}
+            />
+            {canMutate ? (
+              <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
+                <FiBriefcase />
+                Add Agency
+              </Button>
+            ) : null}
+          </Flex>
+        }
+      />
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0}>
+          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input size="sm" placeholder="Name, email, phone…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} borderRadius="md" />
           </FilterField>
       </FilterToolbar>
 
       {showForm && (
-        <Box bg="white" borderRadius="lg" border="1px solid" borderColor="gray.100" p={5}>
+        <Box bg="bg.panel" borderRadius="lg" border="1px solid" borderColor="border.muted" p={5}>
           <Heading size="sm" mb={4}>New agency</Heading>
           <AgencyForm
             name={name} setName={setName} email={email} setEmail={setEmail}
@@ -266,6 +298,8 @@ export function AgenciesPage() {
 
       <DataTableCard
         loading={loading}
+        loadingMore={loadingMore}
+        loadedCount={agencies.length}
         pagination={pagination}
         onPageChange={(nextPage) => {
           setPage(nextPage);
@@ -339,7 +373,7 @@ export function AgenciesPage() {
                           {a.activeCustomers ?? 0}
                         </Badge>
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="gray.600">{a.phone}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">{a.phone}</Table.Cell>
                     </Table.Row>
                     {isOpen && (
                       <Table.Row {...dataTableExpandRowProps}>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Box,
   Button,
@@ -62,6 +62,66 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+function MobileRecordList({
+  children,
+  empty,
+}: {
+  children: ReactNode;
+  empty?: boolean;
+}) {
+  if (empty) {
+    return (
+      <Text fontSize="xs" color="fg.subtle" py={4} textAlign="center">
+        No records
+      </Text>
+    );
+  }
+  return (
+    <Stack
+      gap={0}
+      divideY="1px"
+      divideColor="gray.100"
+      border="1px solid"
+      borderColor="border.muted"
+      borderRadius="md"
+      overflow="hidden"
+      w="full"
+    >
+      {children}
+    </Stack>
+  );
+}
+
+function MobileRecordRow({
+  title,
+  meta,
+  trailing,
+}: {
+  title: ReactNode;
+  meta?: ReactNode;
+  trailing?: ReactNode;
+}) {
+  return (
+    <Flex px={2.5} py={2} gap={2} justify="space-between" align="flex-start" w="full" minW={0}>
+      <Box flex={1} minW={0}>
+        <Text fontSize="xs" fontWeight="semibold" color="fg" lineClamp={1}>
+          {title}
+        </Text>
+        {meta ? (
+          <Box fontSize="2xs" color="fg.muted" mt={0.5} lineHeight="1.35">
+            {meta}
+          </Box>
+        ) : null}
+      </Box>
+      {trailing ? (
+        <Box flexShrink={0} textAlign="right" maxW="42%" minW={0}>
+          {trailing}
+        </Box>
+      ) : null}
+    </Flex>
+  );
+}
+
 export function ReconciliationExpandPanel({
   customerId,
   initialRow,
@@ -116,7 +176,7 @@ export function ReconciliationExpandPanel({
 
   if (!detail) {
     return (
-      <Text fontSize="sm" color="gray.500">
+      <Text fontSize="sm" color="fg.muted">
         Reconciliation data unavailable.
       </Text>
     );
@@ -151,21 +211,18 @@ export function ReconciliationExpandPanel({
         detail.primaryStatus === "connected_without_payment" ? "red.500" : "brand.600"
       }
     >
-      <Stack gap={3} p={3}>
+      <Stack gap={{ base: 2, md: 3 }}>
         {(detail.billedViaAgency || detail.customer?.customerType === "B2B") && (
-          <Box bg="blue.50" border="1px solid" borderColor="blue.100" borderRadius="md" px={3} py={2}>
+          <Box bg="blue.50" border="1px solid" borderColor="blue.100" borderRadius="md" px={{ base: 2.5, md: 3 }} py={{ base: 1.5, md: 2 }}>
             <Text fontSize="xs" color="blue.800" fontWeight="medium">
-              B2B — billed via {detail.agencyName || detail.customer?.agencyName || "agency"}
-            </Text>
-            <Text fontSize="xs" color="blue.700" mt={0.5}>
               {detail.billingNote ||
-                "Individual Zoho invoices are not created for B2B customers. Use Agencies to invoice."}
+                `B2B — billed via ${detail.agencyName || detail.customer?.agencyName || "agency"}, not individually`}
             </Text>
           </Box>
         )}
 
         {(detail.zohoError || detail.tispError) && (
-          <Box bg="orange.50" border="1px solid" borderColor="orange.200" borderRadius="md" px={3} py={2}>
+          <Box bg="orange.50" border="1px solid" borderColor="orange.200" borderRadius="md" px={{ base: 2.5, md: 3 }} py={{ base: 1.5, md: 2 }}>
             <Text fontSize="xs" color="orange.800">
               {detail.zohoError && `Zoho: ${detail.zohoError}`}
               {detail.zohoError && detail.tispError ? " · " : ""}
@@ -177,7 +234,7 @@ export function ReconciliationExpandPanel({
         <TabStrip tabs={[...TABS]} active={tab} onChange={(id) => setTab(id as TabId)} />
 
         {tab === "overview" && (
-          <Stack gap={3}>
+          <Stack gap={{ base: 2, md: 3 }}>
             <ReconciliationSystemChecks detail={detail} />
 
             <DetailGrid>
@@ -210,10 +267,10 @@ export function ReconciliationExpandPanel({
 
             {detail.recommendations?.length > 0 && (
               <Box>
-                <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
+                <Text fontSize="2xs" fontWeight="semibold" color="fg.muted" mb={1.5}>
                   Recommended Actions
                 </Text>
-                <Flex gap={2} wrap="wrap">
+                <Flex gap={1.5} wrap="wrap">
                   {detail.recommendations.map((rec) => (
                     <Button
                       key={rec.action}
@@ -251,65 +308,134 @@ export function ReconciliationExpandPanel({
         )}
 
         {tab === "invoices" && (
-          <DataTable>
-            <Table.Header>
-              <Table.Row>
-                <DataTableColumnHeader>Invoice</DataTableColumnHeader>
-                <DataTableColumnHeader>Date</DataTableColumnHeader>
-                <DataTableColumnHeader>Due</DataTableColumnHeader>
-                <DataTableColumnHeader>Status</DataTableColumnHeader>
-                <DataTableColumnHeader textAlign="right">Balance</DataTableColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {(detail.invoices || []).map((inv) => (
-                <Table.Row key={inv.id}>
-                  <Table.Cell {...dataTableCellProps}>{inv.invoiceNumber || inv.id}</Table.Cell>
-                  <Table.Cell {...dataTableCellProps}>{inv.date ? formatDate(inv.date) : "—"}</Table.Cell>
-                  <Table.Cell {...dataTableCellProps}>{inv.dueDate ? formatDate(inv.dueDate) : "—"}</Table.Cell>
-                  <Table.Cell {...dataTableCellProps}>
-                    <TextStatus status={inv.status} />
-                  </Table.Cell>
-                  <Table.Cell {...dataTableCellProps} textAlign="right">
-                    {formatCurrency(inv.balanceDue)}
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </DataTable>
+          <>
+            <Box display={{ base: "block", lg: "none" }}>
+              <MobileRecordList empty={(detail.invoices || []).length === 0}>
+                {(detail.invoices || []).map((inv) => (
+                  <MobileRecordRow
+                    key={inv.id}
+                    title={inv.invoiceNumber || inv.id}
+                    meta={
+                      <Text>
+                        {[
+                          inv.date ? formatDate(inv.date) : null,
+                          inv.dueDate ? `Due ${formatDate(inv.dueDate)}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </Text>
+                    }
+                    trailing={
+                      <Box>
+                        <Text fontSize="xs" fontWeight="semibold" color="brand.800" whiteSpace="nowrap">
+                          {formatCurrency(inv.balanceDue)}
+                        </Text>
+                        <Box mt={0.5} display="flex" justifyContent="flex-end">
+                          <TextStatus status={inv.status} />
+                        </Box>
+                      </Box>
+                    }
+                  />
+                ))}
+              </MobileRecordList>
+            </Box>
+            <Box display={{ base: "none", lg: "block" }}>
+              <DataTable>
+                <Table.Header>
+                  <Table.Row>
+                    <DataTableColumnHeader>Invoice</DataTableColumnHeader>
+                    <DataTableColumnHeader>Date</DataTableColumnHeader>
+                    <DataTableColumnHeader>Due</DataTableColumnHeader>
+                    <DataTableColumnHeader>Status</DataTableColumnHeader>
+                    <DataTableColumnHeader textAlign="right">Balance</DataTableColumnHeader>
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
+                  {(detail.invoices || []).map((inv) => (
+                    <Table.Row key={inv.id}>
+                      <Table.Cell {...dataTableCellProps}>{inv.invoiceNumber || inv.id}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>{inv.date ? formatDate(inv.date) : "—"}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>{inv.dueDate ? formatDate(inv.dueDate) : "—"}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        <TextStatus status={inv.status} />
+                      </Table.Cell>
+                      <Table.Cell {...dataTableCellProps} textAlign="right">
+                        {formatCurrency(inv.balanceDue)}
+                      </Table.Cell>
+                    </Table.Row>
+                  ))}
+                </Table.Body>
+              </DataTable>
+            </Box>
+          </>
         )}
 
         {tab === "payments" && (
-          <Stack gap={3}>
-            <DataTable>
-              <Table.Header>
-                <Table.Row>
-                  <DataTableColumnHeader>Source</DataTableColumnHeader>
-                  <DataTableColumnHeader>Reference</DataTableColumnHeader>
-                  <DataTableColumnHeader>Date</DataTableColumnHeader>
-                  <DataTableColumnHeader textAlign="right">Amount</DataTableColumnHeader>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
+          <>
+            <Box display={{ base: "block", lg: "none" }}>
+              <MobileRecordList
+                empty={[...(detail.mpesaPayments || []), ...(detail.zohoPayments || [])].length === 0}
+              >
                 {[...(detail.mpesaPayments || []), ...(detail.zohoPayments || [])].map((p) => (
-                  <Table.Row key={p.id}>
-                    <Table.Cell {...dataTableCellProps}>{p.source?.toUpperCase()}</Table.Cell>
-                    <Table.Cell {...dataTableCellProps}>{p.referenceId || "—"}</Table.Cell>
-                    <Table.Cell {...dataTableCellProps}>
-                      {p.paidAt ? formatDate(String(p.paidAt)) : "—"}
-                    </Table.Cell>
-                    <Table.Cell {...dataTableCellProps} textAlign="right">
-                      {formatCurrency(p.amount)}
-                    </Table.Cell>
-                  </Table.Row>
+                  <MobileRecordRow
+                    key={p.id}
+                    title={p.referenceId || p.id}
+                    meta={
+                      <Text>
+                        {[p.source?.toUpperCase(), p.paidAt ? formatDate(String(p.paidAt)) : null]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </Text>
+                    }
+                    trailing={
+                      <Text fontSize="xs" fontWeight="semibold" color="brand.800" whiteSpace="nowrap">
+                        {formatCurrency(p.amount)}
+                      </Text>
+                    }
+                  />
                 ))}
-              </Table.Body>
-            </DataTable>
-          </Stack>
+              </MobileRecordList>
+            </Box>
+            <Box display={{ base: "none", lg: "block" }}>
+              <DataTable>
+                <Table.Header>
+                  <Table.Row>
+                    <DataTableColumnHeader>Source</DataTableColumnHeader>
+                    <DataTableColumnHeader>Reference</DataTableColumnHeader>
+                    <DataTableColumnHeader>Date</DataTableColumnHeader>
+                    <DataTableColumnHeader textAlign="right">Amount</DataTableColumnHeader>
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
+                  {[...(detail.mpesaPayments || []), ...(detail.zohoPayments || [])].map((p) => (
+                    <Table.Row key={p.id}>
+                      <Table.Cell {...dataTableCellProps}>{p.source?.toUpperCase()}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>{p.referenceId || "—"}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        {p.paidAt ? formatDate(String(p.paidAt)) : "—"}
+                      </Table.Cell>
+                      <Table.Cell {...dataTableCellProps} textAlign="right">
+                        {formatCurrency(p.amount)}
+                      </Table.Cell>
+                    </Table.Row>
+                  ))}
+                </Table.Body>
+              </DataTable>
+            </Box>
+          </>
         )}
 
         {tab === "timeline" && (
-          <Stack gap={2}>
+          <Stack
+            gap={0}
+            divideY="1px"
+            divideColor="gray.100"
+            border="1px solid"
+            borderColor="border.muted"
+            borderRadius="md"
+            overflow="hidden"
+            w="full"
+          >
             {[...(detail.auditTrail || []), ...(detail.activityTrail || [])]
               .sort(
                 (a, b) =>
@@ -320,21 +446,28 @@ export function ReconciliationExpandPanel({
                 <Flex
                   key={`${"actionType" in entry ? "audit" : "activity"}-${entry.id}`}
                   gap={2}
+                  px={{ base: 2.5, md: 3 }}
+                  py={{ base: 2, md: 2.5 }}
                   fontSize="xs"
-                  borderBottom="1px solid"
-                  borderColor="gray.100"
-                  pb={2}
+                  align="flex-start"
+                  w="full"
+                  minW={0}
                 >
-                  <Text color="gray.500" minW="140px">
+                  <Text color="fg.muted" minW={{ base: "72px", md: "140px" }} flexShrink={0} fontSize="2xs">
                     {formatDate(entry.createdAt)}
                   </Text>
-                  <Text color="gray.800" flex={1}>
+                  <Text color="fg" flex={1} minW={0} lineHeight="1.4">
                     {"actionType" in entry
                       ? `${entry.actionType}${entry.userEmail ? ` · ${entry.userEmail}` : ""}`
                       : entry.title}
                   </Text>
                 </Flex>
               ))}
+            {[...(detail.auditTrail || []), ...(detail.activityTrail || [])].length === 0 ? (
+              <Text fontSize="xs" color="fg.subtle" py={4} textAlign="center">
+                No audit activity
+              </Text>
+            ) : null}
           </Stack>
         )}
       </Stack>

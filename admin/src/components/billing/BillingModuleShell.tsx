@@ -3,6 +3,7 @@ import { FiDownload, FiRefreshCw } from "react-icons/fi";
 import type { ReactNode } from "react";
 import type { ReconciliationSummary } from "../../lib/api";
 import { BillingSyncProgressBanner } from "./BillingSyncProgressBanner";
+import { PAGE_STACK_GAP } from "../ui/pageLayout";
 
 type Props = {
   title: string;
@@ -18,8 +19,6 @@ type Props = {
   children: ReactNode;
 };
 
-import { PAGE_STACK_GAP } from "../ui/pageLayout";
-
 export function BillingModuleShell({
   title,
   description,
@@ -34,10 +33,17 @@ export function BillingModuleShell({
 }: Props) {
   return (
     <Stack gap={PAGE_STACK_GAP} minW={0} maxW="100%">
-      <Flex justify="space-between" align={{ base: "stretch", md: "center" }} gap={3} wrap="wrap" minW={0}>
+      <Flex
+        display={{ base: "none", lg: "flex" }}
+        justify="space-between"
+        align="center"
+        gap={3}
+        wrap="wrap"
+        minW={0}
+      >
         <Box minW={0} flex="1">
           <Heading size="lg">{title}</Heading>
-          <Text fontSize="sm" color="gray.500" mt={0.5}>
+          <Text fontSize="sm" color="fg.muted" mt={0.5}>
             {description}
           </Text>
           {count != null && (
@@ -46,7 +52,7 @@ export function BillingModuleShell({
             </Text>
           )}
           {summary?.sync?.lastSyncAt && (
-            <Text fontSize="xs" color="gray.500" mt={1}>
+            <Text fontSize="xs" color="fg.muted" mt={1}>
               Last sync: {new Date(summary.sync.lastSyncAt).toLocaleString("en-KE")}
             </Text>
           )}
@@ -64,6 +70,7 @@ export function BillingModuleShell({
           </Button>
         </Flex>
       </Flex>
+
       {!hideSyncBanner && summary?.sync?.status === "running" && (
         <BillingSyncProgressBanner
           status={summary.sync.status}

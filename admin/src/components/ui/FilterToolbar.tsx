@@ -25,12 +25,13 @@ export function FilterToolbar({
 }) {
   return (
     <Box
-      bg="white"
+      display={{ base: "none", lg: "block" }}
+      bg="bg.panel"
       borderRadius={{ base: "xl", lg: "lg" }}
       px={{ base: 3.5, lg: 3 }}
       py={{ base: 3.5, lg: 2.5 }}
       border="1px solid"
-      borderColor="gray.100"
+      borderColor="border.muted"
       position="relative"
       zIndex={zIndex}
       boxShadow={{ base: "sm", lg: "none" }}

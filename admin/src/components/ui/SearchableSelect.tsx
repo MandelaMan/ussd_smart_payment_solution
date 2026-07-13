@@ -181,7 +181,7 @@ export function SearchableSelect({
 
   const menuItems =
     filtered.length === 0 ? (
-      <Text px={3} py={3} fontSize="sm" color="gray.500">
+      <Text px={3} py={3} fontSize="sm" color="fg.muted">
         {emptyLabel}
       </Text>
     ) : (
@@ -198,7 +198,7 @@ export function SearchableSelect({
             cursor="pointer"
             bg={isHighlighted ? "brand.50" : isSelected ? "gray.50" : "white"}
             borderBottom="1px solid"
-            borderColor="gray.100"
+            borderColor="border.muted"
             _last={{ borderBottom: "none" }}
             _hover={{ bg: "brand.50" }}
             onMouseEnter={() => setHighlightIndex(index)}
@@ -211,12 +211,12 @@ export function SearchableSelect({
             <Text
               fontSize="sm"
               fontWeight={isSelected ? "semibold" : "medium"}
-              color="gray.900"
+              color="fg"
             >
               {option.label}
             </Text>
             {option.description ? (
-              <Text fontSize="xs" color="gray.500" mt={0.5}>
+              <Text fontSize="xs" color="fg.muted" mt={0.5}>
                 {option.description}
               </Text>
             ) : null}
@@ -230,9 +230,9 @@ export function SearchableSelect({
       ref={menuRef}
       id={menuId}
       role="listbox"
-      bg="white"
+      bg="bg.panel"
       border="1px solid"
-      borderColor="gray.200"
+      borderColor="border"
       borderRadius="md"
       boxShadow="lg"
       maxH="240px"
@@ -258,7 +258,7 @@ export function SearchableSelect({
         boxShadow={open ? "0 0 0 1px var(--chakra-colors-brand-500)" : "sm"}
         overflow="hidden"
       >
-        <Box ps={3} color="gray.400" flexShrink={0}>
+        <Box ps={3} color="fg.subtle" flexShrink={0}>
           <FiSearch size={14} />
         </Box>
         <Input
@@ -289,7 +289,7 @@ export function SearchableSelect({
         />
         <Flex
           pe={3}
-          color="gray.500"
+          color="fg.muted"
           flexShrink={0}
           cursor={isDisabled ? "not-allowed" : "pointer"}
           onMouseDown={(e) => {
@@ -316,7 +316,7 @@ export function SearchableSelect({
               left={`${dropdownRect.left}px`}
               width={`${dropdownRect.width}px`}
               zIndex={resolvedMenuZIndex}
-              bg="white"
+              bg="bg.panel"
               borderRadius="md"
             >
               {menuContent}
@@ -329,7 +329,7 @@ export function SearchableSelect({
             left={0}
             right={0}
             zIndex={resolvedMenuZIndex}
-            bg="white"
+            bg="bg.panel"
             borderRadius="md"
           >
             {menuContent}

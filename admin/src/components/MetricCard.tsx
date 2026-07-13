@@ -9,15 +9,15 @@ const ACCENTS = {
   },
   azure: {
     bg: `linear-gradient(145deg, #2a9fc4 0%, ${BRAND.paleAzure} 100%)`,
-    color: "gray.900",
+    color: "fg",
   },
   sandy: {
     bg: `linear-gradient(145deg, ${BRAND.sandyBrown} 0%, #e8873a 100%)`,
-    color: "gray.900",
+    color: "fg",
   },
   mindaro: {
     bg: `linear-gradient(145deg, #d4d88a 0%, ${BRAND.mindaro} 100%)`,
-    color: "gray.800",
+    color: "fg",
   },
   teal: {
     bg: "linear-gradient(145deg, #0d9488 0%, #14b8a6 100%)",
@@ -50,31 +50,32 @@ export function MetricCard({
     <Box
       bg={style.bg}
       color={style.color}
-      borderRadius="xl"
-      px={{ base: 4, md: 3.5 }}
-      py={{ base: 4, md: 3 }}
-      minH={{ base: "118px", md: "104px" }}
+      borderRadius={{ base: "lg", md: "xl" }}
+      px={{ base: 2.5, md: 3.5 }}
+      py={{ base: 2.5, md: 3 }}
+      minH={{ base: "92px", md: "104px" }}
       display="flex"
       flexDirection="column"
-      gap={{ base: 2, md: 1.5 }}
+      gap={{ base: 1, md: 1.5 }}
       boxShadow="sm"
       position="relative"
       overflow="hidden"
+      w="full"
       _after={{
         content: '""',
         position: "absolute",
         top: "-20px",
         right: "-20px",
-        w: "72px",
-        h: "72px",
+        w: { base: "56px", md: "72px" },
+        h: { base: "56px", md: "72px" },
         borderRadius: "full",
         bg: "whiteAlpha.200",
       }}
     >
       <Text
-        fontSize={{ base: "sm", md: "xs" }}
+        fontSize="xs"
         fontWeight="semibold"
-        lineHeight="1.35"
+        lineHeight="1.3"
         opacity={0.92}
         css={{
           display: "-webkit-box",
@@ -87,7 +88,7 @@ export function MetricCard({
       </Text>
 
       <Text
-        fontSize={{ base: "xl", md: "xl" }}
+        fontSize={{ base: "lg", md: "xl" }}
         fontWeight="bold"
         lineHeight="1.15"
         letterSpacing="-0.02em"
@@ -101,12 +102,12 @@ export function MetricCard({
       {(sub || sub2) && (
         <Box opacity={0.9}>
           {sub && (
-            <Text fontSize={{ base: "sm", md: "xs" }} lineHeight="1.4">
+            <Text fontSize="2xs" lineHeight="1.35" lineClamp={1}>
               {sub}
             </Text>
           )}
           {sub2 && (
-            <Text fontSize={{ base: "sm", md: "xs" }} lineHeight="1.4" mt={sub ? 0.5 : 0}>
+            <Text fontSize="2xs" lineHeight="1.35" mt={sub ? 0.5 : 0} lineClamp={1}>
               {sub2}
             </Text>
           )}
@@ -118,10 +119,11 @@ export function MetricCard({
   if (!to) return content;
 
   return (
-    <RouterLink to={to} style={{ textDecoration: "none" }}>
+    <RouterLink to={to} style={{ textDecoration: "none", display: "block", width: "100%" }}>
       <Box
         transition="transform 0.15s, box-shadow 0.15s"
         _hover={{ transform: "translateY(-1px)", boxShadow: "md" }}
+        w="full"
       >
         {content}
       </Box>

@@ -11,10 +11,10 @@ export const BRAND = {
 /** Shared border + shadow for text fields, selects, and composite input shells. */
 export const fieldControlStyles = {
   borderRadius: "md",
-  bg: "white",
+  bg: "bg.panel",
   boxShadow: "sm",
   _disabled: {
-    bg: "gray.50",
+    bg: "bg.muted",
     opacity: 1,
   },
 } as const;
@@ -23,9 +23,9 @@ export const fieldControlStyles = {
 export const FILTER_CONTROL_HEIGHT = "36px";
 
 const fieldOutlineVariant = {
-  bg: "white",
+  bg: "bg.panel",
   borderWidth: "1px",
-  borderColor: "gray.200",
+  borderColor: "border",
   boxShadow: "sm",
   focusRingWidth: "0px",
   _focusVisible: {
@@ -86,6 +86,8 @@ const config = defineConfig({
         surface: {
           50: { value: "#f4f6f7" },
           100: { value: "#eceef1" },
+          900: { value: "#0b1220" },
+          950: { value: "#070b14" },
         },
       },
       fonts: {
@@ -122,12 +124,31 @@ const config = defineConfig({
     },
     semanticTokens: {
       colors: {
-        bg: { value: { base: "{colors.surface.50}" } },
-        card: { value: { base: "white" } },
-        "bg.muted": { value: { base: "{colors.gray.100}" } },
-        "bg.emphasized": { value: { base: "{colors.gray.200}" } },
+        bg: {
+          DEFAULT: { value: { base: "{colors.surface.50}" } },
+          subtle: { value: { base: "{colors.surface.50}" } },
+          muted: { value: { base: "{colors.gray.100}" } },
+          emphasized: { value: { base: "{colors.gray.200}" } },
+          panel: { value: { base: "{colors.white}" } },
+        },
+        fg: {
+          DEFAULT: { value: { base: "{colors.gray.800}" } },
+          muted: { value: { base: "{colors.gray.600}" } },
+          subtle: { value: { base: "{colors.gray.400}" } },
+        },
+        border: {
+          DEFAULT: { value: { base: "{colors.gray.200}" } },
+          muted: { value: { base: "{colors.gray.100}" } },
+        },
+        card: { value: { base: "{colors.white}" } },
         "header.bg": { value: { base: "{colors.brand.600}" } },
         "header.fg": { value: { base: "white" } },
+        "sidebar.bg": { value: { base: "{colors.white}" } },
+        "sidebar.nav": { value: { base: "{colors.brand.50}" } },
+        "sidebar.border": { value: { base: "{colors.brand.100}" } },
+        "sidebar.fg": { value: { base: "{colors.brand.800}" } },
+        "sidebar.hover": { value: { base: "{colors.white}" } },
+        "sidebar.muted": { value: { base: "{colors.gray.500}" } },
       },
     },
     recipes: {
@@ -245,12 +266,14 @@ const config = defineConfig({
     "html, body": {
       fontFamily: "body",
       fontSize: "md",
-    lineHeight: "1.45",
-    color: "gray.800",
-    background: "bg",
-  },
+      lineHeight: "1.45",
+      color: "fg",
+      background: "bg",
+    },
     "#root": {
       minHeight: "100dvh",
+      background: "bg",
+      color: "fg",
     },
   },
 });

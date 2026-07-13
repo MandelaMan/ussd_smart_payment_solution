@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -23,7 +24,7 @@ import {
 import {
   api,
   formatCurrency,
-  formatDate,
+  formatDateOnly,
   type Building,
   type Customer,
   type PackageCategory,
@@ -41,6 +42,16 @@ import {
 import type { CustomerAction } from "../components/customers/CustomerActionMenu";
 import { CustomerExpandPanel } from "../components/customers/CustomerExpandPanel";
 import type { ApartmentHistoryEntry } from "../lib/api";
+
+/** TISP due dates may be ISO or "DD MMM YYYY hh:mm A". */
+function formatTispDueDateDisplay(value: string | null | undefined): string {
+  if (!value) return "—";
+  const only = formatDateOnly(value);
+  if (only && only !== "—" && !Number.isNaN(new Date(value).getTime())) {
+    return only;
+  }
+  return String(value).replace(/\s+\d{1,2}:\d{2}\s*[AP]M$/i, "").trim() || String(value);
+}
 import {
   DataTable,
   DataTableCard,
@@ -100,7 +111,7 @@ type CustomerSortKey =
   | "productName"
   | "paymentFrequency"
   | "subscriptionStatus"
-  | "lastPaymentDate"
+  | "tispDueDate"
   | "packagePrice";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -128,6 +139,7 @@ export function CustomersListPage() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const canMutate = canMutateCustomers(user);
+  const isMobile = useMobileViewport();
   const allowPermanentDelete = canDeleteCustomer(user);
   const hidePrices = hidePricing(user);
   const hideFinancials = !canSeeCustomerFinancials(user);
@@ -142,6 +154,7 @@ export function CustomersListPage() {
   const [categories, setCategories] = useState<PackageCategory[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const debouncedSearch = useDebouncedValue(searchInput, 350);
@@ -225,7 +238,9 @@ export function CustomersListPage() {
   const loadCustomers = useCallback(
     async (refresh = false) => {
       const requestId = ++loadRequestRef.current;
-      setLoading(true);
+      const append = isMobile && page > 1 && !refresh;
+      if (append) setLoadingMore(true);
+      else setLoading(true);
       setError("");
       try {
         const params: Record<string, string> = {
@@ -245,9 +260,11 @@ export function CustomersListPage() {
         if (refresh) params.refresh = "true";
         const res = await api.listCustomers(params);
         if (requestId !== loadRequestRef.current) return;
-        setCustomers(res.data);
+        setCustomers((prev) =>
+          mergeInfinitePage(prev, res.data, page, isMobile && !refresh, (c) => c.id)
+        );
         setPagination(res.pagination);
-        setSelectedIds(new Set());
+        if (!append) setSelectedIds(new Set());
       } catch (e) {
         if (requestId !== loadRequestRef.current) return;
         const message = e instanceof Error ? e.message : "Failed to load customers";
@@ -256,10 +273,11 @@ export function CustomersListPage() {
       } finally {
         if (requestId === loadRequestRef.current) {
           setLoading(false);
+          setLoadingMore(false);
         }
       }
     },
-    [debouncedSearch, buildingId, statusFilters, categoryId, customerType, page, sortQuery.sortBy, sortQuery.sortDir]
+    [debouncedSearch, buildingId, statusFilters, categoryId, customerType, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]
   );
 
   function handleSort(
@@ -1122,8 +1140,30 @@ export function CustomersListPage() {
           toaster.create({ title: "Apartment switched", type: "success" });
         }
       } else if (actionType === "cancel") {
-        await api.cancelCustomer(actionCustomer.id, cancelNotes || undefined);
-        toaster.create({ title: "Subscription cancelled", type: "success" });
+        const res = await api.cancelCustomer(actionCustomer.id, cancelNotes || undefined);
+        const issues = [
+          res.tisp && res.tisp.ok === false ? `TISP: ${res.tisp.error || "update failed"}` : null,
+          res.zoho && res.zoho.ok === false ? `Zoho: ${res.zoho.error || "update failed"}` : null,
+        ].filter(Boolean);
+        if (issues.length) {
+          toaster.create({
+            title: "Subscription cancelled with sync issues",
+            description: issues.join(" · "),
+            type: "warning",
+            duration: 10000,
+          });
+        } else {
+          toaster.create({
+            title: "Subscription cancelled",
+            description: [
+              res.tisp?.dueDate ? `TISP due date set to ${res.tisp.dueDate}` : null,
+              res.zoho?.contactInactivated ? "Zoho contact marked inactive" : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined,
+            type: "success",
+          });
+        }
       } else if (actionType === "deletePermanent") {
         await api.deleteCustomerPermanently(actionCustomer.id);
         toaster.create({ title: "Customer deleted permanently", type: "success" });
@@ -1195,13 +1235,18 @@ export function CustomersListPage() {
         title="Customers"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
-        searchPlaceholder="Name, apartment, customer number…"
+        searchPlaceholder="Name, Apt No. , Customer No."
         chips={[
           {
             key: "all",
             label: "All",
-            active: statusFilters.length === 0,
-            onClick: () => applyStatusFilters([]),
+            active: statusFilters.length === 0 && !customerType,
+            onClick: () => {
+              applyStatusFilters([]);
+              setCustomerType("");
+              setPage(1);
+              setExpanded(null);
+            },
           },
           ...SUBSCRIPTION_STATUS_FILTER_OPTIONS.map((option) => ({
             key: option.value.toLowerCase(),
@@ -1216,6 +1261,52 @@ export function CustomersListPage() {
           })),
           { key: "c2b", label: "C2B", active: customerType === "C2B", onClick: () => { setCustomerType(customerType === "C2B" ? "" : "C2B"); setPage(1); setExpanded(null); } },
           { key: "b2b", label: "B2B", active: customerType === "B2B", onClick: () => { setCustomerType(customerType === "B2B" ? "" : "B2B"); setPage(1); setExpanded(null); } },
+        ]}
+        filterTitle="Filters"
+        activeFilterCount={(buildingId ? 1 : 0) + (categoryId ? 1 : 0)}
+        onClearFilters={() => {
+          setBuildingId("");
+          setCategoryId("");
+          setPage(1);
+          setExpanded(null);
+        }}
+        filterContent={advancedFilters}
+        sortOptions={[
+          {
+            key: "customerName",
+            label: "Customer name",
+            active: sorts[0]?.sortBy === "customerName",
+            direction: sorts[0]?.sortBy === "customerName" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("customerName"),
+          },
+          {
+            key: "customerNumber",
+            label: "Customer number",
+            active: sorts[0]?.sortBy === "customerNumber",
+            direction: sorts[0]?.sortBy === "customerNumber" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("customerNumber"),
+          },
+          {
+            key: "subscriptionStatus",
+            label: "Status",
+            active: sorts[0]?.sortBy === "subscriptionStatus",
+            direction: sorts[0]?.sortBy === "subscriptionStatus" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("subscriptionStatus"),
+          },
+          {
+            key: "tispDueDate",
+            label: "Due date",
+            active: sorts[0]?.sortBy === "tispDueDate",
+            direction: sorts[0]?.sortBy === "tispDueDate" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("tispDueDate", "desc"),
+          },
+          {
+            key: "packagePrice",
+            label: "Package price",
+            active: sorts[0]?.sortBy === "packagePrice",
+            direction: sorts[0]?.sortBy === "packagePrice" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("packagePrice", "desc"),
+          },
         ]}
         desktopActions={
           <Flex gap={2} align="center" flexShrink={0}>
@@ -1335,7 +1426,7 @@ export function CustomersListPage() {
           px={4}
           py={3}
         >
-          <Text fontSize="sm" fontWeight="medium" color="gray.700">
+          <Text fontSize="sm" fontWeight="medium" color="fg">
             {selectedIds.size > 0
               ? `${selectedIds.size} selected${
                   activeSelectedIds.length !== selectedIds.size
@@ -1391,6 +1482,8 @@ export function CustomersListPage() {
 
       <DataTableCard
         loading={loading}
+        loadingMore={loadingMore}
+        loadedCount={customers.length}
         pagination={pagination}
         onPageChange={(nextPage) => {
           setPage(nextPage);
@@ -1413,7 +1506,7 @@ export function CustomersListPage() {
           />
         ) : customers.length === 0 ? (
           <Stack gap={2} align="center" py={4}>
-            <Text textAlign="center" color="gray.400" fontSize="sm">
+            <Text textAlign="center" color="fg.subtle" fontSize="sm">
               No customers found
             </Text>
             {canMutate ? (
@@ -1512,7 +1605,7 @@ export function CustomersListPage() {
                 <DataTableSortHeader label="Package" column="productName" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataColumnHeaderProps} />
                 <DataTableSortHeader label="Frequency" column="paymentFrequency" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataColumnHeaderProps} />
                 <DataTableSortHeader label="Status" column="subscriptionStatus" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataColumnHeaderProps} />
-                <DataTableSortHeader label="Last payment" column="lastPaymentDate" sorts={sorts} onSort={handleSort} defaultDir="desc" headerProps={dataTableEqualDataColumnHeaderProps} />
+                <DataTableSortHeader label="Due date" column="tispDueDate" sorts={sorts} onSort={handleSort} defaultDir="desc" headerProps={dataTableEqualDataColumnHeaderProps} />
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -1577,7 +1670,7 @@ export function CustomersListPage() {
                         />
                         <Text
                           fontSize="xs"
-                          color="gray.500"
+                          color="fg.muted"
                           mt={0.5}
                           textTransform="none"
                           whiteSpace="normal"
@@ -1606,20 +1699,20 @@ export function CustomersListPage() {
                         ) : (
                           <>
                             <Text fontWeight="semibold">{formatCurrency(c.packagePrice)}</Text>
-                            <Text fontSize="xs" color="gray.500" mt={0.5}>
+                            <Text fontSize="xs" color="fg.muted" mt={0.5}>
                               {c.productMbps} Mbps
                             </Text>
                           </>
                         )}
                       </Table.Cell>
-                      <Table.Cell {...dataTableEqualDataCellProps} color="gray.600" textTransform="capitalize">
+                      <Table.Cell {...dataTableEqualDataCellProps} color="fg.muted" textTransform="capitalize">
                         <PaymentFrequencyText customer={c} />
                       </Table.Cell>
                       <Table.Cell {...dataTableEqualDataCellProps}>
                         <CustomerStatusText customer={c} />
                       </Table.Cell>
-                      <Table.Cell {...dataTableEqualDataCellProps} color="gray.600">
-                        {c.lastPaymentDate ? formatDate(c.lastPaymentDate) : "—"}
+                      <Table.Cell {...dataTableEqualDataCellProps} color="fg.muted">
+                        {formatTispDueDateDisplay(c.tispDueDate)}
                       </Table.Cell>
                     </Table.Row>
                     {isOpen && (
@@ -1719,11 +1812,11 @@ export function CustomersListPage() {
       >
         {bulkCancelStep === 1 ? (
           <>
-            <Box px={5} pt={5} pb={4} pr={12} borderBottomWidth="1px" borderColor="gray.100">
+            <Box px={5} pt={5} pb={4} pr={12} borderBottomWidth="1px" borderColor="border.muted">
               <Text fontSize="lg" fontWeight="semibold">
                 Cancel subscriptions
               </Text>
-              <Text fontSize="sm" color="gray.500" mt={1}>
+              <Text fontSize="sm" color="fg.muted" mt={1}>
                 You are about to cancel {activeSelectedIds.length} active subscription
                 {activeSelectedIds.length === 1 ? "" : "s"}.
                 {selectedIds.size > activeSelectedIds.length
@@ -1760,11 +1853,11 @@ export function CustomersListPage() {
           </>
         ) : (
           <>
-            <Box px={5} pt={5} pb={4} pr={12} borderBottomWidth="1px" borderColor="gray.100">
+            <Box px={5} pt={5} pb={4} pr={12} borderBottomWidth="1px" borderColor="border.muted">
               <Text fontSize="lg" fontWeight="semibold">
                 Confirm cancellation
               </Text>
-              <Text fontSize="sm" color="gray.500" mt={1}>
+              <Text fontSize="sm" color="fg.muted" mt={1}>
                 Please confirm you want to cancel {activeSelectedIds.length} subscription
                 {activeSelectedIds.length === 1 ? "" : "s"}.
               </Text>
