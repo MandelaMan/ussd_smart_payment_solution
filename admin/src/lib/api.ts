@@ -1,5 +1,36 @@
 const API_BASE = "/api";
 
+type AuthSessionExpiredHandler = () => void;
+let authSessionExpiredHandler: AuthSessionExpiredHandler | null = null;
+let authSessionExpiredNotified = false;
+
+/** Called by AuthProvider — clears user and sends to login on any 401. */
+export function registerAuthSessionExpiredHandler(handler: AuthSessionExpiredHandler | null) {
+  authSessionExpiredHandler = handler;
+}
+
+export function resetAuthSessionExpiredFlag() {
+  authSessionExpiredNotified = false;
+}
+
+function notifyAuthSessionExpired(path: string) {
+  if (authSessionExpiredNotified) return;
+  if (path.startsWith("/auth/login")) return;
+  authSessionExpiredNotified = true;
+  authSessionExpiredHandler?.();
+}
+
+function rejectApiResponse(res: Response, body: Record<string, unknown>, path: string): never {
+  if (res.status === 401) {
+    notifyAuthSessionExpired(path);
+  }
+  const message =
+    (typeof body.error === "string" && body.error) ||
+    (typeof body.message === "string" && body.message) ||
+    `Request failed (${res.status})`;
+  throw new Error(message);
+}
+
 export type User = {
   id: number;
   name: string;
@@ -1143,7 +1174,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || body.message || `Request failed (${res.status})`);
+    rejectApiResponse(res, body, path);
   }
 
   return res.json();
@@ -1151,7 +1182,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 async function downloadExport(path: string, filename: string) {
   const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
-  if (!res.ok) throw new Error("Export failed");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    rejectApiResponse(res, body, path);
+  }
   const blob = await res.blob();
   downloadBlobFile(filename, blob);
 }
@@ -1181,7 +1215,7 @@ async function downloadReportFile(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Export failed");
+    rejectApiResponse(res, body, `/admin/reports/${reportId}/download`);
   }
   const disposition = res.headers.get("Content-Disposition") || "";
   const match = disposition.match(/filename="?([^"]+)"?/);
@@ -1427,7 +1461,7 @@ export const api = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || "Import failed");
+      rejectApiResponse(res, body, "/admin/customers/import");
     }
     return res.json() as Promise<{
       ok: boolean;
@@ -1463,7 +1497,7 @@ export const api = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || "Import failed");
+      rejectApiResponse(res, body, "/admin/customers/import?stream=1");
     }
     if (!res.body) {
       throw new Error("Import stream unavailable");
@@ -1584,7 +1618,7 @@ export const api = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || "Export failed");
+      rejectApiResponse(res, body, "/admin/export/table");
     }
     const blob = await res.blob();
     downloadBlobFile(filename, blob);
@@ -1871,6 +1905,16 @@ export const api = {
         reason?: string;
       };
     }>(`/admin/customers/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ notes }),
+    }),
+
+  disconnectCustomer: (id: number, notes?: string) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+    }>(`/admin/customers/${id}/disconnect`, {
       method: "POST",
       body: JSON.stringify({ notes }),
     }),

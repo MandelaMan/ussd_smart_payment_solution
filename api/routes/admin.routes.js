@@ -50,6 +50,7 @@ const {
   changePaymentFrequency,
   switchApartment,
   cancelSubscription,
+  disconnectCustomer,
   deleteCustomerPermanently,
   apartmentHistory,
   downloadImportTemplate,
@@ -221,6 +222,7 @@ router.post(
 );
 router.post("/customers/:id/switch-apartment", requireCustomerWrite, switchApartment);
 router.post("/customers/:id/cancel", requireCustomerWrite, cancelSubscription);
+router.post("/customers/:id/disconnect", requireCustomerWrite, disconnectCustomer);
 router.delete("/customers/:id", requireAdmin, deleteCustomerPermanently);
 router.get(
   "/buildings/:buildingId/apartments/:apartmentNumber/history",

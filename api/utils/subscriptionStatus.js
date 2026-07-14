@@ -13,7 +13,7 @@ function normalizeSubscriptionStatus(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return "Not on TISP";
   const lower = raw.toLowerCase();
-  if (lower.includes("active")) return "Active";
+  if (lower === "active" || lower.startsWith("active ")) return "Active";
   if (lower.includes("suspend")) return "Suspended";
   if (lower.includes("cancel")) return "Cancelled";
   if (NOT_ON_TISP_ALIASES.has(lower) || lower.includes("not on tisp")) {
@@ -23,31 +23,45 @@ function normalizeSubscriptionStatus(value) {
   return "Not on TISP";
 }
 
+/**
+ * SQL condition that matches how the UI displays status for a row:
+ * Cancelled account → Cancelled; else normalize(subscription_status).
+ */
 function singleSubscriptionStatusClause(normalized) {
   if (normalized === "cancelled") {
-    return "c.status = 'cancelled'";
+    // Account cancelled, or still active but service status is cancelled.
+    return `(c.status = 'cancelled'
+      OR (c.status = 'active' AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%cancel%'))`;
   }
+
   const activeAccount = "c.status = 'active'";
   if (normalized === "active") {
-    return `(${activeAccount} AND LOWER(c.subscription_status) LIKE '%active%')`;
+    return `(${activeAccount}
+      AND LOWER(TRIM(COALESCE(c.subscription_status, ''))) IN ('active')
+      AND LOWER(COALESCE(c.subscription_status, '')) NOT LIKE '%cancel%')`;
   }
   if (normalized === "suspended") {
-    return `(${activeAccount} AND LOWER(c.subscription_status) LIKE '%suspend%')`;
+    return `(${activeAccount}
+      AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%'
+      AND LOWER(COALESCE(c.subscription_status, '')) NOT LIKE '%cancel%')`;
   }
-  // "Not on TISP" (and legacy "Unknown") — empty, unknown, or not active/suspended.
+  // "Not on TISP" (and legacy "Unknown").
   if (
     normalized === "unknown" ||
     normalized === "not on tisp" ||
     normalized === "not_on_tisp"
   ) {
-    return `(${activeAccount} AND (c.subscription_status IS NULL
-             OR TRIM(c.subscription_status) = ''
-             OR LOWER(c.subscription_status) = 'unknown'
-             OR LOWER(c.subscription_status) = 'not on tisp'
-             OR LOWER(c.subscription_status) = 'not_on_tisp'
-             OR (LOWER(c.subscription_status) NOT LIKE '%active%'
-                 AND LOWER(c.subscription_status) NOT LIKE '%suspend%'
-                 AND LOWER(c.subscription_status) NOT LIKE '%cancel%')))`;
+    return `(${activeAccount}
+      AND LOWER(COALESCE(c.subscription_status, '')) NOT LIKE '%cancel%'
+      AND (
+        c.subscription_status IS NULL
+        OR TRIM(c.subscription_status) = ''
+        OR LOWER(TRIM(c.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
+        OR (
+          LOWER(TRIM(c.subscription_status)) NOT IN ('active')
+          AND LOWER(c.subscription_status) NOT LIKE '%suspend%'
+        )
+      ))`;
   }
   return null;
 }

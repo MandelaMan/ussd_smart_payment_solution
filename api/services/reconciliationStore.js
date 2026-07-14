@@ -631,7 +631,7 @@ async function buildCustomerRecord(customer, options = {}) {
       const tisp = await getTISPCustomer(customer.customerNumber);
       const status = tisp?.status ?? tisp?.Status ?? tisp?.subscriptionStatus ?? null;
       if (status) subscriptionStatus = normalizeSubscriptionStatus(String(status));
-      tispDueDate = tisp?.dueDate ?? tisp?.duedate ?? null;
+      tispDueDate = integrationSnapshot.extractTispDueDate(tisp) || tispDueDate;
       try {
         await integrationSnapshot.upsertTispSnapshot(customer.id, tisp);
       } catch (e) {
@@ -1369,6 +1369,7 @@ async function listCustomersBySearch(filters = {}) {
     page,
     limit,
     search,
+    searchMode: "exact",
     accountStatus: "active",
     buildingId: filters.buildingId,
   });

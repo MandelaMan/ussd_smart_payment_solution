@@ -76,6 +76,7 @@ import {
   displayCustomerStatus,
   parseStatusFilterParam,
   serializeStatusFilter,
+  statusFiltersEqual,
   type SubscriptionStatusLabel,
 } from "../lib/customerStatus";
 import { StatusMultiSelect } from "../components/ui/StatusMultiSelect";
@@ -137,7 +138,7 @@ const expandPanelRowMotion = {
 
 export function CustomersListPage() {
   const { user } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canMutate = canMutateCustomers(user);
   const isMobile = useMobileViewport();
   const allowPermanentDelete = canDeleteCustomer(user);
@@ -407,15 +408,20 @@ export function CustomersListPage() {
 
   useEffect(() => {
     const urlStatuses = parseStatusFilterParam(searchParams.get("status"));
-    setStatusFilters(urlStatuses);
-    setPage(1);
-    setExpanded(null);
+    setStatusFilters((prev) => (statusFiltersEqual(prev, urlStatuses) ? prev : urlStatuses));
   }, [searchParams]);
 
   function applyStatusFilters(next: SubscriptionStatusLabel[]) {
     setStatusFilters(next);
     setPage(1);
     setExpanded(null);
+    const nextParams = new URLSearchParams(searchParams);
+    if (next.length) {
+      nextParams.set("status", serializeStatusFilter(next));
+    } else {
+      nextParams.delete("status");
+    }
+    setSearchParams(nextParams, { replace: true });
   }
 
   useEffect(() => {
@@ -1138,6 +1144,24 @@ export function CustomersListPage() {
           });
         } else {
           toaster.create({ title: "Apartment switched", type: "success" });
+        }
+      } else if (actionType === "disconnect") {
+        const res = await api.disconnectCustomer(actionCustomer.id);
+        if (res.tisp && res.tisp.ok === false) {
+          toaster.create({
+            title: "Disconnected locally with TISP issues",
+            description: res.tisp.error || "TISP update failed",
+            type: "warning",
+            duration: 10000,
+          });
+        } else {
+          toaster.create({
+            title: "Customer disconnected",
+            description: res.tisp?.dueDate
+              ? `TISP due date set to ${res.tisp.dueDate}`
+              : undefined,
+            type: "success",
+          });
         }
       } else if (actionType === "cancel") {
         const res = await api.cancelCustomer(actionCustomer.id, cancelNotes || undefined);

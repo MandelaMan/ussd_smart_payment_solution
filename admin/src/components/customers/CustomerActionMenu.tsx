@@ -9,6 +9,7 @@ import {
   FiMove,
   FiRepeat,
   FiTrash2,
+  FiWifiOff,
   FiXCircle,
 } from "react-icons/fi";
 import type { Customer } from "../../lib/api";
@@ -19,6 +20,7 @@ export type CustomerAction =
   | "downgrade"
   | "changePaymentFrequency"
   | "switch"
+  | "disconnect"
   | "cancel"
   | "history"
   | "convertType"
@@ -96,6 +98,10 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
                   {customer.customerType === "C2B" ? "Convert to B2B" : "Convert to C2B"}
                 </Menu.Item>
                 <Menu.Separator />
+                <Menu.Item value="disconnect" color="fg.error">
+                  <FiWifiOff />
+                  Disconnect customer
+                </Menu.Item>
                 <Menu.Item value="cancel" color="fg.error">
                   <FiXCircle />
                   Cancel subscription

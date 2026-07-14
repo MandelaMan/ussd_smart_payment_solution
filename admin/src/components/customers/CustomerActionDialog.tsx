@@ -127,6 +127,7 @@ export function CustomerActionDialog({
   if (actionType === "downgrade") title = "Downgrade package";
   if (actionType === "changePaymentFrequency") title = "Update frequency";
   if (actionType === "switch") title = "Move apartment";
+  if (actionType === "disconnect") title = "Disconnect customer";
   if (actionType === "cancel") title = "Cancel subscription";
   if (actionType === "deletePermanent") title = "Delete customer permanently";
   if (actionType === "history") {
@@ -222,6 +223,25 @@ export function CustomerActionDialog({
                 onClick={onSubmit}
               >
                 Confirm
+              </Button>
+            </Flex>
+          </Stack>
+        ) : null}
+
+        {actionType === "disconnect" ? (
+          <Stack gap={4}>
+            <Box bg="orange.50" borderRadius="md" px={3} py={3} fontSize="sm" color="orange.900">
+              This will disconnect{" "}
+              <strong>{formatTitleCase(customer?.fullName)}</strong> (
+              {customer?.customerNumber}) on TISP by setting the due date to today. The account
+              stays active here; service status becomes Suspended. Zoho billing is not changed.
+            </Box>
+            <Flex justify="flex-end" gap={2}>
+              <Button variant="ghost" onClick={onClose}>
+                Keep connected
+              </Button>
+              <Button colorPalette="orange" loading={loading} onClick={onSubmit}>
+                Disconnect on TISP
               </Button>
             </Flex>
           </Stack>

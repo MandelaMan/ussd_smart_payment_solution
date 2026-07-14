@@ -32,16 +32,16 @@ export type MobileNavTab = {
 export const MOBILE_BOTTOM_NAV_H = "56px";
 
 /**
- * Keep icons flush to the screen edge. Safe-area padding was removed from the
- * nav root — it left a dead strip under the floating pill.
+ * Gap under the floating pill (transparent padding on `.sul-mobile-nav-v2`).
+ * Kept off safe-area so we do not paint an opaque dead strip under the pill.
  */
-export const MOBILE_BOTTOM_NAV_SAFE_PB = "0px";
+export const MOBILE_BOTTOM_NAV_SAFE_PB = "8px";
 
 /**
  * Space to reserve above the fixed floating bottom nav so content can scroll clear.
- * Nav sits 2px off the bottom edge (no safe-area lift).
+ * Nav height + 8px bottom gap + side clearance for shadow.
  */
-export const MOBILE_BOTTOM_NAV_OFFSET = `calc(${MOBILE_BOTTOM_NAV_H} + 14px)`;
+export const MOBILE_BOTTOM_NAV_OFFSET = `calc(${MOBILE_BOTTOM_NAV_H} + 28px)`;
 
 /** Build exactly four navigation destinations before the More tab. */
 export function buildMobileNavTabs(user: User | null): MobileNavTab[] {

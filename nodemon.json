@@ -1,0 +1,17 @@
+{
+  "watch": ["api", "index.js", "workers"],
+  "ext": "js,mjs,cjs,json",
+  "ignore": [
+    "admin/**",
+    "node_modules/**",
+    "**/node_modules/**",
+    "**/.tmp/**",
+    "**/*.tsbuildinfo",
+    "logs/**",
+    "db/**",
+    "docs/**",
+    "scripts/**",
+    ".git/**"
+  ],
+  "delay": 400
+}

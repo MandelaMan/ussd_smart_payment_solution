@@ -104,6 +104,14 @@ async function processCustomerSyncJob(job) {
             customer.id,
             "Not on TISP"
           );
+          // Keep snapshot in sync so list filters and expand panel agree.
+          try {
+            await integrationSnapshot.upsertTispSnapshot(customer.id, {
+              status: "Not on TISP",
+            });
+          } catch (e) {
+            console.warn("TISP snapshot clear failed:", e.message);
+          }
           await customerStore.updateCustomerTispSync(
             customer.id,
             "failed",
@@ -126,6 +134,13 @@ async function processCustomerSyncJob(job) {
               customer.id,
               "Not on TISP"
             );
+            try {
+              await integrationSnapshot.upsertTispSnapshot(customer.id, {
+                status: "Not on TISP",
+              });
+            } catch {
+              /* ignore */
+            }
           }
           await customerStore.updateCustomerTispSync(customer.id, "failed", message);
         } catch {

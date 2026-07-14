@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Box, Button, Input, Stack, Table, Text } from "@chakra-ui/react";
 import { FiChevronDown, FiChevronRight, FiRefreshCw } from "react-icons/fi";
 import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
@@ -94,6 +94,7 @@ export function BillingCustomerTable({
   const [syncProgress, setSyncProgress] = useState<ReconciliationSyncProgress | null>(null);
   const [exporting, setExporting] = useState(false);
   const [browseMode, setBrowseMode] = useState(true);
+  const loadGenRef = useRef(0);
 
   const baseStatus = moduleStatusParam(module);
   const activeStatus = issueTypeFilter || baseStatus;
@@ -124,6 +125,7 @@ export function BillingCustomerTable({
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
       if (!baseStatus) return;
+      const gen = ++loadGenRef.current;
       const pageForQuery = searchActive ? page : 1;
       const append = Boolean(isMobile && searchActive && pageForQuery > 1 && !opts?.silent);
       if (!opts?.silent) {
@@ -140,6 +142,9 @@ export function BillingCustomerTable({
           sortBy: "priority",
           sortDir: "desc",
         });
+        // Live Zoho search is slow — ignore stale responses from earlier keystrokes
+        // (e.g. intermediate "t50" finishing after "t506").
+        if (gen !== loadGenRef.current) return;
         setBrowseMode(Boolean(res.browseMode) && !searchActive);
         setSyncStatus(res.sync?.status ?? "idle");
         setSyncProgress(res.sync?.progress ?? null);
@@ -158,8 +163,10 @@ export function BillingCustomerTable({
           setPagination(res.pagination);
         }
       } catch (e) {
+        if (gen !== loadGenRef.current) return;
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
+        if (gen !== loadGenRef.current) return;
         if (!opts?.silent) {
           setLoading(false);
           setLoadingMore(false);
@@ -183,8 +190,11 @@ export function BillingCustomerTable({
 
   const colSpan = 2 + columns.length;
   const showIssueTypeFilter = Boolean(module.statusFilters?.length);
+  // Browse sync banner is misleading during search ("N matching" = table rows, not filter hits).
   const showProgress =
-    !searchPending && (syncRunning || Boolean(syncProgress?.partialReady));
+    !searchActive &&
+    !searchPending &&
+    (syncRunning || Boolean(syncProgress?.partialReady));
   const showTable = !tableBusy && rows.length > 0;
   const emptyMessage =
     tableBusy || syncRunning ? null : (
@@ -359,7 +369,7 @@ export function BillingCustomerTable({
           title={module.label}
           searchValue={searchInput}
           onSearchChange={setSearchInput}
-          searchPlaceholder="Customer number or name…"
+          searchPlaceholder="Exact customer number, apartment, or name…"
           chips={
             showIssueTypeFilter
               ? [
@@ -400,7 +410,7 @@ export function BillingCustomerTable({
         <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
           <Input
             size="sm"
-            placeholder="Customer number or name…"
+            placeholder="Exact customer number, apartment, or name…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -428,8 +438,9 @@ export function BillingCustomerTable({
       {!inputActive && !tableBusy && (
         <Text fontSize="xs" color="fg.muted" display={{ base: "none", lg: "block" }}>
           Showing up to {BROWSE_PAGE_SIZE} customers from local data (no Zoho API calls).
-          Search by customer number or name to live-check Zoho invoices, payments, and TISP
-          status — mismatches are flagged; a clean result confirms no billing gaps.
+          Search with an exact customer number, apartment, or full name to live-check Zoho
+          invoices, payments, and TISP — mismatches are flagged; a clean result confirms no
+          billing gaps. Partial IDs match the end of the customer number (t506 → ET-T506).
         </Text>
       )}
       {inputActive && !tableBusy && searchActive && (

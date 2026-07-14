@@ -14,6 +14,7 @@ import {
   api,
   formatCurrency,
   formatDate,
+  formatDateOnly,
   type Customer,
   type CustomerPayment,
   type CustomerZohoStatus,
@@ -801,7 +802,11 @@ export function CustomerExpandPanel({
             />
             <DetailCard
               label="Due date"
-              value={customer.tispDueDate ? formatDate(customer.tispDueDate) : null}
+              value={
+                customer.tispDueDate
+                  ? formatDateOnly(customer.tispDueDate)
+                  : null
+              }
               highlight={Boolean(customer.tispDueDate)}
             />
             <DetailCard

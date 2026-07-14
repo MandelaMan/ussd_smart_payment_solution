@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
+    "dev": "nodemon --config nodemon.json index.js",
     "lint": "eslint .",
     "db:migrate": "node api/config/migrate.js",
     "db:status": "node api/config/migrate.js --status",
@@ -27,7 +27,7 @@
     "test:xtream-spec": "node scripts/xtream-spec-test.js",
     "paybill:simulate": "node scripts/paybill-simulate.js",
     "worker": "node workers/index.js",
-    "worker:dev": "nodemon workers/index.js",
+    "worker:dev": "nodemon --config nodemon.json workers/index.js",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",

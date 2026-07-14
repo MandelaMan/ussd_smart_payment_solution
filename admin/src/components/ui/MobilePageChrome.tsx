@@ -11,7 +11,7 @@ import {
 } from "@chakra-ui/react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { FiArrowLeft, FiChevronDown, FiSearch } from "react-icons/fi";
+import { FiArrowLeft, FiFilter, FiSearch } from "react-icons/fi";
 import { HiOutlineSortDescending } from "react-icons/hi";
 import { Link } from "react-router-dom";
 import { useMobileSearchOptional } from "../../lib/mobileSearch";
@@ -197,6 +197,7 @@ export function MobilePageChrome({
                     overflowX="auto"
                     py={0.5}
                     minW={0}
+                    pr={1}
                     css={{
                       scrollbarWidth: "none",
                       "&::-webkit-scrollbar": { display: "none" },
@@ -238,6 +239,7 @@ export function MobilePageChrome({
                   <Box flex={1} />
                 )}
 
+                <Flex align="center" gap={2} flexShrink={0} pl={2} ml={0.5}>
                 {hasFilters ? (
                   <Box position="relative" flexShrink={0}>
                     <IconButton
@@ -250,7 +252,7 @@ export function MobilePageChrome({
                       onClick={() => setFilterOpen(true)}
                       _hover={{ bg: activeFilterCount > 0 ? "brand.100" : "gray.200" }}
                     >
-                      <FiChevronDown size={18} />
+                      <FiFilter size={16} />
                     </IconButton>
                     {activeFilterCount > 0 ? (
                       <Badge
@@ -293,6 +295,7 @@ export function MobilePageChrome({
                 ) : null}
 
                 {chipsTrailing ? <Box flexShrink={0}>{chipsTrailing}</Box> : null}
+                </Flex>
               </Flex>
             ) : null}
           </>

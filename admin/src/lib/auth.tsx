@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, type User } from "./api";
+import { api, registerAuthSessionExpiredHandler, resetAuthSessionExpiredFlag, type User } from "./api";
 
 type AuthContextValue = {
   user: User | null;
@@ -27,6 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { user: u } = await api.me();
       setUser(u);
+      resetAuthSessionExpiredFlag();
     } catch {
       setUser(null);
     } finally {
@@ -35,11 +36,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    registerAuthSessionExpiredHandler(() => {
+      setUser(null);
+      setLoading(false);
+      void api.logout().catch(() => {});
+    });
+    return () => registerAuthSessionExpiredHandler(null);
+  }, []);
+
+  useEffect(() => {
     refresh();
   }, [refresh]);
 
   const login = useCallback(async (email: string, password: string) => {
     const { user: u } = await api.login(email, password);
+    resetAuthSessionExpiredFlag();
     setUser(u);
   }, []);
 

@@ -22,6 +22,7 @@ export function TabStrip({ tabs, active, onChange }: Props) {
       bg="bg.panel"
       w="full"
       minW={0}
+      overflow="hidden"
     >
       {/* Mobile: section picker — avoids cramped equal-width tabs */}
       <Box display={{ base: "block", md: "none" }} px={{ base: 2.5, sm: 3 }} py={2}>
@@ -55,18 +56,9 @@ export function TabStrip({ tabs, active, onChange }: Props) {
         </SelectField>
       </Box>
 
-      {/* Desktop / tablet: scrollable underline tab strip */}
-      <Box
-        display={{ base: "none", md: "block" }}
-        px={{ md: 2, lg: 4 }}
-        overflowX="auto"
-        css={{
-          WebkitOverflowScrolling: "touch",
-          scrollbarWidth: "none",
-          "&::-webkit-scrollbar": { display: "none" },
-        }}
-      >
-        <Flex gap={0} w="max-content" minW="full">
+      {/* Desktop: equal-width underline tabs — no horizontal scroll */}
+      <Box display={{ base: "none", md: "block" }} px={{ md: 2, lg: 3 }} overflow="hidden">
+        <Flex gap={0} w="full" minW={0} overflow="hidden">
           {tabs.map((tab) => {
             const isActive = tab.id === active;
             return (
@@ -76,14 +68,14 @@ export function TabStrip({ tabs, active, onChange }: Props) {
                 variant="ghost"
                 size="sm"
                 borderRadius={0}
-                flex="none"
+                flex="1 1 0"
                 minW={0}
-                px={{ md: 3, lg: 4 }}
+                px={{ md: 2, lg: 3 }}
                 py={3}
                 h="auto"
                 minH="44px"
                 fontWeight={isActive ? "semibold" : "medium"}
-                fontSize="sm"
+                fontSize={{ md: "xs", lg: "sm" }}
                 color={
                   isActive
                     ? { _light: "brand.700", _dark: "brand.300" }
@@ -93,6 +85,8 @@ export function TabStrip({ tabs, active, onChange }: Props) {
                 borderColor={isActive ? "brand.600" : "transparent"}
                 mb="-1px"
                 whiteSpace="nowrap"
+                overflow="hidden"
+                textOverflow="ellipsis"
                 _hover={{
                   bg: { _light: "brand.50", _dark: "brand.900" },
                   color: { _light: "brand.700", _dark: "brand.300" },

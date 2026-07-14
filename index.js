@@ -130,16 +130,23 @@ async function bootstrapSync() {
       return;
     }
 
+    // Schedulers + boot enqueue belong to the worker process. Running them in
+    // both API and worker races clearAllRepeatableJobs and opens dozens of
+    // Redis connections on every nodemon restart — which makes admin refresh
+    // hang on ECONNREFUSED / Redis storms.
     if (env.WORKER_INLINE) {
       const { startAllWorkers } = require("./api/workers/registry");
       startAllWorkers();
-      syncLog.info("inline_workers_started");
+      const { registerRepeatableJobs, triggerInitialSync } = require("./api/queue/schedulers");
+      await registerRepeatableJobs();
+      await triggerInitialSync();
+      syncLog.info("inline_workers_and_schedulers_started");
+      return;
     }
 
-    const { registerRepeatableJobs, triggerInitialSync } = require("./api/queue/schedulers");
-    await registerRepeatableJobs();
-    await triggerInitialSync();
-    syncLog.info("sync_schedulers_registered");
+    syncLog.info("sync_schedulers_owned_by_worker", {
+      hint: "Run yarn worker / yarn worker:dev for schedules and job processing",
+    });
   } catch (e) {
     syncLog.warn("sync_bootstrap_failed", { error: e.message });
     try {

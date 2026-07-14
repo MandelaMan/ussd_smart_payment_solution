@@ -291,15 +291,15 @@ async function getPaymentStatusDistribution(filters) {
         WHEN LOWER(c.subscription_status) LIKE '%active%' THEN 'Paid'
         WHEN c.last_payment_date IS NULL THEN 'Pending'
         ELSE 'Overdue'
-      END AS status,
+      END AS payment_status,
       COUNT(*) AS count
      FROM customers c
      LEFT JOIN products p ON p.id = c.product_id
      WHERE c.status = 'active'${filterSql}
-     GROUP BY status`,
+     GROUP BY 1`,
     filterParams
   );
-  return rows.map((r) => ({ status: r.status, count: Number(r.count) }));
+  return rows.map((r) => ({ status: r.payment_status, count: Number(r.count) }));
 }
 
 async function getDebtAging(filters) {

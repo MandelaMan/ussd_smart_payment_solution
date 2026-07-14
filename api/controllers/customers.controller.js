@@ -454,6 +454,13 @@ async function refreshTispStatus(customer) {
       try {
         await store.updateCustomerSubscriptionStatus(customer.id, "Not on TISP");
         customer.subscriptionStatus = "Not on TISP";
+        try {
+          await integrationSnapshot.upsertTispSnapshot(customer.id, {
+            status: "Not on TISP",
+          });
+        } catch (e) {
+          console.warn("TISP not-found snapshot persist failed:", e.message);
+        }
       } catch (e) {
         console.warn("TISP not-found status persist failed:", e.message);
       }
@@ -644,7 +651,7 @@ async function listCustomers(req, res, next) {
       sortBy,
       sortDir,
     } = req.query;
-    const result = await store.listCustomers({
+    const listFilters = {
       accountStatus: status,
       subscriptionStatus: subscriptionStatus || undefined,
       buildingId: buildingId ? Number(buildingId) : undefined,
@@ -655,14 +662,57 @@ async function listCustomers(req, res, next) {
       customerType,
       sortBy,
       sortDir,
-    });
+    };
+    let result = await store.listCustomers(listFilters);
 
-    if (refresh === "true") {
+    const searchQuery = String(search || "").trim();
+    // Search hits and explicit refresh: live-sync TISP + Zoho so cards open already synced.
+    const shouldLiveSync = searchQuery.length > 0 || refresh === "true";
+
+    if (shouldLiveSync) {
       const active = result.data.filter((c) => c.status === "active");
-      const toRefresh = active.filter((c) => syncCooldown.getRemainingMs(c.id) <= 0);
-      await mapWithConcurrency(toRefresh, 5, (c) =>
-        refreshTispStatusWithCooldown(c)
-      );
+      const toRefresh = active
+        .filter((c) => syncCooldown.getRemainingMs(c.id) <= 0)
+        .slice(0, Math.min(Number(limit) || 20, 20));
+
+      if (toRefresh.length > 0) {
+        await mapWithConcurrency(toRefresh, 3, async (customer) => {
+          try {
+            await refreshTispStatus(customer);
+          } catch (e) {
+            console.warn(
+              `[listCustomers] TISP sync failed for ${customer.customerNumber}:`,
+              e.message
+            );
+          }
+          try {
+            invalidateCustomerZoho(customer.id);
+            const zoho = await fetchCustomerZohoInvoices(customer, {
+              skipCache: true,
+            });
+            await store.reconcileZohoBillingStatus(customer.id, {
+              linked: zoho?.linked,
+              invoiceCount: zoho?.invoiceCount ?? 0,
+            });
+          } catch (e) {
+            console.warn(
+              `[listCustomers] Zoho sync failed for ${customer.customerNumber}:`,
+              e.message
+            );
+          }
+          try {
+            await store.reconcileTispSyncStatus(customer.id);
+          } catch (e) {
+            console.warn(
+              `[listCustomers] TISP reconcile failed for ${customer.customerNumber}:`,
+              e.message
+            );
+          }
+          syncCooldown.recordSync(customer.id);
+        });
+
+        result = await store.listCustomers(listFilters);
+      }
     }
 
     return res.json(result);
@@ -814,13 +864,75 @@ async function exportCustomers(req, res, next) {
 
 async function attachTispDueDate(customer) {
   if (!customer?.id) return customer;
+
+  let dueDate =
+    integrationSnapshot.normalizeTispDueDateValue(customer.tispDueDate) || null;
+
   try {
     const snap = await integrationSnapshot.getTispSnapshot(customer.id);
-    const dueDate = snap?.due_date || null;
-    return { ...customer, tispDueDate: dueDate ? String(dueDate) : null };
+    dueDate =
+      integrationSnapshot.dueDateFromTispSnapshotRow(snap) || dueDate || null;
+
+    // Persist normalized due date back onto the snapshot when we recovered it from raw_json.
+    if (
+      snap &&
+      dueDate &&
+      (!snap.due_date ||
+        integrationSnapshot.normalizeTispDueDateValue(snap.due_date) !== dueDate)
+    ) {
+      try {
+        await query(
+          `UPDATE tisp_customer_snapshots SET due_date = ? WHERE customer_id = ?`,
+          [dueDate, customer.id]
+        );
+      } catch {
+        /* best-effort backfill */
+      }
+    }
   } catch {
-    return { ...customer, tispDueDate: customer.tispDueDate ?? null };
+    /* keep whatever we already have */
   }
+
+  // Live TISP lookup when snapshot has no due date (common for older syncs).
+  if (!dueDate && customer.status === "active" && customer.customerNumber) {
+    const timeoutMs = Number(process.env.TISP_QUOTE_TIMEOUT_MS || 5_000);
+    try {
+      const tisp = await Promise.race([
+        getTISPCustomer(customer.customerNumber),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("TISP due-date lookup timed out")), timeoutMs)
+        ),
+      ]);
+      dueDate = integrationSnapshot.extractTispDueDate(tisp);
+      if (dueDate || tisp) {
+        try {
+          await integrationSnapshot.upsertTispSnapshot(customer.id, tisp || {});
+        } catch (e) {
+          console.warn("TISP snapshot save (due date) failed:", e.message);
+        }
+      }
+    } catch {
+      /* TISP unavailable — fall through to estimate */
+    }
+  }
+
+  // Last resort: estimate from last payment + billing frequency.
+  if (!dueDate && customer.lastPaymentDate) {
+    try {
+      dueDate = estimateDueDateFromLastPayment(
+        customer.lastPaymentDate,
+        customer.paymentFrequency,
+        customer.customPeriodDays
+      );
+      if (dueDate) {
+        dueDate = integrationSnapshot.normalizeTispDueDateValue(dueDate) || String(dueDate).slice(0, 10);
+      }
+    } catch {
+      /* ignore estimate errors */
+    }
+  }
+
+  return { ...customer, tispDueDate: dueDate || null };
 }
 
 async function getCustomer(req, res, next) {
@@ -983,9 +1095,11 @@ async function resolveCustomerDueDateFromTisp(customerRow, billingContext) {
 
   try {
     const snap = await integrationSnapshot.getTispSnapshot(customerRow.id);
-    if (snap?.due_date) dueDate = String(snap.due_date);
-    if (snap?.subscription_status) {
-      subscriptionStatus = normalizeSubscriptionStatus(snap.subscription_status);
+    if (snap) {
+      dueDate = integrationSnapshot.dueDateFromTispSnapshotRow(snap);
+      if (snap.subscription_status) {
+        subscriptionStatus = normalizeSubscriptionStatus(snap.subscription_status);
+      }
     }
   } catch {
     /* ignore snapshot read errors */
@@ -1002,7 +1116,7 @@ async function resolveCustomerDueDateFromTisp(customerRow, billingContext) {
         )
       ),
     ]);
-    dueDate = tisp?.dueDate ?? tisp?.duedate ?? dueDate;
+    dueDate = integrationSnapshot.extractTispDueDate(tisp) || dueDate;
     const tispStatus = tisp?.status ?? tisp?.Status ?? null;
     if (tispStatus) {
       subscriptionStatus = normalizeSubscriptionStatus(String(tispStatus));
@@ -2044,6 +2158,102 @@ async function cancelSubscription(req, res, next) {
   }
 }
 
+/**
+ * Disconnect service on TISP by setting due date to today.
+ * Keeps the local account active; sets subscription status to Suspended.
+ */
+async function disconnectCustomer(req, res, next) {
+  try {
+    const { notes } = req.body || {};
+    const customerId = Number(req.params.id);
+    const ctx = await store.getCustomerContext(customerId);
+    if (!ctx) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+    if (ctx.status === "cancelled") {
+      return res.status(400).json({ error: "Cannot disconnect a cancelled customer" });
+    }
+    if (ctx.status !== "active") {
+      return res.status(400).json({ error: "Customer is not active" });
+    }
+
+    const disconnectDate = new Date();
+    const dueDateLabel = formatTispDueDate(disconnectDate);
+    const tisp = { ok: true, skipped: true };
+
+    try {
+      const onTisp = await accountExistsOnTisp(ctx.customer_number);
+      if (onTisp) {
+        await updateCustomerOnTisp(ctx, {
+          dueDate: disconnectDate,
+          skipCooldown: true,
+        });
+        tisp.ok = true;
+        tisp.skipped = false;
+        tisp.dueDate = dueDateLabel;
+      } else {
+        tisp.ok = true;
+        tisp.skipped = true;
+        tisp.reason = "not_on_tisp";
+        tisp.dueDate = dueDateLabel;
+      }
+    } catch (e) {
+      tisp.ok = false;
+      tisp.skipped = false;
+      tisp.error = formatTispError(e);
+    }
+
+    await store.disconnectCustomer(customerId, notes);
+
+    try {
+      await integrationSnapshot.upsertTispSnapshot(customerId, {
+        status: "Suspended",
+        DueDate: dueDateLabel,
+        due_date: dueDateLabel,
+      });
+    } catch (e) {
+      console.warn("TISP snapshot save (disconnect) failed:", e.message);
+    }
+
+    try {
+      await store.updateCustomerTispSync(
+        customerId,
+        tisp.ok ? "synced" : "failed",
+        tisp.ok ? null : tisp.error || "TISP disconnect failed"
+      );
+    } catch {
+      /* best-effort */
+    }
+
+    const customer = await store.getCustomerById(customerId);
+
+    await logActivity({
+      eventType: "customer_disconnected",
+      title: "Customer disconnected on TISP",
+      message: [
+        customer?.customerNumber || "",
+        tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
+        tisp.skipped ? "not on TISP" : null,
+        tisp.error || null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      source: "admin",
+      status: tisp.ok ? "success" : "failed",
+      customerRef: customer?.customerNumber,
+    });
+
+    return res.json({
+      ok: true,
+      customer,
+      tisp,
+    });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
 async function deleteCustomerPermanently(req, res, next) {
   try {
     const id = Number(req.params.id);
@@ -2913,6 +3123,7 @@ module.exports = {
   changePaymentFrequency,
   switchApartment,
   cancelSubscription,
+  disconnectCustomer,
   deleteCustomerPermanently,
   bulkCancelSubscriptions,
   apartmentHistory,

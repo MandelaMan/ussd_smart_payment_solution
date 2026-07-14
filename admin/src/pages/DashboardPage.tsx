@@ -336,8 +336,8 @@ export function DashboardPage() {
                 <MetricCard
                   accent="cerulean"
                   label="Active subscribers"
-                  value={subs.active}
-                  sub={`${subs.total} total`}
+                  value={subs.tispActive}
+                  sub={`${subs.active} accounts · ${subs.total} total`}
                   to="/customers?status=Active"
                 />
                 <MetricCard
@@ -351,6 +351,7 @@ export function DashboardPage() {
                   label="Churned"
                   value={subs.cancelled}
                   sub="Cancelled accounts"
+                  to="/customers?status=Cancelled"
                 />
                 <MetricCard
                   accent="cerulean"

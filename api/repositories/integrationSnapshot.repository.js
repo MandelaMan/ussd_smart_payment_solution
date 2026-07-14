@@ -15,6 +15,74 @@ function parseJson(value, fallback = null) {
   }
 }
 
+/** Pull due date from common TISP payload key variants. */
+function extractTispDueDateRaw(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const raw =
+    payload.dueDate ??
+    payload.duedate ??
+    payload.DueDate ??
+    payload.DUE_DATE ??
+    payload.expiryDate ??
+    payload.ExpiryDate ??
+    payload.due_date ??
+    null;
+  if (raw == null || String(raw).trim() === "") return null;
+  return String(raw).trim();
+}
+
+/**
+ * Normalize TISP due dates (e.g. "13 Jul 2026 12:00 AM") to YYYY-MM-DD for storage/UI.
+ * Falls back to the original string if parsing fails.
+ */
+function normalizeTispDueDateValue(value) {
+  if (value == null || value === "") return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+
+  try {
+    const moment = require("moment-timezone");
+    const formats = [
+      "DD MMM YYYY hh:mm A",
+      "DD MMM YYYY h:mm A",
+      "D MMM YYYY hh:mm A",
+      "D MMM YYYY h:mm A",
+      "DD MMM YYYY",
+      "D MMM YYYY",
+      "DD/MM/YYYY",
+      "D/M/YYYY",
+      "YYYY-MM-DD",
+      moment.ISO_8601,
+    ];
+    const strict = moment(s, formats, true);
+    if (strict.isValid()) return strict.format("YYYY-MM-DD");
+    const loose = moment(s);
+    if (loose.isValid()) return loose.format("YYYY-MM-DD");
+  } catch {
+    /* moment unavailable — fall through */
+  }
+
+  const native = new Date(s);
+  if (!Number.isNaN(native.getTime())) {
+    return native.toISOString().slice(0, 10);
+  }
+  return s;
+}
+
+function extractTispDueDate(payload) {
+  return normalizeTispDueDateValue(extractTispDueDateRaw(payload));
+}
+
+/** Resolve due date from a stored snapshot row (column or nested raw_json). */
+function dueDateFromTispSnapshotRow(row) {
+  if (!row) return null;
+  const fromColumn = normalizeTispDueDateValue(row.due_date);
+  if (fromColumn) return fromColumn;
+  const raw = parseJson(row.raw_json, null);
+  return extractTispDueDate(raw);
+}
+
 function isFresh(syncedAt, maxAgeHours = DEFAULT_MAX_AGE_HOURS) {
   if (!syncedAt) return false;
   const ageMs = Date.now() - new Date(syncedAt).getTime();
@@ -188,11 +256,7 @@ async function upsertTispSnapshot(customerId, tispPayload) {
     tispPayload.Status ??
     tispPayload.subscriptionStatus ??
     null;
-  const dueDate =
-    tispPayload.dueDate ??
-    tispPayload.duedate ??
-    tispPayload.DueDate ??
-    null;
+  const dueDate = extractTispDueDate(tispPayload);
   const packageLabel =
     tispPayload.package ?? tispPayload.Package ?? tispPayload.package_label ?? null;
   const amount =
@@ -204,7 +268,7 @@ async function upsertTispSnapshot(customerId, tispPayload) {
      VALUES (?, ?, ?, ?, ?, ?, NOW())
      ON DUPLICATE KEY UPDATE
       subscription_status = VALUES(subscription_status),
-      due_date = VALUES(due_date),
+      due_date = COALESCE(VALUES(due_date), due_date),
       package_label = VALUES(package_label),
       monthly_amount = VALUES(monthly_amount),
       raw_json = VALUES(raw_json),
@@ -212,7 +276,7 @@ async function upsertTispSnapshot(customerId, tispPayload) {
     [
       customerId,
       status ? String(status) : null,
-      dueDate ? String(dueDate) : null,
+      dueDate,
       packageLabel ? String(packageLabel) : null,
       amount != null ? Number(amount) : null,
       JSON.stringify(tispPayload),
@@ -262,7 +326,7 @@ async function loadCustomerBillingSnapshot(customerId, options = {}) {
     tisp: tispRow
       ? {
           subscriptionStatus: tispRow.subscription_status,
-          dueDate: tispRow.due_date,
+          dueDate: dueDateFromTispSnapshotRow(tispRow),
           packageLabel: tispRow.package_label,
           amount: tispRow.monthly_amount,
           fresh: tispFresh,
@@ -387,6 +451,9 @@ module.exports = {
   listRecurringInvoices,
   getTispSnapshot,
   upsertTispSnapshot,
+  extractTispDueDate,
+  normalizeTispDueDateValue,
+  dueDateFromTispSnapshotRow,
   loadCustomerBillingSnapshot,
   saveZohoBillingSnapshot,
   recordZohoPaymentSnapshot,

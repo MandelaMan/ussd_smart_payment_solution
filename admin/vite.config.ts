@@ -7,7 +7,10 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt",
+      devOptions: {
+        enabled: false,
+      },
       includeAssets: ["favicon.svg", "logo.png", "icons.svg"],
       manifest: {
         name: "SUL Bix",
@@ -39,12 +42,25 @@ export default defineConfig({
         ],
       },
       workbox: {
+        cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         navigateFallback: "/admin/index.html",
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith("/api"),
             handler: "NetworkOnly",
+          },
+          {
+            // Prefer network for shell assets so nav CSS cannot stick on an old build.
+            urlPattern: ({ request }) =>
+              request.destination === "document" ||
+              request.destination === "script" ||
+              request.destination === "style",
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "admin-shell-v2",
+              networkTimeoutSeconds: 4,
+            },
           },
         ],
       },
@@ -56,6 +72,8 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:4000",
         changeOrigin: true,
+        timeout: 15000,
+        proxyTimeout: 15000,
       },
     },
   },

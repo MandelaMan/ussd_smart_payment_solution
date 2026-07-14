@@ -30,19 +30,30 @@ const ALLOWED = new Set<SubscriptionStatusLabel>([
   "Cancelled",
 ]);
 
+const CANONICAL_BY_LOWER = new Map<string, SubscriptionStatusLabel>([
+  ["active", "Active"],
+  ["suspended", "Suspended"],
+  ["not on tisp", "Not on TISP"],
+  ["not_on_tisp", "Not on TISP"],
+  ["unknown", "Not on TISP"],
+  ["cancelled", "Cancelled"],
+  ["canceled", "Cancelled"],
+]);
+
 export function parseStatusFilterParam(value: string | null | undefined): SubscriptionStatusLabel[] {
   if (!value?.trim()) return [];
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .map((part) => {
-      // Legacy filter value from bookmarks / saved links.
-      if (part.toLowerCase() === "unknown") return "Not on TISP" as const;
-      return part;
-    })
-    .filter((part): part is SubscriptionStatusLabel =>
-      ALLOWED.has(part as SubscriptionStatusLabel)
-    );
+  const seen = new Set<SubscriptionStatusLabel>();
+  const out: SubscriptionStatusLabel[] = [];
+  for (const part of value.split(",")) {
+    const key = part.trim().toLowerCase();
+    if (!key) continue;
+    const canonical = CANONICAL_BY_LOWER.get(key);
+    if (!canonical || seen.has(canonical)) continue;
+    if (!ALLOWED.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
+  }
+  return out;
 }
 
 export function serializeStatusFilter(values: SubscriptionStatusLabel[]): string {
@@ -55,7 +66,7 @@ export function normalizeSubscriptionStatus(
   const raw = String(value ?? "").trim();
   if (!raw) return "Not on TISP";
   const lower = raw.toLowerCase();
-  if (lower.includes("active")) return "Active";
+  if (lower === "active" || lower.startsWith("active ")) return "Active";
   if (lower.includes("suspend")) return "Suspended";
   if (lower.includes("cancel")) return "Cancelled";
   return "Not on TISP";
@@ -67,4 +78,12 @@ export function displayCustomerStatus(customer: {
 }): string {
   if (customer.status === "cancelled") return "Cancelled";
   return normalizeSubscriptionStatus(customer.subscriptionStatus);
+}
+
+export function statusFiltersEqual(
+  a: SubscriptionStatusLabel[],
+  b: SubscriptionStatusLabel[]
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
 }

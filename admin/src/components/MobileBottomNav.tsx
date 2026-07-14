@@ -66,15 +66,15 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
   return (
     <Box
       as="nav"
-      mx={3}
-      mb="2px"
+      mx={0}
+      mb={0}
       bg="whiteAlpha.900"
       border="1px solid"
       borderColor="border"
       borderRadius="full"
       boxShadow="0 8px 28px rgba(15, 23, 42, 0.14)"
       backdropFilter="blur(16px)"
-      css={{ WebkitBackdropFilter: "blur(16px)" }}
+      css={{ WebkitBackdropFilter: "blur(16px)", pointerEvents: "auto" }}
       overflow="visible"
       px={1}
       py={1}

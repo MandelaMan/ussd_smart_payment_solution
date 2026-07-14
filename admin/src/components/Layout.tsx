@@ -67,7 +67,7 @@ function LayoutShell() {
       {typeof document !== "undefined" && !open && !hideBottomNav
         ? createPortal(
             <Box
-              className="mobile-bottom-nav-root"
+              className="sul-mobile-nav-v2"
               display={{ base: "block", lg: "none" }}
               position="fixed"
               left={0}
@@ -75,6 +75,9 @@ function LayoutShell() {
               bottom={0}
               zIndex={1000}
               bg="transparent"
+              pointerEvents="none"
+              p={0}
+              pb="8px"
               style={{
                 position: "fixed",
                 left: 0,
@@ -82,6 +85,9 @@ function LayoutShell() {
                 bottom: 0,
                 zIndex: 1000,
                 background: "transparent",
+                pointerEvents: "none",
+                paddingBottom: 8,
+                transform: "none",
               }}
             >
               <MobileBottomNav onOpenMenu={() => setOpen(true)} />

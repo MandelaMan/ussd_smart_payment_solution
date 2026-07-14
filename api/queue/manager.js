@@ -12,7 +12,7 @@ const dlqQueues = new Map();
 const queueEvents = new Map();
 let initialized = false;
 
-function getQueue(integration) {
+function getQueue(integration, { withEvents = true } = {}) {
   const cfg = getQueueConfig(integration);
   if (!queues.has(integration)) {
     const queue = new Queue(cfg.name, {
@@ -25,7 +25,11 @@ function getQueue(integration) {
       connection: getBullConnection(),
     });
     dlqQueues.set(integration, dlq);
+  }
 
+  if (withEvents && !queueEvents.has(integration)) {
+    const queue = queues.get(integration);
+    const dlq = dlqQueues.get(integration);
     const events = new QueueEvents(cfg.name, { connection: getBullConnection() });
     queueEvents.set(integration, events);
 
@@ -171,7 +175,7 @@ async function clearAllRepeatableJobs() {
 }
 
 async function getQueueStats(integration) {
-  const queue = getQueue(integration);
+  const queue = getQueue(integration, { withEvents: false });
   const [waiting, active, completed, failed, delayed] = await Promise.all([
     queue.getWaitingCount(),
     queue.getActiveCount(),

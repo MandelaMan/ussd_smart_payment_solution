@@ -18,7 +18,13 @@ async function main() {
       throw new Error("Redis is not reachable");
     }
   } catch (err) {
-    syncLog.error("worker_redis_connection_failed", { error: err });
+    syncLog.error("worker_redis_connection_failed", {
+      error: err?.message || String(err),
+      code: err?.code,
+      host: env.REDIS_HOST,
+      port: env.REDIS_PORT,
+      hint: "Is Redis running? Try: yarn docker:up  (or docker compose up -d redis)",
+    });
     process.exit(1);
   }
 

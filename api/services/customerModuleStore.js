@@ -22,9 +22,49 @@ function escapeLike(term) {
   return String(term).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
-function buildCustomerSearchFilter(term) {
+/**
+ * @param {string} term
+ * @param {{ mode?: "fuzzy" | "exact" }} [options]
+ * - fuzzy: substring match (default customers list)
+ * - exact: billing gaps — exact CN/apt/name, or CN ending with the token
+ *   (e.g. t506 → ET-T506). No starts-with prefixes (t50 must not hit T501–T506).
+ */
+function buildCustomerSearchFilter(term, options = {}) {
   const raw = String(term || "").trim();
   if (!raw || raw === "undefined") return null;
+
+  const mode = options.mode === "exact" ? "exact" : "fuzzy";
+  const upper = raw.toUpperCase();
+  const compact = upper.replace(/[\s\-_/]+/g, "");
+
+  if (mode === "exact") {
+    // Hyphen boundary: ET-T506 matches t506 / T506; ET-T501 does not match t50.
+    const hyphenSuffix = `%-${escapeLike(upper)}`;
+    return {
+      sql: `(
+        UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')) = ?
+        OR UPPER(TRIM(c.customer_number)) = ?
+        OR UPPER(TRIM(c.apartment_number)) = ?
+        OR UPPER(TRIM(CONCAT_WS(' ', c.first_name, c.middle_name, c.last_name))) = ?
+        OR UPPER(TRIM(CONCAT_WS(' ', c.first_name, c.last_name))) = ?
+        OR UPPER(TRIM(c.customer_number)) LIKE ?
+        OR RIGHT(
+          UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')),
+          ?
+        ) = ?
+      )`,
+      params: [
+        compact,
+        upper,
+        upper,
+        upper,
+        upper,
+        hyphenSuffix,
+        compact.length,
+        compact,
+      ],
+    };
+  }
 
   const escaped = escapeLike(raw);
   const like = `%${escaped}%`;
@@ -757,7 +797,9 @@ async function listCustomers(filters = {}) {
     clauses.push("c.customer_type = ?");
     params.push(filters.customerType);
   }
-  const searchFilter = buildCustomerSearchFilter(filters.search);
+  const searchFilter = buildCustomerSearchFilter(filters.search, {
+    mode: filters.searchMode === "exact" ? "exact" : "fuzzy",
+  });
   if (searchFilter) {
     clauses.push(searchFilter.sql);
     params.push(...searchFilter.params);
@@ -1578,6 +1620,31 @@ async function cancelCustomer(customerId, notes) {
   return customer;
 }
 
+/**
+ * Soft-disconnect: keep the account active but mark service Suspended locally.
+ * Caller is responsible for pushing due date = today to TISP.
+ */
+async function disconnectCustomer(customerId, notes) {
+  const customer = await getCustomerContext(customerId);
+  if (!customer) throw new Error("Customer not found");
+  if (customer.status === "cancelled") {
+    throw new Error("Cannot disconnect a cancelled customer");
+  }
+  if (customer.status !== "active") {
+    throw new Error("Customer is not active");
+  }
+
+  await updateCustomerSubscriptionStatus(customerId, "Suspended");
+
+  await query(
+    `INSERT INTO customer_events (customer_id, event_type, notes)
+     VALUES (?, 'disconnect', ?)`,
+    [customerId, notes || "Disconnected on TISP (due date set to today)"]
+  );
+
+  return customer;
+}
+
 async function deleteCustomerCompletely(customerId) {
   const customer = await getCustomerById(customerId);
   if (!customer) throw new Error("Customer not found");
@@ -2270,7 +2337,7 @@ async function getSubscriberStats(days = 29) {
       FROM customers c
       JOIN buildings b ON b.id = c.building_id
       WHERE c.status = 'active'
-        AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
+        AND LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active'
       GROUP BY b.id, b.name
       ORDER BY subscribers DESC
       LIMIT 20
@@ -2280,25 +2347,26 @@ async function getSubscriberStats(days = 29) {
       FROM customers c
       JOIN products p ON p.id = c.product_id
       WHERE c.status = 'active'
-        AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
+        AND LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active'
       GROUP BY p.id, p.name, p.mbps
       ORDER BY subscribers DESC
       LIMIT 8
     `),
     query(`
       SELECT
-        SUM(CASE WHEN LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) LIKE '%active%' THEN 1 ELSE 0 END) AS active_count,
-        SUM(CASE WHEN LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) LIKE '%suspend%' THEN 1 ELSE 0 END) AS suspended_count,
+        SUM(CASE WHEN LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active' THEN 1 ELSE 0 END) AS active_count,
+        SUM(CASE WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%' THEN 1 ELSE 0 END) AS suspended_count,
         SUM(CASE
-          WHEN COALESCE(NULLIF(TRIM(ts.subscription_status), ''), NULLIF(TRIM(c.subscription_status), '')) IS NULL
-            OR LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) IN ('unknown', 'not on tisp', 'not_on_tisp')
+          WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%cancel%' THEN 0
+          WHEN c.subscription_status IS NULL
+            OR TRIM(c.subscription_status) = ''
+            OR LOWER(TRIM(c.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
             OR (
-              LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) NOT LIKE '%active%'
-              AND LOWER(COALESCE(ts.subscription_status, c.subscription_status, '')) NOT LIKE '%suspend%'
+              LOWER(TRIM(c.subscription_status)) <> 'active'
+              AND LOWER(c.subscription_status) NOT LIKE '%suspend%'
             )
           THEN 1 ELSE 0 END) AS unknown_count
       FROM customers c
-      LEFT JOIN tisp_customer_snapshots ts ON ts.customer_id = c.id
       WHERE c.status = 'active'
     `),
   ]);
@@ -2369,6 +2437,7 @@ module.exports = {
   findProductForBillingFrequency,
   switchCustomerApartment,
   cancelCustomer,
+  disconnectCustomer,
   deleteCustomerCompletely,
   updateCustomerDetails,
   convertCustomerType,
