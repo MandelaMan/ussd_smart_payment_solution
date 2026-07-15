@@ -465,34 +465,22 @@ function billingcycleValue(_frequency) {
 }
 
 /**
- * Production: "BASIC + 100 + INTERNET + APARTONET CHANNELS"
- * Development: "10MBPS"
+ * TISP Package field — plan name only (e.g. "BASIC", "BASIC PLUS").
  */
-function buildTispPackageLabel({ planName, mbps, categoryName, productName }) {
-  if (process.env.NODE_ENV === "development") {
-    return "10MBPS";
-  }
-
-  const speed = Number(mbps);
+function buildTispPackageLabel({ planName, productName }) {
   const plan = String(planName || "").trim().toUpperCase();
-  const category = String(categoryName || "").trim().toUpperCase();
-
-  if (plan && category && speed > 0) {
-    return `${plan} + ${speed} + ${category}`;
-  }
+  if (plan) return plan;
 
   if (productName) {
     const parts = String(productName)
       .split(/\s*[·•―–—-]\s*|\s*\?\?\s*/)
       .map((s) => s.trim())
       .filter(Boolean);
-    if (parts.length >= 2 && speed > 0) {
-      return `${parts[0].toUpperCase()} + ${speed} + ${parts[1].toUpperCase()}`;
-    }
-    return String(productName).trim().toUpperCase();
+    // Product names are often "Plan · Category" — use the plan segment.
+    if (parts.length >= 1) return parts[0].toUpperCase();
   }
 
-  return speed > 0 ? `${speed}MBPS` : "10MBPS";
+  return "";
 }
 
 function collectTispClientInput({

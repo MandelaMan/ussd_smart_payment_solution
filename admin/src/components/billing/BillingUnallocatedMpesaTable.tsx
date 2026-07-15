@@ -32,6 +32,8 @@ import {
 } from "../../lib/tableExport";
 import { UnmatchedMpesaExpandPanel } from "./UnmatchedMpesaExpandPanel";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
+import { useAuth } from "../../lib/auth";
+import { canOperateFinance } from "../../lib/rbac";
 
 const PAGE_SIZE = 25;
 
@@ -42,6 +44,8 @@ type Props = {
 
 export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props) {
   const isMobile = useMobileViewport();
+  const { user } = useAuth();
+  const allowSync = canOperateFinance(user);
   const { syncing, runSync } = useBillingReconciliation();
   const [searchInput, setSearchInput] = useState("");
   const { query: search, pending: searchPending } = useDebouncedSearch(searchInput);
@@ -134,9 +138,11 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
           onSearchChange={setSearchInput}
           searchPlaceholder="Receipt, account, phone…"
           headerActions={
-            <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
-              <FiRefreshCw />
-            </Button>
+            allowSync ? (
+              <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+                <FiRefreshCw />
+              </Button>
+            ) : undefined
           }
         />
       </Box>

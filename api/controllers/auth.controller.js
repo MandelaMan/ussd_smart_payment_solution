@@ -6,7 +6,7 @@ const {
   clearAuthCookie,
 } = require("../middleware/auth");
 
-const VALID_ROLES = ["admin", "support", "cfo", "partner"];
+const VALID_ROLES = ["admin", "support", "cfo", "partner", "ceo"];
 
 function isValidRole(role) {
   return VALID_ROLES.includes(role);
@@ -87,7 +87,7 @@ async function createUser(req, res, next) {
         .json({ error: "Name, email, and password are required" });
     }
     if (!isValidRole(role)) {
-      return res.status(400).json({ error: "Role must be admin, support, cfo, or partner" });
+      return res.status(400).json({ error: "Role must be admin, support, cfo, partner, or ceo" });
     }
 
     const hash = await bcrypt.hash(password, 12);
@@ -100,6 +100,17 @@ async function createUser(req, res, next) {
     if (err.code === "ER_DUP_ENTRY") {
       return res.status(409).json({ error: "Email already exists" });
     }
+    // ENUM missing `ceo` (migration 032 not applied) surfaces as truncation.
+    if (
+      err.code === "WARN_DATA_TRUNCATED" ||
+      err.errno === 1265 ||
+      /Data truncated for column 'role'/i.test(err.message || "")
+    ) {
+      return res.status(500).json({
+        error:
+          "Database role column is missing the CEO value. Apply migration 032_ceo_role.sql (or ALTER admin_users.role ENUM to include 'ceo'), then retry.",
+      });
+    }
     return next(err);
   }
 }
@@ -110,7 +121,7 @@ async function updateUser(req, res, next) {
     const id = req.params.id;
 
     if (role && !isValidRole(role)) {
-      return res.status(400).json({ error: "Role must be admin, support, cfo, or partner" });
+      return res.status(400).json({ error: "Role must be admin, support, cfo, partner, or ceo" });
     }
 
     const rows = await query(

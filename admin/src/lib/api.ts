@@ -35,7 +35,7 @@ export type User = {
   id: number;
   name: string;
   email: string;
-  role: "admin" | "support" | "cfo" | "viewer" | "partner";
+  role: "admin" | "support" | "cfo" | "viewer" | "partner" | "ceo";
 };
 
 export type AdminUser = User & {

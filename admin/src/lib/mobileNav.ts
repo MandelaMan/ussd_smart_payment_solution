@@ -60,6 +60,11 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
         icon: FiCheckCircle,
       }
     );
+  } else if (normalizeRole(user?.role) === "ceo") {
+    tabs.push(
+      { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },
+      { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 }
+    );
   } else if (canAccessFinance(user)) {
     tabs.push(
       { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },

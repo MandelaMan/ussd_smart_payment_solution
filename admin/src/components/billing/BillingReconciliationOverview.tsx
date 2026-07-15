@@ -12,6 +12,8 @@ import { MobilePageChrome } from "../ui/MobilePageChrome";
 import { BillingModuleCard } from "./BillingModuleCard";
 import { BillingReconciliationGuides } from "./BillingReconciliationGuides";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
+import { useAuth } from "../../lib/auth";
+import { canOperateFinance } from "../../lib/rbac";
 
 type Props = {
   summary: ReconciliationSummary | null;
@@ -42,6 +44,8 @@ function MobileKeyStats({ summary }: { summary: ReconciliationSummary }) {
 }
 
 export function BillingReconciliationOverview({ summary, summaryLoading }: Props) {
+  const { user } = useAuth();
+  const allowSync = canOperateFinance(user);
   const { syncing, runSync } = useBillingReconciliation();
   const totalIssues = BILLING_MODULES.reduce(
     (sum, module) => sum + moduleCount(summary, module),
@@ -54,10 +58,12 @@ export function BillingReconciliationOverview({ summary, summaryLoading }: Props
         <MobilePageChrome
           title="Billing"
           headerActions={
-            <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
-              <FiRefreshCw />
-              Sync
-            </Button>
+            allowSync ? (
+              <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+                <FiRefreshCw />
+                Sync
+              </Button>
+            ) : undefined
           }
         />
       </Box>

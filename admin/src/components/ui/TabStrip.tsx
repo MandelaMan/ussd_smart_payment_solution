@@ -10,9 +10,11 @@ type Props = {
   tabs: TabItem[];
   active: string;
   onChange: (id: string) => void;
+  /** Hug label width instead of stretching tabs across the full row. */
+  fitContent?: boolean;
 };
 
-export function TabStrip({ tabs, active, onChange }: Props) {
+export function TabStrip({ tabs, active, onChange, fitContent = false }: Props) {
   const activeLabel = tabs.find((tab) => tab.id === active)?.label ?? "Section";
 
   return (
@@ -56,9 +58,19 @@ export function TabStrip({ tabs, active, onChange }: Props) {
         </SelectField>
       </Box>
 
-      {/* Desktop: equal-width underline tabs — no horizontal scroll */}
-      <Box display={{ base: "none", md: "block" }} px={{ md: 2, lg: 3 }} overflow="hidden">
-        <Flex gap={0} w="full" minW={0} overflow="hidden">
+      {/* Desktop tabs */}
+      <Box
+        display={{ base: "none", md: "block" }}
+        px={{ md: fitContent ? 4 : 2, lg: fitContent ? 5 : 3 }}
+        pt={fitContent ? 1 : 0}
+        overflow="hidden"
+      >
+        <Flex
+          gap={fitContent ? 1 : 0}
+          w={fitContent ? "auto" : "full"}
+          minW={0}
+          overflow="hidden"
+        >
           {tabs.map((tab) => {
             const isActive = tab.id === active;
             return (
@@ -68,12 +80,12 @@ export function TabStrip({ tabs, active, onChange }: Props) {
                 variant="ghost"
                 size="sm"
                 borderRadius={0}
-                flex="1 1 0"
+                flex={fitContent ? "0 0 auto" : "1 1 0"}
                 minW={0}
-                px={{ md: 2, lg: 3 }}
-                py={3}
+                px={{ md: fitContent ? 3 : 2, lg: fitContent ? 4 : 3 }}
+                py={fitContent ? 2.5 : 3}
                 h="auto"
-                minH="44px"
+                minH={fitContent ? "40px" : "44px"}
                 fontWeight={isActive ? "semibold" : "medium"}
                 fontSize={{ md: "xs", lg: "sm" }}
                 color={

@@ -34,11 +34,11 @@ export function AdminRoute() {
 }
 
 export function FinanceRoute() {
-  return <RoleRoute roles={["admin", "cfo"]} />;
+  return <RoleRoute roles={["admin", "cfo", "ceo"]} />;
 }
 
 export function ReportsRoute() {
-  return <RoleRoute roles={["admin", "cfo", "partner"]} />;
+  return <RoleRoute roles={["admin", "cfo", "partner", "ceo"]} />;
 }
 
 export function ConfigRoute() {

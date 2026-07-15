@@ -1,10 +1,16 @@
 import type { User } from "./api";
 
-export type UserRole = "admin" | "support" | "cfo" | "partner";
+export type UserRole = "admin" | "support" | "cfo" | "partner" | "ceo";
 
 export function normalizeRole(role: string | undefined): UserRole {
   if (role === "viewer") return "support";
-  if (role === "admin" || role === "cfo" || role === "support" || role === "partner") {
+  if (
+    role === "admin" ||
+    role === "cfo" ||
+    role === "support" ||
+    role === "partner" ||
+    role === "ceo"
+  ) {
     return role;
   }
   return "support";
@@ -16,6 +22,8 @@ export function roleLabel(role: string | undefined): string {
       return "Administrator";
     case "cfo":
       return "CFO";
+    case "ceo":
+      return "CEO";
     case "support":
       return "Customer Support";
     case "partner":
@@ -33,14 +41,21 @@ export function usePartnerDashboard(user: User | null): boolean {
   return isPartner(user);
 }
 
+/** Finance dashboard, transactions, BI, billing overview (read). */
 export function canAccessFinance(user: User | null): boolean {
+  const role = normalizeRole(user?.role);
+  return role === "admin" || role === "cfo" || role === "ceo";
+}
+
+/** Sync / allocate / send billing actions — not CEO. */
+export function canOperateFinance(user: User | null): boolean {
   const role = normalizeRole(user?.role);
   return role === "admin" || role === "cfo";
 }
 
 export function canAccessReports(user: User | null): boolean {
   const role = normalizeRole(user?.role);
-  return role === "admin" || role === "cfo" || role === "partner";
+  return role === "admin" || role === "cfo" || role === "partner" || role === "ceo";
 }
 
 export function canAccessConfig(user: User | null): boolean {
@@ -90,4 +105,8 @@ export function hidePricing(user: User | null): boolean {
 
 export function useSupportDashboard(user: User | null): boolean {
   return normalizeRole(user?.role) === "support";
+}
+
+export function useCeoDashboard(user: User | null): boolean {
+  return normalizeRole(user?.role) === "ceo";
 }

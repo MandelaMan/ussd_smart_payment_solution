@@ -11,6 +11,8 @@ import {
   moduleCount,
   moduleStatusParam,
 } from "../../lib/billingReconciliationNav";
+import { useAuth } from "../../lib/auth";
+import { canOperateFinance } from "../../lib/rbac";
 
 type Column =
   | "issue"
@@ -39,6 +41,8 @@ const MODULE_COLUMNS: Record<string, Column[]> = {
 
 export function BillingModulePage() {
   const location = useLocation();
+  const { user } = useAuth();
+  const allowSync = canOperateFinance(user);
   const module = getBillingModuleFromPath(location.pathname);
   const { summary, syncing, runSync, reloadKey } = useBillingReconciliation();
   const [exporting, setExporting] = useState(false);
@@ -74,6 +78,7 @@ export function BillingModulePage() {
       syncing={syncing}
       exporting={exporting}
       onSync={runSync}
+      allowSync={allowSync}
       onExport={handleExport}
       count={count}
       hideSyncBanner

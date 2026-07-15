@@ -41,6 +41,8 @@ import { BillingSyncProgressBanner } from "./BillingSyncProgressBanner";
 import { DataTableExportButton } from "../ui/DataTableExportButton";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
 import type { ExportFormat, ExportScope } from "../../lib/tableExport";
+import { useAuth } from "../../lib/auth";
+import { canOperateFinance } from "../../lib/rbac";
 
 const BROWSE_PAGE_SIZE = 10;
 const SEARCH_PAGE_SIZE = 25;
@@ -73,6 +75,8 @@ export function BillingCustomerTable({
   showInvoiceAmountUnderCustomer = false,
 }: Props) {
   const isMobile = useMobileViewport();
+  const { user } = useAuth();
+  const allowSync = canOperateFinance(user);
   const { syncing, runSync } = useBillingReconciliation();
   const [searchInput, setSearchInput] = useState("");
   const { query: debouncedQuery, pending: searchPending } = useDebouncedSearch(searchInput);
@@ -389,9 +393,11 @@ export function BillingCustomerTable({
               : undefined
           }
           headerActions={
-            <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
-              <FiRefreshCw />
-            </Button>
+            allowSync ? (
+              <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+                <FiRefreshCw />
+              </Button>
+            ) : undefined
           }
         />
       </Box>

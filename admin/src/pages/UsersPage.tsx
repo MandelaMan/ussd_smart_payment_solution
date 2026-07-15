@@ -52,7 +52,11 @@ import {
 const CREATE_ROLE_OPTIONS = [
   { value: "admin", label: "Administrator — full access" },
   { value: "support", label: "Customer support — manage customers and agencies" },
-  { value: "cfo", label: "CFO — financial reports and transactions" },
+  { value: "cfo", label: "CFO — financial ops, billing, and reports" },
+  {
+    value: "ceo",
+    label: "CEO — business reports, customers & payments (read-only)",
+  },
   { value: "partner", label: "Partner — read-only dashboard and customer list" },
 ] as const;
 

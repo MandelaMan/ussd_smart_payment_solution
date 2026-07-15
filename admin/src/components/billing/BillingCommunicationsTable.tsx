@@ -46,6 +46,8 @@ import {
   type ExportScope,
 } from "../../lib/tableExport";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
+import { useAuth } from "../../lib/auth";
+import { canOperateFinance } from "../../lib/rbac";
 
 const PAGE_SIZE = 25;
 
@@ -61,6 +63,9 @@ export function BillingCommunicationsTable({
   mailConfigured = false,
 }: Props) {
   const isMobile = useMobileViewport();
+  const { user } = useAuth();
+  const allowSync = canOperateFinance(user);
+  const allowSend = allowSync;
   const { syncing, runSync } = useBillingReconciliation();
   const [searchInput, setSearchInput] = useState("");
   const { query: debouncedQuery, pending: searchPending } = useDebouncedSearch(searchInput);
@@ -241,9 +246,11 @@ export function BillingCommunicationsTable({
           onSearchChange={setSearchInput}
           searchPlaceholder="Customer number or name…"
           headerActions={
-            <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
-              <FiRefreshCw />
-            </Button>
+            allowSync ? (
+              <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+                <FiRefreshCw />
+              </Button>
+            ) : undefined
           }
         />
       </Box>
@@ -300,7 +307,7 @@ export function BillingCommunicationsTable({
         </FilterField>
       </FilterToolbar>
 
-      {sendableSelected.length > 0 && (
+      {allowSend && sendableSelected.length > 0 && (
         <Flex justify="flex-end">
           <Button
             size="sm"
@@ -358,17 +365,19 @@ export function BillingCommunicationsTable({
                           <FiEye />
                           Preview
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          colorPalette="brand"
-                          disabled={!row.canSend}
-                          loading={sending}
-                          onClick={() => sendOne(row.customerId)}
-                        >
-                          <FiMail />
-                          Send
-                        </Button>
+                        {allowSend && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="brand"
+                            disabled={!row.canSend}
+                            loading={sending}
+                            onClick={() => sendOne(row.customerId)}
+                          >
+                            <FiMail />
+                            Send
+                          </Button>
+                        )}
                       </Flex>
                     }
                   />
@@ -448,17 +457,19 @@ export function BillingCommunicationsTable({
                         <FiEye />
                         Preview
                       </Button>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        colorPalette="brand"
-                        disabled={!row.canSend}
-                        loading={sending}
-                        onClick={() => sendOne(row.customerId)}
-                      >
-                        <FiMail />
-                        Send
-                      </Button>
+                      {allowSend && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          colorPalette="brand"
+                          disabled={!row.canSend}
+                          loading={sending}
+                          onClick={() => sendOne(row.customerId)}
+                        >
+                          <FiMail />
+                          Send
+                        </Button>
+                      )}
                     </Flex>
                   </Table.Cell>
                 </Table.Row>

@@ -2,7 +2,7 @@
 /**
  * Seed test users for each role (development only).
  * Usage: yarn db:seed
- * Env: see .env.dist — ADMIN_*, SUPPORT_*, CFO_*, PARTNER_*
+ * Env: see .env.dist — ADMIN_*, SUPPORT_*, CFO_*, CEO_*, PARTNER_*
  */
 require("dotenv").config();
 const bcrypt = require("bcrypt");
@@ -26,6 +26,12 @@ const TEST_USERS = [
     name: process.env.CFO_NAME || "CFO User",
     email: process.env.CFO_EMAIL || "cfo@sulsolutions.biz",
     password: process.env.CFO_PASSWORD || "Cfo@12345",
+  },
+  {
+    role: "ceo",
+    name: process.env.CEO_NAME || "CEO User",
+    email: process.env.CEO_EMAIL || "ceo@sulsolutions.biz",
+    password: process.env.CEO_PASSWORD || "Ceo@12345",
   },
   {
     role: "partner",

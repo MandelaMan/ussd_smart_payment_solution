@@ -12,6 +12,7 @@ export const USER_ROLE_OPTIONS = [
   { value: "admin", label: "Administrator" },
   { value: "support", label: "Customer Support" },
   { value: "cfo", label: "CFO" },
+  { value: "ceo", label: "CEO" },
   { value: "partner", label: "Partner" },
 ] as const;
 

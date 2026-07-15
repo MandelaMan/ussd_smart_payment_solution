@@ -1,7 +1,11 @@
 import { Suspense, lazy } from "react";
 import { Flex, Spinner } from "@chakra-ui/react";
 import { useAuth } from "../lib/auth";
-import { usePartnerDashboard, useSupportDashboard } from "../lib/rbac";
+import {
+  useCeoDashboard,
+  usePartnerDashboard,
+  useSupportDashboard,
+} from "../lib/rbac";
 import { BRAND } from "../theme";
 
 const DashboardPage = lazy(() =>
@@ -12,6 +16,9 @@ const SupportDashboardPage = lazy(() =>
 );
 const PartnerDashboardPage = lazy(() =>
   import("./PartnerDashboardPage").then((m) => ({ default: m.PartnerDashboardPage }))
+);
+const CeoDashboardPage = lazy(() =>
+  import("./CeoDashboardPage").then((m) => ({ default: m.CeoDashboardPage }))
 );
 
 function DashFallback() {
@@ -26,6 +33,7 @@ export function RoleHomePage() {
   const { user } = useAuth();
   const partner = usePartnerDashboard(user);
   const support = useSupportDashboard(user);
+  const ceo = useCeoDashboard(user);
 
   return (
     <Suspense fallback={<DashFallback />}>
@@ -33,6 +41,8 @@ export function RoleHomePage() {
         <PartnerDashboardPage />
       ) : support ? (
         <SupportDashboardPage />
+      ) : ceo ? (
+        <CeoDashboardPage />
       ) : (
         <DashboardPage />
       )}

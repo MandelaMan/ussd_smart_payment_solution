@@ -5,6 +5,7 @@ const ROLES = Object.freeze({
   SUPPORT: "support",
   CFO: "cfo",
   PARTNER: "partner",
+  CEO: "ceo",
 });
 
 function normalizeRole(role) {
@@ -25,16 +26,33 @@ function requireRoles(...roles) {
   };
 }
 
+/** Dashboard, BI, transactions, reconciliation reads, report analytics. */
+const FINANCE_READ = [ROLES.ADMIN, ROLES.CFO, ROLES.CEO];
+/** Sync, allocate, reconciliation actions, billing send. */
+const FINANCE_WRITE = [ROLES.ADMIN, ROLES.CFO];
+
 module.exports = {
   ROLES,
   normalizeRole,
   requireAdmin: requireRoles(ROLES.ADMIN),
-  requireFinance: requireRoles(ROLES.ADMIN, ROLES.CFO),
+  requireFinance: requireRoles(...FINANCE_READ),
+  requireFinanceWrite: requireRoles(...FINANCE_WRITE),
   requirePartner: requireRoles(ROLES.PARTNER),
   requirePartnerDashboard: requireRoles(ROLES.ADMIN, ROLES.PARTNER),
-  requireReportsAccess: requireRoles(ROLES.ADMIN, ROLES.CFO, ROLES.PARTNER),
-  requireCustomerRead: requireRoles(ROLES.ADMIN, ROLES.SUPPORT, ROLES.CFO, ROLES.PARTNER),
-  requireCustomerFinancialRead: requireRoles(ROLES.ADMIN, ROLES.SUPPORT, ROLES.CFO),
+  requireReportsAccess: requireRoles(ROLES.ADMIN, ROLES.CFO, ROLES.PARTNER, ROLES.CEO),
+  requireCustomerRead: requireRoles(
+    ROLES.ADMIN,
+    ROLES.SUPPORT,
+    ROLES.CFO,
+    ROLES.PARTNER,
+    ROLES.CEO
+  ),
+  requireCustomerFinancialRead: requireRoles(
+    ROLES.ADMIN,
+    ROLES.SUPPORT,
+    ROLES.CFO,
+    ROLES.CEO
+  ),
   requireCustomerWrite: requireRoles(ROLES.ADMIN, ROLES.SUPPORT),
   requireAgencyWrite: requireRoles(ROLES.ADMIN, ROLES.SUPPORT),
   requireConfigRead: requireRoles(ROLES.ADMIN, ROLES.SUPPORT),

@@ -13,6 +13,8 @@ type Props = {
   exporting?: boolean;
   onSync: () => void;
   onExport?: () => void;
+  /** When false, Sync is hidden (CEO / read-only finance). Default true. */
+  allowSync?: boolean;
   count?: number;
   /** Hide when a child (e.g. customer table) renders its own sync banner. */
   hideSyncBanner?: boolean;
@@ -27,6 +29,7 @@ export function BillingModuleShell({
   exporting,
   onSync,
   onExport,
+  allowSync = true,
   count,
   hideSyncBanner = false,
   children,
@@ -64,10 +67,12 @@ export function BillingModuleShell({
               Export
             </Button>
           )}
-          <Button size="sm" colorPalette="brand" loading={syncing} onClick={onSync}>
-            <FiRefreshCw />
-            Sync
-          </Button>
+          {allowSync && (
+            <Button size="sm" colorPalette="brand" loading={syncing} onClick={onSync}>
+              <FiRefreshCw />
+              Sync
+            </Button>
+          )}
         </Flex>
       </Flex>
 

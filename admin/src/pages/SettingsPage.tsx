@@ -261,7 +261,7 @@ export function SettingsPage() {
   }
 
   return (
-    <Stack gap={0}>
+    <Stack gap={PAGE_STACK_GAP}>
       <PageHeader
         title="Settings"
         description="User permissions, webhook endpoints, and integration configuration"
@@ -273,9 +273,13 @@ export function SettingsPage() {
         borderRadius="lg"
         overflow="hidden"
         bg="bg.panel"
-        mt={{ base: 3, lg: 0 }}
       >
-        <TabStrip tabs={[...TABS]} active={activeTab} onChange={(id) => setTab(id as TabId)} />
+        <TabStrip
+          tabs={[...TABS]}
+          active={activeTab}
+          onChange={(id) => setTab(id as TabId)}
+          fitContent
+        />
 
         <Box p={{ base: 4, md: 5 }}>
           {activeTab === "permissions" ? (

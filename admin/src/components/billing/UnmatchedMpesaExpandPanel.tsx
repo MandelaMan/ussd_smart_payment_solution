@@ -12,6 +12,8 @@ import { DataTable, dataTableCellProps, DataTableColumnHeader } from "../ui/Data
 import { SkeletonBlock } from "../ui/SkeletonBlock";
 import { TextStatus } from "../ui/TextStatus";
 import { toaster } from "../ui/toaster";
+import { useAuth } from "../../lib/auth";
+import { canOperateFinance } from "../../lib/rbac";
 
 type Props = {
   paymentId: number;
@@ -19,6 +21,8 @@ type Props = {
 };
 
 export function UnmatchedMpesaExpandPanel({ paymentId, onComplete }: Props) {
+  const { user } = useAuth();
+  const allowAllocate = canOperateFinance(user);
   const [detail, setDetail] = useState<UnmatchedMpesaDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [allocating, setAllocating] = useState(false);
@@ -116,17 +120,19 @@ export function UnmatchedMpesaExpandPanel({ paymentId, onComplete }: Props) {
           )}
         </Box>
 
-        <Button
-          size="sm"
-          colorPalette="brand"
-          loading={allocating}
-          disabled={!detail.canAllocate || detail.alreadyAllocated}
-          onClick={handleAllocate}
-          w={{ base: "full", sm: "auto" }}
-        >
-          <FiCheckCircle />
-          {detail.alreadyAllocated ? "Already allocated" : "Allocate in Zoho & update TISP"}
-        </Button>
+        {allowAllocate && (
+          <Button
+            size="sm"
+            colorPalette="brand"
+            loading={allocating}
+            disabled={!detail.canAllocate || detail.alreadyAllocated}
+            onClick={handleAllocate}
+            w={{ base: "full", sm: "auto" }}
+          >
+            <FiCheckCircle />
+            {detail.alreadyAllocated ? "Already allocated" : "Allocate in Zoho & update TISP"}
+          </Button>
+        )}
       </Flex>
 
       {detail.openInvoices.length > 0 && (

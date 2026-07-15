@@ -5,6 +5,7 @@ import {
   Field,
   Flex,
   Heading,
+  IconButton,
   Image,
   Input,
   InputGroup,
@@ -12,7 +13,16 @@ import {
   Text,
 } from "@chakra-ui/react";
 import { Navigate } from "react-router-dom";
-import { FiActivity, FiLock, FiMail, FiRepeat, FiTrendingUp, FiUsers } from "react-icons/fi";
+import {
+  FiActivity,
+  FiEye,
+  FiEyeOff,
+  FiLock,
+  FiMail,
+  FiRepeat,
+  FiTrendingUp,
+  FiUsers,
+} from "react-icons/fi";
 import { useAuth } from "../lib/auth";
 import { BRAND } from "../theme";
 
@@ -536,6 +546,7 @@ export function LoginPage() {
   const { user, loading, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -596,9 +607,25 @@ export function LoginPage() {
           >
             Password <Field.RequiredIndicator />
           </Field.Label>
-          <InputGroup startElement={<FiLock color="gray" size={16} />}>
+          <InputGroup
+            startElement={<FiLock color="gray" size={16} />}
+            endElement={
+              <IconButton
+                type="button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                variant="ghost"
+                size="xs"
+                color="fg.muted"
+                _hover={{ color: "fg", bg: "transparent" }}
+                onClick={() => setShowPassword((v) => !v)}
+                tabIndex={-1}
+              >
+                {showPassword ? <FiEyeOff size={16} /> : <FiEye size={16} />}
+              </IconButton>
+            }
+          >
             <Input
-              type="password"
+              type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               placeholder="Enter your password"
               value={password}

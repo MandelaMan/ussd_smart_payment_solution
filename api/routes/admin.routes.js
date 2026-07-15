@@ -94,6 +94,7 @@ const { authenticate } = require("../middleware/auth");
 const {
   requireAdmin,
   requireFinance,
+  requireFinanceWrite,
   requireCustomerRead,
   requireCustomerWrite,
   requireCustomerFinancialRead,
@@ -140,22 +141,22 @@ router.get("/transactions/tisp", requireFinance, listTispEvents);
 
 router.get("/reconciliation/summary", requireFinance, getReconciliationSummary);
 router.get("/reconciliation/sync-status", requireFinance, getReconciliationSyncStatus);
-router.post("/reconciliation/sync", requireFinance, runReconciliationSync);
+router.post("/reconciliation/sync", requireFinanceWrite, runReconciliationSync);
 router.get("/reconciliation/statuses", requireFinance, listReconciliationStatuses);
 router.get("/reconciliation/unmatched-mpesa", requireFinance, listReconciliationUnmatchedMpesa);
 router.get("/reconciliation/unmatched-mpesa/:id", requireFinance, getReconciliationUnmatchedMpesaDetail);
-router.post("/reconciliation/unmatched-mpesa/:id/allocate", requireFinance, allocateReconciliationUnmatchedMpesa);
+router.post("/reconciliation/unmatched-mpesa/:id/allocate", requireFinanceWrite, allocateReconciliationUnmatchedMpesa);
 router.get("/reconciliation/export", requireFinance, exportReconciliation);
 router.get("/reconciliation/customers", requireFinance, listReconciliationCustomers);
 router.get("/reconciliation/customers/:id", requireFinance, getReconciliationCustomerDetail);
-router.post("/reconciliation/customers/:id/actions", requireFinance, executeReconciliationAction);
+router.post("/reconciliation/customers/:id/actions", requireFinanceWrite, executeReconciliationAction);
 router.get("/reconciliation/communications/templates", requireFinance, getReconciliationCommunicationTemplates);
 
 router.use("/sync", require("./sync.routes"));
 router.get("/reconciliation/communications", requireFinance, listReconciliationCommunications);
 router.get("/reconciliation/communications/:customerId/preview", requireFinance, previewReconciliationCommunication);
-router.post("/reconciliation/communications/:customerId/send", requireFinance, sendReconciliationCommunication);
-router.post("/reconciliation/communications/bulk-send", requireFinance, sendReconciliationBulkCommunications);
+router.post("/reconciliation/communications/:customerId/send", requireFinanceWrite, sendReconciliationCommunication);
+router.post("/reconciliation/communications/bulk-send", requireFinanceWrite, sendReconciliationBulkCommunications);
 
 router.get("/logs", requireOps, listLogs);
 router.get("/logs/:id", requireOps, getLog);

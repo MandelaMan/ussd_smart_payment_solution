@@ -29,6 +29,7 @@ import {
   canAccessConfig,
   canAccessFinance,
   canAccessReports,
+  canOperateFinance,
   canManageUsers,
   canAccessOps,
   normalizeRole,
@@ -91,7 +92,7 @@ export function Sidebar({ open, onClose }: Props) {
       to: "/synchronization",
       label: "Synchronization",
       icon: FiRefreshCw,
-      visible: canAccessFinance(user),
+      visible: canOperateFinance(user),
     },
     {
       to: "/analytics",
