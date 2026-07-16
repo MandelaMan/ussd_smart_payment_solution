@@ -23,6 +23,58 @@ function cellValue(val) {
   return String(val);
 }
 
+function appendReportSummaryRows(sheet, report, startRowIndex) {
+  let rowIndex = startRowIndex;
+  const summary = report.summary;
+  if (!summary) return rowIndex;
+
+  const writeLabelValue = (label, value, bold = false) => {
+    const row = sheet.getRow(rowIndex);
+    row.getCell(1).value = label;
+    row.getCell(2).value = value;
+    if (bold) {
+      row.getCell(1).font = { bold: true };
+      row.getCell(2).font = { bold: true };
+    }
+    rowIndex += 1;
+  };
+
+  sheet.mergeCells(rowIndex, 1, rowIndex, Math.max(report.headers.length, 2));
+  const heading = sheet.getCell(rowIndex, 1);
+  heading.value = "Summary";
+  heading.font = { bold: true, size: 11 };
+  rowIndex += 1;
+
+  if (summary.total != null) {
+    writeLabelValue("Total churned", summary.total, true);
+  }
+  if (summary.totalOutstanding != null) {
+    writeLabelValue("Total outstanding (KES)", summary.totalOutstanding, true);
+  }
+
+  if (Array.isArray(summary.byReason) && summary.byReason.length) {
+    rowIndex += 1;
+    const reasonHeader = sheet.getRow(rowIndex);
+    reasonHeader.getCell(1).value = "Reason";
+    reasonHeader.getCell(2).value = "Count";
+    reasonHeader.getCell(3).value = "Outstanding (KES)";
+    reasonHeader.eachCell((cell) => {
+      cell.font = { bold: true };
+    });
+    rowIndex += 1;
+
+    for (const item of summary.byReason) {
+      const row = sheet.getRow(rowIndex);
+      row.getCell(1).value = item.label || item.reason || "";
+      row.getCell(2).value = item.count ?? 0;
+      row.getCell(3).value = item.outstanding ?? 0;
+      rowIndex += 1;
+    }
+  }
+
+  return rowIndex + 1;
+}
+
 async function toExcel(report) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Starlynx Admin";
@@ -55,6 +107,10 @@ async function toExcel(report) {
     titleCell.value = `${report.title} (${report.period.from} to ${report.period.to})`;
     titleCell.font = { bold: true, size: 12 };
     headerRowIndex = titleRowIndex + 2;
+  }
+
+  if (report.summary) {
+    headerRowIndex = appendReportSummaryRows(sheet, report, headerRowIndex);
   }
 
   sheet.views = [{ state: "frozen", ySplit: headerRowIndex }];
@@ -96,7 +152,14 @@ async function toExcel(report) {
   });
 
   sheet.addRow([]);
-  const summaryRow = sheet.addRow([`Total rows: ${report.rows.length}`]);
+  const summaryParts = [`Total rows: ${report.rows.length}`];
+  if (report.summary?.total != null) {
+    summaryParts.push(`Total churned: ${report.summary.total}`);
+  }
+  if (report.summary?.totalOutstanding != null) {
+    summaryParts.push(`Total outstanding: ${report.summary.totalOutstanding}`);
+  }
+  const summaryRow = sheet.addRow([summaryParts.join(" · ")]);
   summaryRow.getCell(1).font = { italic: true, color: { argb: "FF666666" } };
 
   return workbook.xlsx.writeBuffer();
@@ -135,6 +198,37 @@ function toPdf(report) {
         .fillColor("#666666")
         .text(`Period: ${report.period.from} to ${report.period.to}`, startX, y);
       y = doc.y + 6;
+    }
+
+    if (report.summary) {
+      doc.fontSize(11).font("Helvetica-Bold").fillColor("#111111");
+      doc.text("Summary", startX, y);
+      y = doc.y + 4;
+      doc.fontSize(9).font("Helvetica").fillColor("#333333");
+      if (report.summary.total != null) {
+        doc.text(`Total churned: ${report.summary.total}`, startX, y);
+        y = doc.y + 2;
+      }
+      if (report.summary.totalOutstanding != null) {
+        doc.text(
+          `Total outstanding (KES): ${Number(report.summary.totalOutstanding).toLocaleString("en-KE")}`,
+          startX,
+          y
+        );
+        y = doc.y + 2;
+      }
+      if (Array.isArray(report.summary.byReason) && report.summary.byReason.length) {
+        y += 4;
+        for (const item of report.summary.byReason) {
+          doc.text(
+            `${item.label || item.reason}: ${item.count ?? 0} · Outstanding KES ${Number(item.outstanding ?? 0).toLocaleString("en-KE")}`,
+            startX,
+            y
+          );
+          y = doc.y + 2;
+        }
+      }
+      y += 8;
     }
 
     doc
@@ -200,7 +294,16 @@ function toPdf(report) {
 
     ensureSpace();
     doc.font("Helvetica-Oblique").fontSize(8).fillColor("#666666");
-    doc.text(`Total rows: ${report.rows.length}`, startX, y + 8);
+    const footerParts = [`Total rows: ${report.rows.length}`];
+    if (report.summary?.total != null) {
+      footerParts.push(`Total churned: ${report.summary.total}`);
+    }
+    if (report.summary?.totalOutstanding != null) {
+      footerParts.push(
+        `Total outstanding: KES ${Number(report.summary.totalOutstanding).toLocaleString("en-KE")}`
+      );
+    }
+    doc.text(footerParts.join(" · "), startX, y + 8);
 
     doc.end();
   });

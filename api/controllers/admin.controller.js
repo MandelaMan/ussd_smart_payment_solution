@@ -179,6 +179,7 @@ async function getStats(req, res, next) {
       channelBreakdown,
       integrationBreakdown,
       topCustomers,
+      revenueByBuilding,
       avgTransactionRows,
       subscribers,
     ] = await Promise.all([
@@ -276,6 +277,21 @@ async function getStats(req, res, next) {
         ORDER BY total_spent DESC
         LIMIT 5
       `),
+      query(
+        `SELECT b.name AS building,
+          COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue,
+          COUNT(DISTINCT CASE WHEN c.status = 'active' THEN c.id END) AS subscribers
+         FROM buildings b
+         LEFT JOIN customers c ON c.building_id = b.id
+         LEFT JOIN payment_transactions pt ON pt.account_reference = c.customer_number
+           AND pt.status = 'SUCCESS'
+           AND pt.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+         GROUP BY b.id, b.name
+         HAVING revenue > 0 OR subscribers > 0
+         ORDER BY revenue DESC
+         LIMIT 12`,
+        [days]
+      ),
       query(`
         SELECT COALESCE(AVG(amount), 0) AS avg_amount
         FROM payment_transactions WHERE status = 'SUCCESS'
@@ -349,6 +365,11 @@ async function getStats(req, res, next) {
         payments: Number(d.payments),
         totalSpent: Number(d.total_spent),
         lastPayment: d.last_payment,
+      })),
+      revenueByBuilding: revenueByBuilding.map((d) => ({
+        building: d.building,
+        revenue: Number(d.revenue),
+        subscribers: Number(d.subscribers),
       })),
       subscribers,
     });

@@ -91,6 +91,7 @@ export function BuildingsPage() {
   const [c2bCode, setC2bCode] = useState("");
   const [b2bCode, setB2bCode] = useState("");
   const [formIpSetup, setFormIpSetup] = useState<"STATIC" | "PPOE">("STATIC");
+  const [formDstvSetup, setFormDstvSetup] = useState<"headend_coax" | "decoder">("decoder");
   const [prefixInput, setPrefixInput] = useState("");
   const [ipPrefixes, setIpPrefixes] = useState<string[]>([]);
   const { sorts, toggleSort, sortQuery } = useTableSort<BuildingSortKey>({
@@ -153,6 +154,7 @@ export function BuildingsPage() {
     setC2bCode(building.c2bCode);
     setB2bCode(building.b2bCode);
     setFormIpSetup(building.ipSetup);
+    setFormDstvSetup(building.dstvSetup || "decoder");
     setIpPrefixes(building.ipPrefixes || []);
     setPrefixInput("");
   }
@@ -167,6 +169,7 @@ export function BuildingsPage() {
     setC2bCode("");
     setB2bCode("");
     setFormIpSetup("STATIC");
+    setFormDstvSetup("decoder");
     setIpPrefixes([]);
     setPrefixInput("");
   }
@@ -199,6 +202,7 @@ export function BuildingsPage() {
         c2bCode: c2bCode.toUpperCase(),
         b2bCode: b2bCode.toUpperCase(),
         ipSetup: formIpSetup,
+        dstvSetup: formDstvSetup,
         ipPrefixes: formIpSetup === "STATIC" ? ipPrefixes : [],
       });
       toaster.create({ title: "Building created", type: "success" });
@@ -218,10 +222,6 @@ export function BuildingsPage() {
   async function handleUpdate(e: FormEvent) {
     e.preventDefault();
     if (!editing) return;
-    if (formIpSetup === "STATIC" && ipPrefixes.length === 0) {
-      toaster.create({ title: "Add at least one IP prefix for STATIC buildings", type: "error" });
-      return;
-    }
     setEditSubmitting(true);
     try {
       await api.updateBuilding(editing.id, {
@@ -229,7 +229,12 @@ export function BuildingsPage() {
         c2bCode: c2bCode.toUpperCase(),
         b2bCode: b2bCode.toUpperCase(),
         ipSetup: formIpSetup,
-        ipPrefixes: formIpSetup === "STATIC" ? ipPrefixes : [],
+        dstvSetup: formDstvSetup,
+        ...(formIpSetup === "PPOE"
+          ? { ipPrefixes: [] }
+          : ipPrefixes.length > 0
+            ? { ipPrefixes }
+            : {}),
       });
       toaster.create({ title: "Building updated", type: "success" });
       closeEdit();
@@ -389,9 +394,11 @@ export function BuildingsPage() {
             c2bCode={c2bCode} setC2bCode={setC2bCode}
             b2bCode={b2bCode} setB2bCode={setB2bCode}
             formIpSetup={formIpSetup} setFormIpSetup={setFormIpSetup} setIpPrefixes={setIpPrefixes}
+            formDstvSetup={formDstvSetup} setFormDstvSetup={setFormDstvSetup}
             prefixInput={prefixInput} setPrefixInput={setPrefixInput}
             ipPrefixes={ipPrefixes} addPrefix={addPrefix} removePrefix={removePrefix}
             onSubmit={handleCreate} submitting={submitting}
+            requireIpPrefixes
             onCancel={() => { setShowForm(false); resetForm(); }}
           />
         </Box>
@@ -440,6 +447,7 @@ export function BuildingsPage() {
                     fields={[
                       { label: "C2B", value: b.c2bCode },
                       { label: "B2B", value: b.b2bCode },
+                      { label: "DSTV", value: b.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder" },
                       { label: "Added", value: b.createdAt ? formatDate(b.createdAt) : "—" },
                     ]}
                   />
@@ -458,6 +466,7 @@ export function BuildingsPage() {
                 <DataTableSortHeader label="C2B" column="c2bCode" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataCodeColumnHeaderProps} />
                 <DataTableSortHeader label="B2B" column="b2bCode" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataCodeColumnHeaderProps} />
                 <DataTableSortHeader label="IP setup" column="ipSetup" sorts={sorts} onSort={handleSort} />
+                <Table.ColumnHeader>DSTV setup</Table.ColumnHeader>
                 <DataTableSortHeader label="Added" column="createdAt" sorts={sorts} onSort={handleSort} defaultDir="desc" />
               </Table.Row>
             </Table.Header>
@@ -485,13 +494,16 @@ export function BuildingsPage() {
                           {b.ipSetup}
                         </Badge>
                       </Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        {b.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder"}
+                      </Table.Cell>
                       <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {b.createdAt ? formatDate(b.createdAt) : "—"}
                       </Table.Cell>
                     </Table.Row>
                     {isOpen && (
                       <Table.Row {...dataTableExpandRowProps}>
-                        <Table.Cell colSpan={6} p={3} bg="surface.50" borderBottom="none">
+                        <Table.Cell colSpan={7} p={3} bg="surface.50" borderBottom="none">
                           <BuildingExpandPanel building={b} onEdit={openEdit} canEdit={canMutate} />
                         </Table.Cell>
                       </Table.Row>
@@ -516,11 +528,13 @@ export function BuildingsPage() {
             c2bCode={c2bCode} setC2bCode={setC2bCode}
             b2bCode={b2bCode} setB2bCode={setB2bCode}
             formIpSetup={formIpSetup} setFormIpSetup={setFormIpSetup} setIpPrefixes={setIpPrefixes}
+            formDstvSetup={formDstvSetup} setFormDstvSetup={setFormDstvSetup}
             prefixInput={prefixInput} setPrefixInput={setPrefixInput}
             ipPrefixes={ipPrefixes} addPrefix={addPrefix} removePrefix={removePrefix}
             onSubmit={handleUpdate} submitting={editSubmitting}
             onCancel={closeEdit}
             submitLabel="Save changes"
+            requireIpPrefixes={false}
           />
         </Dialog.Body>
       </AppDialog>
@@ -530,20 +544,24 @@ export function BuildingsPage() {
 
 function BuildingForm({
   name, setName, c2bCode, setC2bCode, b2bCode, setB2bCode,
-  formIpSetup, setFormIpSetup, setIpPrefixes, prefixInput, setPrefixInput,
+  formIpSetup, setFormIpSetup, formDstvSetup, setFormDstvSetup, setIpPrefixes, prefixInput, setPrefixInput,
   ipPrefixes, addPrefix, removePrefix, onSubmit, submitting, onCancel,
-  submitLabel = "Save building",
+  submitLabel = "Save building", requireIpPrefixes = false,
 }: {
   name: string; setName: (v: string) => void;
   c2bCode: string; setC2bCode: (v: string) => void;
   b2bCode: string; setB2bCode: (v: string) => void;
   formIpSetup: "STATIC" | "PPOE"; setFormIpSetup: (v: "STATIC" | "PPOE") => void;
+  formDstvSetup: "headend_coax" | "decoder";
+  setFormDstvSetup: (v: "headend_coax" | "decoder") => void;
   setIpPrefixes: (v: string[]) => void;
   prefixInput: string; setPrefixInput: (v: string) => void;
   ipPrefixes: string[]; addPrefix: () => void; removePrefix: (i: number) => void;
   onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
   submitLabel?: string;
+  requireIpPrefixes?: boolean;
 }) {
+  const ipPrefixesRequired = requireIpPrefixes ?? false;
   return (
     <form onSubmit={onSubmit}>
       <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap={4}>
@@ -568,6 +586,19 @@ function BuildingForm({
           </SelectField>
         </Field.Root>
         <Field.Root required>
+          <Field.Label>DSTV setup</Field.Label>
+          <SelectField
+            fieldProps={{
+              value: formDstvSetup,
+              onChange: (e) =>
+                setFormDstvSetup(e.target.value as "headend_coax" | "decoder"),
+            }}
+          >
+            <option value="headend_coax">Headend coax</option>
+            <option value="decoder">Decoder</option>
+          </SelectField>
+        </Field.Root>
+        <Field.Root required>
           <Field.Label>C2B code</Field.Label>
           <Input value={c2bCode} onChange={(e) => setC2bCode(e.target.value.toUpperCase())} maxLength={10} />
         </Field.Root>
@@ -577,7 +608,7 @@ function BuildingForm({
         </Field.Root>
         {formIpSetup === "STATIC" && (
           <Box gridColumn={{ md: "span 2" }}>
-            <Field.Root required>
+            <Field.Root required={ipPrefixesRequired}>
               <Field.Label>IP prefixes</Field.Label>
               <Flex gap={2} mb={2}>
                 <Input

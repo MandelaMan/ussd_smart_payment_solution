@@ -21,6 +21,7 @@ export const buildingExportColumns: ExportColumn<Building>[] = [
   { header: "C2B Code", value: (row) => row.c2bCode },
   { header: "B2B Code", value: (row) => row.b2bCode },
   { header: "IP Setup", value: (row) => row.ipSetup },
+  { header: "DSTV Setup", value: (row) => row.dstvSetup },
   { header: "IP Prefixes", value: (row) => (row.ipPrefixes || []).join("; ") },
   { header: "Created", value: (row) => (row.createdAt ? formatDate(row.createdAt) : "") },
 ];

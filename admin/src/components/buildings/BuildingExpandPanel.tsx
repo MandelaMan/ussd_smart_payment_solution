@@ -43,6 +43,10 @@ export function BuildingExpandPanel({ building, onEdit, canEdit = true }: Props)
         <DetailCard label="B2B code" value={building.b2bCode} mono />
         <DetailCard label="IP setup" value={building.ipSetup} />
         <DetailCard
+          label="DSTV setup"
+          value={building.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder"}
+        />
+        <DetailCard
           label="IP prefixes"
           value={
             building.ipSetup === "PPOE"

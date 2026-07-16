@@ -37,6 +37,8 @@ import { FormSubmitSummary, type FormSummaryItem } from "../ui/FormSubmitSummary
 import { formatCustomerPackageLabel } from "../../lib/formatText";
 import { useAuth } from "../../lib/auth";
 import { canEditCustomerPackage } from "../../lib/rbac";
+import { DateField } from "../ui/DateField";
+import { normalizeSubscriptionStatus } from "../../lib/customerStatus";
 
 const PAYMENT_FREQUENCIES = [
   { value: "monthly", label: "Monthly" },
@@ -128,6 +130,13 @@ export function CustomerForm({
   const [agencyId, setAgencyId] = useState("");
   const [dstvDecoderSerial, setDstvDecoderSerial] = useState("");
   const [trialPeriod, setTrialPeriod] = useState(false);
+  const [createInitialInvoice, setCreateInitialInvoice] = useState(false);
+  const [createRecurringInvoice, setCreateRecurringInvoice] = useState(false);
+  const [updateZohoRecurring, setUpdateZohoRecurring] = useState(false);
+  const [tispDueDate, setTispDueDate] = useState("");
+  const [onTisp, setOnTisp] = useState(false);
+  const [onZoho, setOnZoho] = useState(false);
+  const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [occupancy, setOccupancy] = useState<ApartmentOccupancy | null>(null);
   const [occupancyChecking, setOccupancyChecking] = useState(false);
   const [initializingEdit, setInitializingEdit] = useState(isEdit);
@@ -149,6 +158,55 @@ export function CustomerForm({
       .catch(() => {})
       .finally(() => setLookupsLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!customer?.id || customer.status !== "active") {
+      setOnTisp(false);
+      setOnZoho(false);
+      setTispDueDate("");
+      return;
+    }
+
+    // Optimistic local guess while live check runs.
+    const localOnTisp =
+      customer.tispSyncStatus === "synced" ||
+      (Boolean(customer.subscriptionStatus) &&
+        normalizeSubscriptionStatus(customer.subscriptionStatus) !== "Not on TISP" &&
+        customer.tispSyncStatus !== "failed");
+    const localOnZoho =
+      customer.customerType === "B2B" ||
+      customer.zohoBillingStatus === "completed" ||
+      Boolean(customer.zohoSignupInvoiceId);
+    setOnTisp(localOnTisp);
+    setOnZoho(localOnZoho);
+    setTispDueDate(customer.tispDueDate ? String(customer.tispDueDate).slice(0, 10) : "");
+    setCreateInitialInvoice(false);
+    setCreateRecurringInvoice(false);
+    setUpdateZohoRecurring(false);
+
+    let cancelled = false;
+    setIntegrationsLoading(true);
+    api
+      .getCustomerIntegrations(customer.id)
+      .then((res) => {
+        if (cancelled) return;
+        setOnTisp(Boolean(res.onTisp));
+        setOnZoho(Boolean(res.onZoho) || res.isB2B);
+        if (res.tispDueDate) {
+          setTispDueDate(String(res.tispDueDate).slice(0, 10));
+        }
+      })
+      .catch(() => {
+        /* keep local guess */
+      })
+      .finally(() => {
+        if (!cancelled) setIntegrationsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [customer]);
 
   useEffect(() => {
     if (!customer || !buildings.length) return;
@@ -295,10 +353,14 @@ export function CustomerForm({
   const selectedPackage = showPackageEditor
     ? packages.find((p) => String(p.id) === productId) || null
     : null;
+  const buildingRequiresDecoderSerial = selectedBuilding
+    ? selectedBuilding.dstvSetup === "decoder"
+    : true;
   const requiresDstvSerial = Boolean(
-    isEdit && !canEditPackage
+    (isEdit && !canEditPackage
       ? customer?.hasDstv
-      : selectedCategory?.hasDstv || selectedPackage?.hasDstv || customer?.hasDstv
+      : selectedCategory?.hasDstv || selectedPackage?.hasDstv || customer?.hasDstv) &&
+      buildingRequiresDecoderSerial
   );
   const packageAmount =
     isEdit && !canEditPackage
@@ -389,6 +451,40 @@ export function CustomerForm({
       items.push({ label: "DSTV serial", value: dstvDecoderSerial.trim().toUpperCase() });
     }
 
+    if (isEdit && isActive) {
+      items.push({
+        label: "TISP",
+        value: onTisp
+          ? tispDueDate
+            ? `Update · due ${tispDueDate}`
+            : "Update existing"
+          : tispDueDate
+            ? `Create · due ${tispDueDate}`
+            : "Create (due date required)",
+      });
+      if (customerType === "C2B") {
+        if (!onZoho) {
+          items.push({
+            label: "Zoho Books",
+            value: [
+              "Create contact",
+              createInitialInvoice ? "initial invoice" : null,
+              createRecurringInvoice ? "recurring" : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          });
+        } else {
+          items.push({
+            label: "Zoho Books",
+            value: updateZohoRecurring
+              ? "Update contact + recurring invoice"
+              : "Update contact",
+          });
+        }
+      }
+    }
+
     return items;
   }, [
     agencies,
@@ -418,6 +514,13 @@ export function CustomerForm({
     selectedBuilding?.name,
     selectedPackage,
     trialPeriod,
+    isActive,
+    onTisp,
+    onZoho,
+    tispDueDate,
+    createInitialInvoice,
+    createRecurringInvoice,
+    updateZohoRecurring,
   ]);
 
   function validateForm() {
@@ -459,6 +562,14 @@ export function CustomerForm({
       toaster.create({
         title: "DSTV decoder serial required",
         description: "Enter the decoder serial number for DSTV packages.",
+        type: "error",
+      });
+      return false;
+    }
+    if (isEdit && isActive && !onTisp && !tispDueDate.trim()) {
+      toaster.create({
+        title: "TISP due date required",
+        description: "Enter the customer due date to create them on TISP.",
         type: "error",
       });
       return false;
@@ -505,6 +616,17 @@ export function CustomerForm({
                 productId: Number(productId),
               }
             : {}),
+          ...(isActive
+            ? {
+                createInitialInvoice:
+                  !onZoho && customerType === "C2B" ? createInitialInvoice : undefined,
+                createRecurringInvoice:
+                  !onZoho && customerType === "C2B" ? createRecurringInvoice : undefined,
+                updateZohoRecurring:
+                  onZoho && customerType === "C2B" ? updateZohoRecurring : undefined,
+                tispDueDate: tispDueDate.trim() || undefined,
+              }
+            : {}),
         });
 
         if (res.tisp && !res.tisp.ok) {
@@ -513,6 +635,19 @@ export function CustomerForm({
             description: `TISP sync failed: ${res.tisp.error}`,
             type: "warning",
             duration: 10000,
+          });
+        } else if (res.zoho && res.zoho.ok === false) {
+          toaster.create({
+            title: "Customer updated",
+            description: `Zoho sync failed: ${res.zoho.error}`,
+            type: "warning",
+            duration: 10000,
+          });
+        } else {
+          toaster.create({
+            title: "Customer updated",
+            description: "Saved and synced to TISP and Zoho where applicable.",
+            type: "success",
           });
         }
         onUpdated?.(res.customer, res.tisp);
@@ -818,8 +953,8 @@ export function CustomerForm({
                 bg={!isActive ? "gray.50" : undefined}
               />
               <Field.HelperText>
-                Required for DSTV packages. Must be unique across all customers. Found on the
-                decoder label or activation card.
+                Required for DSTV packages in decoder-based buildings. Must be unique across all
+                customers. Found on the decoder label or activation card.
               </Field.HelperText>
             </Field.Root>
           )}
@@ -844,7 +979,7 @@ export function CustomerForm({
           <Field.Root gridColumn={{ md: "span 2" }}>
             <Field.Label>Trial period</Field.Label>
             <SelectField
-              disabled={fieldsDisabled || !isActive}
+              disabled={fieldsDisabled || !isActive || isEdit}
               fieldProps={{
                 value: trialPeriod ? "yes" : "no",
                 onChange: (e) => setTrialPeriod(e.target.value === "yes"),
@@ -854,13 +989,113 @@ export function CustomerForm({
               <option value="yes">Yes — 30-day free trial, bill after trial</option>
             </SelectField>
             <Field.HelperText>
-              When enabled, no signup invoice is sent. A recurring invoice is scheduled to
-              start 30 days after creation.
+              {isEdit
+                ? "Trial applies on create only."
+                : "When enabled, no signup invoice is sent. A recurring invoice is scheduled to start 30 days after creation."}
             </Field.HelperText>
           </Field.Root>
             </>
           )}
         </FormSection>
+
+        {isEdit && isActive ? (
+          <FormSection title="Zoho & TISP sync">
+            <Box gridColumn={{ md: "span 2" }}>
+              <Text fontSize="sm" color="fg.muted" mb={3}>
+                {integrationsLoading
+                  ? "Checking Zoho and TISP…"
+                  : `Status: TISP ${onTisp ? "linked" : "missing"} · Zoho ${
+                      customerType === "B2B"
+                        ? "agency billing"
+                        : onZoho
+                          ? "linked"
+                          : "missing"
+                    }. Saving will ensure the customer exists on both systems.`}
+              </Text>
+            </Box>
+
+            <Field.Root
+              required={!onTisp}
+              gridColumn={{ md: "span 2" }}
+            >
+              <Field.Label>
+                {onTisp ? "TISP due date (optional update)" : "TISP due date"}
+              </Field.Label>
+              <DateField
+                value={tispDueDate}
+                onChange={setTispDueDate}
+                disabled={fieldsDisabled || integrationsLoading}
+                placeholder="Select due date"
+              />
+              <Field.HelperText>
+                {onTisp
+                  ? "Leave blank to keep the current TISP due date, or pick a new date to update it."
+                  : "Required — this customer is not on TISP yet. Saving will create them with this due date."}
+              </Field.HelperText>
+            </Field.Root>
+
+            {customerType === "C2B" && !onZoho ? (
+              <>
+                <Field.Root>
+                  <Field.Label>Initial Zoho invoice</Field.Label>
+                  <SelectField
+                    disabled={fieldsDisabled || integrationsLoading}
+                    fieldProps={{
+                      value: createInitialInvoice ? "yes" : "no",
+                      onChange: (e) =>
+                        setCreateInitialInvoice(e.target.value === "yes"),
+                    }}
+                  >
+                    <option value="no">No — create contact only</option>
+                    <option value="yes">Yes — create signup invoice</option>
+                  </SelectField>
+                  <Field.HelperText>
+                    Unchecked by default. Zoho contact is always created without duplicating
+                    an existing match.
+                  </Field.HelperText>
+                </Field.Root>
+                <Field.Root>
+                  <Field.Label>Zoho recurring invoice</Field.Label>
+                  <SelectField
+                    disabled={fieldsDisabled || integrationsLoading}
+                    fieldProps={{
+                      value: createRecurringInvoice ? "yes" : "no",
+                      onChange: (e) =>
+                        setCreateRecurringInvoice(e.target.value === "yes"),
+                    }}
+                  >
+                    <option value="no">No — skip recurring profile</option>
+                    <option value="yes">Yes — create recurring invoice</option>
+                  </SelectField>
+                  <Field.HelperText>
+                    Unchecked by default. Only set if you want a recurring profile now.
+                  </Field.HelperText>
+                </Field.Root>
+              </>
+            ) : null}
+
+            {customerType === "C2B" && onZoho ? (
+              <Field.Root gridColumn={{ md: "span 2" }}>
+                <Field.Label>Update Zoho recurring invoice</Field.Label>
+                <SelectField
+                  disabled={fieldsDisabled || integrationsLoading}
+                  fieldProps={{
+                    value: updateZohoRecurring ? "yes" : "no",
+                    onChange: (e) =>
+                      setUpdateZohoRecurring(e.target.value === "yes"),
+                  }}
+                >
+                  <option value="no">No — leave recurring as-is</option>
+                  <option value="yes">Yes — create or update recurring profile</option>
+                </SelectField>
+                <Field.HelperText>
+                  Contact details are always refreshed on Zoho. Enable this to sync the
+                  recurring invoice to the current package and frequency.
+                </Field.HelperText>
+              </Field.Root>
+            ) : null}
+          </FormSection>
+        ) : null}
 
         <FormSection title="Contact details">
           <Field.Root required>
@@ -1060,7 +1295,7 @@ export function CustomerForm({
         <FormSubmitSummary
           description={
             isEdit
-              ? "These details will be saved and synced to TISP and Zoho."
+              ? "These details will be saved. Missing Zoho/TISP links are created; optional invoice and recurring settings apply as selected."
               : trialPeriod
                 ? "A customer record will be created with a 30-day trial. No signup invoice — billing starts after the trial via a recurring profile."
                 : "A customer record will be created and synced to TISP and Zoho."

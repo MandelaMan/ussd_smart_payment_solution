@@ -43,6 +43,7 @@ const {
   getDowngradeQuote,
   createCustomer,
   updateCustomer,
+  getCustomerIntegrations,
   convertCustomerType,
   upgradePackage,
   cancelPendingUpgrade,
@@ -62,7 +63,7 @@ const {
   getLog,
   retryLog,
 } = require("../controllers/logs.controller");
-const { listReports, downloadReport, getAnalytics } = require("../controllers/reports.controller");
+const { listReports, downloadReport, getAnalytics, getMonthlyPaymentChurnSummary } = require("../controllers/reports.controller");
 const { getDashboard: getBiDashboard, exportSection: exportBiSection } = require("../controllers/bi.controller");
 const { exportTableReport } = require("../controllers/tableExport.controller");
 const { getSettings } = require("../controllers/settings.controller");
@@ -119,6 +120,11 @@ router.get("/revenue-chart", requireFinance, getRevenueChart);
 router.get("/activity", requireFinance, getActivityFeed);
 router.get("/reports", requireReportsAccess, listReports);
 router.get("/reports/analytics", requireFinance, getAnalytics);
+router.get(
+  "/reports/monthly-payment-churn/summary",
+  requireReportsAccess,
+  getMonthlyPaymentChurnSummary
+);
 router.get("/bi/dashboard", requireFinance, getBiDashboard);
 router.get("/bi/export", requireFinance, exportBiSection);
 router.get("/reports/:id/download", requireReportsAccess, downloadReport);
@@ -213,6 +219,7 @@ router.post(
 router.get("/customers/:id/upgrade-quote", requireCustomerWrite, getUpgradeQuote);
 router.get("/customers/:id/downgrade-quote", requireCustomerWrite, getDowngradeQuote);
 router.get("/customers/:id", requireCustomerRead, getCustomer);
+router.get("/customers/:id/integrations", requireCustomerWrite, getCustomerIntegrations);
 router.post("/customers/:id/upgrade", requireCustomerWrite, upgradePackage);
 router.post("/customers/:id/upgrade/cancel", requireCustomerWrite, cancelPendingUpgrade);
 router.post("/customers/:id/downgrade", requireCustomerWrite, downgradePackage);

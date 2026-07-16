@@ -330,15 +330,10 @@ async function postSetClientDetails(payload, meta = {}) {
     httpStatus = r.status;
     responseData = r.data;
     const httpOk = r.status >= 200 && r.status < 300;
-    let parsed = parseTispOperationResponse(responseData);
+    const parsed = parseTispOperationResponse(responseData);
 
-    if (httpOk && !parsed.ok && meta.customerNumber) {
-      const exists = await accountExistsOnTisp(meta.customerNumber);
-      if (exists) {
-        parsed = { ok: true, message: "Account verified on TISP" };
-      }
-    }
-
+    // Do not treat "account exists" as success when TISP returned an error
+    // body (e.g. "Package Missing.") — the UPDATE did not apply.
     const success = httpOk && parsed.ok;
 
     await logApiCall({
@@ -432,7 +427,22 @@ function tispNamePart(value) {
 }
 
 function formatTispDueDate(date = new Date()) {
-  return moment.tz(date, DEFAULT_TZ).startOf("day").format("DD MMM YYYY hh:mm A");
+  const formats = [
+    "YYYY-MM-DD",
+    "DD MMM YYYY hh:mm A",
+    "DD MMM YYYY h:mm A",
+    "DD-MMM-YYYY",
+    "D-MMM-YYYY",
+    moment.ISO_8601,
+  ];
+  const parsed =
+    date instanceof Date
+      ? moment.tz(date, DEFAULT_TZ)
+      : moment.tz(String(date).trim(), formats, true, DEFAULT_TZ);
+  const m = parsed.isValid()
+    ? parsed
+    : moment.tz(date, DEFAULT_TZ);
+  return m.startOf("day").format("DD MMM YYYY hh:mm A");
 }
 
 function formatTispTelephone(phone) {
@@ -466,6 +476,7 @@ function billingcycleValue(_frequency) {
 
 /**
  * TISP Package field — plan name only (e.g. "BASIC", "BASIC PLUS").
+ * Category/speed suffixes are rejected by TISP as "Package Missing".
  */
 function buildTispPackageLabel({ planName, productName }) {
   const plan = String(planName || "").trim().toUpperCase();
@@ -492,7 +503,6 @@ function collectTispClientInput({
   customerType,
   ipSetup,
   planName,
-  mbps,
   categoryName,
   productName,
   apartmentNumber,
@@ -513,7 +523,6 @@ function collectTispClientInput({
   );
   const packageLabel = buildTispPackageLabel({
     planName,
-    mbps,
     categoryName,
     productName,
   });
@@ -553,7 +562,6 @@ function buildTispSetClientPayload(input, transactionType) {
     customerNumber,
     ipSetup,
     planName,
-    mbps,
     categoryName,
     productName,
     apartmentNumber,
@@ -571,7 +579,6 @@ function buildTispSetClientPayload(input, transactionType) {
   const routerLocation = tispRouterLocation(buildingName);
   const packageLabel = buildTispPackageLabel({
     planName,
-    mbps,
     categoryName,
     productName,
   });

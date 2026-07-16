@@ -50,6 +50,10 @@ function normalizeTispDueDateValue(value) {
       "D MMM YYYY h:mm A",
       "DD MMM YYYY",
       "D MMM YYYY",
+      "DD-MMM-YYYY",
+      "D-MMM-YYYY",
+      "DD-MMM-YYYY hh:mm A",
+      "D-MMM-YYYY h:mm A",
       "DD/MM/YYYY",
       "D/M/YYYY",
       "YYYY-MM-DD",
@@ -267,10 +271,10 @@ async function upsertTispSnapshot(customerId, tispPayload) {
       (customer_id, subscription_status, due_date, package_label, monthly_amount, raw_json, synced_at)
      VALUES (?, ?, ?, ?, ?, ?, NOW())
      ON DUPLICATE KEY UPDATE
-      subscription_status = VALUES(subscription_status),
+      subscription_status = COALESCE(VALUES(subscription_status), subscription_status),
       due_date = COALESCE(VALUES(due_date), due_date),
-      package_label = VALUES(package_label),
-      monthly_amount = VALUES(monthly_amount),
+      package_label = COALESCE(VALUES(package_label), package_label),
+      monthly_amount = COALESCE(VALUES(monthly_amount), monthly_amount),
       raw_json = VALUES(raw_json),
       synced_at = NOW()`,
     [

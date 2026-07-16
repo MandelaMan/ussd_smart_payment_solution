@@ -149,6 +149,8 @@ function resolvePackagePrice(product, paymentFrequency, customPeriodDays) {
 
 function mapCustomerRow(row) {
   if (!row) return null;
+  const buildingDstvSetup = row.building_dstv_setup || "decoder";
+  const dstvSerialRequired = Boolean(row.product_has_dstv) && buildingDstvSetup === "decoder";
   return {
     id: row.id,
     firstName: row.first_name,
@@ -182,10 +184,10 @@ function mapCustomerRow(row) {
       row.decoder_fee_amount != null ? Number(row.decoder_fee_amount) : null,
     decoderFeeRequired: Boolean(row.decoder_fee_required),
     hasDstv: Boolean(row.product_has_dstv),
+    buildingDstvSetup,
+    dstvSerialRequired,
     dstvDecoderSerial: row.dstv_decoder_serial || null,
-    dstvSerialMissing:
-      Boolean(row.product_has_dstv) &&
-      !String(row.dstv_decoder_serial || "").trim(),
+    dstvSerialMissing: dstvSerialRequired && !String(row.dstv_decoder_serial || "").trim(),
     subscriptionStatus: normalizeSubscriptionStatus(row.subscription_status),
     tispSyncStatus: row.tisp_sync_status || "pending",
     tispSyncError: sanitizeSyncError(row.tisp_sync_error),
@@ -211,6 +213,7 @@ const LAST_PAYMENT_SORT_EXPR = `COALESCE(c.last_payment_date, '1000-01-01')`;
 const CUSTOMER_SELECT = `
   SELECT c.*,
          b.name AS building_name,
+         b.dstv_setup AS building_dstv_setup,
          p.name AS product_name,
          p.mbps AS product_mbps,
          p.extra_bandwidth AS product_extra_bandwidth,
@@ -268,7 +271,7 @@ async function listBuildings(filters = {}) {
   );
 
   const rows = await query(
-    `SELECT id, name, c2b_code, b2b_code, ip_setup, ip_prefixes, created_at
+    `SELECT id, name, c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes, created_at
      FROM buildings WHERE ${clauses.join(" AND ")}
      ORDER BY ${sort.orderClause} LIMIT ? OFFSET ?`,
     [...params, limit, offset]
@@ -294,6 +297,7 @@ function mapBuildingRow(row) {
     c2bCode: row.c2b_code,
     b2bCode: row.b2b_code,
     ipSetup: row.ip_setup,
+    dstvSetup: row.dstv_setup || "decoder",
     ipPrefixes: parseBuildingPrefixes(row.ip_prefixes),
     createdAt: row.created_at,
   };
@@ -319,12 +323,16 @@ async function createBuilding(data) {
   const c2bCode = String(data.c2bCode || "").trim().toUpperCase();
   const b2bCode = String(data.b2bCode || "").trim().toUpperCase();
   const ipSetup = data.ipSetup;
+  const dstvSetup = data.dstvSetup || "decoder";
 
   if (!name || !c2bCode || !b2bCode) {
     throw new Error("Name, C2B code, and B2B code are required");
   }
   if (!["STATIC", "PPOE"].includes(ipSetup)) {
     throw new Error("IP setup must be STATIC or PPOE");
+  }
+  if (!["headend_coax", "decoder"].includes(dstvSetup)) {
+    throw new Error("DSTV setup must be headend_coax or decoder");
   }
   if (!/^[A-Z0-9]{2,10}$/.test(c2bCode) || !/^[A-Z0-9]{2,10}$/.test(b2bCode)) {
     throw new Error("Codes must be 2–10 alphanumeric characters");
@@ -339,9 +347,9 @@ async function createBuilding(data) {
   }
 
   const result = await query(
-    `INSERT INTO buildings (name, c2b_code, b2b_code, ip_setup, ip_prefixes)
-     VALUES (?, ?, ?, ?, ?)`,
-    [name, c2bCode, b2bCode, ipSetup, JSON.stringify(ipPrefixes)]
+    `INSERT INTO buildings (name, c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, c2bCode, b2bCode, ipSetup, dstvSetup, JSON.stringify(ipPrefixes)]
   );
 
   return result.insertId;
@@ -362,6 +370,8 @@ async function updateBuilding(id, data) {
       ? String(data.b2bCode).trim().toUpperCase()
       : existing.b2b_code;
   const ipSetup = data.ipSetup !== undefined ? data.ipSetup : existing.ip_setup;
+  const dstvSetup =
+    data.dstvSetup !== undefined ? data.dstvSetup : existing.dstv_setup || "decoder";
 
   if (!name || !c2bCode || !b2bCode) {
     throw new Error("Name, C2B code, and B2B code are required");
@@ -369,24 +379,32 @@ async function updateBuilding(id, data) {
   if (!["STATIC", "PPOE"].includes(ipSetup)) {
     throw new Error("IP setup must be STATIC or PPOE");
   }
+  if (!["headend_coax", "decoder"].includes(dstvSetup)) {
+    throw new Error("DSTV setup must be headend_coax or decoder");
+  }
   if (!/^[A-Z0-9]{2,10}$/.test(c2bCode) || !/^[A-Z0-9]{2,10}$/.test(b2bCode)) {
     throw new Error("Codes must be 2–10 alphanumeric characters");
   }
 
   let ipPrefixes = parseBuildingPrefixes(existing.ip_prefixes);
   if (data.ipPrefixes !== undefined) {
-    ipPrefixes = ipSetup === "STATIC" ? normalizeIpPrefixes(data.ipPrefixes || []) : [];
+    if (ipSetup === "PPOE") {
+      ipPrefixes = [];
+    } else {
+      const normalized = normalizeIpPrefixes(data.ipPrefixes || []);
+      // Empty array on edit means "unchanged" — keep existing prefixes.
+      if (normalized.length > 0) {
+        ipPrefixes = normalized;
+      }
+    }
   } else if (ipSetup === "PPOE") {
     ipPrefixes = [];
   }
-  if (ipSetup === "STATIC" && !ipPrefixes.length) {
-    throw new Error("STATIC buildings require at least one IP prefix (e.g. 10.12.10.)");
-  }
 
   await query(
-    `UPDATE buildings SET name = ?, c2b_code = ?, b2b_code = ?, ip_setup = ?, ip_prefixes = ?
+    `UPDATE buildings SET name = ?, c2b_code = ?, b2b_code = ?, ip_setup = ?, dstv_setup = ?, ip_prefixes = ?
      WHERE id = ?`,
-    [name, c2bCode, b2bCode, ipSetup, JSON.stringify(ipPrefixes), id]
+    [name, c2bCode, b2bCode, ipSetup, dstvSetup, JSON.stringify(ipPrefixes), id]
   );
 }
 
@@ -864,7 +882,7 @@ async function getCustomerById(id) {
 
 async function getCustomerContext(id) {
   const rows = await query(
-    `SELECT c.*, b.name AS building_name, b.c2b_code, b.b2b_code, b.ip_setup,
+    `SELECT c.*, b.name AS building_name, b.c2b_code, b.b2b_code, b.ip_setup, b.dstv_setup,
             p.name AS product_name, p.mbps AS product_mbps,
             p.extra_bandwidth AS product_extra_bandwidth,
             p.has_dstv AS product_has_dstv,
@@ -1123,11 +1141,15 @@ function normalizeDstvDecoderSerial(value) {
   return serial || null;
 }
 
-function assertDstvDecoderSerial(product, serial) {
+function assertDstvDecoderSerial(product, building, serial) {
   if (!product?.has_dstv) return;
+  const setup = building?.dstv_setup || "decoder";
+  if (setup !== "decoder") return;
   const normalized = normalizeDstvDecoderSerial(serial);
   if (!normalized) {
-    throw new Error("DSTV decoder serial number is required for DSTV packages");
+    throw new Error(
+      "DSTV decoder serial number is required for DSTV packages in decoder buildings"
+    );
   }
   if (normalized.length < 4 || normalized.length > 50) {
     throw new Error("DSTV decoder serial must be between 4 and 50 characters");
@@ -1161,7 +1183,7 @@ async function assertDstvSerialUnique(serial, excludeCustomerId = null) {
   );
 }
 
-async function createCustomer(data, options = {}) {
+async function createCustomer(data) {
   const building = await getBuildingById(data.buildingId);
   if (!building) throw new Error("Building not found");
   if (!String(building.name || "").trim()) {
@@ -1243,9 +1265,7 @@ async function createCustomer(data, options = {}) {
   }
 
   const dstvDecoderSerial = normalizeDstvDecoderSerial(data.dstvDecoderSerial);
-  if (!options.allowMissingDstvSerial) {
-    assertDstvDecoderSerial(product, dstvDecoderSerial);
-  }
+  assertDstvDecoderSerial(product, building, dstvDecoderSerial);
   await assertDstvSerialUnique(dstvDecoderSerial);
 
   const trialPeriodEnabled = Boolean(data.trialPeriod);
@@ -1784,7 +1804,7 @@ async function updateCustomerDetails(id, data, options = {}) {
     data.dstvDecoderSerial !== undefined
       ? normalizeDstvDecoderSerial(data.dstvDecoderSerial)
       : existing.dstvDecoderSerial;
-  assertDstvDecoderSerial(effectiveProduct, dstvDecoderSerial);
+  assertDstvDecoderSerial(effectiveProduct, building, dstvDecoderSerial);
   await assertDstvSerialUnique(dstvDecoderSerial, id);
 
   const contactChanged =
@@ -2293,7 +2313,7 @@ async function importCustomerFromRow(row, batchSeen) {
     productId: product.id,
     agencyId: agency?.id,
     dstvDecoderSerial: row.dstv_decoder_serial || undefined,
-  }, { allowMissingDstvSerial: true });
+  });
 
   registerImportBatchEntry(batchSeen, {
     customerNumber,

@@ -19,12 +19,13 @@ async function listBuildings(req, res, next) {
 
 async function createBuilding(req, res, next) {
   try {
-    const { name, c2bCode, b2bCode, ipSetup, ipPrefixes } = req.body || {};
+    const { name, c2bCode, b2bCode, ipSetup, dstvSetup, ipPrefixes } = req.body || {};
     const id = await store.createBuilding({
       name,
       c2bCode,
       b2bCode,
       ipSetup,
+      dstvSetup,
       ipPrefixes,
     });
     const result = await store.listBuildings({ limit: 1, page: 1 });
@@ -54,12 +55,13 @@ async function createBuilding(req, res, next) {
 async function updateBuilding(req, res, next) {
   try {
     const id = Number(req.params.id);
-    const { name, c2bCode, b2bCode, ipSetup, ipPrefixes } = req.body || {};
+    const { name, c2bCode, b2bCode, ipSetup, dstvSetup, ipPrefixes } = req.body || {};
     await store.updateBuilding(id, {
       name,
       c2bCode,
       b2bCode,
       ipSetup,
+      dstvSetup,
       ipPrefixes,
     });
     const row = await store.getBuildingById(id);

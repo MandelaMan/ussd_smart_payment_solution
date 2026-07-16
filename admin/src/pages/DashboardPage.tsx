@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Box,
+  Button,
   Flex,
   Grid,
+  Input,
   Stack,
   Text,
 } from "@chakra-ui/react";
@@ -21,7 +23,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, formatCurrency, formatMetricCurrency } from "../lib/api";
+import { api, formatCurrency, formatMetricCurrency, type MonthlyPaymentChurnSummary } from "../lib/api";
 import type { ActivityItem, Stats } from "../lib/api";
 import { DisplayText } from "../components/ui/DisplayText";
 import { MetricCard } from "../components/MetricCard";
@@ -36,6 +38,7 @@ import { BRAND } from "../theme";
 import { SelectField } from "../components/ui/SelectField";
 import { useMobileViewport } from "../hooks/useMobileViewport";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { toaster } from "../components/ui/toaster";
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: BRAND.cerulean,
@@ -144,6 +147,10 @@ export function DashboardPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
+  const [churnMonth, setChurnMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [churnDownloading, setChurnDownloading] = useState<"xlsx" | "pdf" | null>(null);
+  const [churnSummary, setChurnSummary] = useState<MonthlyPaymentChurnSummary | null>(null);
+  const [churnSummaryLoading, setChurnSummaryLoading] = useState(false);
 
   useEffect(() => {
     if (!isMobile || mobileRevenueDefaultApplied.current) return;
@@ -218,6 +225,25 @@ export function DashboardPage() {
     };
   }, [chartMonth, chartYear]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setChurnSummaryLoading(true);
+    api
+      .getMonthlyPaymentChurnSummary(churnMonth)
+      .then((summary) => {
+        if (!cancelled) setChurnSummary(summary);
+      })
+      .catch(() => {
+        if (!cancelled) setChurnSummary(null);
+      })
+      .finally(() => {
+        if (!cancelled) setChurnSummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churnMonth]);
+
   if (loading && !stats) {
     return <DashboardSkeleton />;
   }
@@ -288,11 +314,45 @@ export function DashboardPage() {
     subscribers: p.subscribers,
   }));
 
+  const revenueByBuildingData = (stats.revenueByBuilding ?? [])
+    .filter((b) => b.revenue > 0)
+    .slice(0, 10)
+    .map((b) => ({
+      building: b.building,
+      revenue: b.revenue,
+    }));
+
+  const trendChartHeight = { base: "240px", md: "200px" };
 
   const zohoSyncRate =
     stats.zoho.total > 0 ? Math.round((stats.zoho.success / stats.zoho.total) * 100) : null;
   const tispSyncRate =
     stats.tisp.total > 0 ? Math.round((stats.tisp.success / stats.tisp.total) * 100) : null;
+
+  const churnMonthLabel = new Date(`${churnMonth}-01`).toLocaleDateString("en-KE", {
+    month: "long",
+    year: "numeric",
+  });
+
+  async function downloadChurnReport(format: "xlsx" | "pdf") {
+    try {
+      setChurnDownloading(format);
+      await api.downloadReport("monthly-payment-churn", { format, month: churnMonth });
+      toaster.create({
+        title: "Monthly churn report downloaded",
+        description: `${churnMonthLabel} (${format.toUpperCase()})`,
+        type: "success",
+      });
+    } catch (e) {
+      toaster.create({
+        title: "Could not download churn report",
+        description: e instanceof Error ? e.message : "Download failed",
+        type: "error",
+      });
+    } finally {
+      setChurnDownloading(null);
+    }
+  }
 
   return (
     <Flex
@@ -678,7 +738,7 @@ export function DashboardPage() {
               </SelectField>
             }
           >
-            <Box h={{ base: "240px", md: "200px" }} minH={{ base: "240px", md: "200px" }} mt={1}>
+            <Box h={trendChartHeight} minH={trendChartHeight} mt={1}>
               {chartLoading ? (
                 <ChartSkeleton height="100%" />
               ) : chartIsEmpty ? (
@@ -747,7 +807,7 @@ export function DashboardPage() {
           </Card>
 
           <Card title="By Status" accent="cerulean">
-            <Box h={{ base: "220px", md: "200px" }} mt={1}>
+            <Box h={trendChartHeight} minH={trendChartHeight} mt={1}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -773,59 +833,144 @@ export function DashboardPage() {
         </Grid>
 
         <Grid
-          templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
+          templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }}
           gap={{ base: 4, xl: 3 }}
           display={{ base: "none", lg: "grid" }}
         >
-          <Card title="By Channel" accent="cerulean">
-            <Box h={{ base: "200px", md: "160px" }} mt={1}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.channelBreakdown} margin={{ left: -8, right: 4, top: 8, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
-                  <XAxis dataKey="channel" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
-                  <Tooltip contentStyle={{ fontSize: 13 }} />
-                  <Bar dataKey="count" fill={BRAND.cerulean} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </Box>
+          <Card
+            title="Monthly Payment Churn Report"
+            subtitle={churnMonthLabel}
+            accent="cerulean"
+            action={
+              <Input
+                size="sm"
+                type="month"
+                w="150px"
+                value={churnMonth}
+                onChange={(e) => setChurnMonth(e.target.value)}
+              />
+            }
+          >
+            <Flex direction="column" h={trendChartHeight} minH={trendChartHeight} mt={1}>
+              <Stack gap={2.5} flex={1}>
+                <Flex justify="space-between" align="baseline" gap={2}>
+                  <Text fontSize="xs" color="fg.muted">
+                    Total churned
+                  </Text>
+                  <Text fontSize="lg" fontWeight="semibold" color="brand.700">
+                    {churnSummaryLoading ? "…" : (churnSummary?.total ?? 0)}
+                  </Text>
+                </Flex>
+                <Flex justify="space-between" align="baseline" gap={2}>
+                  <Text fontSize="xs" color="fg.muted">
+                    Outstanding
+                  </Text>
+                  <Text fontSize="sm" fontWeight="medium" color="fg">
+                    {churnSummaryLoading
+                      ? "…"
+                      : formatCurrency(churnSummary?.totalOutstanding ?? 0)}
+                  </Text>
+                </Flex>
+                <Stack gap={1.5} fontSize="xs" flex={1}>
+                  {(churnSummary?.byReason ?? []).map((row) => (
+                    <Flex key={row.reason} justify="space-between" gap={2}>
+                      <Text color="fg.muted">{row.label}</Text>
+                      <Text fontWeight="semibold" color={row.count > 0 ? "brand.700" : "fg.subtle"}>
+                        {churnSummaryLoading
+                          ? "…"
+                          : row.outstanding > 0
+                            ? `${row.count} · ${formatCurrency(row.outstanding)}`
+                            : row.count}
+                      </Text>
+                    </Flex>
+                  ))}
+                </Stack>
+              </Stack>
+              <Flex gap={2} mt={3}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  flex={1}
+                  loading={churnDownloading === "xlsx"}
+                  onClick={() => void downloadChurnReport("xlsx")}
+                >
+                  Excel
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  flex={1}
+                  loading={churnDownloading === "pdf"}
+                  onClick={() => void downloadChurnReport("pdf")}
+                >
+                  PDF
+                </Button>
+              </Flex>
+            </Flex>
           </Card>
 
           <Card title="Top Buildings" accent="cerulean">
-            <Stack gap={3.5}>
-              {subs.topBuildings.slice(0, 4).map((b) => (
-                <Flex key={b.building} justify="space-between" fontSize="sm" align="center">
-                  <DisplayText value={b.building} fontWeight="medium" />
-                  <Text fontWeight="semibold" color="brand.600" flexShrink={0} ml={2}>
-                    {b.subscribers} active
-                  </Text>
-                </Flex>
-              ))}
-              {subs.topBuildings.length === 0 && (
-                <Text fontSize="xs" color="fg.subtle">No subscriber data</Text>
-              )}
-            </Stack>
-          </Card>
-
-          <Card title="Top Payers" accent="cerulean">
-            <Stack gap={3.5}>
-              {stats.topCustomers.slice(0, 4).map((c) => (
-                <Flex key={c.customer} justify="space-between" fontSize="sm" align="center">
-                  <Box minW={0}>
-                    <DisplayText value={c.customer} fontWeight="medium" />
-                    <Text color="fg.muted">{c.payments} payments</Text>
-                  </Box>
-                  <Text fontWeight="semibold" color="brand.600" flexShrink={0} ml={2}>
-                    {formatCurrency(c.totalSpent)}
-                  </Text>
-                </Flex>
-              ))}
-              {stats.topCustomers.length === 0 && (
-                <Text fontSize="xs" color="fg.subtle">No payment data</Text>
-              )}
-            </Stack>
+            <Flex direction="column" h={trendChartHeight} minH={trendChartHeight} mt={1} justify="center">
+              <Stack gap={3.5}>
+                {subs.topBuildings.slice(0, 6).map((b) => (
+                  <Flex key={b.building} justify="space-between" fontSize="sm" align="center">
+                    <DisplayText value={b.building} fontWeight="medium" />
+                    <Text fontWeight="semibold" color="brand.600" flexShrink={0} ml={2}>
+                      {b.subscribers} active
+                    </Text>
+                  </Flex>
+                ))}
+                {subs.topBuildings.length === 0 && (
+                  <Text fontSize="xs" color="fg.subtle">No subscriber data</Text>
+                )}
+              </Stack>
+            </Flex>
           </Card>
         </Grid>
+
+        <Box display={{ base: "none", lg: "block" }}>
+          <Card title="Revenue by Building" subtitle="Last 30 days" accent="cerulean">
+            <Box h={trendChartHeight} minH={trendChartHeight} mt={1}>
+              {revenueByBuildingData.length === 0 ? (
+                <Flex h="100%" align="center" justify="center">
+                  <Text fontSize="sm" color="fg.subtle">No building revenue data yet</Text>
+                </Flex>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={revenueByBuildingData}
+                    margin={{ left: 4, right: 8, top: 8, bottom: 28 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
+                    <XAxis
+                      dataKey="building"
+                      tick={{ fontSize: 10, fill: "#64748b" }}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={0}
+                      angle={-24}
+                      textAnchor="end"
+                      height={48}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: "#64748b" }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={48}
+                      tickFormatter={formatAxisRevenue}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      formatter={(v) => formatCurrency(Number(v))}
+                      contentStyle={{ fontSize: 13 }}
+                    />
+                    <Bar dataKey="revenue" fill={BRAND.cerulean} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Box>
+          </Card>
+        </Box>
       </Stack>
 
       <Box

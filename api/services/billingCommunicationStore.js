@@ -9,7 +9,7 @@ const {
   listTemplateOptions,
   buildTemplateContext,
 } = require("../utils/billingCommunicationTemplates");
-const { getCustomerByCompanyName_JS } = require("../controllers/zoho.controller");
+const { findContactByLookupKeys_JS } = require("../controllers/zoho.controller");
 const { getZohoContactLookupKeys } = require("../utils/b2bBilling");
 
 const COMMUNICABLE_STATUSES = new Set([
@@ -36,11 +36,9 @@ async function resolveCustomerEmail(customer, record) {
 
   try {
     const keys = getZohoContactLookupKeys(customer || { customerNumber: record.customerNumber });
-    for (const key of keys) {
-      const contact = await getCustomerByCompanyName_JS(key);
-      if (contact?.email && String(contact.email).includes("@")) {
-        return { email: String(contact.email).trim(), source: "zoho" };
-      }
+    const contact = await findContactByLookupKeys_JS(keys);
+    if (contact?.email && String(contact.email).includes("@")) {
+      return { email: String(contact.email).trim(), source: "zoho" };
     }
   } catch {
     /* Zoho lookup optional for preview */

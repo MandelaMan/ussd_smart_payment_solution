@@ -5,6 +5,7 @@ import {
   Button,
   Flex,
   Grid,
+  Input,
   Stack,
   Text,
 } from "@chakra-ui/react";
@@ -42,6 +43,10 @@ function defaultToDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function defaultMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
 export function ReportsPage() {
   const { user } = useAuth();
   const partnerView = isPartner(user);
@@ -55,6 +60,7 @@ export function ReportsPage() {
   const [analyticsError, setAnalyticsError] = useState("");
   const [from, setFrom] = useState(defaultFromDate);
   const [to, setTo] = useState(defaultToDate);
+  const [month, setMonth] = useState(defaultMonth);
   const [downloading, setDownloading] = useState<string | null>(null);
 
   useEffect(() => {
@@ -121,6 +127,9 @@ export function ReportsPage() {
           params.from = from;
           params.to = to;
         }
+        if (report.monthFilter) {
+          params.month = month;
+        }
         await api.downloadReport(report.id, params);
         toaster.create({
           title: "Report downloaded",
@@ -168,6 +177,17 @@ export function ReportsPage() {
             onChange={setTo}
             min={from}
             placeholder="End date"
+          />
+        </FilterField>
+        <FilterField label="Month report" flex={FILTER_FLEX.standard}>
+          <Input
+            size="sm"
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            borderRadius="md"
+            borderColor="border"
+            bg="bg.panel"
           />
         </FilterField>
         <Box
@@ -253,7 +273,7 @@ export function ReportsPage() {
                     </Text>
                     {!report.dateFilter && (
                       <Badge size="sm" variant="outline" colorPalette="gray" mt={2}>
-                        Snapshot (no date filter)
+                        {report.monthFilter ? "Month-based" : "Snapshot (no date filter)"}
                       </Badge>
                     )}
                   </Box>

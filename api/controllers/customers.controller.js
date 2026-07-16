@@ -28,6 +28,7 @@ const {
 const { initiateSTKPush } = require("./mpesa.controller");
 const {
   getCustomerByCompanyName_JS,
+  findContactByLookupKeys_JS,
   createInvoice_JS,
   createCreditNote_JS,
   createContact_JS,
@@ -68,20 +69,7 @@ const ZOHO_INVOICE_TAX_INCLUSIVE =
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 
 async function findZohoContactForCustomer(customer) {
-  const lookupKeys = getZohoContactLookupKeys(customer);
-
-  for (const key of lookupKeys) {
-    const result = await getCustomerByCompanyName_JS(key);
-    if (
-      result &&
-      typeof result === "object" &&
-      !Array.isArray(result) &&
-      result.contact_id
-    ) {
-      return result;
-    }
-  }
-  return null;
+  return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer));
 }
 
 function formatZohoPhone(phone) {
@@ -93,19 +81,32 @@ function formatZohoPhone(phone) {
   return digits;
 }
 
-async function buildZohoContactPayload(customer) {
-  const displayName = [customer.firstName, customer.middleName, customer.lastName]
+/** Title-case a person name part — "JOHN" / "john" → "John" (not ALL CAPS). */
+function capitalizeZohoPersonName(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
     .filter(Boolean)
-    .join(" ")
-    .trim();
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+async function buildZohoContactPayload(customer) {
+  const firstName = capitalizeZohoPersonName(customer.firstName);
+  const middleName = capitalizeZohoPersonName(customer.middleName);
+  const lastName = capitalizeZohoPersonName(customer.lastName);
+  const displayName = [firstName, middleName, lastName].filter(Boolean).join(" ").trim();
   const isB2B = customer.customerType === "B2B";
+  const customerNumber = String(customer.customerNumber || "").trim();
+
+  // C2B: company_name is always the customer number (lookup key). B2B: agency name.
   const companyName = isB2B
-    ? customer.agencyName || displayName || customer.customerNumber
-    : displayName || customer.customerNumber;
+    ? String(customer.agencyName || displayName || customerNumber).trim()
+    : customerNumber || displayName;
 
   const payload = {
-    contact_name: companyName,
-    company_name: isB2B ? companyName : displayName || companyName,
+    contact_name: isB2B ? companyName : displayName || companyName,
+    company_name: companyName,
     contact_type: "customer",
     customer_sub_type: isB2B ? "business" : "individual",
   };
@@ -127,11 +128,22 @@ async function buildZohoContactPayload(customer) {
   }
   if (email) payload.email = email;
 
-  if (displayName && displayName !== companyName) {
+  if (!isB2B && (firstName || lastName || displayName)) {
     payload.contact_persons = [
       {
-        first_name: customer.firstName || displayName,
-        last_name: customer.lastName || companyName,
+        first_name: firstName || displayName,
+        last_name: lastName || firstName || customerNumber,
+        email,
+        phone,
+        mobile: phone,
+        is_primary_contact: true,
+      },
+    ];
+  } else if (isB2B && displayName && displayName !== companyName) {
+    payload.contact_persons = [
+      {
+        first_name: firstName || displayName,
+        last_name: lastName || companyName,
         email,
         phone,
         mobile: phone,
@@ -150,24 +162,50 @@ async function ensureZohoContactForCustomer(customer) {
     return ensureZohoContactForAgency(agency);
   }
 
-  const existing = await findZohoContactForCustomer(customer);
-  if (existing?.contact_id) {
+  const { updateContact_JS, getSpecificCustomer_JS } = require("./zoho.controller");
+
+  async function refreshExisting(existing) {
     try {
       const payload = await buildZohoContactPayload(customer);
-      const { updateContact_JS } = require("./zoho.controller");
       const updated = await updateContact_JS(existing.contact_id, payload);
       const contact = updated || existing;
-      await integrationSnapshot.upsertZohoContact(customer.id, contact);
+      if (customer.id) {
+        await integrationSnapshot.upsertZohoContact(customer.id, contact);
+      }
       return contact;
     } catch (e) {
       console.warn("Zoho contact refresh failed:", e.message);
-      try {
-        await integrationSnapshot.upsertZohoContact(customer.id, existing);
-      } catch {
-        /* best-effort */
+      if (customer.id) {
+        try {
+          await integrationSnapshot.upsertZohoContact(customer.id, existing);
+        } catch {
+          /* best-effort */
+        }
       }
       return existing;
     }
+  }
+
+  // Prefer the known Zoho contact id from our snapshot so we never create a
+  // duplicate when company_name / search_text lookup misses.
+  if (customer.id) {
+    try {
+      const snap = await integrationSnapshot.getZohoContact(customer.id);
+      const snapId = snap?.zoho_contact_id ? String(snap.zoho_contact_id) : "";
+      if (snapId) {
+        const byId = await getSpecificCustomer_JS(snapId);
+        if (byId && typeof byId === "object" && byId.contact_id) {
+          return refreshExisting(byId);
+        }
+      }
+    } catch {
+      /* fall through to live lookup */
+    }
+  }
+
+  const existing = await findZohoContactForCustomer(customer);
+  if (existing?.contact_id) {
+    return refreshExisting(existing);
   }
 
   const payload = await buildZohoContactPayload(customer);
@@ -175,6 +213,11 @@ async function ensureZohoContactForCustomer(customer) {
   try {
     created = await createContact_JS(payload);
   } catch (e) {
+    // Duplicate / race: resolve the existing contact and update it instead.
+    const retry = await findZohoContactForCustomer(customer);
+    if (retry?.contact_id) {
+      return refreshExisting(retry);
+    }
     throw new Error(
       `Zoho contact creation failed: ${e.response?.data?.message || e.message}`
     );
@@ -182,7 +225,9 @@ async function ensureZohoContactForCustomer(customer) {
 
   if (created?.contact_id) {
     try {
-      await integrationSnapshot.upsertZohoContact(customer.id, created);
+      if (customer.id) {
+        await integrationSnapshot.upsertZohoContact(customer.id, created);
+      }
     } catch (e) {
       console.warn("Zoho contact snapshot failed:", e.message);
     }
@@ -191,12 +236,7 @@ async function ensureZohoContactForCustomer(customer) {
 
   const retry = await findZohoContactForCustomer(customer);
   if (retry?.contact_id) {
-    try {
-      await integrationSnapshot.upsertZohoContact(customer.id, retry);
-    } catch (e) {
-      console.warn("Zoho contact snapshot failed:", e.message);
-    }
-    return retry;
+    return refreshExisting(retry);
   }
 
   throw new Error("Zoho contact could not be linked");
@@ -423,7 +463,11 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
   return result;
 }
 
-async function refreshTispStatus(customer) {
+async function refreshTispStatus(customer, options = {}) {
+  const preferredDueDate = options.preferredDueDate
+    ? integrationSnapshot.normalizeTispDueDateValue(options.preferredDueDate)
+    : null;
+
   try {
     const tisp = await getTISPCustomer(customer.customerNumber);
     const status =
@@ -437,8 +481,18 @@ async function refreshTispStatus(customer) {
       await store.updateCustomerSubscriptionStatus(customer.id, "Active");
       customer.subscriptionStatus = "Active";
     }
+
+    const liveDue = integrationSnapshot.extractTispDueDate(tisp);
+    const snapshotPayload = { ...tisp };
+    // SetClientDetails can succeed before Client Status reflects the new due
+    // date — prefer the date we just pushed so every customer stays accurate.
+    if (preferredDueDate && liveDue !== preferredDueDate) {
+      snapshotPayload.dueDate = preferredDueDate;
+      snapshotPayload.duedate = preferredDueDate;
+    }
+
     try {
-      await integrationSnapshot.upsertTispSnapshot(customer.id, tisp);
+      await integrationSnapshot.upsertTispSnapshot(customer.id, snapshotPayload);
     } catch (e) {
       console.warn("TISP snapshot save failed:", e.message);
     }
@@ -532,12 +586,23 @@ async function createCustomerOnTisp(ctx, meta = {}) {
   const payload = buildTispCreateClientPayload(
     tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate })
   );
-  return postSetClientDetails(payload, {
+  const result = await postSetClientDetails(payload, {
     customerId: ctx.id,
     customerNumber: ctx.customer_number,
     operation: "set_client_create",
     parentLogId: meta.parentLogId ?? null,
   });
+  if (meta.skipStatusRefresh !== true) {
+    try {
+      await refreshTispStatus(
+        { id: ctx.id, customerNumber: ctx.customer_number },
+        { preferredDueDate: meta.dueDate }
+      );
+    } catch {
+      /* best-effort live snapshot */
+    }
+  }
+  return result;
 }
 
 async function updateCustomerOnTisp(ctx, meta = {}) {
@@ -545,12 +610,23 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
   const payload = buildTispUpdateClientDetailsPayload(
     tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate })
   );
-  return postSetClientDetails(payload, {
+  const result = await postSetClientDetails(payload, {
     customerId: ctx.id,
     customerNumber: ctx.customer_number,
     operation: "set_client_update",
     parentLogId: meta.parentLogId ?? null,
   });
+  if (meta.skipStatusRefresh !== true) {
+    try {
+      await refreshTispStatus(
+        { id: ctx.id, customerNumber: ctx.customer_number },
+        { preferredDueDate: meta.dueDate }
+      );
+    } catch {
+      /* best-effort live snapshot */
+    }
+  }
+  return result;
 }
 
 async function pushCustomerToTisp(ctx, meta = {}) {
@@ -594,6 +670,234 @@ async function pushCustomerToZoho(ctx, options = {}) {
   return pushCustomerBillingToZoho(ctx, options);
 }
 
+/**
+ * Live presence on TISP + Zoho (local snapshot first, then live lookup).
+ */
+async function resolveCustomerIntegrationPresence(customerId) {
+  const ctx = await store.getCustomerContext(customerId);
+  if (!ctx) return null;
+
+  const customerNumber = String(ctx.customer_number || "").trim();
+  let onTisp = false;
+  let tispDueDate = null;
+  try {
+    onTisp = customerNumber
+      ? Boolean(await accountExistsOnTisp(customerNumber))
+      : false;
+  } catch {
+    onTisp =
+      String(ctx.tisp_sync_status || "").toLowerCase() === "synced" &&
+      String(ctx.subscription_status || "")
+        .trim()
+        .toLowerCase() !== "not on tisp";
+  }
+
+  try {
+    const withDue = await attachTispDueDate({
+      id: ctx.id,
+      customerNumber,
+      status: ctx.status,
+    });
+    tispDueDate = withDue?.tispDueDate || null;
+  } catch {
+    /* best-effort */
+  }
+
+  const isB2B = isB2BCustomer({ customerType: ctx.customer_type });
+  let onZoho = false;
+  let zohoContactId = null;
+
+  if (isB2B) {
+    onZoho = true;
+  } else {
+    const snap = await integrationSnapshot.getZohoContact(customerId).catch(() => null);
+    if (snap?.zoho_contact_id) {
+      onZoho = true;
+      zohoContactId = String(snap.zoho_contact_id);
+    } else {
+      try {
+        const { mapContextToCustomer } = require("../services/customerZohoSync");
+        const contact = await findZohoContactForCustomer(
+          mapContextToCustomer(ctx)
+        );
+        if (contact?.contact_id) {
+          onZoho = true;
+          zohoContactId = String(contact.contact_id);
+          try {
+            await integrationSnapshot.upsertZohoContact(customerId, contact);
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        onZoho =
+          String(ctx.zoho_billing_status || "").toLowerCase() === "completed";
+      }
+    }
+  }
+
+  return {
+    customerId: ctx.id,
+    customerNumber,
+    customerType: ctx.customer_type,
+    onTisp,
+    onZoho,
+    zohoContactId,
+    tispDueDate,
+    isB2B,
+  };
+}
+
+async function getCustomerIntegrations(req, res, next) {
+  try {
+    const id = Number(req.params.id);
+    const presence = await resolveCustomerIntegrationPresence(id);
+    if (!presence) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+    return res.json(presence);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+/**
+ * After local edit: ensure customer exists on TISP + Zoho (C2B), with optional
+ * invoice/recurring/due-date controls from the edit form.
+ */
+async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
+  const createInitialInvoice = options.createInitialInvoice === true;
+  const createRecurringInvoice = options.createRecurringInvoice === true;
+  const updateZohoRecurring = options.updateZohoRecurring === true;
+  const tispDueDateRaw = options.tispDueDate
+    ? String(options.tispDueDate).trim()
+    : "";
+  const tispDueDate = tispDueDateRaw || null;
+
+  const ctx = await store.getCustomerContext(customerId);
+  if (!ctx || ctx.status !== "active") {
+    return {
+      tisp: { ok: true, skipped: true },
+      zoho: { ok: true, skipped: true },
+    };
+  }
+
+  const presence = await resolveCustomerIntegrationPresence(customerId);
+  const isB2B = Boolean(presence?.isB2B);
+
+  let tisp = { ok: true };
+  try {
+    if (!presence?.onTisp) {
+      if (!tispDueDate) {
+        throw new Error(
+          "Due date is required to create this customer on TISP"
+        );
+      }
+      await createCustomerOnTisp(ctx, { dueDate: tispDueDate });
+      tisp = { ok: true, created: true, dueDate: tispDueDate };
+    } else {
+      // Prefer explicit form date; otherwise keep the snapshot due date so we
+      // do not accidentally reset TISP DueDate to "today".
+      const dueForUpdate = tispDueDate || presence.tispDueDate || undefined;
+      await updateCustomerOnTisp(ctx, {
+        dueDate: dueForUpdate,
+      });
+      tisp = {
+        ok: true,
+        updated: true,
+        dueDate: dueForUpdate || null,
+      };
+    }
+    await store.updateCustomerTispSync(customerId, "synced", null);
+    // create/update already refresh live Client Status (+ preferred due date).
+  } catch (e) {
+    const message = formatTispError(e);
+    await store.updateCustomerTispSync(customerId, "failed", message);
+    tisp = { ok: false, error: message };
+  }
+
+  let zoho = { ok: true, skipped: true };
+  if (isB2B) {
+    zoho = { ok: true, skipped: true, reason: "b2b_agency_billing" };
+  } else {
+    try {
+      const { mapContextToCustomer, ensureRecurringSubscription } = require(
+        "../services/customerZohoSync"
+      );
+      const { createSignupInvoice } = require(
+        "../services/customerBillingOnboarding"
+      );
+      const customer = mapContextToCustomer(ctx);
+
+      if (!presence?.onZoho) {
+        const contact = await ensureZohoContactForCustomer(customer);
+        if (!contact?.contact_id) {
+          throw new Error("Zoho contact could not be linked");
+        }
+
+        let invoice = null;
+        let recurring = null;
+        if (createInitialInvoice) {
+          invoice = await createSignupInvoice(customer, contact);
+        }
+        if (createRecurringInvoice) {
+          recurring = await ensureRecurringSubscription(customer, contact, {
+            startDate: invoice?.period?.endDate,
+          });
+        }
+
+        await store.updateCustomerZohoBillingStatus(
+          customerId,
+          "completed",
+          null
+        );
+        zoho = {
+          ok: true,
+          created: true,
+          contactId: String(contact.contact_id),
+          invoice,
+          recurring,
+        };
+      } else {
+        // Already on Zoho: refresh contact when requested via contactChanged path;
+        // optionally create/update recurring profile.
+        const contact = await ensureZohoContactForCustomer(customer);
+        let recurring = null;
+        if (createRecurringInvoice || updateZohoRecurring) {
+          recurring = await ensureRecurringSubscription(customer, contact);
+        }
+        await store.updateCustomerZohoBillingStatus(
+          customerId,
+          "completed",
+          null
+        );
+        zoho = {
+          ok: true,
+          updated: true,
+          contactId: contact?.contact_id
+            ? String(contact.contact_id)
+            : presence.zohoContactId,
+          recurring,
+        };
+      }
+    } catch (e) {
+      const message = e.message || "Zoho sync failed";
+      try {
+        await store.updateCustomerZohoBillingStatus(
+          customerId,
+          "failed",
+          message
+        );
+      } catch {
+        /* ignore */
+      }
+      zoho = { ok: false, error: message };
+    }
+  }
+
+  return { tisp, zoho, presence };
+}
+
 async function runZohoSyncForCustomer(customerId, options = {}) {
   const ctx = await store.getCustomerContext(customerId);
   if (!ctx || ctx.status !== "active") {
@@ -621,11 +925,6 @@ async function syncNewCustomerToTisp(customerId, customerNumber, meta = {}) {
     const ctx = await store.getCustomerContext(customerId);
     await createCustomerOnTisp(ctx, meta);
     await store.updateCustomerTispSync(customerId, "synced", null);
-    try {
-      await refreshTispStatus({ id: customerId, customerNumber });
-    } catch {
-      // best-effort
-    }
     return null;
   } catch (e) {
     const tispError = formatTispError(e);
@@ -862,8 +1161,20 @@ async function exportCustomers(req, res, next) {
   }
 }
 
-async function attachTispDueDate(customer) {
+async function attachTispDueDate(customer, options = {}) {
   if (!customer?.id) return customer;
+
+  const forceLive = options.forceLive === true;
+
+  // Explicit refresh / detail sync: always pull live Client Status first.
+  if (forceLive && customer.status === "active" && customer.customerNumber) {
+    try {
+      await refreshTispStatus(customer);
+      customer = (await store.getCustomerById(customer.id)) || customer;
+    } catch {
+      /* fall through to snapshot */
+    }
+  }
 
   let dueDate =
     integrationSnapshot.normalizeTispDueDateValue(customer.tispDueDate) || null;
@@ -2044,6 +2355,11 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
         skipCooldown: true,
       });
       result.tisp = { ok: true, dueDate: dueDateLabel };
+      try {
+        await store.updateCustomerTispSync(customerId, "synced", null);
+      } catch {
+        /* ignore */
+      }
     } else {
       result.tisp = { ok: true, skipped: true, reason: "not_on_tisp" };
     }
@@ -2209,7 +2525,8 @@ async function disconnectCustomer(req, res, next) {
       await integrationSnapshot.upsertTispSnapshot(customerId, {
         status: "Suspended",
         DueDate: dueDateLabel,
-        due_date: dueDateLabel,
+        dueDate: dueDateLabel,
+        duedate: dueDateLabel,
       });
     } catch (e) {
       console.warn("TISP snapshot save (disconnect) failed:", e.message);
@@ -2706,9 +3023,22 @@ async function updateCustomer(req, res, next) {
       });
     }
 
+    const createInitialInvoice = body.createInitialInvoice === true;
+    const createRecurringInvoice = body.createRecurringInvoice === true;
+    const updateZohoRecurring = body.updateZohoRecurring === true;
+    const tispDueDate = body.tispDueDate
+      ? String(body.tispDueDate).trim()
+      : null;
+
+    const presenceBefore = await resolveCustomerIntegrationPresence(id);
+    if (presenceBefore && !presenceBefore.onTisp && !tispDueDate) {
+      return res.status(400).json({
+        error: "Due date is required to create this customer on TISP",
+      });
+    }
+
     const {
       customer: updated,
-      contactChanged,
       packageChanged,
     } = await store.updateCustomerDetails(
       id,
@@ -2731,38 +3061,35 @@ async function updateCustomer(req, res, next) {
       { allowPackageEdit: isAdmin && wantsPackageEdit }
     );
 
-    let tispError = null;
+    let tisp = { ok: true, skipped: true };
     let zoho = { ok: true, skipped: true };
+
     if (updated?.status === "active") {
-      // Contact + package corrections stay in DB; TISP is updated so the ISP
-      // matches local data. Zoho Books only receives C2B contact changes.
-      try {
-        const ctx = await store.getCustomerContext(id);
-        await pushCustomerToTisp(ctx);
-        await store.updateCustomerTispSync(id, "synced", null);
-      } catch (e) {
-        tispError = formatTispError(e);
-        await store.updateCustomerTispSync(id, "failed", tispError);
-      }
+      const syncResult = await syncIntegrationsOnCustomerUpdate(id, {
+        createInitialInvoice,
+        createRecurringInvoice,
+        updateZohoRecurring,
+        tispDueDate,
+      });
+      tisp = syncResult.tisp;
+      zoho = syncResult.zoho;
 
       if (
-        contactChanged &&
-        !isB2BCustomer({ customerType: updated.customerType })
+        packageChanged &&
+        zoho.ok &&
+        !createRecurringInvoice &&
+        !updateZohoRecurring
       ) {
-        zoho = await runZohoSyncForCustomer(id, { syncRecurring: false });
-      } else if (isB2BCustomer({ customerType: updated.customerType })) {
-        zoho = { ok: true, skipped: true, reason: "b2b_no_zoho" };
-      } else if (packageChanged) {
-        zoho = { ok: true, skipped: true, reason: "package_db_only" };
+        zoho = { ...zoho, packageNote: "package_db_only_unless_recurring_flag" };
       }
     }
 
-    const customer = await store.getCustomerById(id);
+    const customer = await attachTispDueDate(await store.getCustomerById(id));
 
     return res.json({
       ok: true,
       customer,
-      tisp: tispError ? { ok: false, error: tispError } : { ok: true },
+      tisp: tisp.ok === false ? { ok: false, error: tisp.error } : { ok: true, ...tisp },
       zoho,
       packageChanged: Boolean(packageChanged),
     });
@@ -3134,4 +3461,6 @@ module.exports = {
   pushCustomerToZoho,
   ensureZohoContactForCustomer,
   buildZohoContactPayload,
+  getCustomerIntegrations,
+  resolveCustomerIntegrationPresence,
 };

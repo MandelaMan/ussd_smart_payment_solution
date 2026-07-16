@@ -600,9 +600,13 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
     const list = result.contacts || [];
     if (list.length === 0) return "Customer not found with provided name.";
 
-    const best = list
+    const ranked = list
       .map((c) => ({ c, s: scoreMatch(idOrEmail, c) }))
-      .sort((a, b) => b.s - a.s)[0].c;
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s);
+    if (!ranked.length) return "Customer not found with provided name.";
+
+    const best = ranked[0].c;
     const contact = pickLean(best);
     cache.set(key, contact);
     return contact;
@@ -673,10 +677,15 @@ const getCustomerByCompanyName_JS = async (rawName) => {
     if (list.length === 0)
       return "Customer not found with provided company name.";
 
-    // Score using full contact object
-    const best = list
+    // Score using full contact object — reject zero-score fuzzy hits.
+    const ranked = list
       .map((c) => ({ c, s: scoreMatch(companyName, c) }))
-      .sort((a, b) => b.s - a.s)[0].c;
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s);
+    if (!ranked.length)
+      return "Customer not found with provided company name.";
+
+    const best = ranked[0].c;
 
     const contact = pickLean(best);
     cache.set(key, contact);
@@ -688,6 +697,31 @@ const getCustomerByCompanyName_JS = async (rawName) => {
     );
     return "Error trying to execute function. " + error.message;
   }
+};
+
+/**
+ * Resolve a Zoho contact from ordered lookup keys.
+ * Email keys use the email filter; others use company/name search_text.
+ */
+const findContactByLookupKeys_JS = async (lookupKeys = []) => {
+  for (const raw of lookupKeys) {
+    const key = String(raw || "").trim();
+    if (!key) continue;
+
+    const result = key.includes("@")
+      ? await getSpecificCustomer_JS(key)
+      : await getCustomerByCompanyName_JS(key);
+
+    if (
+      result &&
+      typeof result === "object" &&
+      !Array.isArray(result) &&
+      result.contact_id
+    ) {
+      return result;
+    }
+  }
+  return null;
 };
 
 // Items (array)
@@ -1316,6 +1350,7 @@ module.exports = {
   getZohoCustomers_JS,
   getSpecificCustomer_JS,
   getCustomerByCompanyName_JS,
+  findContactByLookupKeys_JS,
   getItems_JS,
   getItemsByAllowedSkuPrefixes_JS,
   getInvoiceTemplates_JS,

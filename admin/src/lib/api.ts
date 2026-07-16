@@ -49,6 +49,7 @@ export type Building = {
   c2bCode: string;
   b2bCode: string;
   ipSetup: "STATIC" | "PPOE";
+  dstvSetup: "headend_coax" | "decoder";
   ipPrefixes: string[];
   createdAt?: string;
 };
@@ -902,6 +903,7 @@ export type Stats = {
     totalSpent: number;
     lastPayment: string;
   }>;
+  revenueByBuilding: Array<{ building: string; revenue: number; subscribers: number }>;
   activityFeed: ActivityItem[];
 };
 
@@ -984,12 +986,26 @@ type Paginated<T> = {
 
 export type ListPagination = Paginated<unknown>["pagination"];
 
+export type MonthlyPaymentChurnSummary = {
+  month: string;
+  period: { from: string; to: string };
+  total: number;
+  totalOutstanding: number;
+  byReason: Array<{
+    reason: string;
+    label: string;
+    count: number;
+    outstanding: number;
+  }>;
+};
+
 export type ReportDefinition = {
   id: string;
   title: string;
   description: string;
   category: string;
   dateFilter: boolean;
+  monthFilter?: boolean;
 };
 
 export type BiDashboardFilters = {
@@ -1373,6 +1389,7 @@ export const api = {
     c2bCode: string;
     b2bCode: string;
     ipSetup: "STATIC" | "PPOE";
+    dstvSetup: "headend_coax" | "decoder";
     ipPrefixes?: string[];
   }) =>
     request<{ ok: boolean; id: number; building: Building }>("/admin/buildings", {
@@ -1387,6 +1404,7 @@ export const api = {
       c2bCode: string;
       b2bCode: string;
       ipSetup: "STATIC" | "PPOE";
+      dstvSetup: "headend_coax" | "decoder";
       ipPrefixes: string[];
     }>
   ) =>
@@ -1726,12 +1744,43 @@ export const api = {
       productId?: number;
       ipAddress?: string;
       dstvDecoderSerial?: string;
+      /** Create Zoho signup invoice when provisioning a missing Zoho contact (default false). */
+      createInitialInvoice?: boolean;
+      /** Create Zoho recurring when provisioning missing Zoho contact (default false). */
+      createRecurringInvoice?: boolean;
+      /** Update/create Zoho recurring when already linked (default false). */
+      updateZohoRecurring?: boolean;
+      /** Required when creating on TISP; optional update when already on TISP (YYYY-MM-DD). */
+      tispDueDate?: string;
     }
   ) =>
-    request<{ ok: boolean; customer: Customer; tisp: { ok: boolean; error?: string } }>(
-      `/admin/customers/${id}`,
-      { method: "PATCH", body: JSON.stringify(data) }
-    ),
+    request<{
+      ok: boolean;
+      customer: Customer;
+      tisp: { ok: boolean; error?: string; created?: boolean; updated?: boolean };
+      zoho?: {
+        ok: boolean;
+        error?: string;
+        created?: boolean;
+        updated?: boolean;
+        skipped?: boolean;
+      };
+    }>(`/admin/customers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  getCustomerIntegrations: (id: number) =>
+    request<{
+      customerId: number;
+      customerNumber: string;
+      customerType: string;
+      onTisp: boolean;
+      onZoho: boolean;
+      zohoContactId: string | null;
+      tispDueDate: string | null;
+      isB2B: boolean;
+    }>(`/admin/customers/${id}/integrations`),
 
   convertCustomerType: (
     id: number,
@@ -1979,6 +2028,11 @@ export const api = {
 
   listReports: () =>
     request<{ reports: ReportDefinition[] }>("/admin/reports"),
+
+  getMonthlyPaymentChurnSummary: (month: string) =>
+    request<MonthlyPaymentChurnSummary>(
+      `/admin/reports/monthly-payment-churn/summary?month=${encodeURIComponent(month)}`
+    ),
 
   getReportAnalytics: (params: { from?: string; to?: string } = {}) => {
     const qs = buildQueryString({

@@ -17,7 +17,7 @@ const {
   b2bBillingMeta,
 } = require("../utils/b2bBilling");
 const {
-  getCustomerByCompanyName_JS,
+  findContactByLookupKeys_JS,
   getInvoices_JS,
   getCustomerPayments_JS,
   getRecurringInvoices_JS,
@@ -423,12 +423,7 @@ async function ensureSnapshotLoaded({ fullZoho = false } = {}) {
 }
 
 async function findZohoContact(customer) {
-  const lookupKeys = getZohoContactLookupKeys(customer);
-  for (const key of lookupKeys) {
-    const result = await getCustomerByCompanyName_JS(key);
-    if (result?.contact_id) return result;
-  }
-  return null;
+  return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer));
 }
 
 function mapInvoice(inv) {

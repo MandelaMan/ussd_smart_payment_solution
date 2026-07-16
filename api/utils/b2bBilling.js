@@ -15,8 +15,35 @@ function getZohoContactLookupKeys(customer) {
     const agencyName = customer?.agencyName || customer?.agency_name;
     return agencyName ? [String(agencyName).trim()] : [];
   }
-  const customerNumber = customer?.customerNumber || customer?.customer_number;
-  return customerNumber ? [String(customerNumber).trim()] : [];
+
+  const keys = [];
+  const seen = new Set();
+  const push = (value) => {
+    const key = String(value || "").trim();
+    if (!key) return;
+    const dedupe = key.toLowerCase();
+    if (seen.has(dedupe)) return;
+    seen.add(dedupe);
+    keys.push(key);
+  };
+
+  // Prefer customer number (company_name), then email, then full name.
+  push(customer?.customerNumber || customer?.customer_number);
+  push(customer?.email);
+  const displayName = [
+    customer?.firstName || customer?.first_name,
+    customer?.middleName || customer?.middle_name,
+    customer?.lastName || customer?.last_name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  push(displayName);
+  if (!displayName) {
+    push(customer?.fullName || customer?.full_name || customer?.customerName);
+  }
+
+  return keys;
 }
 
 async function resolveAgencyForCustomer(customer, store) {

@@ -121,6 +121,15 @@ const REPORT_DEFINITIONS = [
     dateFilter: true,
   },
   {
+    id: "monthly-payment-churn",
+    title: "Monthly Payment Churn",
+    description:
+      "Customers churned in a selected month from cancellations, disconnects, and unpaid/long-unpaid billing.",
+    category: "Customers",
+    dateFilter: false,
+    monthFilter: true,
+  },
+  {
     id: "payment-frequency-mix",
     title: "Billing Frequency Mix",
     description: "Active subscribers grouped by monthly, quarterly, or yearly billing.",
@@ -149,6 +158,7 @@ const PARTNER_REPORT_IDS = new Set([
   "customer-lifecycle",
   "new-subscribers",
   "churn-analysis",
+  "monthly-payment-churn",
   "payment-frequency-mix",
 ]);
 
@@ -176,6 +186,22 @@ function resolveDateRange(from, to) {
     : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const resolvedFrom = from || fromDate.toISOString().slice(0, 10);
   return { from: resolvedFrom, to: resolvedTo };
+}
+
+function resolveMonthRange(month) {
+  const normalized = String(month || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(normalized)) {
+    throw new Error("month must be in YYYY-MM format");
+  }
+  const [yearStr, monthStr] = normalized.split("-");
+  const year = Number(yearStr);
+  const monthNum = Number(monthStr);
+  if (!Number.isFinite(year) || !Number.isFinite(monthNum) || monthNum < 1 || monthNum > 12) {
+    throw new Error("month must be in YYYY-MM format");
+  }
+  const start = `${yearStr}-${monthStr}-01`;
+  const end = new Date(year, monthNum, 0).toISOString().slice(0, 10);
+  return { month: normalized, from: start, to: end };
 }
 
 function dateWhere(column, from, to) {
@@ -668,6 +694,241 @@ async function churnAnalysis(from, to) {
   };
 }
 
+const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
+  SELECT
+    'cancelled' AS churn_reason,
+    c.updated_at AS churned_at,
+    c.customer_number,
+    CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name) AS full_name,
+    b.name AS building,
+    p.name AS package,
+    c.customer_type,
+    COALESCE(c.subscription_status, '') AS subscription_status,
+    c.last_payment_date,
+    NULL AS oldest_overdue_date,
+    0 AS outstanding_balance
+  FROM customers c
+  JOIN buildings b ON b.id = c.building_id
+  JOIN products p ON p.id = c.product_id
+  WHERE c.status = 'cancelled'
+    AND c.updated_at >= ?
+    AND c.updated_at <= ?
+
+  UNION ALL
+
+  SELECT
+    'disconnected' AS churn_reason,
+    e.created_at AS churned_at,
+    c.customer_number,
+    CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name) AS full_name,
+    b.name AS building,
+    p.name AS package,
+    c.customer_type,
+    COALESCE(c.subscription_status, '') AS subscription_status,
+    c.last_payment_date,
+    NULL AS oldest_overdue_date,
+    0 AS outstanding_balance
+  FROM customer_events e
+  JOIN customers c ON c.id = e.customer_id
+  JOIN buildings b ON b.id = c.building_id
+  JOIN products p ON p.id = c.product_id
+  WHERE e.event_type = 'disconnect'
+    AND e.created_at >= ?
+    AND e.created_at <= ?
+
+  UNION ALL
+
+  SELECT
+    'unpaid_overdue' AS churn_reason,
+    DATE_ADD(MIN(COALESCE(zi.due_date, ?)), INTERVAL 14 DAY) AS churned_at,
+    c.customer_number,
+    CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name) AS full_name,
+    b.name AS building,
+    p.name AS package,
+    c.customer_type,
+    COALESCE(c.subscription_status, '') AS subscription_status,
+    c.last_payment_date,
+    MIN(zi.due_date) AS oldest_overdue_date,
+    ROUND(SUM(COALESCE(zi.balance_due, 0)), 2) AS outstanding_balance
+  FROM customers c
+  JOIN buildings b ON b.id = c.building_id
+  JOIN products p ON p.id = c.product_id
+  JOIN zoho_customer_invoices zi ON zi.customer_id = c.id
+  WHERE c.status = 'active'
+    AND zi.balance_due > 0
+    AND zi.due_date IS NOT NULL
+    AND zi.due_date >= ?
+    AND zi.due_date <= ?
+    AND (
+      c.last_payment_date IS NULL
+      OR c.last_payment_date < DATE_SUB(zi.due_date, INTERVAL 1 DAY)
+    )
+  GROUP BY c.id, c.customer_number, c.first_name, c.middle_name, c.last_name,
+           b.name, p.name, c.customer_type, c.subscription_status, c.last_payment_date
+  HAVING DATE_ADD(MIN(zi.due_date), INTERVAL 14 DAY) <= ?
+
+  UNION ALL
+
+  SELECT
+    'long_unpaid' AS churn_reason,
+    DATE_SUB(?, INTERVAL 1 DAY) AS churned_at,
+    c.customer_number,
+    CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name) AS full_name,
+    b.name AS building,
+    p.name AS package,
+    c.customer_type,
+    COALESCE(c.subscription_status, '') AS subscription_status,
+    c.last_payment_date,
+    MIN(zi.due_date) AS oldest_overdue_date,
+    ROUND(SUM(COALESCE(zi.balance_due, 0)), 2) AS outstanding_balance
+  FROM customers c
+  JOIN buildings b ON b.id = c.building_id
+  JOIN products p ON p.id = c.product_id
+  JOIN zoho_customer_invoices zi ON zi.customer_id = c.id
+  WHERE c.status = 'active'
+    AND zi.balance_due > 0
+    AND zi.due_date < ?
+    AND (
+      c.last_payment_date IS NULL
+      OR c.last_payment_date < DATE_SUB(?, INTERVAL 60 DAY)
+    )
+  GROUP BY c.id, c.customer_number, c.first_name, c.middle_name, c.last_name,
+           b.name, p.name, c.customer_type, c.subscription_status, c.last_payment_date
+`;
+
+function monthlyPaymentChurnParams(period) {
+  return [
+    period.from,
+    `${period.to} 23:59:59`,
+    period.from,
+    `${period.to} 23:59:59`,
+    period.from,
+    period.from,
+    period.to,
+    period.to,
+    `${period.to} 23:59:59`,
+    `${period.to} 23:59:59`,
+    period.from,
+    period.from,
+  ];
+}
+
+const CHURN_REASON_LABELS = {
+  cancelled: "Cancelled",
+  disconnected: "Disconnected",
+  unpaid_overdue: "Unpaid (overdue)",
+  long_unpaid: "Long unpaid",
+};
+
+async function getMonthlyPaymentChurnSummary(month) {
+  const period = resolveMonthRange(month);
+  const params = monthlyPaymentChurnParams(period);
+
+  const [reasonRows, [totalRow]] = await Promise.all([
+    query(
+      `SELECT x.churn_reason AS reason,
+              COUNT(*) AS count,
+              COALESCE(SUM(x.outstanding_balance), 0) AS outstanding
+       FROM (${MONTHLY_PAYMENT_CHURN_UNION_SQL}) x
+       GROUP BY x.churn_reason
+       ORDER BY count DESC`,
+      params
+    ),
+    query(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(x.outstanding_balance), 0) AS total_outstanding
+       FROM (${MONTHLY_PAYMENT_CHURN_UNION_SQL}) x`,
+      params
+    ),
+  ]);
+
+  const byReasonMap = new Map(
+    reasonRows.map((row) => [
+      row.reason,
+      {
+        reason: row.reason,
+        label: CHURN_REASON_LABELS[row.reason] || row.reason,
+        count: Number(row.count || 0),
+        outstanding: Number(row.outstanding || 0),
+      },
+    ])
+  );
+
+  const byReason = Object.keys(CHURN_REASON_LABELS).map((reason) =>
+    byReasonMap.get(reason) || {
+      reason,
+      label: CHURN_REASON_LABELS[reason],
+      count: 0,
+      outstanding: 0,
+    }
+  );
+
+  return {
+    month: period.month,
+    period: { from: period.from, to: period.to },
+    total: Number(totalRow?.total || 0),
+    totalOutstanding: Number(totalRow?.total_outstanding || 0),
+    byReason,
+  };
+}
+
+async function monthlyPaymentChurn(month) {
+  const period = resolveMonthRange(month);
+  const headers = [
+    { key: "month", label: "Month" },
+    { key: "churn_reason", label: "Reason" },
+    { key: "churned_at", label: "Date" },
+    { key: "customer_number", label: "Customer No." },
+    { key: "full_name", label: "Name" },
+    { key: "building", label: "Building" },
+    { key: "package", label: "Package" },
+    { key: "customer_type", label: "Type" },
+    { key: "subscription_status", label: "Service Status" },
+    { key: "last_payment_date", label: "Last Payment" },
+    { key: "oldest_overdue_date", label: "Oldest Overdue" },
+    { key: "outstanding_balance", label: "Outstanding (KES)" },
+  ];
+
+  const rows = await query(
+    `SELECT
+       ? AS month,
+       x.churn_reason,
+       x.churned_at,
+       x.customer_number,
+       x.full_name,
+       x.building,
+       x.package,
+       x.customer_type,
+       x.subscription_status,
+       x.last_payment_date,
+       x.oldest_overdue_date,
+       x.outstanding_balance
+     FROM (${MONTHLY_PAYMENT_CHURN_UNION_SQL}) x
+     ORDER BY x.churned_at DESC
+     LIMIT 10000`,
+    [period.month, ...monthlyPaymentChurnParams(period)]
+  );
+
+  const summary = await getMonthlyPaymentChurnSummary(period.month);
+
+  return {
+    title: "Monthly Payment Churn",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    period: { from: period.from, to: period.to },
+    month: period.month,
+    summary: {
+      total: summary.total,
+      totalOutstanding: summary.totalOutstanding,
+      byReason: summary.byReason.map((r) => ({
+        label: r.label,
+        count: r.count,
+        outstanding: r.outstanding,
+      })),
+    },
+  };
+}
+
 async function paymentFrequencyMix() {
   const headers = [
     { key: "frequency", label: "Billing Frequency" },
@@ -738,11 +999,12 @@ const RUNNERS = {
   "collection-efficiency": collectionEfficiency,
   "arpu-analysis": arpuAnalysis,
   "churn-analysis": churnAnalysis,
+  "monthly-payment-churn": monthlyPaymentChurn,
   "payment-frequency-mix": paymentFrequencyMix,
   "billing-reconciliation": billingReconciliationReport,
 };
 
-async function runReport(reportId, { from, to } = {}) {
+async function runReport(reportId, { from, to, month } = {}) {
   const def = getReportDefinition(reportId);
   if (!def) return null;
 
@@ -755,6 +1017,12 @@ async function runReport(reportId, { from, to } = {}) {
     return { ...result, period: range };
   }
 
+  if (def.monthFilter) {
+    const range = resolveMonthRange(month || new Date().toISOString().slice(0, 7));
+    const result = await runner(range.month);
+    return { ...result, period: { from: range.from, to: range.to }, month: range.month };
+  }
+
   const result = await runner();
   return result;
 }
@@ -765,4 +1033,5 @@ module.exports = {
   isPartnerReport,
   getReportDefinition,
   runReport,
+  getMonthlyPaymentChurnSummary,
 };

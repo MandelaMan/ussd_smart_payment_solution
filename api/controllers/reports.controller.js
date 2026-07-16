@@ -4,6 +4,7 @@ const {
   isPartnerReport,
   getReportDefinition,
   runReport,
+  getMonthlyPaymentChurnSummary,
 } = require("../services/reportStore");
 const { getReportAnalytics } = require("../services/reportAnalyticsStore");
 const { toExcel, toPdf } = require("../utils/reportExport");
@@ -45,6 +46,7 @@ async function downloadReport(req, res, next) {
     const report = await runReport(id, {
       from: req.query.from,
       to: req.query.to,
+      month: req.query.month,
     });
 
     if (!report) {
@@ -88,4 +90,20 @@ async function getAnalytics(req, res, next) {
   }
 }
 
-module.exports = { listReports, downloadReport, getAnalytics };
+async function getMonthlyPaymentChurnSummaryHandler(req, res, next) {
+  try {
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const summary = await getMonthlyPaymentChurnSummary(month);
+    return res.json(summary);
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
+module.exports = {
+  listReports,
+  downloadReport,
+  getAnalytics,
+  getMonthlyPaymentChurnSummary: getMonthlyPaymentChurnSummaryHandler,
+};

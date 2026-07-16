@@ -1,8 +1,8 @@
 const {
-  getCustomerByCompanyName_JS,
   getInvoices_JS,
   getCustomerPayments_JS,
   getRecurringInvoices_JS,
+  findContactByLookupKeys_JS,
 } = require("../../controllers/zoho.controller");
 const { syncLog } = require("../../lib/structuredLogger");
 const { getZohoContactLookupKeys } = require("../../utils/b2bBilling");
@@ -13,20 +13,17 @@ const { getZohoContactLookupKeys } = require("../../utils/b2bBilling");
 async function findContact(customer, options = {}) {
   const { correlationId } = options;
   const lookupKeys = getZohoContactLookupKeys(customer);
-  for (const key of lookupKeys) {
-    try {
-      const result = await getCustomerByCompanyName_JS(key);
-      if (result?.contact_id) return result;
-    } catch (err) {
-      syncLog.warn("zoho_contact_lookup_failed", {
-        integration: "invoices",
-        key,
-        correlationId,
-        error: err.message,
-      });
-    }
+  try {
+    return await findContactByLookupKeys_JS(lookupKeys);
+  } catch (err) {
+    syncLog.warn("zoho_contact_lookup_failed", {
+      integration: "invoices",
+      keys: lookupKeys,
+      correlationId,
+      error: err.message,
+    });
+    return null;
   }
-  return null;
 }
 
 async function fetchInvoices(contactId, options = {}) {
