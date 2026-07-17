@@ -262,10 +262,7 @@ export function SettingsPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <PageHeader
-        title="Settings"
-        description="User permissions, webhook endpoints, and integration configuration"
-      />
+      <PageHeader title="Settings" />
 
       <Box
         border="1px solid"

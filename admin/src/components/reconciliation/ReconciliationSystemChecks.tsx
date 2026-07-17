@@ -188,15 +188,6 @@ export function ReconciliationSystemChecks({ detail }: Props) {
         >
           System status
         </Text>
-        <Text
-          fontSize="2xs"
-          color={hasIssue ? "orange.800" : "green.800"}
-          mt={0.5}
-          lineHeight="1.35"
-          display={{ base: "none", sm: "block" }}
-        >
-          Quick read across dashboard, TISP, and Zoho Books
-        </Text>
       </Box>
 
       <Stack gap={0} divideY="1px" divideColor="gray.100">

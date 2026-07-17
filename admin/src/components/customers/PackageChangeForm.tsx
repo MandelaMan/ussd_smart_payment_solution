@@ -654,7 +654,6 @@ export function PackageChangeForm({
       </Dialog.Header>
       <Dialog.Body px={4} py={3}>
         <FormSubmitSummary
-          description="Changes will sync to TISP and Zoho."
           items={summaryItems}
         />
       </Dialog.Body>

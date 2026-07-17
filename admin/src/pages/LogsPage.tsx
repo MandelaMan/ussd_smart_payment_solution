@@ -216,7 +216,6 @@ export function LogsPage() {
     <Stack gap={PAGE_STACK_GAP}>
       <MobilePageChrome
         title="Logs"
-        description="API endpoint summary and integration retries — expand a row for payload and response details"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Endpoint, customer, error…"

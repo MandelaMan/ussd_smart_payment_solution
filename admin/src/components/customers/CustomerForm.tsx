@@ -15,6 +15,7 @@ import { FiArrowLeft } from "react-icons/fi";
 import {
   api,
   formatCurrency,
+  formatDateOnly,
   type Agency,
   type ApartmentOccupancy,
   type Building,
@@ -27,7 +28,6 @@ import { SelectField } from "../ui/SelectField";
 import { SearchableSelect } from "../ui/SearchableSelect";
 import {
   getBuildingIpRules,
-  ipRulesHint,
   validateIpForBuilding,
 } from "../../lib/buildingIpRules";
 import { embeddedFieldInputStyles } from "../../theme";
@@ -38,6 +38,7 @@ import { formatCustomerPackageLabel } from "../../lib/formatText";
 import { useAuth } from "../../lib/auth";
 import { canEditCustomerPackage } from "../../lib/rbac";
 import { DateField } from "../ui/DateField";
+import { TextStatus } from "../ui/TextStatus";
 import { normalizeSubscriptionStatus } from "../../lib/customerStatus";
 
 const PAYMENT_FREQUENCIES = [
@@ -136,6 +137,15 @@ export function CustomerForm({
   const [tispDueDate, setTispDueDate] = useState("");
   const [onTisp, setOnTisp] = useState(false);
   const [onZoho, setOnZoho] = useState(false);
+  const [zohoInactive, setZohoInactive] = useState(false);
+  const [zohoInvoiceCount, setZohoInvoiceCount] = useState(0);
+  const [zohoInvoicesInSync, setZohoInvoicesInSync] = useState(false);
+  const [zohoPaymentsInSync, setZohoPaymentsInSync] = useState(true);
+  const [zohoLastPaymentDate, setZohoLastPaymentDate] = useState<string | null>(null);
+  const [dashboardLastPaymentDate, setDashboardLastPaymentDate] = useState<string | null>(null);
+  const [hasActiveRecurring, setHasActiveRecurring] = useState(false);
+  const [recurringStatus, setRecurringStatus] = useState<string | null>(null);
+  const [nextRecurringDate, setNextRecurringDate] = useState<string | null>(null);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [occupancy, setOccupancy] = useState<ApartmentOccupancy | null>(null);
   const [occupancyChecking, setOccupancyChecking] = useState(false);
@@ -163,7 +173,16 @@ export function CustomerForm({
     if (!customer?.id || customer.status !== "active") {
       setOnTisp(false);
       setOnZoho(false);
+      setZohoInactive(false);
       setTispDueDate("");
+      setZohoInvoiceCount(0);
+      setZohoInvoicesInSync(false);
+      setZohoPaymentsInSync(true);
+      setZohoLastPaymentDate(null);
+      setDashboardLastPaymentDate(customer?.lastPaymentDate || null);
+      setHasActiveRecurring(false);
+      setRecurringStatus(null);
+      setNextRecurringDate(null);
       return;
     }
 
@@ -179,7 +198,9 @@ export function CustomerForm({
       Boolean(customer.zohoSignupInvoiceId);
     setOnTisp(localOnTisp);
     setOnZoho(localOnZoho);
+    setZohoInactive(false);
     setTispDueDate(customer.tispDueDate ? String(customer.tispDueDate).slice(0, 10) : "");
+    setDashboardLastPaymentDate(customer.lastPaymentDate || null);
     setCreateInitialInvoice(false);
     setCreateRecurringInvoice(false);
     setUpdateZohoRecurring(false);
@@ -192,8 +213,28 @@ export function CustomerForm({
         if (cancelled) return;
         setOnTisp(Boolean(res.onTisp));
         setOnZoho(Boolean(res.onZoho) || res.isB2B);
+        setZohoInactive(Boolean(res.zohoInactive));
         if (res.tispDueDate) {
           setTispDueDate(String(res.tispDueDate).slice(0, 10));
+        }
+        setZohoInvoiceCount(Number(res.invoiceCount) || 0);
+        setZohoInvoicesInSync(Boolean(res.invoicesInSync));
+        setZohoPaymentsInSync(res.paymentsInSync !== false);
+        setZohoLastPaymentDate(res.zohoLastPaymentDate || null);
+        setDashboardLastPaymentDate(
+          res.lastPaymentDate || customer.lastPaymentDate || null
+        );
+        setHasActiveRecurring(Boolean(res.hasActiveRecurring));
+        setRecurringStatus(res.recurringStatus || null);
+        setNextRecurringDate(res.nextRecurringDate || null);
+        // If recurring is missing on a linked C2B contact, offer setup by default.
+        if (
+          !res.isB2B &&
+          res.onZoho &&
+          !res.hasActiveRecurring &&
+          String(res.recurringStatus || "") !== "agency_billing"
+        ) {
+          setUpdateZohoRecurring(true);
         }
       })
       .catch(() => {
@@ -477,9 +518,18 @@ export function CustomerForm({
         } else {
           items.push({
             label: "Zoho Books",
-            value: updateZohoRecurring
-              ? "Update contact + recurring invoice"
-              : "Update contact",
+            value: [
+              zohoInactive ? "Reactivate inactive contact" : "Update contact",
+              hasActiveRecurring
+                ? updateZohoRecurring
+                  ? "refresh recurring"
+                  : "recurring OK"
+                : updateZohoRecurring
+                  ? "set up recurring"
+                  : "recurring missing",
+              zohoInvoicesInSync ? "invoices synced" : "invoices missing",
+              zohoPaymentsInSync ? "payments synced" : "payments out of sync",
+            ].join(" · "),
           });
         }
       }
@@ -521,6 +571,10 @@ export function CustomerForm({
     createInitialInvoice,
     createRecurringInvoice,
     updateZohoRecurring,
+    hasActiveRecurring,
+    zohoInvoicesInSync,
+    zohoPaymentsInSync,
+    zohoInactive,
   ]);
 
   function validateForm() {
@@ -644,11 +698,26 @@ export function CustomerForm({
             duration: 10000,
           });
         } else {
+          const dueHint =
+            res.customer?.tispDueDate ||
+            (typeof res.tisp?.dueDate === "string" ? res.tisp.dueDate : null);
           toaster.create({
             title: "Customer updated",
-            description: "Saved and synced to TISP and Zoho where applicable.",
+            description: dueHint
+              ? `Saved and synced. TISP due date: ${String(dueHint).slice(0, 10)}.`
+              : "Saved and synced to TISP and Zoho where applicable.",
             type: "success",
           });
+        }
+        if (res.customer?.tispDueDate) {
+          setTispDueDate(String(res.customer.tispDueDate).slice(0, 10));
+        }
+        if (res.tisp?.ok && (res.tisp.created || res.tisp.updated)) {
+          setOnTisp(true);
+        }
+        if (res.zoho?.ok && (res.zoho.created || res.zoho.updated)) {
+          setOnZoho(true);
+          setZohoInactive(false);
         }
         onUpdated?.(res.customer, res.tisp);
         setConfirmOpen(false);
@@ -722,11 +791,6 @@ export function CustomerForm({
       <Stack gap={4}>
         <FormSection
           title="Location"
-          description={
-            isEdit
-              ? "Building is fixed. Apartment changes update the customer number."
-              : "Building and apartment determine the customer number and IP rules."
-          }
           sideBySide
         >
           <Field.Root required w="full">
@@ -787,11 +851,9 @@ export function CustomerForm({
         <FormSection
           title="Package & billing"
           description={
-            isEdit
-              ? canEditPackage
-                ? "Admins can correct package and frequency in the database only — this does not create a Zoho upgrade or downgrade invoice."
-                : "Package and billing changes use Upgrade, Downgrade, or Update frequency in customer actions."
-              : "Choose category, plan, billing frequency, and building price."
+            isEdit && canEditPackage
+              ? "Admins can correct package and frequency in the database only — this does not create a Zoho upgrade or downgrade invoice."
+              : undefined
           }
         >
           {isEdit && customer && !showPackageEditor ? (
@@ -999,27 +1061,35 @@ export function CustomerForm({
         </FormSection>
 
         {isEdit && isActive ? (
-          <FormSection title="Zoho & TISP sync">
+          <FormSection title="TISP">
             <Box gridColumn={{ md: "span 2" }}>
+              <Flex align="center" gap={2} mb={1}>
+                <Text fontSize="sm" color="fg.muted">
+                  Status
+                </Text>
+                <TextStatus
+                  status={
+                    integrationsLoading ? "Pending" : onTisp ? "Synced" : "Failed"
+                  }
+                />
+                <Text fontSize="xs" color="fg.muted">
+                  {integrationsLoading
+                    ? "Checking…"
+                    : onTisp
+                      ? "Linked"
+                      : "Not on TISP"}
+                </Text>
+              </Flex>
               <Text fontSize="sm" color="fg.muted" mb={3}>
-                {integrationsLoading
-                  ? "Checking Zoho and TISP…"
-                  : `Status: TISP ${onTisp ? "linked" : "missing"} · Zoho ${
-                      customerType === "B2B"
-                        ? "agency billing"
-                        : onZoho
-                          ? "linked"
-                          : "missing"
-                    }. Saving will ensure the customer exists on both systems.`}
+                {onTisp
+                  ? "Saving updates this customer on TISP (plan package and due date)."
+                  : "This customer is missing on TISP. Set a due date below — saving will create them."}
               </Text>
             </Box>
 
-            <Field.Root
-              required={!onTisp}
-              gridColumn={{ md: "span 2" }}
-            >
+            <Field.Root required={!onTisp} gridColumn={{ md: "span 2" }}>
               <Field.Label>
-                {onTisp ? "TISP due date (optional update)" : "TISP due date"}
+                {onTisp ? "Due date (optional update)" : "Due date"}
               </Field.Label>
               <DateField
                 value={tispDueDate}
@@ -1030,14 +1100,141 @@ export function CustomerForm({
               <Field.HelperText>
                 {onTisp
                   ? "Leave blank to keep the current TISP due date, or pick a new date to update it."
-                  : "Required — this customer is not on TISP yet. Saving will create them with this due date."}
+                  : "Required to create this customer on TISP."}
               </Field.HelperText>
             </Field.Root>
+          </FormSection>
+        ) : null}
+
+        {isEdit && isActive ? (
+          <FormSection title="Zoho Books">
+            <Box gridColumn={{ md: "span 2" }}>
+              {customerType === "B2B" ? (
+                <Text fontSize="sm" color="fg.muted">
+                  B2B customers are billed through the agency Zoho contact — no individual
+                  invoices or recurring profiles.
+                </Text>
+              ) : (
+                <Stack gap={2}>
+                  <Flex align="center" gap={2} flexWrap="wrap">
+                    <Text fontSize="sm" color="fg.muted" minW="5.5rem">
+                      Contact
+                    </Text>
+                    <TextStatus
+                      status={
+                        integrationsLoading
+                          ? "Pending"
+                          : !onZoho
+                            ? "Failed"
+                            : zohoInactive
+                              ? "Suspended"
+                              : "Synced"
+                      }
+                    />
+                    <Text fontSize="xs" color="fg.muted">
+                      {integrationsLoading
+                        ? "Checking…"
+                        : !onZoho
+                          ? "Missing"
+                          : zohoInactive
+                            ? "Found — inactive on Zoho"
+                            : "Linked"}
+                    </Text>
+                  </Flex>
+                  {zohoInactive && onZoho && !integrationsLoading ? (
+                    <Text fontSize="sm" color="orange.600">
+                      This contact exists in Zoho but is inactive. Saving will reactivate it
+                      and update their details.
+                    </Text>
+                  ) : null}
+                  <Flex align="center" gap={2} flexWrap="wrap">
+                    <Text fontSize="sm" color="fg.muted" minW="5.5rem">
+                      Invoices
+                    </Text>
+                    <TextStatus
+                      status={
+                        integrationsLoading
+                          ? "Pending"
+                          : !onZoho
+                            ? "Unknown"
+                            : zohoInvoicesInSync
+                              ? "Synced"
+                              : "Failed"
+                      }
+                    />
+                    <Text fontSize="xs" color="fg.muted">
+                      {integrationsLoading
+                        ? "Checking…"
+                        : !onZoho
+                          ? "N/A"
+                          : zohoInvoicesInSync
+                            ? `${zohoInvoiceCount} on file`
+                            : "None found"}
+                    </Text>
+                  </Flex>
+                  <Flex align="center" gap={2} flexWrap="wrap">
+                    <Text fontSize="sm" color="fg.muted" minW="5.5rem">
+                      Last payment
+                    </Text>
+                    <TextStatus
+                      status={
+                        integrationsLoading
+                          ? "Pending"
+                          : !onZoho
+                            ? "Unknown"
+                            : zohoPaymentsInSync
+                              ? "Synced"
+                              : "Failed"
+                      }
+                    />
+                    {!integrationsLoading && onZoho ? (
+                      <Text fontSize="xs" color="fg.muted">
+                        {zohoLastPaymentDate || dashboardLastPaymentDate
+                          ? formatDateOnly(
+                              zohoLastPaymentDate || dashboardLastPaymentDate
+                            )
+                          : "—"}
+                        {zohoPaymentsInSync ? " (Zoho)" : " · aligning to Zoho…"}
+                      </Text>
+                    ) : null}
+                  </Flex>
+                  <Flex align="center" gap={2} flexWrap="wrap">
+                    <Text fontSize="sm" color="fg.muted" minW="5.5rem">
+                      Recurring
+                    </Text>
+                    <TextStatus
+                      status={
+                        integrationsLoading
+                          ? "Pending"
+                          : !onZoho
+                            ? "Unknown"
+                            : hasActiveRecurring
+                              ? "Active"
+                              : "Failed"
+                      }
+                    />
+                    <Text fontSize="xs" color="fg.muted">
+                      {integrationsLoading
+                        ? "Checking…"
+                        : !onZoho
+                          ? "N/A"
+                          : hasActiveRecurring
+                            ? nextRecurringDate
+                              ? `Next ${formatDateOnly(nextRecurringDate)}`
+                              : "Profile active"
+                            : recurringStatus && recurringStatus !== "missing"
+                              ? recurringStatus
+                              : "Not set"}
+                    </Text>
+                  </Flex>
+                </Stack>
+              )}
+            </Box>
 
             {customerType === "C2B" && !onZoho ? (
               <>
                 <Field.Root>
-                  <Field.Label>Initial Zoho invoice</Field.Label>
+                  <Field.Label>Initial invoice</Field.Label>
                   <SelectField
                     disabled={fieldsDisabled || integrationsLoading}
                     fieldProps={{
@@ -1049,13 +1246,9 @@ export function CustomerForm({
                     <option value="no">No — create contact only</option>
                     <option value="yes">Yes — create signup invoice</option>
                   </SelectField>
-                  <Field.HelperText>
-                    Unchecked by default. Zoho contact is always created without duplicating
-                    an existing match.
-                  </Field.HelperText>
                 </Field.Root>
                 <Field.Root>
-                  <Field.Label>Zoho recurring invoice</Field.Label>
+                  <Field.Label>Recurring invoice</Field.Label>
                   <SelectField
                     disabled={fieldsDisabled || integrationsLoading}
                     fieldProps={{
@@ -1064,19 +1257,37 @@ export function CustomerForm({
                         setCreateRecurringInvoice(e.target.value === "yes"),
                     }}
                   >
-                    <option value="no">No — skip recurring profile</option>
-                    <option value="yes">Yes — create recurring invoice</option>
+                    <option value="no">No — skip for now</option>
+                    <option value="yes">Yes — create recurring profile</option>
                   </SelectField>
-                  <Field.HelperText>
-                    Unchecked by default. Only set if you want a recurring profile now.
-                  </Field.HelperText>
                 </Field.Root>
               </>
             ) : null}
 
-            {customerType === "C2B" && onZoho ? (
+            {customerType === "C2B" && onZoho && !hasActiveRecurring ? (
               <Field.Root gridColumn={{ md: "span 2" }}>
-                <Field.Label>Update Zoho recurring invoice</Field.Label>
+                <Field.Label>Set up recurring invoice</Field.Label>
+                <SelectField
+                  disabled={fieldsDisabled || integrationsLoading}
+                  fieldProps={{
+                    value: updateZohoRecurring ? "yes" : "no",
+                    onChange: (e) =>
+                      setUpdateZohoRecurring(e.target.value === "yes"),
+                  }}
+                >
+                  <option value="yes">Yes — create recurring profile on save</option>
+                  <option value="no">No — leave without recurring</option>
+                </SelectField>
+                <Field.HelperText>
+                  No active recurring profile was found for this customer. Contact details
+                  are still refreshed on save.
+                </Field.HelperText>
+              </Field.Root>
+            ) : null}
+
+            {customerType === "C2B" && onZoho && hasActiveRecurring ? (
+              <Field.Root gridColumn={{ md: "span 2" }}>
+                <Field.Label>Update recurring invoice</Field.Label>
                 <SelectField
                   disabled={fieldsDisabled || integrationsLoading}
                   fieldProps={{
@@ -1086,11 +1297,11 @@ export function CustomerForm({
                   }}
                 >
                   <option value="no">No — leave recurring as-is</option>
-                  <option value="yes">Yes — create or update recurring profile</option>
+                  <option value="yes">Yes — sync to current package and frequency</option>
                 </SelectField>
                 <Field.HelperText>
-                  Contact details are always refreshed on Zoho. Enable this to sync the
-                  recurring invoice to the current package and frequency.
+                  Contact details are always refreshed. Enable this only if the package or
+                  billing frequency changed.
                 </Field.HelperText>
               </Field.Root>
             ) : null}
@@ -1177,71 +1388,87 @@ export function CustomerForm({
             title="Network"
             description={
               needsIp
-                ? "Enter only the last octet — subnet is fixed per building."
+                ? "Pick the subnet, then enter the last number of the IP address."
                 : `${selectedBuilding.name} uses PPOE — no static IP required.`
             }
           >
             {needsIp && ipRules ? (
-              <>
-                {ipRules.prefixes.length > 1 ? (
-                  <Field.Root required>
-                    <Field.Label>Subnet</Field.Label>
-                    <SelectField disabled={fieldsDisabled} fieldProps={{ value: ipPrefix, onChange: (e) => setIpPrefix(e.target.value) }}>
-                      {ipRules.prefixes.map((p) => (
-                        <option key={p} value={p}>{p}x</option>
-                      ))}
-                    </SelectField>
-                  </Field.Root>
-                ) : (
-                  <Field.Root>
-                    <Field.Label>Subnet</Field.Label>
-                    <Input value={ipPrefix} readOnly bg="bg.panel" fontFamily="mono" />
-                  </Field.Root>
-                )}
+              <Box gridColumn={{ md: "span 2" }}>
                 <Field.Root required>
-                  <Field.Label>Host (1–254)</Field.Label>
+                  <Field.Label>IP address</Field.Label>
                   <Flex
-                    align="stretch"
-                    borderWidth="1px"
-                    borderColor="border"
-                    borderRadius="md"
-                    bg="bg.panel"
-                    boxShadow="sm"
-                    overflow="hidden"
-                    _focusWithin={{
-                      borderColor: "brand.500",
-                      boxShadow: "0 0 0 1px var(--chakra-colors-brand-500)",
-                    }}
+                    direction={{ base: "column", sm: "row" }}
+                    gap={3}
+                    align={{ sm: "stretch" }}
                   >
+                    {ipRules.prefixes.length > 1 ? (
+                      <Box maxW={{ sm: "220px" }} w={{ base: "100%", sm: "auto" }} flexShrink={0}>
+                        <SelectField
+                          disabled={fieldsDisabled}
+                          fieldProps={{
+                            value: ipPrefix,
+                            onChange: (e) => setIpPrefix(e.target.value),
+                            fontFamily: "mono",
+                          }}
+                        >
+                          {ipRules.prefixes.map((p) => (
+                            <option key={p} value={p}>
+                              {p}x
+                            </option>
+                          ))}
+                        </SelectField>
+                      </Box>
+                    ) : null}
                     <Flex
-                      align="center"
-                      px={3}
-                      fontSize="sm"
-                      color="fg.muted"
-                      fontFamily="mono"
-                      bg="bg.subtle"
-                      borderRightWidth="1px"
-                      borderColor="border"
-                      flexShrink={0}
-                    >
-                      {ipPrefix}
-                    </Flex>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={254}
-                      value={ipLastOctet}
-                      onChange={(e) => setIpLastOctet(e.target.value)}
-                      placeholder="e.g. 42"
+                      align="stretch"
                       flex={1}
                       minW={0}
-                      disabled={fieldsDisabled}
-                      {...embeddedFieldInputStyles}
-                    />
+                      borderWidth="1px"
+                      borderColor="border"
+                      borderRadius="md"
+                      bg="bg.panel"
+                      boxShadow="sm"
+                      overflow="hidden"
+                      _focusWithin={{
+                        borderColor: "brand.500",
+                        boxShadow: "0 0 0 1px var(--chakra-colors-brand-500)",
+                      }}
+                    >
+                      <Flex
+                        align="center"
+                        px={3}
+                        fontSize="sm"
+                        color="fg.muted"
+                        fontFamily="mono"
+                        bg="bg.subtle"
+                        borderRightWidth="1px"
+                        borderColor="border"
+                        flexShrink={0}
+                      >
+                        {ipPrefix || "—"}
+                      </Flex>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={254}
+                        value={ipLastOctet}
+                        onChange={(e) => setIpLastOctet(e.target.value)}
+                        placeholder="1–254"
+                        aria-label="Host number"
+                        flex={1}
+                        minW={0}
+                        disabled={fieldsDisabled}
+                        {...embeddedFieldInputStyles}
+                      />
+                    </Flex>
                   </Flex>
-                  <Field.HelperText>{ipRulesHint(selectedBuilding)}</Field.HelperText>
+                  <Field.HelperText>
+                    {previewIp
+                      ? `Assigned IP: ${previewIp}`
+                      : "Enter a host number from 1 to 254."}
+                  </Field.HelperText>
                 </Field.Root>
-              </>
+              </Box>
             ) : (
               <Box gridColumn={{ md: "span 2" }}>
                 <Text fontSize="sm" color="fg.muted">
@@ -1344,9 +1571,6 @@ export function CustomerForm({
             </Link>
           </Button>
           <Heading size="lg">New customer</Heading>
-          <Text fontSize="sm" color="fg.muted" mt={1}>
-            Complete each section — building and billing choices filter available packages.
-          </Text>
         </Box>
         {previewCode && (
           <Box

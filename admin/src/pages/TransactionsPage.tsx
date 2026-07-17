@@ -258,7 +258,6 @@ export function TransactionsPage() {
     <ListPageStack>
       <MobilePageChrome
         title="Transactions"
-        description="Expand a row to view M-Pesa, Zoho or TISP details"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Phone, receipt, customer…"

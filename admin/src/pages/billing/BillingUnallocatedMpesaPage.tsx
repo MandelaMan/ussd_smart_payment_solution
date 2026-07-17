@@ -15,7 +15,7 @@ export function BillingUnallocatedMpesaPage() {
   return (
     <BillingModuleShell
       title={MODULE.label}
-      description={`${MODULE.description} — expand a payment to review open Zoho invoices and allocate`}
+      description={MODULE.description}
       summary={summary}
       syncing={syncing}
       onSync={runSync}

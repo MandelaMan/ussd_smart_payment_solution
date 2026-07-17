@@ -313,7 +313,6 @@ export function CeoDashboardPage() {
       <Box display={{ base: "block", lg: "none" }}>
         <MobilePageChrome
           title="Business pulse"
-          description={`Hello ${firstName} — executive briefing`}
           headerActions={periodSelect}
         />
       </Box>

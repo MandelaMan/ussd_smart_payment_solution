@@ -98,10 +98,7 @@ export function BusinessIntelligencePage() {
 
   return (
     <Stack gap={4} pb={6}>
-      <PageHeader
-        title="Business Intelligence"
-        description="Executive analytics across revenue, customers, sales, finance, operations, and network health."
-      />
+      <PageHeader title="Business Intelligence" />
 
       <BiFilters
         filters={draftFilters}

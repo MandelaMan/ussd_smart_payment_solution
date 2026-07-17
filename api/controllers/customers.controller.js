@@ -51,6 +51,7 @@ const {
 } = require("../utils/zohoInvoiceCache");
 const { sendTableExport } = require("../utils/tableExportResponse");
 const {
+  formatDateOnly,
   pickLatestPaymentDate,
   lastPaymentFromZohoInvoices,
   lastPaymentFromZohoPayments,
@@ -162,13 +163,39 @@ async function ensureZohoContactForCustomer(customer) {
     return ensureZohoContactForAgency(agency);
   }
 
-  const { updateContact_JS, getSpecificCustomer_JS } = require("./zoho.controller");
+  const { updateContact_JS, getSpecificCustomer_JS, markContactActive_JS } = require("./zoho.controller");
 
   async function refreshExisting(existing) {
+    let contactBase = existing;
+    // Reactivate inactive Zoho contacts when linking an active dashboard customer
+    // so we update the existing record instead of creating a duplicate.
+    if (
+      String(existing.status || "").toLowerCase() === "inactive" &&
+      existing.contact_id
+    ) {
+      try {
+        const activated = await markContactActive_JS(existing.contact_id);
+        if (activated?.contact_id || activated?.status) {
+          contactBase = {
+            ...existing,
+            ...(activated.contact_id ? activated : {}),
+            status: activated.status || "active",
+          };
+        } else {
+          contactBase = { ...existing, status: "active" };
+        }
+      } catch (e) {
+        console.warn(
+          "Zoho contact reactivate failed:",
+          e.message || e
+        );
+      }
+    }
+
     try {
       const payload = await buildZohoContactPayload(customer);
-      const updated = await updateContact_JS(existing.contact_id, payload);
-      const contact = updated || existing;
+      const updated = await updateContact_JS(contactBase.contact_id, payload);
+      const contact = updated || contactBase;
       if (customer.id) {
         await integrationSnapshot.upsertZohoContact(customer.id, contact);
       }
@@ -177,12 +204,12 @@ async function ensureZohoContactForCustomer(customer) {
       console.warn("Zoho contact refresh failed:", e.message);
       if (customer.id) {
         try {
-          await integrationSnapshot.upsertZohoContact(customer.id, existing);
+          await integrationSnapshot.upsertZohoContact(customer.id, contactBase);
         } catch {
           /* best-effort */
         }
       }
-      return existing;
+      return contactBase;
     }
   }
 
@@ -273,7 +300,11 @@ async function syncZohoLastPayment(customer, zohoContactId, rawInvoices) {
   const lastPayment = pickLatestPaymentDate(lastFromInvoices, lastFromPayments);
 
   if (lastPayment) {
-    await store.recordCustomerLastPayment(customer.customerNumber, lastPayment);
+    // Zoho wins — always write this date to the dashboard.
+    await store.setCustomerLastPaymentFromZoho(
+      customer.customerNumber,
+      lastPayment
+    );
   }
 
   return lastPayment;
@@ -706,6 +737,7 @@ async function resolveCustomerIntegrationPresence(customerId) {
   const isB2B = isB2BCustomer({ customerType: ctx.customer_type });
   let onZoho = false;
   let zohoContactId = null;
+  let zohoContactStatus = null;
 
   if (isB2B) {
     onZoho = true;
@@ -714,6 +746,17 @@ async function resolveCustomerIntegrationPresence(customerId) {
     if (snap?.zoho_contact_id) {
       onZoho = true;
       zohoContactId = String(snap.zoho_contact_id);
+      const raw =
+        typeof snap.raw_json === "string"
+          ? (() => {
+              try {
+                return JSON.parse(snap.raw_json);
+              } catch {
+                return null;
+              }
+            })()
+          : snap.raw_json;
+      if (raw?.status) zohoContactStatus = String(raw.status);
     } else {
       try {
         const { mapContextToCustomer } = require("../services/customerZohoSync");
@@ -723,6 +766,9 @@ async function resolveCustomerIntegrationPresence(customerId) {
         if (contact?.contact_id) {
           onZoho = true;
           zohoContactId = String(contact.contact_id);
+          zohoContactStatus = contact.status
+            ? String(contact.status)
+            : null;
           try {
             await integrationSnapshot.upsertZohoContact(customerId, contact);
           } catch {
@@ -734,7 +780,28 @@ async function resolveCustomerIntegrationPresence(customerId) {
           String(ctx.zoho_billing_status || "").toLowerCase() === "completed";
       }
     }
+
+    // Live status check so inactive contacts are visible in the edit UI.
+    if (zohoContactId) {
+      try {
+        const { getSpecificCustomer_JS } = require("./zoho.controller");
+        const live = await getSpecificCustomer_JS(zohoContactId);
+        if (live && typeof live === "object" && live.contact_id) {
+          if (live.status) zohoContactStatus = String(live.status);
+          try {
+            await integrationSnapshot.upsertZohoContact(customerId, live);
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        /* keep snapshot status */
+      }
+    }
   }
+
+  const zohoInactive =
+    String(zohoContactStatus || "").trim().toLowerCase() === "inactive";
 
   return {
     customerId: ctx.id,
@@ -743,6 +810,8 @@ async function resolveCustomerIntegrationPresence(customerId) {
     onTisp,
     onZoho,
     zohoContactId,
+    zohoContactStatus,
+    zohoInactive,
     tispDueDate,
     isB2B,
   };
@@ -755,7 +824,122 @@ async function getCustomerIntegrations(req, res, next) {
     if (!presence) {
       return res.status(404).json({ error: "Customer not found" });
     }
-    return res.json(presence);
+
+    const ctx = await store.getCustomerContext(id);
+    const dashboardLastPayment = formatDateOnly(
+      ctx?.last_payment_date || ctx?.lastPaymentDate || null
+    );
+
+    let invoiceCount = 0;
+    let invoicesInSync = false;
+    let zohoLastPaymentDate = null;
+    let paymentsInSync = true;
+    let effectiveLastPaymentDate = dashboardLastPayment;
+    let hasActiveRecurring = false;
+    let recurringCount = 0;
+    let recurringStatus = null;
+    let nextRecurringDate = null;
+
+    if (presence.isB2B) {
+      invoicesInSync = true;
+      paymentsInSync = true;
+      hasActiveRecurring = true;
+      recurringStatus = "agency_billing";
+    } else if (presence.onZoho) {
+      try {
+        const [invoices, payments, recurring] = await Promise.all([
+          integrationSnapshot.listInvoicesForCustomer(id),
+          integrationSnapshot.listZohoPayments(id),
+          integrationSnapshot.listRecurringInvoices(id),
+        ]);
+
+        invoiceCount = (invoices || []).length;
+        invoicesInSync = invoiceCount > 0;
+
+        const paidInvoiceDates = (invoices || [])
+          .filter((inv) => {
+            const status = String(inv.status || "").toLowerCase();
+            const balance =
+              inv.balanceDue != null
+                ? Number(inv.balanceDue)
+                : inv.balance != null
+                  ? Number(inv.balance)
+                  : null;
+            return (
+              status === "paid" ||
+              (status === "partially_paid" && balance != null && balance <= 0)
+            );
+          })
+          .map((inv) => inv.date || inv.dueDate);
+
+        zohoLastPaymentDate = pickLatestPaymentDate(
+          ...(payments || []).map((p) => p.paidAt || p.payment_date || p.date),
+          ...paidInvoiceDates,
+          lastPaymentFromZohoInvoices(invoices),
+          lastPaymentFromZohoPayments(payments)
+        );
+
+        // Zoho is authoritative for last payment — sync dashboard when they differ.
+        if (
+          zohoLastPaymentDate &&
+          presence.customerNumber &&
+          zohoLastPaymentDate !== dashboardLastPayment
+        ) {
+          try {
+            await store.setCustomerLastPaymentFromZoho(
+              presence.customerNumber,
+              zohoLastPaymentDate
+            );
+            effectiveLastPaymentDate = zohoLastPaymentDate;
+          } catch (e) {
+            console.warn(
+              "Zoho last-payment dashboard sync failed:",
+              e.message
+            );
+          }
+        } else if (zohoLastPaymentDate) {
+          effectiveLastPaymentDate = zohoLastPaymentDate;
+        }
+
+        if (!effectiveLastPaymentDate && !zohoLastPaymentDate) {
+          paymentsInSync = true;
+        } else if (zohoLastPaymentDate) {
+          paymentsInSync = effectiveLastPaymentDate === zohoLastPaymentDate;
+        } else {
+          paymentsInSync = true;
+        }
+
+        const activeRecurring = (recurring || []).filter((row) => {
+          const status = String(row.status || "").toLowerCase();
+          return !["stopped", "expired", "inactive"].includes(status);
+        });
+        recurringCount = activeRecurring.length;
+        hasActiveRecurring = recurringCount > 0;
+        if (hasActiveRecurring) {
+          recurringStatus = String(activeRecurring[0].status || "active");
+          nextRecurringDate = activeRecurring[0].nextInvoiceDate || null;
+        } else if ((recurring || []).length > 0) {
+          recurringStatus = String(recurring[0].status || "stopped");
+        } else {
+          recurringStatus = "missing";
+        }
+      } catch (e) {
+        console.warn("Zoho integration enrich failed:", e.message);
+      }
+    }
+
+    return res.json({
+      ...presence,
+      invoiceCount,
+      invoicesInSync,
+      lastPaymentDate: effectiveLastPaymentDate,
+      zohoLastPaymentDate,
+      paymentsInSync,
+      hasActiveRecurring,
+      recurringCount,
+      recurringStatus,
+      nextRecurringDate,
+    });
   } catch (err) {
     return next(err);
   }
@@ -764,6 +948,12 @@ async function getCustomerIntegrations(req, res, next) {
 /**
  * After local edit: ensure customer exists on TISP + Zoho (C2B), with optional
  * invoice/recurring/due-date controls from the edit form.
+ *
+ * Always applies:
+ * - TISP package = plan name only; real TISP errors fail the sync
+ * - Live Client Status refresh after every successful TISP write
+ * - Zoho lookup by customer number → email → name; update existing (by snapshot
+ *   id first) instead of creating duplicates
  */
 async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   const createInitialInvoice = options.createInitialInvoice === true;
@@ -796,16 +986,30 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       await createCustomerOnTisp(ctx, { dueDate: tispDueDate });
       tisp = { ok: true, created: true, dueDate: tispDueDate };
     } else {
-      // Prefer explicit form date; otherwise keep the snapshot due date so we
-      // do not accidentally reset TISP DueDate to "today".
-      const dueForUpdate = tispDueDate || presence.tispDueDate || undefined;
+      // Prefer form date → snapshot → live Client Status. Never fall through to
+      // "today" on edit (buildTispSetClientPayload would otherwise reset DueDate).
+      let dueForUpdate = tispDueDate || presence.tispDueDate || null;
+      if (!dueForUpdate && ctx.customer_number) {
+        try {
+          const live = await getTISPCustomer(ctx.customer_number);
+          dueForUpdate =
+            integrationSnapshot.extractTispDueDate(live) || null;
+        } catch {
+          /* keep null — update will still run with whatever we have */
+        }
+      }
+      if (!dueForUpdate) {
+        throw new Error(
+          "Could not resolve TISP due date for update — set a due date and try again"
+        );
+      }
       await updateCustomerOnTisp(ctx, {
         dueDate: dueForUpdate,
       });
       tisp = {
         ok: true,
         updated: true,
-        dueDate: dueForUpdate || null,
+        dueDate: dueForUpdate,
       };
     }
     await store.updateCustomerTispSync(customerId, "synced", null);
@@ -827,7 +1031,9 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       const { createSignupInvoice } = require(
         "../services/customerBillingOnboarding"
       );
-      const customer = mapContextToCustomer(ctx);
+      // Re-load context so Zoho gets the just-saved local fields.
+      const freshCtx = (await store.getCustomerContext(customerId)) || ctx;
+      const customer = mapContextToCustomer(freshCtx);
 
       if (!presence?.onZoho) {
         const contact = await ensureZohoContactForCustomer(customer);
@@ -851,6 +1057,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
           "completed",
           null
         );
+        invalidateCustomerZoho(customerId);
         zoho = {
           ok: true,
           created: true,
@@ -859,8 +1066,8 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
           recurring,
         };
       } else {
-        // Already on Zoho: refresh contact when requested via contactChanged path;
-        // optionally create/update recurring profile.
+        // Already on Zoho: always refresh contact details (name/email/phone/
+        // company_name); optionally create/update recurring profile.
         const contact = await ensureZohoContactForCustomer(customer);
         let recurring = null;
         if (createRecurringInvoice || updateZohoRecurring) {
@@ -871,6 +1078,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
           "completed",
           null
         );
+        invalidateCustomerZoho(customerId);
         zoho = {
           ok: true,
           updated: true,
@@ -964,11 +1172,9 @@ async function listCustomers(req, res, next) {
     };
     let result = await store.listCustomers(listFilters);
 
-    const searchQuery = String(search || "").trim();
-    // Search hits and explicit refresh: live-sync TISP + Zoho so cards open already synced.
-    const shouldLiveSync = searchQuery.length > 0 || refresh === "true";
-
-    if (shouldLiveSync) {
+    // Only live-sync on explicit refresh — searching used to hit TISP+Zoho for
+    // every result row and made list search feel very slow.
+    if (refresh === "true") {
       const active = result.data.filter((c) => c.status === "active");
       const toRefresh = active
         .filter((c) => syncCooldown.getRemainingMs(c.id) <= 0)

@@ -288,7 +288,6 @@ export function BuildingsPage() {
     <Stack gap={PAGE_STACK_GAP}>
       <MobilePageChrome
         title="Buildings"
-        description={canMutate ? "Expand a row to view details and edit" : "View building reference data"}
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Name or codes…"

@@ -231,7 +231,6 @@ export function AgenciesPage() {
     <Stack gap={PAGE_STACK_GAP}>
       <MobilePageChrome
         title="Agencies"
-        description={canMutate ? "Expand a row to view details and edit" : "View agency reference data"}
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Name, email, phone…"

@@ -1757,7 +1757,13 @@ export const api = {
     request<{
       ok: boolean;
       customer: Customer;
-      tisp: { ok: boolean; error?: string; created?: boolean; updated?: boolean };
+      tisp: {
+        ok: boolean;
+        error?: string;
+        created?: boolean;
+        updated?: boolean;
+        dueDate?: string | null;
+      };
       zoho?: {
         ok: boolean;
         error?: string;
@@ -1778,8 +1784,19 @@ export const api = {
       onTisp: boolean;
       onZoho: boolean;
       zohoContactId: string | null;
+      zohoContactStatus?: string | null;
+      zohoInactive?: boolean;
       tispDueDate: string | null;
       isB2B: boolean;
+      invoiceCount: number;
+      invoicesInSync: boolean;
+      lastPaymentDate: string | null;
+      zohoLastPaymentDate: string | null;
+      paymentsInSync: boolean;
+      hasActiveRecurring: boolean;
+      recurringCount: number;
+      recurringStatus: string | null;
+      nextRecurringDate: string | null;
     }>(`/admin/customers/${id}/integrations`),
 
   convertCustomerType: (

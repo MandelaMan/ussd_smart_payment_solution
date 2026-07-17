@@ -416,6 +416,43 @@ const markContactInactive_JS = async (contactId) => {
   }
 };
 
+/** Mark a Zoho Books contact active (POST /contacts/{id}/active). */
+const markContactActive_JS = async (contactId) => {
+  if (!contactId) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(`contacts/${contactId}/active`, "POST", {}),
+      12_000,
+      "mark-contact-active",
+    );
+    return data.contact || data;
+  } catch (error) {
+    console.error(
+      "markContactActive_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
+/** Include inactive contacts in list/search (Zoho defaults to active-only). */
+const ZOHO_CONTACT_LIST_FILTER = { filter_by: "Status.All" };
+
+function isZohoContactInactive(contact) {
+  return String(contact?.status || "").trim().toLowerCase() === "inactive";
+}
+
+/** Prefer active matches when ranking search hits. */
+function rankContactMatches(query, list) {
+  return (list || [])
+    .map((c) => ({
+      c,
+      s: scoreMatch(query, c) + (isZohoContactInactive(c) ? 0 : 5),
+    }))
+    .filter((x) => scoreMatch(query, x.c) > 0)
+    .sort((a, b) => b.s - a.s);
+}
+
 const createRecurringInvoice_JS = async ({
   customer_id,
   recurrence_name,
@@ -558,21 +595,26 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
       return contact;
     }
 
-    // Case 2: email
+    // Case 2: email (include inactive contacts)
     if (idOrEmail.includes("@")) {
       const result = await withTimeout(
-        callZoho("contacts", "GET", null, { email: idOrEmail, per_page: 1 }),
+        callZoho("contacts", "GET", null, {
+          email: idOrEmail,
+          per_page: 10,
+          ...ZOHO_CONTACT_LIST_FILTER,
+        }),
         8000,
         "get-by-email",
       );
-      const hit = (result.contacts || [])[0];
+      const ranked = rankContactMatches(idOrEmail, result.contacts || []);
+      const hit = ranked[0]?.c || (result.contacts || [])[0];
       if (!hit) return "Customer not found with provided email.";
       const contact = pickLean(hit);
       cache.set(key, contact);
       return contact;
     }
 
-    // Case 3: name/company using search_text (small page + local scoring)
+    // Case 3: name/company using search_text (include inactive)
     let result;
     try {
       result = await withTimeout(
@@ -580,6 +622,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
           search_text: idOrEmail,
           per_page: 10,
           page: 1,
+          ...ZOHO_CONTACT_LIST_FILTER,
         }),
         9000,
         "search_text",
@@ -591,6 +634,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
           search_text: idOrEmail,
           per_page: 5,
           page: 1,
+          ...ZOHO_CONTACT_LIST_FILTER,
         }),
         6000,
         "search_text_fallback",
@@ -600,10 +644,7 @@ const getSpecificCustomer_JS = async (idOrEmail) => {
     const list = result.contacts || [];
     if (list.length === 0) return "Customer not found with provided name.";
 
-    const ranked = list
-      .map((c) => ({ c, s: scoreMatch(idOrEmail, c) }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s);
+    const ranked = rankContactMatches(idOrEmail, list);
     if (!ranked.length) return "Customer not found with provided name.";
 
     const best = ranked[0].c;
@@ -648,7 +689,7 @@ const getCustomerByCompanyName_JS = async (rawName) => {
       return contact;
     }
 
-    // Search by company_name using search_text
+    // Search by company_name using search_text (include inactive contacts)
     let result;
     try {
       result = await withTimeout(
@@ -656,6 +697,7 @@ const getCustomerByCompanyName_JS = async (rawName) => {
           search_text: companyName,
           per_page: 10,
           page: 1,
+          ...ZOHO_CONTACT_LIST_FILTER,
         }),
         9000,
         "search_company",
@@ -667,6 +709,7 @@ const getCustomerByCompanyName_JS = async (rawName) => {
           search_text: companyName,
           per_page: 5,
           page: 1,
+          ...ZOHO_CONTACT_LIST_FILTER,
         }),
         6000,
         "search_company_fallback",
@@ -678,10 +721,8 @@ const getCustomerByCompanyName_JS = async (rawName) => {
       return "Customer not found with provided company name.";
 
     // Score using full contact object — reject zero-score fuzzy hits.
-    const ranked = list
-      .map((c) => ({ c, s: scoreMatch(companyName, c) }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s);
+    // Prefer active over inactive when scores are otherwise equal.
+    const ranked = rankContactMatches(companyName, list);
     if (!ranked.length)
       return "Customer not found with provided company name.";
 
@@ -1360,6 +1401,7 @@ module.exports = {
   createContact_JS,
   updateContact_JS,
   markContactInactive_JS,
+  markContactActive_JS,
   markInvoiceAsPaid_JS,
 
   // Extra helpers if you want them elsewhere

@@ -17,7 +17,7 @@ export function BillingOverviewPage() {
   return (
     <BillingModuleShell
       title="Billing Reconciliation"
-      description="Review billing gaps across Zoho, M-Pesa, and TISP — dashboard customers are matched to Zoho Books (not imported from Zoho)"
+      description="Dashboard customers are matched to Zoho Books (not imported from Zoho)"
       summary={summary}
       syncing={syncing}
       onSync={runSync}

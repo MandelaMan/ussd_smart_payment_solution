@@ -425,7 +425,6 @@ export function SynchronizationPage() {
       <Box display={{ base: "none", lg: "block" }}>
         <PageHeader
           title="Synchronization"
-          description="Background sync from Zoho Books, TISP, and M-Pesa into MySQL"
           actions={
             <HStack>
               <Badge colorPalette={overview?.redisConnected ? "green" : "red"} variant="subtle">

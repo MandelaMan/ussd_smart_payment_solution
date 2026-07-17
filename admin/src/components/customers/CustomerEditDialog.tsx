@@ -13,27 +13,27 @@ export function CustomerEditDialog({ customer, onClose, onSaved }: Props) {
   if (!customer) return null;
 
   return (
-    <ModalShell open onClose={onClose} maxW="56rem">
-      <Flex direction="column" maxH="min(90vh, 880px)">
+    <ModalShell open onClose={onClose} maxW="72rem">
+      <Flex direction="column" maxH="min(88vh, 740px)" minH={0}>
         <Box
           px={5}
-          pt={5}
-          pb={4}
+          pt={4}
+          pb={3}
           pr={12}
           borderBottomWidth="1px"
           borderColor="border.muted"
           flexShrink={0}
         >
-          <Text fontSize="lg" fontWeight="semibold" color="fg">
+          <Text fontSize="md" fontWeight="semibold" color="fg" lineHeight="short">
             Edit customer
           </Text>
-          <Text fontSize="xs" color="fg.muted" mt={0.5}>
+          <Text fontSize="xs" color="fg.muted" mt={0.5} lineHeight="short">
             {customer.fullName} · {customer.customerNumber}
             {customer.status === "cancelled" ? " · Cancelled" : ""}
           </Text>
         </Box>
 
-        <Box flex="1" overflowY="auto" px={5} py={4}>
+        <Box flex="1" overflowY="auto" minH={0} px={5} pt={3} pb={2}>
           <CustomerForm
             customer={customer}
             embedded

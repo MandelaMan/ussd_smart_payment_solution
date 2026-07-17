@@ -70,21 +70,35 @@ function buildCustomerSearchFilter(term, options = {}) {
   const like = `%${escaped}%`;
   const normalized = raw.toUpperCase().replace(/\s+/g, "");
   const likeNormalized = `%${escapeLike(normalized)}%`;
+  const prefix = `${escapeLike(upper)}%`;
 
+  // Prefer equality / prefix (index-friendly) before contains-anywhere name matches.
   return {
     sql: `(
-      UPPER(c.apartment_number) LIKE ?
+      UPPER(TRIM(c.apartment_number)) = ?
+      OR UPPER(TRIM(c.customer_number)) = ?
+      OR UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')) = ?
       OR UPPER(c.customer_number) LIKE ?
+      OR UPPER(c.apartment_number) LIKE ?
       OR UPPER(REPLACE(c.customer_number, '-', '')) LIKE ?
+      OR RIGHT(
+        UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')),
+        ?
+      ) = ?
       OR c.first_name LIKE ?
       OR c.middle_name LIKE ?
       OR c.last_name LIKE ?
       OR CONCAT_WS(' ', c.first_name, c.middle_name, c.last_name) LIKE ?
     )`,
     params: [
+      upper,
+      upper,
+      compact,
+      prefix,
+      prefix,
       likeNormalized,
-      like,
-      likeNormalized,
+      compact.length,
+      compact,
       like,
       like,
       like,
@@ -848,12 +862,16 @@ async function listCustomers(filters = {}) {
   });
 
   const [countRow] = await query(
-    `SELECT COUNT(*) AS total
+    filters.categoryId
+      ? `SELECT COUNT(*) AS total
      FROM customers c
      JOIN products p ON p.id = c.product_id
      LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
      LEFT JOIN package_plans pl ON pl.id = v.plan_id
      LEFT JOIN package_categories cat ON cat.id = pl.category_id
+     WHERE ${clauses.join(" AND ")}`
+      : `SELECT COUNT(*) AS total
+     FROM customers c
      WHERE ${clauses.join(" AND ")}`,
     params
   );
@@ -932,6 +950,26 @@ async function recordCustomerLastPayment(customerNumber, paymentDate) {
        AND (last_payment_date IS NULL OR ? > last_payment_date)`,
     [date, ref, date]
   );
+}
+
+/**
+ * Zoho is the source of truth for last payment date — always overwrite the
+ * dashboard value (even when Zoho is older than the local date).
+ */
+async function setCustomerLastPaymentFromZoho(customerNumber, paymentDate) {
+  const ref = String(customerNumber || "").trim();
+  if (!ref) return null;
+
+  const date = formatDateOnly(paymentDate);
+  if (!date) return null;
+
+  await query(
+    `UPDATE customers
+     SET last_payment_date = ?
+     WHERE UPPER(customer_number) = UPPER(?)`,
+    [date, ref]
+  );
+  return date;
 }
 
 async function updateCustomerTispSync(id, syncStatus, syncError = null) {
@@ -2444,6 +2482,7 @@ module.exports = {
   getCustomerContext,
   updateCustomerSubscriptionStatus,
   recordCustomerLastPayment,
+  setCustomerLastPaymentFromZoho,
   updateCustomerTispSync,
   reconcileTispSyncStatus,
   updateCustomerZohoBillingStatus,

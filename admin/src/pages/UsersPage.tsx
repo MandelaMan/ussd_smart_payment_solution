@@ -241,7 +241,6 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
     <Stack gap={PAGE_STACK_GAP}>
       <PageHeader
         title={embedded ? "Users" : "User Management"}
-        description="Create users and assign roles"
         headingSize={embedded ? "sm" : "lg"}
         sticky={!embedded}
         actions={

@@ -52,7 +52,7 @@ export function ActivityPage() {
   if (role === "partner") {
     return (
       <Box>
-        <MobilePageChrome title="Activity" description="Recent payments and integrations" />
+        <MobilePageChrome title="Activity" />
         <PageErrorBanner>Activity is not available for partner accounts.</PageErrorBanner>
       </Box>
     );
@@ -62,7 +62,6 @@ export function ActivityPage() {
     <Box display="flex" flexDirection="column" gap={2} minW={0}>
       <MobilePageChrome
         title="Activity"
-        description="Payments and integration events"
       />
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
       <ActivityPanel items={items} loading={loading} variant="page" />

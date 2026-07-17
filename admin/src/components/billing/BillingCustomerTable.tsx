@@ -109,7 +109,6 @@ export function BillingCustomerTable({
     searchActive && module.id === "billing-gaps"
       ? issueTypeFilter || undefined
       : activeStatus;
-  const inputActive = searchInput.trim().length > 0;
   const pageSize = searchActive ? SEARCH_PAGE_SIZE : BROWSE_PAGE_SIZE;
   const syncRunning = syncStatus === "running";
   const tableBusy = loading || searchPending;
@@ -440,21 +439,6 @@ export function BillingCustomerTable({
           </FilterField>
         )}
       </FilterToolbar>
-
-      {!inputActive && !tableBusy && (
-        <Text fontSize="xs" color="fg.muted" display={{ base: "none", lg: "block" }}>
-          Showing up to {BROWSE_PAGE_SIZE} customers from local data (no Zoho API calls).
-          Search with an exact customer number, apartment, or full name to live-check Zoho
-          invoices, payments, and TISP — mismatches are flagged; a clean result confirms no
-          billing gaps. Partial IDs match the end of the customer number (t506 → ET-T506).
-        </Text>
-      )}
-      {inputActive && !tableBusy && searchActive && (
-        <Text fontSize="xs" color="fg.muted" display={{ base: "none", lg: "block" }}>
-          Live Zoho + TISP check for matching customers. Gap types are flagged; “No gaps”
-          means invoices, payments, and TISP connection look consistent.
-        </Text>
-      )}
 
       {error && (
         <Text color="red.600" fontSize="sm">

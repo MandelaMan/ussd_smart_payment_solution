@@ -346,7 +346,6 @@ export function ApartmentHistoryPage() {
     <ListPageStack>
       <MobilePageChrome
         title="Apartment history"
-        description="Track tenants who have occupied each apartment. Expand a row for the full occupancy timeline."
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Tenant, customer #, apartment…"
@@ -424,12 +423,9 @@ export function ApartmentHistoryPage() {
           py={5}
           minW={0}
         >
-          <Text fontSize="sm" fontWeight="semibold" color="fg" mb={1} lineHeight="1.4">
+          <Text fontSize="sm" fontWeight="semibold" color="fg" mb={4} lineHeight="1.4">
             Occupancy timeline — {apartmentNumber}
             {selectedBuildingName ? ` · ${selectedBuildingName}` : ""}
-          </Text>
-          <Text fontSize="xs" color="fg.muted" mb={4} lineHeight="1.45">
-            Complete tenant history for this unit. Oldest period on the left, most recent on the right.
           </Text>
           {unitTimelineLoading && visibleUnitTimeline.length === 0 ? (
             <ApartmentHistoryTimelineSkeleton steps={3} />

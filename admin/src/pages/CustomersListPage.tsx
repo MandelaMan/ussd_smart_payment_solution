@@ -158,7 +158,7 @@ export function CustomersListPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const debouncedSearch = useDebouncedValue(searchInput, 350);
+  const debouncedSearch = useDebouncedValue(searchInput, 450);
   const loadRequestRef = useRef(0);
   const [buildingId, setBuildingId] = useState("");
   const [statusFilters, setStatusFilters] = useState<SubscriptionStatusLabel[]>(() =>
@@ -249,7 +249,8 @@ export function CustomersListPage() {
           limit: String(PAGE_SIZE),
         };
         const query = debouncedSearch.trim();
-        if (query) params.search = query;
+        // Require 2+ chars so single-keystroke typing does not hit the API.
+        if (query.length >= 2) params.search = query;
         if (buildingId) params.buildingId = buildingId;
         if (statusFilters.length) {
           params.subscriptionStatus = serializeStatusFilter(statusFilters);
@@ -472,7 +473,9 @@ export function CustomersListPage() {
         params.page = String(page);
         params.limit = String(PAGE_SIZE);
       }
-      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
+      if (debouncedSearch.trim().length >= 2) {
+        params.search = debouncedSearch.trim();
+      }
       if (buildingId) params.buildingId = buildingId;
       if (statusFilters.length) {
         params.subscriptionStatus = serializeStatusFilter(statusFilters);

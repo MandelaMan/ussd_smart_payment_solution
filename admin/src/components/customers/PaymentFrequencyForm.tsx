@@ -229,7 +229,6 @@ export function PaymentFrequencyForm({
       </Dialog.Header>
       <Dialog.Body px={4} py={3}>
         <FormSubmitSummary
-          description="This will update the customer package price and sync to TISP and Zoho."
           items={summaryItems}
         />
       </Dialog.Body>

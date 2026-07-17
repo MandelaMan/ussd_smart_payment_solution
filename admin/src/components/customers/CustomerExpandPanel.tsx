@@ -9,7 +9,7 @@ import {
   Table,
   Text,
 } from "@chakra-ui/react";
-import { FiCheck, FiClock, FiRefreshCw, FiX } from "react-icons/fi";
+import { FiRefreshCw, FiX } from "react-icons/fi";
 import {
   api,
   formatCurrency,
@@ -49,6 +49,7 @@ type Props = {
 };
 
 const ALL_TABS = [
+  { id: "status", label: "Status" },
   { id: "package", label: "Package" },
   { id: "connection", label: "Connection" },
   { id: "contact", label: "Contact info" },
@@ -133,73 +134,276 @@ function buildZohoStatusFromInvoices(
   };
 }
 
-type SyncChipState = "ok" | "failed" | "pending" | "unknown" | "loading";
+type CustomerIntegrationsSummary = Awaited<
+  ReturnType<typeof api.getCustomerIntegrations>
+>;
 
-function SyncChip({
-  label,
-  state,
-  detail,
-  statusLabel,
-}: {
+type StatusTone = "ok" | "warn" | "bad" | "neutral";
+
+type StatusNarration = {
   label: string;
-  state: SyncChipState;
-  detail?: string | null;
-  statusLabel?: string;
+  text: string;
+  tone: StatusTone;
+};
+
+function narrationToneColor(tone: StatusTone) {
+  if (tone === "ok") return "green.700";
+  if (tone === "warn") return "orange.700";
+  if (tone === "bad") return "red.700";
+  return "fg";
+}
+
+function buildTispNarration(
+  customer: Customer,
+  integrations: CustomerIntegrationsSummary | null
+): StatusNarration {
+  const due =
+    integrations?.tispDueDate || customer.tispDueDate
+      ? formatDateOnly(integrations?.tispDueDate || customer.tispDueDate)
+      : null;
+  const dueLabel = due && due !== "—" ? due : null;
+  const service = displayCustomerStatus(customer);
+
+  if (integrations && !integrations.onTisp) {
+    return {
+      label: "TISP",
+      text: "This customer is not on TISP yet. They need to be created before service can be managed there.",
+      tone: "bad",
+    };
+  }
+
+  const statusLower = service.toLowerCase();
+  if (statusLower.includes("not on tisp")) {
+    return {
+      label: "TISP",
+      text: "This customer is not on TISP yet.",
+      tone: "bad",
+    };
+  }
+  if (statusLower.includes("suspend")) {
+    return {
+      label: "TISP",
+      text: dueLabel
+        ? `Customer is currently Suspended on TISP. Their due date is ${dueLabel}.`
+        : "Customer is currently Suspended on TISP.",
+      tone: "warn",
+    };
+  }
+  if (statusLower.includes("disconnect") || statusLower.includes("inactive")) {
+    return {
+      label: "TISP",
+      text: dueLabel
+        ? `Customer is currently Disconnected on TISP. Their due date is ${dueLabel}.`
+        : "Customer is currently Disconnected on TISP.",
+      tone: "warn",
+    };
+  }
+  if (statusLower.includes("active")) {
+    return {
+      label: "TISP",
+      text: dueLabel
+        ? `Customer is currently Active on TISP. Their internet expires on ${dueLabel}.`
+        : "Customer is currently Active on TISP.",
+      tone: "ok",
+    };
+  }
+
+  return {
+    label: "TISP",
+    text: dueLabel
+      ? `TISP status is ${service}. Due date is ${dueLabel}.`
+      : `TISP status is ${service}.`,
+    tone: "neutral",
+  };
+}
+
+function buildZohoNarrations(
+  customer: Customer,
+  integrations: CustomerIntegrationsSummary | null,
+  zohoStatus: CustomerZohoStatus | null
+): StatusNarration[] {
+  if (customer.customerType === "B2B" || integrations?.isB2B) {
+    return [
+      {
+        label: "Zoho",
+        text: "B2B customer — billing goes through the agency Zoho contact, not an individual contact.",
+        tone: "ok",
+      },
+    ];
+  }
+
+  const rows: StatusNarration[] = [];
+
+  if (!integrations?.onZoho && !zohoStatus?.linked) {
+    rows.push({
+      label: "Contact",
+      text: "No Zoho contact was found for this customer.",
+      tone: "bad",
+    });
+  } else if (integrations?.zohoInactive) {
+    rows.push({
+      label: "Contact",
+      text: "Contact exists in Zoho but is inactive. Edit and save the customer to reactivate it.",
+      tone: "warn",
+    });
+  } else {
+    rows.push({
+      label: "Contact",
+      text: "Contact exists in Zoho and is active.",
+      tone: "ok",
+    });
+  }
+
+  const unpaidCount = zohoStatus?.unpaidCount ?? 0;
+  const balanceDue = zohoStatus?.totalBalanceDue ?? 0;
+  const invoiceCount =
+    integrations?.invoiceCount ?? zohoStatus?.invoiceCount ?? 0;
+
+  if (!integrations?.onZoho && !zohoStatus?.linked) {
+    rows.push({
+      label: "Invoice",
+      text: "Cannot check invoices until a Zoho contact is linked.",
+      tone: "neutral",
+    });
+  } else if (invoiceCount === 0) {
+    rows.push({
+      label: "Invoice",
+      text: "No invoices found in Zoho for this customer.",
+      tone: "warn",
+    });
+  } else if (unpaidCount > 0 || balanceDue > 0) {
+    rows.push({
+      label: "Invoice",
+      text: `Customer has ${unpaidCount} unpaid invoice${unpaidCount === 1 ? "" : "s"} totaling ${formatCurrency(balanceDue)}.`,
+      tone: "bad",
+    });
+  } else {
+    rows.push({
+      label: "Invoice",
+      text: "Current invoice is paid — no outstanding invoice balance.",
+      tone: "ok",
+    });
+  }
+
+  if (!integrations?.onZoho && !zohoStatus?.linked) {
+    rows.push({
+      label: "Payment",
+      text: "Cannot check payments until a Zoho contact is linked.",
+      tone: "neutral",
+    });
+  } else if (unpaidCount > 0 || balanceDue > 0) {
+    rows.push({
+      label: "Payment",
+      text: `Customer has outstanding payments of ${formatCurrency(balanceDue)}.`,
+      tone: "bad",
+    });
+  } else if (integrations && !integrations.paymentsInSync) {
+    const zoho = integrations.zohoLastPaymentDate
+      ? formatDateOnly(integrations.zohoLastPaymentDate)
+      : "none";
+    rows.push({
+      label: "Payment",
+      text: `Last payment is being aligned to Zoho (${zoho}). Refresh if this still looks wrong.`,
+      tone: "warn",
+    });
+  } else if (integrations?.zohoLastPaymentDate || integrations?.lastPaymentDate) {
+    const paid = formatDateOnly(
+      integrations.zohoLastPaymentDate || integrations.lastPaymentDate
+    );
+    rows.push({
+      label: "Payment",
+      text: `Last payment on ${paid} (from Zoho). No outstanding payments.`,
+      tone: "ok",
+    });
+  } else {
+    rows.push({
+      label: "Payment",
+      text: "Customer has no outstanding payments.",
+      tone: "ok",
+    });
+  }
+
+  if (!integrations?.onZoho && !zohoStatus?.linked) {
+    rows.push({
+      label: "Recurring invoice",
+      text: "Cannot check recurring billing until a Zoho contact is linked.",
+      tone: "neutral",
+    });
+  } else if (integrations?.hasActiveRecurring) {
+    rows.push({
+      label: "Recurring invoice",
+      text: integrations.nextRecurringDate
+        ? `Recurring invoice is active. Next invoice date is ${formatDateOnly(integrations.nextRecurringDate)}.`
+        : "Recurring invoice is active.",
+      tone: "ok",
+    });
+  } else if (
+    integrations?.recurringStatus &&
+    integrations.recurringStatus !== "missing"
+  ) {
+    rows.push({
+      label: "Recurring invoice",
+      text: `Recurring invoice is inactive (${integrations.recurringStatus}).`,
+      tone: "warn",
+    });
+  } else {
+    rows.push({
+      label: "Recurring invoice",
+      text: "Recurring invoice is not set.",
+      tone: "bad",
+    });
+  }
+
+  return rows;
+}
+
+function StatusNarrationBlock({
+  title,
+  items,
+  loading,
+}: {
+  title: string;
+  items: StatusNarration[];
+  loading?: boolean;
 }) {
-  const icon =
-    state === "ok" ? (
-      <FiCheck />
-    ) : state === "failed" ? (
-      <FiX />
-    ) : state === "pending" || state === "loading" ? (
-      <FiClock />
-    ) : null;
-
-  const color =
-    state === "ok"
-      ? "green.600"
-      : state === "failed"
-        ? "red.600"
-        : state === "pending"
-          ? "orange.600"
-          : state === "loading"
-            ? "gray.500"
-          : "gray.400";
-
-  const statusText =
-    statusLabel ??
-    (state === "ok"
-      ? "Synced"
-      : state === "failed"
-        ? "Failed"
-        : state === "pending"
-          ? "Pending"
-          : state === "loading"
-            ? "Loading…"
-            : "Not checked");
-
   return (
-    <Flex
-      align="center"
-      gap={1.5}
-      fontSize="xs"
-      color={color}
-      title={detail || undefined}
-      minW={0}
-      flexShrink={1}
+    <Box
+      borderWidth="1px"
+      borderColor="border.muted"
+      borderRadius="md"
+      bg="bg.subtle"
+      px={3}
+      py={3}
     >
-      <Text fontWeight="medium" color="fg.muted" flexShrink={0}>
-        {label}
+      <Text fontWeight="bold" fontSize="sm" mb={2}>
+        {title}
       </Text>
-      {icon ? (
-        <Box aria-hidden flexShrink={0}>{icon}</Box>
+      {loading ? (
+        <Text fontSize="sm" color="fg.muted">
+          Checking status…
+        </Text>
       ) : (
-        <Box w="14px" h="14px" borderRadius="full" bg="gray.200" aria-hidden flexShrink={0} />
+        <Stack gap={2.5}>
+          {items.map((item, index) => {
+            const showLabel =
+              Boolean(item.label) &&
+              item.label.trim().toLowerCase() !== title.trim().toLowerCase();
+            return (
+              <Box key={`${item.label}-${index}`}>
+                {showLabel ? (
+                  <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={0.5}>
+                    {item.label}
+                  </Text>
+                ) : null}
+                <Text fontSize="sm" color={narrationToneColor(item.tone)} lineHeight="1.45">
+                  {item.text}
+                </Text>
+              </Box>
+            );
+          })}
+        </Stack>
       )}
-      <Text fontWeight="semibold" truncate maxW={{ base: "9rem", sm: "none" }}>
-        {statusText}
-      </Text>
-    </Flex>
+    </Box>
   );
 }
 
@@ -231,7 +435,9 @@ export function CustomerExpandPanel({
   const [error, setError] = useState("");
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [zohoStatus, setZohoStatus] = useState<CustomerZohoStatus | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("package");
+  const [integrations, setIntegrations] = useState<CustomerIntegrationsSummary | null>(null);
+  const [integrationsLoading, setIntegrationsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabId>("status");
   const [payments, setPayments] = useState<CustomerPayment[]>([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState("");
@@ -278,8 +484,10 @@ export function CustomerExpandPanel({
     setLoading(true);
     setZohoLoading(true);
     setError("");
-    setActiveTab("package");
+    setActiveTab("status");
     setZohoStatus(null);
+    setIntegrations(null);
+    setIntegrationsLoading(true);
     setPayments([]);
     setPaymentsError("");
     setPaymentsLoading(false);
@@ -336,6 +544,20 @@ export function CustomerExpandPanel({
         if (!cancelled) setZohoLoading(false);
       });
 
+    void api
+      .getCustomerIntegrations(customerId)
+      .then((res) => {
+        if (cancelled) return;
+        setIntegrations(res);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setIntegrations(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIntegrationsLoading(false);
+      });
+
     return () => {
       cancelled = true;
     };
@@ -377,6 +599,13 @@ export function CustomerExpandPanel({
       setCustomer(res.customer);
       setZohoStatus(res.zoho);
       onCustomerUpdated?.(res.customer);
+
+      try {
+        const integ = await api.getCustomerIntegrations(customerId);
+        setIntegrations(integ);
+      } catch {
+        /* keep previous integrations summary */
+      }
 
       paymentsLoadedRef.current = false;
       if (activeTab === "payments") {
@@ -516,51 +745,8 @@ export function CustomerExpandPanel({
       ? `Custom (${customer.customPeriodDays} days)`
       : customer.paymentFrequency;
 
-  const tispHealthy =
-    customer.tispSyncStatus === "synced" ||
-    Boolean(
-      customer.subscriptionStatus &&
-        normalizeSubscriptionStatus(customer.subscriptionStatus) !== "Not on TISP" &&
-        customer.tispSyncStatus !== "pending"
-    );
-
-  const tispSyncState: SyncChipState =
-    customer.tispSyncStatus === "synced" || tispHealthy
-      ? "ok"
-      : customer.tispSyncStatus === "failed"
-        ? "failed"
-        : "pending";
-
-  const isB2B = customer.customerType === "B2B";
-
-  const zohoLinkedOnly =
-    !isB2B &&
-    customer.zohoBillingStatus === "pending" &&
-    Boolean(zohoStatus?.linked) &&
-    (zohoStatus?.invoiceCount ?? 0) === 0;
-
-  const zohoBillingHealthy =
-    isB2B ||
-    customer.zohoBillingStatus === "completed" ||
-    Boolean(zohoStatus?.linked && (zohoStatus.invoiceCount ?? 0) > 0);
-
-  const zohoSyncState: SyncChipState = isB2B
-    ? "ok"
-    : zohoLoading
-      ? "loading"
-      : customer.zohoBillingStatus === "failed"
-        ? "failed"
-        : zohoBillingHealthy && zohoStatus?.linked
-          ? "ok"
-          : zohoLinkedOnly
-            ? "ok"
-          : customer.zohoBillingStatus === "pending"
-            ? "pending"
-            : !zohoStatus
-              ? "unknown"
-              : zohoStatus.linked
-                ? "ok"
-                : "failed";
+  const tispNarration = buildTispNarration(customer, integrations);
+  const zohoNarrations = buildZohoNarrations(customer, integrations, zohoStatus);
 
   return (
     <Box {...shellProps}>
@@ -596,53 +782,6 @@ export function CustomerExpandPanel({
               {formatTitleCase(customer.fullName)}
             </Text>
             <TextStatus status={statusLabel} />
-          </Flex>
-          <Flex align="center" gap={{ base: 2, sm: 4 }} mt={2.5} flexWrap="wrap">
-            <SyncChip
-              label="TISP"
-              state={tispSyncState}
-              detail={
-                tispSyncState === "ok" && customer.tispSyncStatus === "failed"
-                  ? customer.subscriptionStatus || "Verified on TISP"
-                  : customer.tispSyncError
-              }
-            />
-            <SyncChip
-              label="Zoho"
-              state={zohoSyncState}
-              statusLabel={
-                isB2B
-                  ? "Not required"
-                  : customer.zohoBillingStatus === "failed"
-                    ? "Setup failed"
-                    : zohoBillingHealthy && zohoStatus?.linked
-                      ? "Synced"
-                      : zohoLinkedOnly
-                        ? "Linked"
-                        : customer.zohoBillingStatus === "pending"
-                          ? "Setup pending"
-                          : customer.zohoBillingStatus === "completed" && zohoStatus?.linked
-                            ? "Synced"
-                            : undefined
-              }
-              detail={
-                isB2B
-                  ? "B2B customers are not Zoho Books contacts"
-                  : customer.zohoBillingStatus === "failed"
-                  ? customer.zohoBillingError || "Billing setup failed"
-                  : zohoBillingHealthy && zohoStatus?.linked
-                    ? `${zohoStatus.invoiceCount} invoice${zohoStatus.invoiceCount === 1 ? "" : "s"}`
-                    : zohoLinkedOnly
-                      ? "Zoho contact linked — no invoices synced to admin yet"
-                      : customer.zohoBillingStatus === "pending"
-                        ? "Initial invoice and recurring profile not configured in Zoho yet"
-                        : zohoStatus?.linked
-                          ? `${zohoStatus.invoiceCount} invoice${zohoStatus.invoiceCount === 1 ? "" : "s"}`
-                          : zohoStatus
-                            ? "Billing setup complete — refresh if contact not shown"
-                            : undefined
-              }
-            />
           </Flex>
         </Box>
         <Flex
@@ -724,6 +863,21 @@ export function CustomerExpandPanel({
       <TabStrip tabs={tabs} active={activeTab} onChange={(id) => setActiveTab(id as TabId)} />
 
       <Box p={{ base: 2.5, md: 4 }} minH={{ base: "auto", md: "280px" }} minW={0}>
+        <Box hidden={activeTab !== "status"}>
+          <Stack gap={3}>
+            <StatusNarrationBlock
+              title="TISP"
+              items={[tispNarration]}
+              loading={integrationsLoading && !integrations}
+            />
+            <StatusNarrationBlock
+              title="Zoho"
+              items={zohoNarrations}
+              loading={(integrationsLoading || zohoLoading) && !integrations && !zohoStatus}
+            />
+          </Stack>
+        </Box>
+
         <Box hidden={activeTab !== "package"}>
           <DetailGrid>
             <DetailCard
@@ -779,7 +933,17 @@ export function CustomerExpandPanel({
             <DetailCard label="Type" value={customer.customerType} />
             <DetailCard
               label="Last payment"
-              value={customer.lastPaymentDate ? formatDate(customer.lastPaymentDate) : null}
+              value={
+                integrations?.zohoLastPaymentDate ||
+                integrations?.lastPaymentDate ||
+                customer.lastPaymentDate
+                  ? formatDateOnly(
+                      integrations?.zohoLastPaymentDate ||
+                        integrations?.lastPaymentDate ||
+                        customer.lastPaymentDate
+                    )
+                  : null
+              }
             />
             {!hideFinancials && (zohoStatus?.creditBalance || 0) > 0 ? (
               <DetailCard

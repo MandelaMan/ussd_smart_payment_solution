@@ -134,7 +134,6 @@ export function PartnerDashboardPage() {
     <Stack gap={{ base: 2.5, md: 4 }} p={{ base: 0, md: 4 }}>
       <PageHeader
         title="Partner overview"
-        description="Customers, collections, and package activity"
         actions={
           <Box minW={{ base: "full", sm: "160px" }} maxW={{ base: "full", sm: "200px" }}>
             <Text fontSize="xs" color="fg.muted" mb={1}>

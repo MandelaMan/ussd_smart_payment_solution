@@ -381,7 +381,7 @@ export function DashboardPage() {
         pr={{ xl: 4 }}
         pb={{ base: 2, xl: 0 }}
       >
-        <MobilePageChrome title="Home" description="Operations overview" />
+        <MobilePageChrome title="Home" />
         {loading ? (
           <Box mx={{ base: -3, xl: 0 }} px={{ base: 1, xl: 0 }}>
             <DashboardMetricsSkeleton />

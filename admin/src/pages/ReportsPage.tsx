@@ -153,11 +153,6 @@ export function ReportsPage() {
     <Stack gap={PAGE_STACK_GAP}>
       <PageHeader
         title={partnerView ? "Reports" : "Reports & Analytics"}
-        description={
-          partnerView
-            ? "Download aggregate business reports in Excel or PDF."
-            : "Interactive business insights and downloadable operational reports."
-        }
       />
 
       <FilterToolbar>
