@@ -21,11 +21,16 @@ function signToken(user) {
 
 function setAuthCookie(res, token) {
   const isProd = process.env.NODE_ENV === "production";
+  const decoded = jwt.decode(token);
+  const maxAge =
+    decoded?.exp != null
+      ? Math.max(0, decoded.exp * 1000 - Date.now())
+      : 8 * 60 * 60 * 1000;
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: isProd,
     sameSite: isProd ? "strict" : "lax",
-    maxAge: 8 * 60 * 60 * 1000,
+    maxAge,
     path: "/",
   });
 }
@@ -51,6 +56,7 @@ async function authenticate(req, res, next) {
       return res.status(401).json({ error: "Authentication required" });
     }
     const decoded = jwt.verify(token, getJwtSecret());
+    req.tokenExp = decoded.exp;
     const user = await loadUserFromToken(decoded);
     if (!user) {
       clearAuthCookie(res);

@@ -1,5 +1,4 @@
 const {
-  updateContact_JS,
   getRecurringInvoices_JS,
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
@@ -182,9 +181,30 @@ async function updateZohoContactDetails(customer, zohoContact) {
   }
 
   const { buildZohoContactPayload } = require("../controllers/customers.controller");
-  const payload = await buildZohoContactPayload(customer);
-  const updated = await updateContact_JS(zohoContact.contact_id, payload);
-  return updated || zohoContact;
+  const { updateContact_JS, getContactFull_JS } = require("../controllers/zoho.controller");
+  const { normalizeCustomerRef } = require("../utils/zohoCustomerScope");
+  const fullContact =
+    (await getContactFull_JS(zohoContact.contact_id)) || zohoContact;
+  const payload = await buildZohoContactPayload(customer, fullContact);
+  await updateContact_JS(zohoContact.contact_id, payload);
+
+  const expected = String(
+    customer.customerNumber || customer.customer_number || ""
+  ).trim();
+  let contact = await getContactFull_JS(zohoContact.contact_id);
+  if (
+    expected &&
+    normalizeCustomerRef(contact?.company_name) !== normalizeCustomerRef(expected)
+  ) {
+    await updateContact_JS(zohoContact.contact_id, {
+      contact_type: "customer",
+      customer_sub_type: "business",
+      contact_name: expected,
+      company_name: expected,
+    });
+    contact = await getContactFull_JS(zohoContact.contact_id);
+  }
+  return contact || fullContact;
 }
 
 /**
@@ -261,5 +281,7 @@ async function pushCustomerBillingToZoho(ctx, options = {}) {
 module.exports = {
   mapContextToCustomer,
   ensureRecurringSubscription,
+  updateZohoContactDetails,
   pushCustomerBillingToZoho,
+  isActiveRecurring,
 };

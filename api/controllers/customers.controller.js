@@ -63,6 +63,11 @@ const {
   filterAgencyInvoicesForCustomer,
   b2bBillingMeta,
 } = require("../utils/b2bBilling");
+const {
+  filterZohoInvoicesForContact,
+  filterZohoPaymentsForContact,
+  zohoContactMatchesDashboardCustomer,
+} = require("../utils/zohoCustomerScope");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
   String(process.env.ZOHO_INVOICE_TAX_INCLUSIVE || "true").toLowerCase() !==
@@ -70,7 +75,46 @@ const ZOHO_INVOICE_TAX_INCLUSIVE =
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 
 async function findZohoContactForCustomer(customer) {
-  return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer));
+  return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer), {
+    customer,
+  });
+}
+
+/** Load Zoho contact by stored snapshot id first, then live lookup. */
+async function loadZohoContactForCustomer(customer) {
+  const customerId = customer?.id ? Number(customer.id) : null;
+  const { getContactFull_JS } = require("./zoho.controller");
+
+  let storedContactId = null;
+  if (customerId) {
+    storedContactId = await integrationSnapshot.getStoredZohoContactId(customerId);
+    if (storedContactId) {
+      const byStoredId = await getContactFull_JS(storedContactId);
+      if (byStoredId?.contact_id) {
+        return { contact: byStoredId, storedContactId, fromSnapshot: true };
+      }
+    }
+  }
+
+  const contact = await findZohoContactForCustomer(customer);
+  if (contact?.contact_id) {
+    if (customerId) {
+      try {
+        const full =
+          (await getContactFull_JS(contact.contact_id)) || contact;
+        await integrationSnapshot.upsertZohoContact(customerId, full);
+      } catch {
+        /* best-effort */
+      }
+    }
+    return {
+      contact,
+      storedContactId: storedContactId || String(contact.contact_id),
+      fromSnapshot: false,
+    };
+  }
+
+  return null;
 }
 
 function formatZohoPhone(phone) {
@@ -92,31 +136,95 @@ function capitalizeZohoPersonName(value) {
     .join(" ");
 }
 
-async function buildZohoContactPayload(customer) {
-  const firstName = capitalizeZohoPersonName(customer.firstName);
-  const middleName = capitalizeZohoPersonName(customer.middleName);
-  const lastName = capitalizeZohoPersonName(customer.lastName);
-  const displayName = [firstName, middleName, lastName].filter(Boolean).join(" ").trim();
-  const isB2B = customer.customerType === "B2B";
-  const customerNumber = String(customer.customerNumber || "").trim();
+/** Resolve and title-case person name fields from camelCase or snake_case customer objects. */
+function resolveZohoPersonNames(customer) {
+  let first = customer?.firstName ?? customer?.first_name ?? "";
+  let middle = customer?.middleName ?? customer?.middle_name ?? "";
+  let last = customer?.lastName ?? customer?.last_name ?? "";
 
-  // C2B: company_name is always the customer number (lookup key). B2B: agency name.
+  if (!String(first).trim() && !String(last).trim()) {
+    const full = String(
+      customer?.fullName ??
+        customer?.full_name ??
+        customer?.customerName ??
+        customer?.customer_name ??
+        ""
+    ).trim();
+    if (full) {
+      const parts = full.split(/\s+/).filter(Boolean);
+      if (parts.length === 1) {
+        first = parts[0];
+        last = parts[0];
+      } else if (parts.length === 2) {
+        first = parts[0];
+        last = parts[1];
+      } else {
+        first = parts[0];
+        middle = parts.slice(1, -1).join(" ");
+        last = parts[parts.length - 1];
+      }
+    }
+  }
+
+  return {
+    firstName: capitalizeZohoPersonName(first),
+    middleName: capitalizeZohoPersonName(middle),
+    lastName: capitalizeZohoPersonName(last),
+  };
+}
+
+function pickPrimaryZohoContactPerson(contact) {
+  const persons = contact?.contact_persons || [];
+  if (!Array.isArray(persons) || persons.length === 0) return null;
+  return persons.find((p) => p.is_primary_contact) || persons[0];
+}
+
+function buildZohoContactPersonPayload(existingContact, personFields) {
+  const existingPerson = pickPrimaryZohoContactPerson(existingContact);
+  const person = { ...personFields, is_primary_contact: true };
+  if (existingPerson?.contact_person_id) {
+    person.contact_person_id = existingPerson.contact_person_id;
+  }
+  return person;
+}
+
+async function buildZohoContactPayload(customer, existingContact = null) {
+  const { firstName, middleName, lastName } = resolveZohoPersonNames(customer);
+  const displayName = [firstName, middleName, lastName].filter(Boolean).join(" ").trim();
+  const isB2B = isB2BCustomer(customer);
+  const customerNumber = String(
+    customer.customerNumber || customer.customer_number || ""
+  ).trim();
+
+  // C2B: company_name AND contact_name (Display Name) must be the customer number.
+  // Zoho often copies Display Name into Company Name — if Display Name is the person,
+  // company_name gets overwritten. Person details live only on contact_persons.
   const companyName = isB2B
-    ? String(customer.agencyName || displayName || customerNumber).trim()
-    : customerNumber || displayName;
+    ? String(customer.agencyName || customer.agency_name || "").trim()
+    : customerNumber;
+
+  if (!companyName) {
+    throw new Error(
+      isB2B
+        ? "Agency name is required before syncing to Zoho Books"
+        : "Customer number is required before syncing to Zoho Books"
+    );
+  }
 
   const payload = {
-    contact_name: isB2B ? companyName : displayName || companyName,
+    contact_name: companyName,
     company_name: companyName,
     contact_type: "customer",
-    customer_sub_type: isB2B ? "business" : "individual",
+    customer_sub_type: "business",
   };
 
   let phone = formatZohoPhone(customer.phone);
   let email = customer.email ? String(customer.email).trim() : undefined;
 
-  if (isB2B && customer.agencyId) {
-    const agency = await store.getAgencyById(customer.agencyId);
+  if (isB2B && (customer.agencyId || customer.agency_id)) {
+    const agency = await store.getAgencyById(
+      customer.agencyId || customer.agency_id
+    );
     if (agency) {
       phone = formatZohoPhone(agency.phone) || phone;
       email = agency.email ? String(agency.email).trim() : email;
@@ -131,29 +239,77 @@ async function buildZohoContactPayload(customer) {
 
   if (!isB2B && (firstName || lastName || displayName)) {
     payload.contact_persons = [
-      {
+      buildZohoContactPersonPayload(existingContact, {
         first_name: firstName || displayName,
-        last_name: lastName || firstName || customerNumber,
+        last_name: lastName || firstName || displayName,
         email,
         phone,
         mobile: phone,
-        is_primary_contact: true,
-      },
+      }),
     ];
   } else if (isB2B && displayName && displayName !== companyName) {
     payload.contact_persons = [
-      {
+      buildZohoContactPersonPayload(existingContact, {
         first_name: firstName || displayName,
         last_name: lastName || companyName,
         email,
         phone,
         mobile: phone,
-        is_primary_contact: true,
-      },
+      }),
     ];
   }
 
   return payload;
+}
+
+/**
+ * Zoho sometimes ignores company_name on the first write (especially when the
+ * contact was created as Individual). Force company_name + business subtype.
+ */
+async function enforceZohoCompanyName(contactId, expectedCompanyName, getContactFull_JS, updateContact_JS) {
+  const expected = String(expectedCompanyName || "").trim();
+  if (!contactId || !expected) return null;
+
+  const { normalizeCustomerRef } = require("../utils/zohoCustomerScope");
+  const expectedNorm = normalizeCustomerRef(expected);
+
+  let contact = await getContactFull_JS(contactId);
+  const currentCompany = String(contact?.company_name || "").trim();
+  const currentName = String(contact?.contact_name || "").trim();
+  const subtype = String(contact?.customer_sub_type || "").toLowerCase();
+
+  const companyOk = normalizeCustomerRef(currentCompany) === expectedNorm;
+  const nameOk = normalizeCustomerRef(currentName) === expectedNorm;
+  const subtypeOk = subtype === "business";
+
+  if (companyOk && nameOk && subtypeOk) return contact;
+
+  // Step 1: switch to business if needed (Individual often blocks company_name).
+  if (!subtypeOk) {
+    await updateContact_JS(contactId, {
+      contact_type: "customer",
+      customer_sub_type: "business",
+      contact_name: expected,
+      company_name: expected,
+    });
+  }
+
+  // Step 2: always push company_name + display name as customer number.
+  await updateContact_JS(contactId, {
+    contact_type: "customer",
+    customer_sub_type: "business",
+    contact_name: expected,
+    company_name: expected,
+  });
+
+  contact = await getContactFull_JS(contactId);
+  const afterCompany = String(contact?.company_name || "").trim();
+  if (normalizeCustomerRef(afterCompany) !== expectedNorm) {
+    throw new Error(
+      `Zoho company_name did not update (expected "${expected}", got "${afterCompany || "(empty)"}")`
+    );
+  }
+  return contact;
 }
 
 async function ensureZohoContactForCustomer(customer) {
@@ -163,7 +319,14 @@ async function ensureZohoContactForCustomer(customer) {
     return ensureZohoContactForAgency(agency);
   }
 
-  const { updateContact_JS, getSpecificCustomer_JS, markContactActive_JS } = require("./zoho.controller");
+  const { updateContact_JS, getSpecificCustomer_JS, getContactFull_JS, markContactActive_JS } = require("./zoho.controller");
+
+  async function loadContactForUpdate(contactId) {
+    const full = await getContactFull_JS(contactId);
+    if (full?.contact_id) return full;
+    const lean = await getSpecificCustomer_JS(String(contactId));
+    return lean && typeof lean === "object" && lean.contact_id ? lean : null;
+  }
 
   async function refreshExisting(existing) {
     let contactBase = existing;
@@ -193,35 +356,44 @@ async function ensureZohoContactForCustomer(customer) {
     }
 
     try {
-      const payload = await buildZohoContactPayload(customer);
-      const updated = await updateContact_JS(contactBase.contact_id, payload);
-      const contact = updated || contactBase;
+      const fullContact = await loadContactForUpdate(contactBase.contact_id);
+      const payload = await buildZohoContactPayload(
+        customer,
+        fullContact || contactBase
+      );
+      await updateContact_JS(contactBase.contact_id, payload);
+
+      const expectedCompany = String(
+        customer.customerNumber || customer.customer_number || ""
+      ).trim();
+      const afterUpdate =
+        (await enforceZohoCompanyName(
+          contactBase.contact_id,
+          expectedCompany,
+          getContactFull_JS,
+          updateContact_JS
+        )) ||
+        (await getContactFull_JS(contactBase.contact_id)) ||
+        fullContact ||
+        contactBase;
+
       if (customer.id) {
-        await integrationSnapshot.upsertZohoContact(customer.id, contact);
+        await integrationSnapshot.upsertZohoContact(customer.id, afterUpdate);
       }
-      return contact;
+      return afterUpdate;
     } catch (e) {
       console.warn("Zoho contact refresh failed:", e.message);
-      if (customer.id) {
-        try {
-          await integrationSnapshot.upsertZohoContact(customer.id, contactBase);
-        } catch {
-          /* best-effort */
-        }
-      }
-      return contactBase;
+      throw e;
     }
   }
 
-  // Prefer the known Zoho contact id from our snapshot so we never create a
-  // duplicate when company_name / search_text lookup misses.
+  // Prefer stored Zoho contact id — works even when company_name is empty in Books.
   if (customer.id) {
     try {
-      const snap = await integrationSnapshot.getZohoContact(customer.id);
-      const snapId = snap?.zoho_contact_id ? String(snap.zoho_contact_id) : "";
+      const snapId = await integrationSnapshot.getStoredZohoContactId(customer.id);
       if (snapId) {
-        const byId = await getSpecificCustomer_JS(snapId);
-        if (byId && typeof byId === "object" && byId.contact_id) {
+        const byId = await loadContactForUpdate(snapId);
+        if (byId?.contact_id) {
           return refreshExisting(byId);
         }
       }
@@ -251,14 +423,32 @@ async function ensureZohoContactForCustomer(customer) {
   }
 
   if (created?.contact_id) {
+    const expectedCompany = String(
+      customer.customerNumber || customer.customer_number || ""
+    ).trim();
+    let contact = created;
+    try {
+      contact =
+        (await enforceZohoCompanyName(
+          created.contact_id,
+          expectedCompany,
+          getContactFull_JS,
+          updateContact_JS
+        )) ||
+        (await getContactFull_JS(created.contact_id)) ||
+        created;
+    } catch (e) {
+      console.warn("Zoho company_name enforce after create failed:", e.message);
+      throw e;
+    }
     try {
       if (customer.id) {
-        await integrationSnapshot.upsertZohoContact(customer.id, created);
+        await integrationSnapshot.upsertZohoContact(customer.id, contact);
       }
     } catch (e) {
       console.warn("Zoho contact snapshot failed:", e.message);
     }
-    return created;
+    return contact;
   }
 
   const retry = await findZohoContactForCustomer(customer);
@@ -326,17 +516,42 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
         maxAgeHours: cacheMaxAgeHours,
       });
       if (stored.hasData && stored.zohoContactId && !stored.stale) {
-        const mapped = (stored.invoices || []).map((inv) => ({
-          id: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          orderNumber: customer.customerNumber,
-          date: inv.date,
-          dueDate: inv.dueDate,
-          status: inv.status,
-          total: inv.total,
-          balanceDue: inv.balanceDue,
-          currency: "KES",
-        }));
+        const contactRow = await integrationSnapshot.getZohoContact(customerId);
+        const contactRaw =
+          contactRow?.raw_json && typeof contactRow.raw_json === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(contactRow.raw_json);
+                } catch {
+                  return null;
+                }
+              })()
+            : contactRow?.raw_json;
+        const contactValid =
+          !contactRaw ||
+          zohoContactMatchesDashboardCustomer(
+            contactRaw,
+            customer,
+            stored.zohoContactId
+          );
+
+        if (contactValid) {
+          const mapped = filterZohoInvoicesForContact(
+            (stored.invoices || []).map((inv) => ({
+              id: inv.id,
+              invoiceNumber: inv.invoiceNumber,
+              orderNumber: customer.customerNumber,
+              date: inv.date,
+              dueDate: inv.dueDate,
+              status: inv.status,
+              total: inv.total,
+              balanceDue: inv.balanceDue,
+              currency: "KES",
+              customer_id: stored.zohoContactId,
+            })),
+            stored.zohoContactId,
+            customer
+          );
         const unpaid = mapped.filter((inv) => (inv.balanceDue || 0) > 0);
         const creditBalance = Number(stored.creditBalance) || 0;
         const result = {
@@ -361,6 +576,18 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
           console.warn("Zoho billing status reconcile failed:", e.message);
         }
         return result;
+        }
+        invalidateCustomerZoho(customerId);
+        try {
+          await query(`DELETE FROM zoho_customer_invoices WHERE customer_id = ?`, [
+            customerId,
+          ]);
+          await query(`DELETE FROM zoho_customer_payments WHERE customer_id = ?`, [
+            customerId,
+          ]);
+        } catch {
+          /* best-effort cleanup of mismatched snapshot */
+        }
       }
     } catch (e) {
       console.warn("Zoho snapshot read failed:", e.message);
@@ -389,9 +616,18 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     }
   }
 
-  let zohoContact = await findZohoContactForCustomer(
-    isB2BCustomer(customer) ? { ...customer, agencyName: agency.name } : customer
+  let zohoContact = null;
+  let storedContactId = customerId
+    ? await integrationSnapshot.getStoredZohoContactId(customerId)
+    : null;
+
+  const linked = await loadZohoContactForCustomer(
+    isB2BCustomer(customer) ? { ...customer, agencyName: agency?.name } : customer
   );
+  if (linked?.contact?.contact_id) {
+    zohoContact = linked.contact;
+    storedContactId = linked.storedContactId || storedContactId;
+  }
 
   if (!zohoContact?.contact_id) {
     const empty = {
@@ -407,6 +643,42 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     return empty;
   }
 
+  if (
+    !zohoContactMatchesDashboardCustomer(
+      zohoContact,
+      customer,
+      storedContactId
+    )
+  ) {
+    console.warn(
+      `[fetchCustomerZohoInvoices] Zoho contact ${zohoContact.contact_id} does not match ${customer.customerNumber}`
+    );
+    const empty = {
+      linked: false,
+      zohoContactId: null,
+      invoices: [],
+      invoiceCount: 0,
+      unpaidCount: 0,
+      totalBalanceDue: 0,
+      zohoError: "Zoho contact does not match this customer number",
+      ...(isB2BCustomer(customer) ? b2bBillingMeta(customer, agency) : {}),
+    };
+    if (customerId) {
+      try {
+        await query(`DELETE FROM zoho_customer_invoices WHERE customer_id = ?`, [
+          customerId,
+        ]);
+        await query(`DELETE FROM zoho_customer_payments WHERE customer_id = ?`, [
+          customerId,
+        ]);
+      } catch {
+        /* best-effort cleanup */
+      }
+      setCachedCustomerZoho(customerId, empty);
+    }
+    return empty;
+  }
+
   const invoices = await getInvoices_JS({
     customer_id: zohoContact.contact_id,
     per_page: 50,
@@ -415,11 +687,22 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
 
   if (customerId) {
     try {
+      const { getCustomerPayments_JS } = require("./zoho.controller");
+      const [payments, recurringList] = await Promise.all([
+        getCustomerPayments_JS({
+          customer_id: zohoContact.contact_id,
+          per_page: 50,
+        }),
+        getRecurringInvoices_JS({
+          customer_id: zohoContact.contact_id,
+          per_page: 50,
+        }),
+      ]);
       await integrationSnapshot.saveZohoBillingSnapshot(customerId, {
         contact: zohoContact,
         invoices: invoices || [],
-        payments: [],
-        recurring: [],
+        payments: payments || [],
+        recurring: recurringList || [],
       });
     } catch (e) {
       console.warn("Zoho snapshot persist failed:", e.message);
@@ -638,12 +921,18 @@ async function createCustomerOnTisp(ctx, meta = {}) {
 
 async function updateCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
-  const payload = buildTispUpdateClientDetailsPayload(
-    tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate })
-  );
+  const accountNumber = String(
+    meta.accountNumber || ctx.customer_number || ""
+  )
+    .trim()
+    .toUpperCase();
+  const payload = buildTispUpdateClientDetailsPayload({
+    ...tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate }),
+    customerNumber: accountNumber,
+  });
   const result = await postSetClientDetails(payload, {
     customerId: ctx.id,
-    customerNumber: ctx.customer_number,
+    customerNumber: accountNumber,
     operation: "set_client_update",
     parentLogId: meta.parentLogId ?? null,
   });
@@ -658,6 +947,83 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     }
   }
   return result;
+}
+
+/**
+ * Move a TISP client from previousAccountNumber → ctx.customer_number
+ * (e.g. CL-A10 → CLB-A10 on C2B↔B2B conversion).
+ *
+ * TISP keys accounts by AccountNumber and rejects INSERT when the same
+ * IP/PPPoE is still held by the old number, so we:
+ * 1) read due date from the old account
+ * 2) release the old account (DueDate = today)
+ * 3) INSERT the new account with the preserved due date
+ */
+async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
+  const previousNumber = String(previousAccountNumber || "")
+    .trim()
+    .toUpperCase();
+  const currentNumber = String(ctx.customer_number || "")
+    .trim()
+    .toUpperCase();
+  if (!previousNumber || !currentNumber || previousNumber === currentNumber) {
+    return createCustomerOnTisp(ctx, meta);
+  }
+
+  let preservedDueDate = meta.dueDate || null;
+  try {
+    const live = await getTISPCustomer(previousNumber);
+    preservedDueDate =
+      integrationSnapshot.extractTispDueDate(live) || preservedDueDate;
+  } catch {
+    /* keep meta due date / fallback below */
+  }
+
+  // Free IP / PPPoE held by the old account number.
+  await updateCustomerOnTisp(ctx, {
+    accountNumber: previousNumber,
+    dueDate: new Date(),
+    skipStatusRefresh: true,
+    parentLogId: meta.parentLogId ?? null,
+  });
+
+  try {
+    return await createCustomerOnTisp(ctx, {
+      ...meta,
+      dueDate: preservedDueDate || meta.dueDate || new Date(),
+      skipStatusRefresh: meta.skipStatusRefresh,
+    });
+  } catch (createErr) {
+    // Best-effort rollback so the customer is not left disconnected.
+    if (preservedDueDate) {
+      try {
+        await updateCustomerOnTisp(ctx, {
+          accountNumber: previousNumber,
+          dueDate: preservedDueDate,
+          skipStatusRefresh: true,
+          parentLogId: meta.parentLogId ?? null,
+        });
+      } catch {
+        /* ignore rollback failure */
+      }
+    }
+    throw createErr;
+  }
+}
+
+/** Alternate C2B/B2B account number for the same apartment (CL-A10 ↔ CLB-A10). */
+function alternateTypeAccountNumber(ctx) {
+  const apartment = String(ctx.apartment_number || "").trim().toUpperCase();
+  if (!apartment) return null;
+  const currentType = String(ctx.customer_type || "").toUpperCase();
+  const altCode =
+    currentType === "B2B"
+      ? String(ctx.c2b_code || "").trim()
+      : String(ctx.b2b_code || "").trim();
+  if (!altCode) return null;
+  const altNumber = `${altCode}-${apartment}`;
+  const current = String(ctx.customer_number || "").trim().toUpperCase();
+  return altNumber.toUpperCase() === current ? null : altNumber.toUpperCase();
 }
 
 async function pushCustomerToTisp(ctx, meta = {}) {
@@ -677,10 +1043,21 @@ async function pushCustomerToTisp(ctx, meta = {}) {
       return await updateCustomerOnTisp(ctx, meta);
     }
 
+    // Explicit migration (type convert / apartment switch).
     if (previousNumber && previousNumber !== currentNumber) {
       const onPrevious = await accountExistsOnTisp(previousNumber);
       if (onPrevious) {
-        return await createCustomerOnTisp(ctx, meta);
+        return await migrateTispAccountNumber(ctx, previousNumber, meta);
+      }
+    }
+
+    // Recovery: local number already converted (CLB-A10) but TISP still has
+    // the other type code (CL-A10) for the same apartment.
+    const altNumber = alternateTypeAccountNumber(ctx);
+    if (altNumber) {
+      const onAlt = await accountExistsOnTisp(altNumber);
+      if (onAlt) {
+        return await migrateTispAccountNumber(ctx, altNumber, meta);
       }
     }
 
@@ -742,10 +1119,15 @@ async function resolveCustomerIntegrationPresence(customerId) {
   if (isB2B) {
     onZoho = true;
   } else {
+    const { mapContextToCustomer } = require("../services/customerZohoSync");
+    const mappedCustomer = mapContextToCustomer(ctx);
     const snap = await integrationSnapshot.getZohoContact(customerId).catch(() => null);
-    if (snap?.zoho_contact_id) {
+    const storedContactId = snap?.zoho_contact_id
+      ? String(snap.zoho_contact_id)
+      : null;
+    if (storedContactId) {
       onZoho = true;
-      zohoContactId = String(snap.zoho_contact_id);
+      zohoContactId = storedContactId;
       const raw =
         typeof snap.raw_json === "string"
           ? (() => {
@@ -757,12 +1139,10 @@ async function resolveCustomerIntegrationPresence(customerId) {
             })()
           : snap.raw_json;
       if (raw?.status) zohoContactStatus = String(raw.status);
-    } else {
+    }
+    if (!onZoho) {
       try {
-        const { mapContextToCustomer } = require("../services/customerZohoSync");
-        const contact = await findZohoContactForCustomer(
-          mapContextToCustomer(ctx)
-        );
+        const contact = await findZohoContactForCustomer(mappedCustomer);
         if (contact?.contact_id) {
           onZoho = true;
           zohoContactId = String(contact.contact_id);
@@ -770,7 +1150,10 @@ async function resolveCustomerIntegrationPresence(customerId) {
             ? String(contact.status)
             : null;
           try {
-            await integrationSnapshot.upsertZohoContact(customerId, contact);
+            const { getContactFull_JS } = require("./zoho.controller");
+            const full =
+              (await getContactFull_JS(contact.contact_id)) || contact;
+            await integrationSnapshot.upsertZohoContact(customerId, full);
           } catch {
             /* ignore */
           }
@@ -784,8 +1167,8 @@ async function resolveCustomerIntegrationPresence(customerId) {
     // Live status check so inactive contacts are visible in the edit UI.
     if (zohoContactId) {
       try {
-        const { getSpecificCustomer_JS } = require("./zoho.controller");
-        const live = await getSpecificCustomer_JS(zohoContactId);
+        const { getContactFull_JS } = require("./zoho.controller");
+        const live = await getContactFull_JS(zohoContactId);
         if (live && typeof live === "object" && live.contact_id) {
           if (live.status) zohoContactStatus = String(live.status);
           try {
@@ -847,11 +1230,30 @@ async function getCustomerIntegrations(req, res, next) {
       recurringStatus = "agency_billing";
     } else if (presence.onZoho) {
       try {
-        const [invoices, payments, recurring] = await Promise.all([
+        const [invoices, payments] = await Promise.all([
           integrationSnapshot.listInvoicesForCustomer(id),
           integrationSnapshot.listZohoPayments(id),
-          integrationSnapshot.listRecurringInvoices(id),
         ]);
+
+        let recurring = [];
+        if (presence.zohoContactId) {
+          try {
+            const liveRecurring = await getRecurringInvoices_JS({
+              customer_id: presence.zohoContactId,
+              per_page: 50,
+            });
+            await integrationSnapshot.replaceRecurringInvoices(
+              id,
+              liveRecurring || []
+            );
+            recurring = await integrationSnapshot.listRecurringInvoices(id);
+          } catch (e) {
+            console.warn("Zoho recurring refresh failed:", e.message);
+            recurring = await integrationSnapshot.listRecurringInvoices(id);
+          }
+        } else {
+          recurring = await integrationSnapshot.listRecurringInvoices(id);
+        }
 
         invoiceCount = (invoices || []).length;
         invoicesInSync = invoiceCount > 0;
@@ -909,10 +1311,10 @@ async function getCustomerIntegrations(req, res, next) {
           paymentsInSync = true;
         }
 
-        const activeRecurring = (recurring || []).filter((row) => {
-          const status = String(row.status || "").toLowerCase();
-          return !["stopped", "expired", "inactive"].includes(status);
-        });
+        const { isActiveRecurring } = require("../services/customerZohoSync");
+        const activeRecurring = (recurring || []).filter((row) =>
+          isActiveRecurring(row)
+        );
         recurringCount = activeRecurring.length;
         hasActiveRecurring = recurringCount > 0;
         if (hasActiveRecurring) {
@@ -999,18 +1401,18 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
         }
       }
       if (!dueForUpdate) {
-        throw new Error(
-          "Could not resolve TISP due date for update — set a due date and try again"
-        );
+        // Contact-only edit — skip TISP package/due-date push when no date resolved.
+        tisp = { ok: true, skipped: true, reason: "no_due_date_change" };
+      } else {
+        await updateCustomerOnTisp(ctx, {
+          dueDate: dueForUpdate,
+        });
+        tisp = {
+          ok: true,
+          updated: true,
+          dueDate: dueForUpdate,
+        };
       }
-      await updateCustomerOnTisp(ctx, {
-        dueDate: dueForUpdate,
-      });
-      tisp = {
-        ok: true,
-        updated: true,
-        dueDate: dueForUpdate,
-      };
     }
     await store.updateCustomerTispSync(customerId, "synced", null);
     // create/update already refresh live Client Status (+ preferred due date).
@@ -1025,69 +1427,85 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     zoho = { ok: true, skipped: true, reason: "b2b_agency_billing" };
   } else {
     try {
-      const { mapContextToCustomer, ensureRecurringSubscription } = require(
+      const { mapContextToCustomer, ensureRecurringSubscription, updateZohoContactDetails } = require(
         "../services/customerZohoSync"
       );
       const { createSignupInvoice } = require(
         "../services/customerBillingOnboarding"
       );
+      const {
+        getInvoices_JS,
+        getCustomerPayments_JS,
+        getRecurringInvoices_JS,
+      } = require("./zoho.controller");
+
       // Re-load context so Zoho gets the just-saved local fields.
       const freshCtx = (await store.getCustomerContext(customerId)) || ctx;
       const customer = mapContextToCustomer(freshCtx);
+      const wasOnZoho = Boolean(presence?.onZoho);
 
-      if (!presence?.onZoho) {
-        const contact = await ensureZohoContactForCustomer(customer);
-        if (!contact?.contact_id) {
-          throw new Error("Zoho contact could not be linked");
-        }
-
-        let invoice = null;
-        let recurring = null;
-        if (createInitialInvoice) {
-          invoice = await createSignupInvoice(customer, contact);
-        }
-        if (createRecurringInvoice) {
-          recurring = await ensureRecurringSubscription(customer, contact, {
-            startDate: invoice?.period?.endDate,
-          });
-        }
-
-        await store.updateCustomerZohoBillingStatus(
-          customerId,
-          "completed",
-          null
-        );
-        invalidateCustomerZoho(customerId);
-        zoho = {
-          ok: true,
-          created: true,
-          contactId: String(contact.contact_id),
-          invoice,
-          recurring,
-        };
-      } else {
-        // Already on Zoho: always refresh contact details (name/email/phone/
-        // company_name); optionally create/update recurring profile.
-        const contact = await ensureZohoContactForCustomer(customer);
-        let recurring = null;
-        if (createRecurringInvoice || updateZohoRecurring) {
-          recurring = await ensureRecurringSubscription(customer, contact);
-        }
-        await store.updateCustomerZohoBillingStatus(
-          customerId,
-          "completed",
-          null
-        );
-        invalidateCustomerZoho(customerId);
-        zoho = {
-          ok: true,
-          updated: true,
-          contactId: contact?.contact_id
-            ? String(contact.contact_id)
-            : presence.zohoContactId,
-          recurring,
-        };
+      // Always: resolve existing contact or create, then push title-cased name fields.
+      let contact = await ensureZohoContactForCustomer(customer);
+      if (!contact?.contact_id) {
+        throw new Error("Zoho contact could not be linked");
       }
+      contact = await updateZohoContactDetails(customer, contact);
+
+      let invoice = null;
+      let recurring = null;
+
+      if (createInitialInvoice) {
+        invoice = await createSignupInvoice(customer, contact);
+      }
+
+      if (createRecurringInvoice || updateZohoRecurring) {
+        recurring = await ensureRecurringSubscription(customer, contact, {
+          startDate: invoice?.period?.endDate,
+        });
+      }
+
+      try {
+        const [invoices, payments, recurringList] = await Promise.all([
+          getInvoices_JS({
+            customer_id: contact.contact_id,
+            per_page: 50,
+            page: 1,
+          }),
+          getCustomerPayments_JS({
+            customer_id: contact.contact_id,
+            per_page: 50,
+          }),
+          getRecurringInvoices_JS({
+            customer_id: contact.contact_id,
+            per_page: 50,
+          }),
+        ]);
+        await integrationSnapshot.saveZohoBillingSnapshot(customerId, {
+          contact,
+          invoices: invoices || [],
+          payments: payments || [],
+          recurring: recurringList || [],
+        });
+      } catch (e) {
+        console.warn("Zoho snapshot refresh after edit failed:", e.message);
+      }
+
+      await store.updateCustomerZohoBillingStatus(
+        customerId,
+        "completed",
+        null
+      );
+      invalidateCustomerZoho(customerId);
+
+      zoho = {
+        ok: true,
+        created: !wasOnZoho,
+        updated: wasOnZoho,
+        contactUpdated: true,
+        contactId: String(contact.contact_id),
+        invoice,
+        recurring,
+      };
     } catch (e) {
       const message = e.message || "Zoho sync failed";
       try {
@@ -3284,7 +3702,8 @@ async function updateCustomer(req, res, next) {
         packageChanged &&
         zoho.ok &&
         !createRecurringInvoice &&
-        !updateZohoRecurring
+        !updateZohoRecurring &&
+        !createInitialInvoice
       ) {
         zoho = { ...zoho, packageNote: "package_db_only_unless_recurring_flag" };
       }
@@ -3330,6 +3749,32 @@ async function convertCustomerTypeHandler(req, res, next) {
 
     const result = await store.convertCustomerType(id, targetType, agencyId);
 
+    // C2B → B2B: stop personal Zoho billing (agency takes over).
+    if (result.previousType === "C2B" && result.newType === "B2B") {
+      try {
+        const oldContact = await findZohoContactForCustomer({
+          customerNumber: result.previousCustomerNumber,
+          customerType: "C2B",
+          firstName: result.customer?.firstName,
+          lastName: result.customer?.lastName,
+          email: result.customer?.email,
+        });
+        if (oldContact?.contact_id) {
+          await stopZohoRecurringForCustomer(
+            oldContact.contact_id,
+            result.previousCustomerNumber
+          );
+          await markContactInactive_JS(oldContact.contact_id);
+          invalidateCustomerZoho(id);
+        }
+      } catch (e) {
+        console.warn(
+          "Zoho C2B contact cleanup after B2B conversion failed:",
+          e.message
+        );
+      }
+    }
+
     if (result.newType === "B2B" && result.agencyId) {
       try {
         const agency = await store.getAgencyById(result.agencyId);
@@ -3348,6 +3793,7 @@ async function convertCustomerTypeHandler(req, res, next) {
         const ctx = await store.getCustomerContext(id);
         await pushCustomerToTisp(ctx, {
           previousCustomerNumber: result.previousCustomerNumber,
+          skipCooldown: true,
         });
         await store.updateCustomerTispSync(id, "synced", null);
       } catch (e) {
@@ -3428,8 +3874,17 @@ async function getCustomerPayments(req, res, next) {
         .filter(Boolean)
     );
 
-    const zohoContact = await findZohoContactForCustomer(customer);
-    if (zohoContact?.contact_id) {
+    const linked = await loadZohoContactForCustomer(customer);
+    const zohoContact = linked?.contact;
+    const storedContactId = linked?.storedContactId || null;
+    if (
+      zohoContact?.contact_id &&
+      zohoContactMatchesDashboardCustomer(
+        zohoContact,
+        customer,
+        storedContactId
+      )
+    ) {
       const { getCustomerPayments_JS } = require("./zoho.controller");
       const zohoPayments = await getCustomerPayments_JS({
         customer_id: zohoContact.contact_id,
@@ -3585,12 +4040,40 @@ async function refreshCustomerStatus(req, res, next) {
     invalidateCustomerZoho(id);
 
     let tispRefreshed = false;
+    let tispMigrated = false;
     try {
       const tispPromise =
         customer.status === "active"
-          ? refreshTispStatus(customer).then(() => {
+          ? (async () => {
+              const ctx = await store.getCustomerContext(id);
+              if (!ctx) return;
+
+              const currentNumber = String(ctx.customer_number || "")
+                .trim()
+                .toUpperCase();
+              const onCurrent = currentNumber
+                ? await accountExistsOnTisp(currentNumber)
+                : false;
+
+              // Local number already converted but TISP still on the other
+              // type code (e.g. local CLB-A10, TISP still CL-A10).
+              if (!onCurrent) {
+                const altNumber = alternateTypeAccountNumber(ctx);
+                if (altNumber && (await accountExistsOnTisp(altNumber))) {
+                  await migrateTispAccountNumber(ctx, altNumber, {
+                    skipCooldown: true,
+                  });
+                  tispMigrated = true;
+                  await store.updateCustomerTispSync(id, "synced", null);
+                }
+              }
+
+              await refreshTispStatus({
+                id: ctx.id,
+                customerNumber: ctx.customer_number,
+              });
               tispRefreshed = true;
-            })
+            })()
           : Promise.resolve();
 
       const [, zoho, events, pendingUpgrade] = await Promise.all([
@@ -3613,7 +4096,11 @@ async function refreshCustomerStatus(req, res, next) {
         events,
         pendingUpgrade,
         zoho,
-        tisp: { refreshed: tispRefreshed, dueDate: customer.tispDueDate || null },
+        tisp: {
+          refreshed: tispRefreshed,
+          migrated: tispMigrated,
+          dueDate: customer.tispDueDate || null,
+        },
       });
     } finally {
       syncCooldown.recordSync(id);

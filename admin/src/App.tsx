@@ -92,8 +92,8 @@ function LazyRoute({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <ChakraProvider value={system}>
-      <AuthProvider>
-        <BrowserRouter basename="/admin">
+      <BrowserRouter basename="/admin">
+        <AuthProvider>
           <ScrollToTop />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -302,10 +302,10 @@ export default function App() {
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </BrowserRouter>
+          </Routes>
           <AppToaster />
         </AuthProvider>
+      </BrowserRouter>
     </ChakraProvider>
   );
 }

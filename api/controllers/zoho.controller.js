@@ -228,7 +228,13 @@ zoho.interceptors.response.use(
   },
 );
 
-/** ========= Helpers ========= **/
+const {
+  looksLikeCustomerNumber,
+  normalizeCustomerRef,
+  zohoContactMatchesDashboardCustomer,
+  filterZohoInvoicesForContact,
+  filterZohoPaymentsForContact,
+} = require("../utils/zohoCustomerScope");
 const withTimeout = (promise, ms, label = "op") =>
   Promise.race([
     promise,
@@ -308,6 +314,7 @@ const getInvoices_JS = async (params = {}) => {
   try {
     const page = Number(params.page || 1);
     const per_page = Math.min(Number(params.per_page || 50), 200);
+    const customer_id = params.customer_id;
     const zohoParams = { ...params, page, per_page };
 
     const data = await withTimeout(
@@ -316,7 +323,9 @@ const getInvoices_JS = async (params = {}) => {
       "get-invoices",
     );
 
-    return data.invoices || [];
+    const invoices = data.invoices || [];
+    if (!customer_id) return invoices;
+    return filterZohoInvoicesForContact(invoices, customer_id);
   } catch (error) {
     console.error(
       "getInvoices_JS error:",
@@ -529,7 +538,8 @@ const getCustomerPayments_JS = async (params = {}) => {
       "get-customer-payments",
     );
 
-    return data.customerpayments || data.payments || [];
+    const payments = data.customerpayments || data.payments || [];
+    return filterZohoPaymentsForContact(payments, customer_id);
   } catch (error) {
     console.error(
       "getCustomerPayments_JS error:",
@@ -570,6 +580,25 @@ const getZohoCustomers_JS = async (params = {}) => {
       error.response?.data || error.message,
     );
     return [];
+  }
+};
+
+// Full contact record (includes contact_persons for updates).
+const getContactFull_JS = async (contactId) => {
+  if (!contactId) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(`contacts/${contactId}`, "GET", null, { per_page: 1 }),
+      8000,
+      "get-contact-full",
+    );
+    return data.contact || null;
+  } catch (error) {
+    console.error(
+      "getContactFull_JS error:",
+      error.response?.data || error.message,
+    );
+    return null;
   }
 };
 
@@ -720,6 +749,22 @@ const getCustomerByCompanyName_JS = async (rawName) => {
     if (list.length === 0)
       return "Customer not found with provided company name.";
 
+    // Customer numbers (ET-RG02, CLB-A10) must match company_name exactly — no fuzzy hits.
+    if (looksLikeCustomerNumber(companyName)) {
+      const target = normalizeCustomerRef(companyName);
+      const exact = list.filter((c) =>
+        [c.company_name, c.contact_name, c.customer_name]
+          .filter(Boolean)
+          .some((field) => normalizeCustomerRef(field) === target)
+      );
+      if (!exact.length) {
+        return "Customer not found with provided company name.";
+      }
+      const contact = pickLean(exact[0]);
+      cache.set(key, contact);
+      return contact;
+    }
+
     // Score using full contact object — reject zero-score fuzzy hits.
     // Prefer active over inactive when scores are otherwise equal.
     const ranked = rankContactMatches(companyName, list);
@@ -743,11 +788,24 @@ const getCustomerByCompanyName_JS = async (rawName) => {
 /**
  * Resolve a Zoho contact from ordered lookup keys.
  * Email keys use the email filter; others use company/name search_text.
+ * When customer is provided, reject contacts that do not match that customer.
  */
-const findContactByLookupKeys_JS = async (lookupKeys = []) => {
-  for (const raw of lookupKeys) {
+const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
+  const customer = options.customer || null;
+  const customerNumber = String(
+    customer?.customerNumber || customer?.customer_number || ""
+  ).trim();
+  const hasCustomerNumber = Boolean(customerNumber);
+
+  for (let i = 0; i < lookupKeys.length; i += 1) {
+    const raw = lookupKeys[i];
     const key = String(raw || "").trim();
     if (!key) continue;
+
+    // Do not fall back to email/name when a customer number exists but did not match.
+    if (hasCustomerNumber && i > 0 && looksLikeCustomerNumber(customerNumber)) {
+      break;
+    }
 
     const result = key.includes("@")
       ? await getSpecificCustomer_JS(key)
@@ -759,6 +817,9 @@ const findContactByLookupKeys_JS = async (lookupKeys = []) => {
       !Array.isArray(result) &&
       result.contact_id
     ) {
+      if (customer && !zohoContactMatchesDashboardCustomer(result, customer)) {
+        continue;
+      }
       return result;
     }
   }
@@ -1390,6 +1451,7 @@ module.exports = {
   getCustomerPayments_JS,
   getZohoCustomers_JS,
   getSpecificCustomer_JS,
+  getContactFull_JS,
   getCustomerByCompanyName_JS,
   findContactByLookupKeys_JS,
   getItems_JS,

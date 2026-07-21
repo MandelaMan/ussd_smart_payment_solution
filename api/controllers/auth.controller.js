@@ -1,4 +1,5 @@
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 const { query } = require("../config/db");
 const {
   signToken,
@@ -36,6 +37,7 @@ async function login(req, res, next) {
 
     const token = signToken(user);
     setAuthCookie(res, token);
+    const decoded = jwt.decode(token);
 
     return res.json({
       user: {
@@ -44,6 +46,7 @@ async function login(req, res, next) {
         email: user.email,
         role: user.role === "viewer" ? "support" : user.role,
       },
+      expiresAt: decoded?.exp ? decoded.exp * 1000 : null,
     });
   } catch (err) {
     return next(err);
@@ -63,6 +66,7 @@ async function me(req, res) {
       email: req.user.email,
       role: req.user.role === "viewer" ? "support" : req.user.role,
     },
+    expiresAt: req.tokenExp ? req.tokenExp * 1000 : null,
   });
 }
 

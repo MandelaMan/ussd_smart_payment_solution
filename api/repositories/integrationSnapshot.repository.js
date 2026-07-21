@@ -123,12 +123,31 @@ function mapStoredPayment(row) {
 }
 
 function mapStoredRecurring(row) {
+  let status = row.status || null;
+  if ((!status || status === "unknown") && row.raw_json) {
+    try {
+      const raw =
+        typeof row.raw_json === "string"
+          ? JSON.parse(row.raw_json)
+          : row.raw_json;
+      status = raw?.recurrence_status || raw?.status || status;
+    } catch {
+      /* ignore */
+    }
+  }
   return {
     id: String(row.recurring_invoice_id),
-    status: row.status || "unknown",
+    status: status || "unknown",
+    recurrence_status: status || "unknown",
     nextInvoiceDate: row.next_invoice_date || null,
     lastSentDate: row.last_sent_date || null,
   };
+}
+
+async function getStoredZohoContactId(customerId) {
+  if (!customerId) return null;
+  const row = await getZohoContact(customerId);
+  return row?.zoho_contact_id ? String(row.zoho_contact_id) : null;
 }
 
 async function getZohoContact(customerId) {
@@ -169,7 +188,12 @@ async function upsertZohoContact(customerId, contact) {
   );
 }
 
-async function listInvoicesForCustomer(customerId) {
+async function listInvoicesForCustomer(customerId, options = {}) {
+  const contactRow = options.contactRow || (await getZohoContact(customerId));
+  const contactId = contactRow?.zoho_contact_id
+    ? String(contactRow.zoho_contact_id)
+    : null;
+
   const rows = await query(
     `SELECT * FROM zoho_customer_invoices
      WHERE customer_id = ?
@@ -177,7 +201,24 @@ async function listInvoicesForCustomer(customerId) {
      LIMIT 100`,
     [customerId]
   );
-  return rows.map(mapStoredInvoice);
+
+  const scoped = contactId
+    ? rows.filter(
+        (row) =>
+          !row.zoho_contact_id || String(row.zoho_contact_id) === contactId
+      )
+    : rows;
+
+  return scoped.map(mapStoredInvoice);
+}
+
+async function replaceZohoInvoices(customerId, zohoContactId, invoices = []) {
+  await query(`DELETE FROM zoho_customer_invoices WHERE customer_id = ?`, [
+    customerId,
+  ]);
+  for (const inv of invoices) {
+    await customerRepo.upsertZohoInvoice(customerId, inv, zohoContactId);
+  }
 }
 
 async function replaceZohoPayments(customerId, payments = []) {
@@ -206,6 +247,11 @@ async function replaceZohoPayments(customerId, payments = []) {
 }
 
 async function listZohoPayments(customerId) {
+  const contactRow = await getZohoContact(customerId);
+  const contactId = contactRow?.zoho_contact_id
+    ? String(contactRow.zoho_contact_id)
+    : null;
+
   const rows = await query(
     `SELECT * FROM zoho_customer_payments
      WHERE customer_id = ?
@@ -213,7 +259,16 @@ async function listZohoPayments(customerId) {
      LIMIT 100`,
     [customerId]
   );
-  return rows.map(mapStoredPayment);
+
+  if (!contactId) return rows.map(mapStoredPayment);
+
+  const scoped = rows.filter((row) => {
+    const raw = parseJson(row.raw_json, null);
+    const paymentContactId = raw?.customer_id ?? raw?.contact_id ?? null;
+    return !paymentContactId || String(paymentContactId) === contactId;
+  });
+
+  return scoped.map(mapStoredPayment);
 }
 
 async function replaceRecurringInvoices(customerId, recurring = []) {
@@ -347,16 +402,45 @@ async function saveZohoBillingSnapshot(customerId, {
   contact,
   invoices = [],
   payments = [],
-  recurring = [],
+  recurring,
 }) {
+  const contactId = contact?.contact_id ? String(contact.contact_id) : null;
+  const scopedInvoices = contactId
+    ? require("../utils/zohoCustomerScope").filterZohoInvoicesForContact(
+        invoices,
+        contactId
+      )
+    : invoices;
+  const scopedPayments = contactId
+    ? require("../utils/zohoCustomerScope").filterZohoPaymentsForContact(
+        payments,
+        contactId
+      )
+    : payments;
+
   if (contact?.contact_id) {
+    const existing = await getZohoContact(customerId);
+    if (
+      existing?.zoho_contact_id &&
+      String(existing.zoho_contact_id) !== String(contact.contact_id)
+    ) {
+      await query(`DELETE FROM zoho_customer_invoices WHERE customer_id = ?`, [
+        customerId,
+      ]);
+      await query(`DELETE FROM zoho_customer_payments WHERE customer_id = ?`, [
+        customerId,
+      ]);
+      await query(`DELETE FROM zoho_recurring_invoices WHERE customer_id = ?`, [
+        customerId,
+      ]);
+    }
     await upsertZohoContact(customerId, contact);
   }
-  for (const inv of invoices) {
-    await customerRepo.upsertZohoInvoice(customerId, inv, contact?.contact_id);
+  await replaceZohoInvoices(customerId, contactId, scopedInvoices);
+  await replaceZohoPayments(customerId, scopedPayments);
+  if (recurring !== undefined) {
+    await replaceRecurringInvoices(customerId, recurring);
   }
-  await replaceZohoPayments(customerId, payments);
-  await replaceRecurringInvoices(customerId, recurring);
 }
 
 /**
@@ -447,8 +531,10 @@ module.exports = {
   DEFAULT_MAX_AGE_HOURS,
   isFresh,
   getZohoContact,
+  getStoredZohoContactId,
   upsertZohoContact,
   listInvoicesForCustomer,
+  replaceZohoInvoices,
   replaceZohoPayments,
   listZohoPayments,
   replaceRecurringInvoices,

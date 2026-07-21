@@ -14,7 +14,7 @@ async function findContact(customer, options = {}) {
   const { correlationId } = options;
   const lookupKeys = getZohoContactLookupKeys(customer);
   try {
-    return await findContactByLookupKeys_JS(lookupKeys);
+    return await findContactByLookupKeys_JS(lookupKeys, { customer });
   } catch (err) {
     syncLog.warn("zoho_contact_lookup_failed", {
       integration: "invoices",

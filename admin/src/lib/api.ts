@@ -13,7 +13,7 @@ export function resetAuthSessionExpiredFlag() {
   authSessionExpiredNotified = false;
 }
 
-function notifyAuthSessionExpired(path: string) {
+export function notifyAuthSessionExpired(path: string) {
   if (authSessionExpiredNotified) return;
   if (path.startsWith("/auth/login")) return;
   authSessionExpiredNotified = true;
@@ -36,6 +36,11 @@ export type User = {
   name: string;
   email: string;
   role: "admin" | "support" | "cfo" | "viewer" | "partner" | "ceo";
+};
+
+export type AuthSession = {
+  user: User;
+  expiresAt: number | null;
 };
 
 export type AdminUser = User & {
@@ -1247,7 +1252,7 @@ async function downloadReportFile(
 
 export const api = {
   login: (email: string, password: string) =>
-    request<{ user: User }>("/auth/login", {
+    request<AuthSession>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
@@ -1257,7 +1262,7 @@ export const api = {
   me: () => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 8000);
-    return request<{ user: User }>("/auth/me", { signal: controller.signal }).finally(() =>
+    return request<AuthSession>("/auth/me", { signal: controller.signal }).finally(() =>
       window.clearTimeout(timer)
     );
   },
@@ -1769,7 +1774,18 @@ export const api = {
         error?: string;
         created?: boolean;
         updated?: boolean;
+        contactUpdated?: boolean;
         skipped?: boolean;
+        contactId?: string;
+        invoice?: {
+          created?: boolean;
+          reused?: boolean;
+          emailed?: boolean;
+        };
+        recurring?: {
+          created?: boolean;
+          updated?: boolean;
+        };
       };
     }>(`/admin/customers/${id}`, {
       method: "PATCH",

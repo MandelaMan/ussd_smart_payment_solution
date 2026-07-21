@@ -36,7 +36,7 @@ async function resolveCustomerEmail(customer, record) {
 
   try {
     const keys = getZohoContactLookupKeys(customer || { customerNumber: record.customerNumber });
-    const contact = await findContactByLookupKeys_JS(keys);
+    const contact = await findContactByLookupKeys_JS(keys, { customer });
     if (contact?.email && String(contact.email).includes("@")) {
       return { email: String(contact.email).trim(), source: "zoho" };
     }

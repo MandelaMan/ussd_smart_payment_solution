@@ -305,7 +305,7 @@ async function onboardNewCustomerBilling(customerId) {
     (hasTrial ? computeTrialEndDate() : null);
 
   try {
-    const zohoContact = await ensureZohoContactForCustomer({
+    let zohoContact = await ensureZohoContactForCustomer({
       ...customer,
       customerType: ctx.customer_type,
       agencyId: ctx.agency_id,
@@ -313,6 +313,12 @@ async function onboardNewCustomerBilling(customerId) {
     if (!zohoContact?.contact_id) {
       throw new Error("Zoho contact could not be linked");
     }
+
+    const { updateZohoContactDetails } = require("./customerZohoSync");
+    zohoContact = await updateZohoContactDetails(
+      { ...customer, customerType: ctx.customer_type, agencyId: ctx.agency_id },
+      zohoContact
+    );
 
     let invoice;
     let recurring = null;

@@ -868,12 +868,12 @@ export function CustomerExpandPanel({
             <StatusNarrationBlock
               title="TISP"
               items={[tispNarration]}
-              loading={integrationsLoading && !integrations}
+              loading={loading}
             />
             <StatusNarrationBlock
               title="Zoho"
               items={zohoNarrations}
-              loading={(integrationsLoading || zohoLoading) && !integrations && !zohoStatus}
+              loading={integrationsLoading}
             />
           </Stack>
         </Box>

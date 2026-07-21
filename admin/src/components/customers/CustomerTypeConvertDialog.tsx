@@ -258,8 +258,10 @@ export function CustomerTypeConvertDialog({
                   New agency: <strong>{formatTitleCase(agencyName)}</strong>
                 </>
               ) : null}
-              {!toB2B ? " The agency link will be removed." : null} The customer number will be
-              updated to match the {targetType} building code.
+              {!toB2B ? " The agency link will be removed." : null}{" "}
+              The customer number will change on TISP from{" "}
+              <strong>{customer.customerNumber}</strong> to the building&apos;s{" "}
+              {targetType} code (same apartment).
             </Box>
           )}
 

@@ -12,7 +12,7 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import {
   FiActivity,
   FiEye,
@@ -544,6 +544,9 @@ function DesktopCustomerCard() {
 
 export function LoginPage() {
   const { user, loading, login } = useAuth();
+  const location = useLocation();
+  const sessionExpired =
+    (location.state as { reason?: string } | null)?.reason === "session_expired";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -568,6 +571,11 @@ export function LoginPage() {
   const loginForm = (
     <Box as="form" onSubmit={handleSubmit} w="full">
       <Stack gap={{ base: 5, md: 4 }}>
+        {sessionExpired ? (
+          <Box bg="orange.50" color="orange.800" px={3} py={2.5} borderRadius="lg" fontSize="sm">
+            Your session has expired. Please sign in again.
+          </Box>
+        ) : null}
         {error ? (
           <Box bg="red.50" color="red.700" px={3} py={2.5} borderRadius="lg" fontSize="sm">
             {error}

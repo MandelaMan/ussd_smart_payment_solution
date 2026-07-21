@@ -520,6 +520,9 @@ export function CustomerForm({
             label: "Zoho Books",
             value: [
               zohoInactive ? "Reactivate inactive contact" : "Update contact",
+              zohoInvoiceCount === 0 && createInitialInvoice
+                ? "initial invoice"
+                : null,
               hasActiveRecurring
                 ? updateZohoRecurring
                   ? "refresh recurring"
@@ -529,7 +532,9 @@ export function CustomerForm({
                   : "recurring missing",
               zohoInvoicesInSync ? "invoices synced" : "invoices missing",
               zohoPaymentsInSync ? "payments synced" : "payments out of sync",
-            ].join(" · "),
+            ]
+              .filter(Boolean)
+              .join(" · "),
           });
         }
       }
@@ -573,6 +578,7 @@ export function CustomerForm({
     updateZohoRecurring,
     hasActiveRecurring,
     zohoInvoicesInSync,
+    zohoInvoiceCount,
     zohoPaymentsInSync,
     zohoInactive,
   ]);
@@ -670,17 +676,16 @@ export function CustomerForm({
                 productId: Number(productId),
               }
             : {}),
-          ...(isActive
+          ...(isActive && customerType === "C2B"
             ? {
-                createInitialInvoice:
-                  !onZoho && customerType === "C2B" ? createInitialInvoice : undefined,
-                createRecurringInvoice:
-                  !onZoho && customerType === "C2B" ? createRecurringInvoice : undefined,
-                updateZohoRecurring:
-                  onZoho && customerType === "C2B" ? updateZohoRecurring : undefined,
+                createInitialInvoice: createInitialInvoice || undefined,
+                createRecurringInvoice: createRecurringInvoice || undefined,
+                updateZohoRecurring: updateZohoRecurring || undefined,
                 tispDueDate: tispDueDate.trim() || undefined,
               }
-            : {}),
+            : isActive
+              ? { tispDueDate: tispDueDate.trim() || undefined }
+              : {}),
         });
 
         if (res.tisp && !res.tisp.ok) {
@@ -701,11 +706,23 @@ export function CustomerForm({
           const dueHint =
             res.customer?.tispDueDate ||
             (typeof res.tisp?.dueDate === "string" ? res.tisp.dueDate : null);
+          const zohoParts: string[] = [];
+          if (res.zoho?.created) zohoParts.push("Zoho contact created");
+          else if (res.zoho?.updated || res.zoho?.contactUpdated) {
+            zohoParts.push("Zoho contact updated");
+          }
+          if (res.zoho?.invoice?.created) zohoParts.push("invoice sent");
+          else if (res.zoho?.invoice?.reused) zohoParts.push("invoice emailed");
+          if (res.zoho?.recurring?.created) zohoParts.push("recurring created");
+          else if (res.zoho?.recurring?.updated) zohoParts.push("recurring updated");
           toaster.create({
             title: "Customer updated",
-            description: dueHint
-              ? `Saved and synced. TISP due date: ${String(dueHint).slice(0, 10)}.`
-              : "Saved and synced to TISP and Zoho where applicable.",
+            description:
+              zohoParts.length > 0
+                ? `${zohoParts.join(" · ")}${dueHint ? ` · TISP due ${String(dueHint).slice(0, 10)}` : ""}`
+                : dueHint
+                  ? `Saved and synced. TISP due date: ${String(dueHint).slice(0, 10)}.`
+                  : "Saved and synced to TISP and Zoho where applicable.",
             type: "success",
           });
         }
@@ -1262,6 +1279,27 @@ export function CustomerForm({
                   </SelectField>
                 </Field.Root>
               </>
+            ) : null}
+
+            {customerType === "C2B" && onZoho && zohoInvoiceCount === 0 ? (
+              <Field.Root gridColumn={{ md: "span 2" }}>
+                <Field.Label>Initial invoice</Field.Label>
+                <SelectField
+                  disabled={fieldsDisabled || integrationsLoading}
+                  fieldProps={{
+                    value: createInitialInvoice ? "yes" : "no",
+                    onChange: (e) =>
+                      setCreateInitialInvoice(e.target.value === "yes"),
+                  }}
+                >
+                  <option value="no">No — contact only</option>
+                  <option value="yes">Yes — create signup invoice</option>
+                </SelectField>
+                <Field.HelperText>
+                  Contact is linked but no invoices were found. Enable to create the
+                  first invoice on save.
+                </Field.HelperText>
+              </Field.Root>
             ) : null}
 
             {customerType === "C2B" && onZoho && !hasActiveRecurring ? (

@@ -423,7 +423,9 @@ async function ensureSnapshotLoaded({ fullZoho = false } = {}) {
 }
 
 async function findZohoContact(customer) {
-  return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer));
+  return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer), {
+    customer,
+  });
 }
 
 function mapInvoice(inv) {
