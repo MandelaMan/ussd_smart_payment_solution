@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const { spawn } = require("child_process");
 const { getBaseUrl, getApiUrl } = require("../services/xtream/xtreamClient");
+const { requireOps } = require("../middleware/rbac");
 
 const router = express.Router();
 
@@ -28,7 +29,7 @@ function runJobScript(extraArgs = []) {
   });
 }
 
-router.get("/status", (_req, res) => {
+router.get("/status", requireOps, (_req, res) => {
   res.json({
     ok: true,
     baseUrl: getBaseUrl(),
@@ -39,7 +40,7 @@ router.get("/status", (_req, res) => {
   });
 });
 
-router.post("/sync", async (_req, res) => {
+router.post("/sync", requireOps, async (_req, res) => {
   try {
     const result = await runJobScript(["--sync"]);
     res.status(result.code === 0 ? 200 : 500).json({
@@ -53,7 +54,7 @@ router.post("/sync", async (_req, res) => {
   }
 });
 
-router.post("/test-endpoints", async (_req, res) => {
+router.post("/test-endpoints", requireOps, async (_req, res) => {
   try {
     const result = await runJobScript(["--test-endpoints"]);
     res.status(result.code === 0 ? 200 : 500).json({

@@ -24,6 +24,7 @@
     "xtream:daily": "node jobs/xtreamDailyScheduler.js",
     "xtream:daily:once": "node jobs/xtreamDailyScheduler.js --once",
     "test:smoke": "node scripts/smoke-test.js",
+    "test:auth-security": "node scripts/auth-security-test.js",
     "test:xtream-spec": "node scripts/xtream-spec-test.js",
     "paybill:simulate": "node scripts/paybill-simulate.js",
     "worker": "node workers/index.js",
@@ -54,7 +55,8 @@
     "mysql2": "^3.11.3",
     "next-themes": "^0.4.6",
     "pdfkit": "^0.19.1",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "whatsapp-cloud-bot": "^1.7.2"
   },
   "devDependencies": {
     "eslint": "^9.11.1",

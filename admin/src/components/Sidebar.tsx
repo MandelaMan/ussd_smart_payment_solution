@@ -22,6 +22,7 @@ import {
   FiSettings,
   FiList,
   FiRefreshCw,
+  FiMessageSquare,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/auth";
@@ -56,6 +57,12 @@ export function Sidebar({ open, onClose }: Props) {
       to: "/customers",
       label: "Customers",
       icon: FiUser,
+      visible: true,
+    },
+    {
+      to: "/leads",
+      label: "Leads",
+      icon: FiMessageSquare,
       visible: true,
     },
     {
@@ -136,6 +143,7 @@ export function Sidebar({ open, onClose }: Props) {
 
       <Box
         as="aside"
+        data-sidebar=""
         w={{ base: "min(280px, 88vw)", lg: "220px" }}
         bg="sidebar.bg"
         borderRight="1px solid"
@@ -205,14 +213,13 @@ export function Sidebar({ open, onClose }: Props) {
                 >
                   {({ isActive }) => (
                     <Flex
+                      data-nav-link=""
                       align="center"
                       gap={2}
                       px={2}
                       py={3}
                       minH="44px"
                       borderRadius="md"
-                      fontSize="sm"
-                      fontWeight="medium"
                       color={isActive ? "white" : "sidebar.fg"}
                       bg={isActive ? "brand.600" : "transparent"}
                       borderLeft="3px solid"
@@ -225,7 +232,9 @@ export function Sidebar({ open, onClose }: Props) {
                       transition="background 0.15s, color 0.15s, transform 0.15s"
                     >
                       <link.icon size={16} />
-                      {link.label}
+                      <Text as="span" fontSize="sm" fontFamily="body" fontWeight="medium">
+                        {link.label}
+                      </Text>
                     </Flex>
                   )}
                 </NavLink>,

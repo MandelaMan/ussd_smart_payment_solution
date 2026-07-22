@@ -18,6 +18,7 @@ import {
 import { api, type ReportAnalytics, type ReportDefinition } from "../lib/api";
 import { ReportsPageSkeleton } from "../components/PageSkeletons";
 import { BusinessInsightsPanel } from "../components/reports/BusinessInsightsPanel";
+import { UpcomingInvoicesForecastStrip } from "../components/billing/UpcomingInvoicesForecastStrip";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { DateField } from "../components/ui/DateField";
@@ -202,6 +203,18 @@ export function ReportsPage() {
 
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
       {analyticsError ? <PageErrorBanner>{analyticsError}</PageErrorBanner> : null}
+
+      {showAnalytics && analytics?.upcomingInvoices && !analyticsLoading ? (
+        <UpcomingInvoicesForecastStrip
+          forecast={{
+            windowDays: 7,
+            windowStart: analytics.upcomingInvoices.windowStart,
+            windowEnd: analytics.upcomingInvoices.windowEnd,
+            invoiceCount: analytics.upcomingInvoices.invoiceCount,
+            anticipatedAmount: analytics.upcomingInvoices.anticipatedAmount,
+          }}
+        />
+      ) : null}
 
       {showAnalytics ? (
         <Box>

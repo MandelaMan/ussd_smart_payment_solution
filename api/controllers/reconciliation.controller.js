@@ -22,6 +22,21 @@ async function getSummary(req, res, next) {
       summary.communicationsEligible = 0;
       summary.communicationsTotal = 0;
     }
+
+    try {
+      const { getUpcomingInvoiceForecast } = require("../services/billingForecastStore");
+      summary.upcomingInvoices = await getUpcomingInvoiceForecast({ days: 7 });
+    } catch {
+      summary.upcomingInvoices = {
+        windowDays: 7,
+        windowStart: new Date().toISOString().slice(0, 10),
+        windowEnd: new Date().toISOString().slice(0, 10),
+        invoiceCount: 0,
+        anticipatedAmount: 0,
+        items: [],
+      };
+    }
+
     summary.mailConfig = billingCommunicationStore.getZohoMailConfig();
     res.json(summary);
   } catch (e) {

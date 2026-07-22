@@ -8,7 +8,7 @@ const cors = require("cors");
 const morgan = require("morgan");
 const cookieParser = require("cookie-parser");
 
-const { loadEnv } = require("./api/config/env");
+const { loadEnv, validateProductionSecrets } = require("./api/config/env");
 const { getPool } = require("./api/config/db");
 const { connectRedis, pingRedis } = require("./api/config/redis");
 const notFound = require("./api/middleware/notFound");
@@ -18,13 +18,22 @@ const { initSocket } = require("./api/socket");
 const { syncLog } = require("./api/lib/structuredLogger");
 
 const env = loadEnv();
+validateProductionSecrets(env);
 const app = express();
+
+if (env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+const { originGuard } = require("./api/middleware/originGuard");
 
 const routes = require("./api/routes");
 
 app.use(
   helmet({
+    // CSP disabled — admin SPA is built separately; configure at reverse proxy if needed.
     contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
   })
 );
 
@@ -36,22 +45,54 @@ const allowedOrigins = [
 ].filter(Boolean);
 
 app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
+  cors((req, callback) => {
+    const path = req.path || "";
+    const isPublicLead =
+      path.startsWith("/api/public/leads") ||
+      path === "/api/public/whatsapp/status";
+
+    if (isPublicLead) {
+      return callback(null, {
+        origin: true,
+        credentials: false,
+        methods: ["GET", "POST", "OPTIONS"],
+        allowedHeaders: [
+          "Content-Type",
+          "X-Lead-Source",
+          "X-Requested-With",
+        ],
+      });
+    }
+
+    const origin = req.header("Origin");
+    if (!origin) {
+      if (env.NODE_ENV === "production") {
+        return callback(new Error("Origin header required"));
       }
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
+      return callback(null, { origin: true, credentials: true });
+    }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, { origin: true, credentials: true });
+    }
+    return callback(new Error("Not allowed by CORS"));
   })
 );
 
 app.use(
-  express.json({ limit: "1mb", type: ["application/json", "text/plain"] })
+  express.json({
+    limit: "1mb",
+    type: ["application/json", "text/plain"],
+    verify: (req, _res, buf) => {
+      const path = req.originalUrl?.split("?")[0] || "";
+      if (path === "/api/public/whatsapp/webhook") {
+        req.rawBody = buf;
+      }
+    },
+  })
 );
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(originGuard);
 
 if (env.NODE_ENV !== "test") app.use(morgan("dev"));
 
@@ -77,6 +118,23 @@ async function healthCheckHandler(_req, res) {
 app.get("/api/health", healthCheckHandler);
 
 app.use("/api", routes);
+
+const publicLeadsDir = path.join(__dirname, "public", "leads");
+app.use(
+  "/leads",
+  express.static(publicLeadsDir, {
+    index: "index.html",
+    setHeaders(res, filePath) {
+      if (filePath.endsWith("embed.js")) {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=300");
+      }
+    },
+  })
+);
+app.get("/leads/embed", (_req, res) => {
+  res.sendFile(path.join(publicLeadsDir, "embed.html"));
+});
 
 const adminDist = path.join(__dirname, "admin", "dist");
 app.use("/admin", express.static(adminDist));

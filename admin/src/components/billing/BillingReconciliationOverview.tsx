@@ -9,6 +9,8 @@ import {
 } from "../../lib/billingReconciliationNav";
 import { ReconciliationFinancialStrip } from "../reconciliation/ReconciliationFinancialStrip";
 import { MobilePageChrome } from "../ui/MobilePageChrome";
+import { BillingIssueAlerts } from "./BillingIssueAlerts";
+import { UpcomingInvoicesForecastStrip } from "./UpcomingInvoicesForecastStrip";
 import { BillingModuleCard } from "./BillingModuleCard";
 import { BillingReconciliationGuides } from "./BillingReconciliationGuides";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
@@ -74,8 +76,14 @@ export function BillingReconciliationOverview({ summary, summaryLoading }: Props
             <ReconciliationFinancialStrip summary={summary} />
           </Box>
           <Box display={{ base: "block", lg: "none" }}>
-            <MobileKeyStats summary={summary} />
+            <Stack gap={2}>
+              <MobileKeyStats summary={summary} />
+              {summary.upcomingInvoices ? (
+                <UpcomingInvoicesForecastStrip forecast={summary.upcomingInvoices} compact />
+              ) : null}
+            </Stack>
           </Box>
+          <BillingIssueAlerts summary={summary} />
         </>
       )}
 

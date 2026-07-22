@@ -297,22 +297,29 @@ export function ResponsiveListViews({
   /** Stretch list/table skeletons to the height of a loading DataTableCard. */
   fill?: boolean;
 }) {
-  const shellProps = fill
+  // When fill=true we need display:flex for height stretch, but must keep the
+  // mobile/desktop breakpoint — a plain "flex" would override and show both.
+  const mobileDisplay = fill
+    ? ({ base: "flex", lg: "none" } as const)
+    : MOBILE_LIST_DISPLAY;
+  const desktopDisplay = fill
+    ? ({ base: "none", lg: "flex" } as const)
+    : DESKTOP_TABLE_DISPLAY;
+  const fillProps = fill
     ? {
         flex: 1 as const,
         minH: 0,
         h: "full",
-        display: "flex" as const,
         flexDirection: "column" as const,
       }
     : {};
 
   return (
     <>
-      <Box display={MOBILE_LIST_DISPLAY} minW={0} maxW="100%" {...shellProps}>
+      <Box display={mobileDisplay} minW={0} maxW="100%" {...fillProps}>
         {mobile}
       </Box>
-      <Box display={DESKTOP_TABLE_DISPLAY} minW={0} {...shellProps}>
+      <Box display={desktopDisplay} minW={0} {...fillProps}>
         {desktop}
       </Box>
     </>

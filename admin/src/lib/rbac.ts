@@ -47,6 +47,22 @@ export function canAccessFinance(user: User | null): boolean {
   return role === "admin" || role === "cfo" || role === "ceo";
 }
 
+/** Activity feed — matches API requireFinance for /admin/activity. */
+export function canAccessActivity(user: User | null): boolean {
+  return canAccessFinance(user) || normalizeRole(user?.role) === "support";
+}
+
+export function canAccessCustomerRead(user: User | null): boolean {
+  const role = normalizeRole(user?.role);
+  return (
+    role === "admin" ||
+    role === "support" ||
+    role === "cfo" ||
+    role === "partner" ||
+    role === "ceo"
+  );
+}
+
 /** Sync / allocate / send billing actions — not CEO. */
 export function canOperateFinance(user: User | null): boolean {
   const role = normalizeRole(user?.role);

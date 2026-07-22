@@ -22,6 +22,8 @@ export type BillingModuleDef = {
 };
 
 export const BILLING_GAP_STATUSES = [
+  "connected_without_payment",
+  "paid_but_disconnected",
   "no_zoho_link",
   "recurring_invoice_stopped",
   "missing_invoice",
@@ -29,8 +31,10 @@ export const BILLING_GAP_STATUSES = [
 ] as const;
 
 export const BILLING_GAP_ISSUE_LABELS: Record<string, string> = {
+  connected_without_payment: "Free service (overdue/unpaid)",
+  paid_but_disconnected: "Paid up, disconnected",
   no_zoho_link: "Not in Zoho Books",
-  recurring_invoice_stopped: "Recurring invoice",
+  recurring_invoice_stopped: "Recurring invoice stopped",
   missing_invoice: "Missing invoice",
   disconnected_not_invoiced: "Disconnected, not invoiced",
   no_gaps: "No gaps",
@@ -56,9 +60,11 @@ export const BILLING_MODULES: BillingModuleDef[] = [
     path: "billing-gaps",
     label: "Billing Gaps",
     description:
-      "Dashboard customers not found or incomplete on Zoho Books — missing contact, recurring profile, period invoice, or TISP disconnected without billing",
+      "TISP vs Zoho mismatches — free service while overdue, paid but disconnected, missing Zoho setup, invoices, or recurring billing",
     statusFilters: [...BILLING_GAP_STATUSES],
     summaryKeys: [
+      "connectedWithoutPayment",
+      "paidButDisconnected",
       "noZohoLink",
       "recurringInvoicesStopped",
       "missingInvoices",

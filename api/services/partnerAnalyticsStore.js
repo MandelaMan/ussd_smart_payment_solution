@@ -1,4 +1,5 @@
 const { query } = require("../config/db");
+const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
 
 function monthLabel(year, month) {
   const d = new Date(year, month - 1, 1);
@@ -175,7 +176,7 @@ async function getPartnerDashboard({ months = 12 } = {}) {
     revenueByMonth,
     customerTrend,
     packageMix: packageMix.map((row) => ({
-      packageName: row.package_name,
+      packageName: formatProductNameForDisplay(row.package_name),
       mbps: Number(row.mbps || 0),
       subscribers: Number(row.subscribers || 0),
     })),

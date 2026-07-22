@@ -122,6 +122,53 @@ export type Agency = {
   activeCustomers?: number;
 };
 
+export type LeadStatus =
+  | "new"
+  | "contacted"
+  | "qualified"
+  | "converted"
+  | "closed";
+
+export type LeadSource = "whatsapp" | "web" | "embed";
+
+export type Lead = {
+  id: number;
+  source: LeadSource;
+  status: LeadStatus;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  interest: string | null;
+  buildingInterest: string | null;
+  message: string | null;
+  notes: string | null;
+  whatsappWaId: string | null;
+  conversationState: string | null;
+  metadata: Record<string, unknown> | null;
+  convertedCustomerId: number | null;
+  assignedTo: number | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount?: number;
+};
+
+export type LeadMessage = {
+  id: number;
+  leadId: number;
+  direction: "inbound" | "outbound";
+  channel: "whatsapp" | "web" | "embed" | "system";
+  body: string;
+  payload: Record<string, unknown> | null;
+  externalMessageId: string | null;
+  createdAt: string;
+};
+
+export type LeadStats = {
+  total: number;
+  byStatus: Record<LeadStatus, number>;
+  bySource: Record<LeadSource, number>;
+};
+
 export type AgencyBilling = {
   totalCustomers: number;
   activeCustomers: number;
@@ -219,6 +266,8 @@ export type Customer = {
   planSortOrder?: number | null;
   agencyId: number | null;
   agencyName: string | null;
+  agencyEmail?: string | null;
+  agencyPhone?: string | null;
   customerNumber: string;
   packagePrice: number;
   decoderFeeAmount: number | null;
@@ -578,6 +627,24 @@ export type ReconciliationSyncProgress = {
   partialReady: boolean;
 };
 
+export type UpcomingInvoicesForecast = {
+  windowDays: number;
+  windowStart: string;
+  windowEnd: string;
+  invoiceCount: number;
+  anticipatedAmount: number;
+  items?: Array<{
+    customerId: number;
+    customerNumber: string;
+    customerName: string;
+    buildingName: string | null;
+    expectedAmount: number;
+    paymentFrequency: string;
+    scheduledDate: string;
+    source: string;
+  }>;
+};
+
 export type ReconciliationSummary = {
   connectedWithoutPayment: number;
   paidButDisconnected: number;
@@ -600,6 +667,7 @@ export type ReconciliationSummary = {
   expectedRevenueThisMonth: number;
   revenueCollectedThisMonth: number;
   collectionRate: number;
+  upcomingInvoices?: UpcomingInvoicesForecast;
   issueTiles: ReconciliationIssueTile[];
   fromCache?: boolean;
   cacheUpdatedAt?: string | null;
@@ -1173,6 +1241,12 @@ export type ReportAnalytics = {
   failureReasons: Array<{ reason: string; count: number }>;
   integrationHealth: Array<{ source: string; total: number; success: number; failed: number }>;
   arpuByBuilding: Array<{ building: string; arpu: number; payers: number; revenue: number }>;
+  upcomingInvoices?: {
+    windowStart: string;
+    windowEnd: string;
+    invoiceCount: number;
+    anticipatedAmount: number;
+  };
 };
 
 function buildQueryString(params: Record<string, string | undefined> = {}) {
@@ -1467,6 +1541,47 @@ export const api = {
       data: Agency[];
       pagination: ListPagination;
     }>(`/admin/agencies${buildQueryString(params)}`),
+
+  listLeads: (params: Record<string, string | undefined> = {}) =>
+    request<{
+      leads: Lead[];
+      data: Lead[];
+      pagination: ListPagination;
+    }>(`/admin/leads${buildQueryString(params)}`),
+
+  getLeadStats: () => request<LeadStats>("/admin/leads/stats"),
+
+  getLead: (id: number) =>
+    request<{ lead: Lead; messages: LeadMessage[] }>(`/admin/leads/${id}`),
+
+  updateLead: (
+    id: number,
+    data: Partial<{
+      status: LeadStatus;
+      name: string;
+      phone: string;
+      email: string;
+      interest: string;
+      buildingInterest: string;
+      message: string;
+      notes: string;
+      assignedTo: number | null;
+      convertedCustomerId: number | null;
+    }>
+  ) =>
+    request<{ ok: boolean; lead: Lead }>(`/admin/leads/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  addLeadNote: (id: number, body: string) =>
+    request<{ ok: boolean; lead: Lead; messages: LeadMessage[] }>(
+      `/admin/leads/${id}/notes`,
+      {
+        method: "POST",
+        body: JSON.stringify({ body }),
+      }
+    ),
 
   downloadCustomerImportTemplate: () =>
     downloadExport(

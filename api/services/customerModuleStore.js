@@ -7,6 +7,7 @@ const {
   formatDateOnly,
 } = require("../utils/lastPaymentDate");
 const { computeTrialEndDate } = require("../utils/billingPeriod");
+const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
 
 /** Keep sync error columns short — TISP often returns full HTML error pages. */
 function sanitizeSyncError(message, maxLen = 240) {
@@ -192,6 +193,8 @@ function mapCustomerRow(row) {
     planSortOrder: row.plan_sort_order != null ? Number(row.plan_sort_order) : null,
     agencyId: row.agency_id,
     agencyName: row.agency_name,
+    agencyEmail: row.agency_email || null,
+    agencyPhone: row.agency_phone || null,
     customerNumber: row.customer_number,
     packagePrice: Number(row.package_price),
     decoderFeeAmount:
@@ -1221,6 +1224,75 @@ async function assertDstvSerialUnique(serial, excludeCustomerId = null) {
   );
 }
 
+async function validateAndNormalizeCustomerEmail(data, { existingCustomer = null } = {}) {
+  const customerType = String(
+    data.customerType || existingCustomer?.customerType || ""
+  )
+    .trim()
+    .toUpperCase();
+  const raw =
+    data.email != null && data.email !== ""
+      ? String(data.email).trim().toLowerCase()
+      : "";
+
+  if (raw) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+      throw new Error("Enter a valid email address");
+    }
+    return raw;
+  }
+
+  if (customerType === "B2B") {
+    const agencyId = data.agencyId ?? existingCustomer?.agencyId;
+    if (!agencyId) {
+      throw new Error("B2B customers must be linked to an agency");
+    }
+    const agency = await getAgencyById(Number(agencyId));
+    const agencyEmail = agency?.email
+      ? String(agency.email).trim().toLowerCase()
+      : "";
+    if (agencyEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(agencyEmail)) {
+      return "";
+    }
+    throw new Error(
+      "Email is required — enter a customer email or set the agency email address"
+    );
+  }
+
+  throw new Error("Email is required");
+}
+
+async function validateAndNormalizeCustomerPhone(data, { existingCustomer = null } = {}) {
+  const customerType = String(
+    data.customerType || existingCustomer?.customerType || ""
+  )
+    .trim()
+    .toUpperCase();
+  const raw =
+    data.phone != null && data.phone !== "" ? String(data.phone).trim() : "";
+
+  if (String(raw).replace(/\D/g, "").length >= 9) {
+    return raw;
+  }
+
+  if (customerType === "B2B") {
+    const agencyId = data.agencyId ?? existingCustomer?.agencyId;
+    if (!agencyId) {
+      throw new Error("B2B customers must be linked to an agency");
+    }
+    const agency = await getAgencyById(Number(agencyId));
+    const agencyPhone = agency?.phone ? String(agency.phone).trim() : "";
+    if (String(agencyPhone).replace(/\D/g, "").length >= 9) {
+      return "";
+    }
+    throw new Error(
+      "Phone is required — enter a customer phone or set the agency phone number"
+    );
+  }
+
+  throw new Error("Phone is required");
+}
+
 async function createCustomer(data) {
   const building = await getBuildingById(data.buildingId);
   if (!building) throw new Error("Building not found");
@@ -1250,13 +1322,8 @@ async function createCustomer(data) {
     throw new Error("First name and last name are required");
   }
 
-  const email = data.email ? String(data.email).trim().toLowerCase() : "";
-  if (!email) {
-    throw new Error("Email is required");
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new Error("Enter a valid email address");
-  }
+  const email = await validateAndNormalizeCustomerEmail(data);
+  const phone = await validateAndNormalizeCustomerPhone(data);
 
   const ipCheck = validateIpForBuilding(building, data.ipAddress);
   if (!ipCheck.ok) {
@@ -1322,7 +1389,7 @@ async function createCustomer(data) {
       names.first_name,
       names.middle_name,
       names.last_name,
-      String(data.phone).trim(),
+      String(phone),
       email,
       resolvedIp,
       data.isVatExempt ? 1 : 0,
@@ -1752,8 +1819,12 @@ async function updateCustomerDetails(id, data, options = {}) {
   const firstName = String(data.firstName || "").trim();
   const lastName = String(data.lastName || "").trim();
   const middleName = data.middleName ? String(data.middleName).trim() : null;
-  const phone = String(data.phone || "").trim();
-  const email = data.email ? String(data.email).trim().toLowerCase() : "";
+  const phone = await validateAndNormalizeCustomerPhone(data, {
+    existingCustomer: existing,
+  });
+  const email = await validateAndNormalizeCustomerEmail(data, {
+    existingCustomer: existing,
+  });
   const customerType = String(data.customerType || existing.customerType)
     .trim()
     .toUpperCase();
@@ -1762,15 +1833,6 @@ async function updateCustomerDetails(id, data, options = {}) {
 
   if (!firstName || !lastName) {
     throw new Error("First name and last name are required");
-  }
-  if (!phone) {
-    throw new Error("Phone is required");
-  }
-  if (!email) {
-    throw new Error("Email is required");
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new Error("Enter a valid email address");
   }
   if (!["C2B", "B2B"].includes(customerType)) {
     throw new Error("Customer type must be C2B or B2B");
@@ -2445,7 +2507,7 @@ async function getSubscriberStats(days = 29) {
       subscribers: Number(d.subscribers),
     })),
     topPackages: topPackages.map((d) => ({
-      package: d.package_name,
+      package: formatProductNameForDisplay(d.package_name),
       mbps: Number(d.mbps),
       subscribers: Number(d.subscribers),
     })),

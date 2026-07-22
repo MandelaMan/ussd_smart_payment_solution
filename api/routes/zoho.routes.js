@@ -9,17 +9,22 @@ const {
   getInvoiceTemplates,
   getCustomerByCompanyName,
 } = require("../controllers/zoho.controller");
+const {
+  requireAdmin,
+  requireFinance,
+  requireFinanceWrite,
+  requireCustomerFinancialRead,
+} = require("../middleware/rbac");
 
-// Works fine
 const router = express.Router();
 
-router.get("/", test);
-router.post("/", createInvoice);
-router.get("/invoice-templates", getInvoiceTemplates);
-router.get("/items/by-sku-prefixes", getItemsBySkuPrefixes);
-router.get("/items", getItems);
-router.get("/customers", getZohoCustomers);
-router.get("/customer/:companyName", getCustomerByCompanyName);
-router.get("/invoices", getInvoices);
+router.get("/", requireAdmin, test);
+router.post("/", requireFinanceWrite, createInvoice);
+router.get("/invoice-templates", requireFinance, getInvoiceTemplates);
+router.get("/items/by-sku-prefixes", requireFinance, getItemsBySkuPrefixes);
+router.get("/items", requireFinance, getItems);
+router.get("/customers", requireCustomerFinancialRead, getZohoCustomers);
+router.get("/customer/:companyName", requireCustomerFinancialRead, getCustomerByCompanyName);
+router.get("/invoices", requireFinance, getInvoices);
 
 module.exports = router;

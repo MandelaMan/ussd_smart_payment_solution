@@ -19,7 +19,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, type ActivityItem, type SupportStats } from "../lib/api";
-import { formatTitleCase } from "../lib/formatText";
+import { formatProductNameForDisplay, formatTitleCase } from "../lib/formatText";
 import { MetricCard } from "../components/MetricCard";
 import { PackageSubscriptionChart } from "../components/PackageSubscriptionChart";
 import {
@@ -184,7 +184,9 @@ export function SupportDashboardPage() {
 
   const subs = stats.subscribers;
   const packageChartData = (subs.topPackages ?? []).slice(0, 5).map((p) => ({
-    name: p.mbps ? `${p.package} (${p.mbps}M)` : p.package,
+    name: p.mbps
+      ? `${formatProductNameForDisplay(p.package)} (${p.mbps}M)`
+      : formatProductNameForDisplay(p.package),
     subscribers: p.subscribers,
   }));
 

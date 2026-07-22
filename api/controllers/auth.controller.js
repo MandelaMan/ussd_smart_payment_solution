@@ -5,7 +5,18 @@ const {
   signToken,
   setAuthCookie,
   clearAuthCookie,
+  verifyToken,
+  invalidateUserTokens,
+  COOKIE_NAME,
 } = require("../middleware/auth");
+const { validatePassword } = require("../utils/passwordPolicy");
+const { logAuthEvent } = require("../utils/authLogger");
+const {
+  MAX_FAILED_ATTEMPTS,
+  LOCKOUT_MINUTES,
+  isAccountLocked,
+  lockoutMessage,
+} = require("../utils/accountLockout");
 
 const VALID_ROLES = ["admin", "support", "cfo", "partner", "ceo"];
 
@@ -13,7 +24,33 @@ function isValidRole(role) {
   return VALID_ROLES.includes(role);
 }
 
+function normalizeEmail(email) {
+  return String(email).trim().toLowerCase();
+}
+
+async function recordFailedLogin(userId) {
+  await query(
+    `UPDATE admin_users
+     SET failed_login_count = failed_login_count + 1,
+         locked_until = IF(
+           failed_login_count + 1 >= ?,
+           DATE_ADD(NOW(), INTERVAL ? MINUTE),
+           locked_until
+         )
+     WHERE id = ?`,
+    [MAX_FAILED_ATTEMPTS, LOCKOUT_MINUTES, userId]
+  );
+}
+
+async function resetFailedLogins(userId) {
+  await query(
+    `UPDATE admin_users SET failed_login_count = 0, locked_until = NULL WHERE id = ?`,
+    [userId]
+  );
+}
+
 async function login(req, res, next) {
+  const emailInput = req.body?.email ? normalizeEmail(req.body.email) : null;
   try {
     const { email, password } = req.body || {};
     if (!email || !password) {
@@ -21,23 +58,67 @@ async function login(req, res, next) {
     }
 
     const rows = await query(
-      `SELECT id, name, email, password_hash, role, is_active
+      `SELECT id, name, email, password_hash, role, is_active, token_version,
+              failed_login_count, locked_until
        FROM admin_users WHERE email = ? LIMIT 1`,
-      [String(email).trim().toLowerCase()]
+      [emailInput]
     );
     const user = rows[0];
+
+    if (user && isAccountLocked(user)) {
+      await logAuthEvent({
+        email: emailInput,
+        userId: user.id,
+        outcome: "lockout",
+        req,
+        reason: "account_locked",
+      });
+      return res.status(429).json(lockoutMessage(user));
+    }
+
     if (!user || !user.is_active) {
+      await logAuthEvent({
+        email: emailInput,
+        outcome: "failure",
+        req,
+        reason: "invalid_credentials",
+      });
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    const valid = await bcrypt.compare(password, user.password_hash);
+    const valid = await bcrypt.compare(String(password), user.password_hash);
     if (!valid) {
+      await recordFailedLogin(user.id);
+      const updated = await query(
+        `SELECT locked_until FROM admin_users WHERE id = ? LIMIT 1`,
+        [user.id]
+      );
+      const locked = isAccountLocked(updated[0]);
+      await logAuthEvent({
+        email: emailInput,
+        userId: user.id,
+        outcome: locked ? "lockout" : "failure",
+        req,
+        reason: "invalid_credentials",
+      });
+      if (locked) {
+        return res.status(429).json(lockoutMessage(updated[0]));
+      }
       return res.status(401).json({ error: "Invalid email or password" });
     }
+
+    await resetFailedLogins(user.id);
 
     const token = signToken(user);
     setAuthCookie(res, token);
     const decoded = jwt.decode(token);
+
+    await logAuthEvent({
+      email: user.email,
+      userId: user.id,
+      outcome: "success",
+      req,
+    });
 
     return res.json({
       user: {
@@ -53,7 +134,26 @@ async function login(req, res, next) {
   }
 }
 
-async function logout(_req, res) {
+async function logout(req, res) {
+  try {
+    const token = req.cookies?.[COOKIE_NAME];
+    if (token) {
+      try {
+        const decoded = verifyToken(token);
+        await invalidateUserTokens(decoded.sub);
+        await logAuthEvent({
+          email: decoded.email,
+          userId: decoded.sub,
+          outcome: "logout",
+          req,
+        });
+      } catch {
+        /* token already invalid — still clear cookie */
+      }
+    }
+  } catch {
+    /* best-effort invalidation */
+  }
   clearAuthCookie(res);
   return res.json({ ok: true });
 }
@@ -94,17 +194,21 @@ async function createUser(req, res, next) {
       return res.status(400).json({ error: "Role must be admin, support, cfo, partner, or ceo" });
     }
 
-    const hash = await bcrypt.hash(password, 12);
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
+    const hash = await bcrypt.hash(String(password), 12);
     await query(
       `INSERT INTO admin_users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
-      [String(name).trim(), String(email).trim().toLowerCase(), hash, role]
+      [String(name).trim(), normalizeEmail(email), hash, role]
     );
     return res.status(201).json({ ok: true });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
-      return res.status(409).json({ error: "Email already exists" });
+      return res.status(409).json({ error: "Unable to create user with this email" });
     }
-    // ENUM missing `ceo` (migration 032 not applied) surfaces as truncation.
     if (
       err.code === "WARN_DATA_TRUNCATED" ||
       err.errno === 1265 ||
@@ -145,13 +249,17 @@ async function updateUser(req, res, next) {
 
     const updates = [];
     const params = [];
+    let shouldInvalidate = false;
+
     if (role) {
       updates.push("role = ?");
       params.push(role);
+      shouldInvalidate = true;
     }
     if (is_active !== undefined) {
       updates.push("is_active = ?");
       params.push(is_active ? 1 : 0);
+      if (!is_active) shouldInvalidate = true;
     }
     if (!updates.length) {
       return res.status(400).json({ error: "Nothing to update" });
@@ -162,6 +270,11 @@ async function updateUser(req, res, next) {
       `UPDATE admin_users SET ${updates.join(", ")} WHERE id = ?`,
       params
     );
+
+    if (shouldInvalidate) {
+      await invalidateUserTokens(id);
+    }
+
     return res.json({ ok: true });
   } catch (err) {
     return next(err);
@@ -172,10 +285,10 @@ async function resetUserPassword(req, res, next) {
   try {
     const id = Number(req.params.id);
     const { password } = req.body || {};
-    if (!password || String(password).length < 8) {
-      return res
-        .status(400)
-        .json({ error: "Password must be at least 8 characters" });
+
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const rows = await query(
@@ -187,10 +300,10 @@ async function resetUserPassword(req, res, next) {
     }
 
     const hash = await bcrypt.hash(String(password), 12);
-    await query(`UPDATE admin_users SET password_hash = ? WHERE id = ?`, [
-      hash,
-      id,
-    ]);
+    await query(
+      `UPDATE admin_users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?`,
+      [hash, id]
+    );
     return res.json({ ok: true });
   } catch (err) {
     return next(err);

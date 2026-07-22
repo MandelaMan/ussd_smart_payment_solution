@@ -1,6 +1,7 @@
 import { Box, Button, Dialog, Flex, Spinner, Text } from "@chakra-ui/react";
 import { FiMail } from "react-icons/fi";
 import type { BillingCommunicationPreview } from "../../lib/api";
+import { sanitizeHtml } from "../../lib/sanitizeHtml";
 import { AppDialog } from "../ui/AppDialog";
 
 type Props = {
@@ -20,6 +21,8 @@ export function BillingEmailPreviewDialog({
   onSend,
   sending,
 }: Props) {
+  const safeHtml = preview?.html ? sanitizeHtml(preview.html) : "";
+
   return (
     <AppDialog open={open} onOpenChange={onOpenChange} maxW="2xl">
       <Dialog.Header borderBottomWidth="1px" px={4} py={3} pr={12}>
@@ -47,7 +50,7 @@ export function BillingEmailPreviewDialog({
               maxH="360px"
               overflow="auto"
               fontSize="sm"
-              dangerouslySetInnerHTML={{ __html: preview.html }}
+              dangerouslySetInnerHTML={{ __html: safeHtml }}
             />
             {!preview.canSend && (
               <Text fontSize="xs" color="orange.700" mt={2}>

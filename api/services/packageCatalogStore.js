@@ -1,6 +1,6 @@
 const { query } = require("../config/db");
 
-const PRODUCT_NAME_SEPARATOR = " — ";
+const PRODUCT_NAME_SEPARATOR = " - ";
 
 function buildProductName(categoryName, planName) {
   return `${planName}${PRODUCT_NAME_SEPARATOR}${categoryName}`;

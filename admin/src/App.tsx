@@ -12,6 +12,8 @@ import {
   ReportsRoute,
   ConfigRoute,
   CustomerWriteRoute,
+  CustomerReadRoute,
+  ActivityRoute,
 } from "./components/ProtectedRoute";
 import { AppToaster } from "./components/ui/AppToaster";
 import { LoginPage } from "./pages/LoginPage";
@@ -28,6 +30,7 @@ function lazyPage<T extends Record<string, ComponentType>>(
 
 const RoleHomePage = lazyPage(() => import("./pages/RoleHomePage"), "RoleHomePage");
 const ActivityPage = lazyPage(() => import("./pages/ActivityPage"), "ActivityPage");
+const LeadsPage = lazyPage(() => import("./pages/LeadsPage"), "LeadsPage");
 const TransactionsPage = lazyPage(() => import("./pages/TransactionsPage"), "TransactionsPage");
 const SynchronizationPage = lazyPage(
   () => import("./pages/SynchronizationPage"),
@@ -107,14 +110,16 @@ export default function App() {
                     </LazyRoute>
                   }
                 />
-                <Route
-                  path="activity"
-                  element={
-                    <LazyRoute>
-                      <ActivityPage />
-                    </LazyRoute>
-                  }
-                />
+                <Route element={<ActivityRoute />}>
+                  <Route
+                    path="activity"
+                    element={
+                      <LazyRoute>
+                        <ActivityPage />
+                      </LazyRoute>
+                    }
+                  />
+                </Route>
                 <Route element={<FinanceRoute />}>
                   <Route
                     path="transactions"
@@ -239,14 +244,24 @@ export default function App() {
                   />
                   <Route path="users" element={<Navigate to="/settings" replace />} />
                 </Route>
-                <Route
-                  path="customers"
-                  element={
-                    <LazyRoute>
-                      <CustomersListPage />
-                    </LazyRoute>
-                  }
-                />
+                <Route element={<CustomerReadRoute />}>
+                  <Route
+                    path="customers"
+                    element={
+                      <LazyRoute>
+                        <CustomersListPage />
+                      </LazyRoute>
+                    }
+                  />
+                  <Route
+                    path="leads"
+                    element={
+                      <LazyRoute>
+                        <LeadsPage />
+                      </LazyRoute>
+                    }
+                  />
+                </Route>
                 <Route element={<CustomerWriteRoute />}>
                   <Route
                     path="customers/new"

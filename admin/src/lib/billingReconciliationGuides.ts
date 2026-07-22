@@ -67,15 +67,16 @@ export const BILLING_RECONCILIATION_GUIDES: BillingGuide[] = [
     id: "billing-gaps",
     title: "Billing gaps (Zoho & TISP)",
     whenToUse:
-      "Dashboard customers missing in Zoho, without a current invoice, recurring profile stopped, or disconnected on TISP without billing.",
+      "Service and billing are out of sync — free service while overdue, paid but disconnected, missing Zoho setup, or invoice gaps.",
     steps: [
+      "Free service (overdue/unpaid) — TISP is active but Zoho has overdue or open invoices. Disconnect TISP or collect/allocate payment.",
+      "Paid up, disconnected — Zoho shows no balance but TISP is suspended. Reconnect TISP after confirming invoices are paid.",
       "Browse shows up to 10 local records (API budget). Search by customer number or name to live-check Zoho invoices, payments, and TISP.",
-      "A clean search result shows “No gaps” — invoices, payments, and TISP connection look consistent.",
       "Not in Zoho Books — open the customer and use Retry billing onboarding to create/link the Zoho contact and signup invoice.",
       "Missing invoice — verify package price, then retry billing or check Zoho Books for draft/void invoices.",
       "Recurring invoice stopped — update payment frequency on the customer, then push billing sync from customer edit.",
-      "Disconnected, not invoiced — check TISP status on the customer; suspend may be correct if they never paid — issue invoice before reconnecting.",
-      "Expand a row for system checks across Dashboard, TISP, and Zoho.",
+      "Disconnected, not invoiced — service was suspended before a current-period invoice existed; issue invoice before reconnecting.",
+      "Expand a row for system checks across Dashboard, TISP, and Zoho with recommended actions.",
     ],
     whereToCheck: [
       "Customers → customer detail → Billing & Zoho sections.",

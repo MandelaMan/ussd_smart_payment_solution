@@ -243,27 +243,47 @@ function toPdf(report) {
 
     const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const colWidth = pageWidth / report.headers.length;
-    const rowHeight = 18;
+    const cellPadX = 4;
+    const cellPadY = 4;
+    const minRowHeight = 18;
+    const textWidth = colWidth - cellPadX * 2;
+
+    function measureWrappedHeight(text, fontName, fontSize) {
+      doc.font(fontName).fontSize(fontSize);
+      const measured = doc.heightOfString(String(text || ""), {
+        width: textWidth,
+        lineGap: 1,
+      });
+      return Math.max(minRowHeight, Math.ceil(measured + cellPadY * 2));
+    }
+
+    function drawWrappedCell(text, x, cellY, fontName, fontSize, color) {
+      doc.font(fontName).fontSize(fontSize).fillColor(color);
+      // No height/ellipsis cap — row height is pre-measured so full text stays visible.
+      doc.text(String(text || ""), x + cellPadX, cellY + cellPadY, {
+        width: textWidth,
+        lineGap: 1,
+        ellipsis: false,
+      });
+    }
 
     function drawHeaderRow() {
-      doc.font("Helvetica-Bold").fontSize(8).fillColor("#FFFFFF");
+      const headerHeight = Math.max(
+        minRowHeight,
+        ...report.headers.map((h) => measureWrappedHeight(h.label, "Helvetica-Bold", 8))
+      );
       report.headers.forEach((h, i) => {
         const x = startX + i * colWidth;
-        doc.rect(x, y, colWidth, rowHeight).fill("#1A6B8A");
-        doc.fillColor("#FFFFFF").text(h.label, x + 4, y + 5, {
-          width: colWidth - 8,
-          height: rowHeight,
-          ellipsis: true,
-          lineBreak: false,
-        });
+        doc.rect(x, y, colWidth, headerHeight).fill("#1A6B8A");
+        drawWrappedCell(h.label, x, y, "Helvetica-Bold", 8, "#FFFFFF");
       });
-      y += rowHeight;
+      y += headerHeight;
       doc.fillColor("#333333");
     }
 
-    function ensureSpace() {
+    function ensureSpace(neededHeight) {
       const bottom = doc.page.height - doc.page.margins.bottom;
-      if (y + rowHeight > bottom) {
+      if (y + neededHeight > bottom) {
         doc.addPage();
         y = doc.page.margins.top;
         drawHeaderRow();
@@ -271,28 +291,26 @@ function toPdf(report) {
     }
 
     drawHeaderRow();
-    doc.font("Helvetica").fontSize(7);
 
     for (let ri = 0; ri < report.rows.length; ri++) {
-      ensureSpace();
       const row = report.rows[ri];
+      const values = report.headers.map((h) => cellValue(row[h.key]));
+      const rowHeight = Math.max(
+        minRowHeight,
+        ...values.map((value) => measureWrappedHeight(value, "Helvetica", 7))
+      );
+      ensureSpace(rowHeight);
       if (ri % 2 === 1) {
         doc.rect(startX, y, pageWidth, rowHeight).fill("#F7F9FB");
-        doc.fillColor("#333333");
       }
-      report.headers.forEach((h, i) => {
+      values.forEach((value, i) => {
         const x = startX + i * colWidth;
-        doc.text(cellValue(row[h.key]), x + 4, y + 5, {
-          width: colWidth - 8,
-          height: rowHeight,
-          ellipsis: true,
-          lineBreak: false,
-        });
+        drawWrappedCell(value, x, y, "Helvetica", 7, "#333333");
       });
       y += rowHeight;
     }
 
-    ensureSpace();
+    ensureSpace(24);
     doc.font("Helvetica-Oblique").fontSize(8).fillColor("#666666");
     const footerParts = [`Total rows: ${report.rows.length}`];
     if (report.summary?.total != null) {
@@ -303,7 +321,10 @@ function toPdf(report) {
         `Total outstanding: KES ${Number(report.summary.totalOutstanding).toLocaleString("en-KE")}`
       );
     }
-    doc.text(footerParts.join(" · "), startX, y + 8);
+    doc.text(footerParts.join(" · "), startX, y + 8, {
+      width: pageWidth,
+      ellipsis: false,
+    });
 
     doc.end();
   });

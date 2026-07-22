@@ -15,6 +15,7 @@ const {
   createInvoice_JS,
   getInvoices_JS,
 } = require("./zoho.controller");
+const { summarizeOverdueZohoInvoices } = require("../utils/zohoInvoiceStatus");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
   String(process.env.ZOHO_INVOICE_TAX_INCLUSIVE || "true").toLowerCase() !==
@@ -170,15 +171,15 @@ async function fetchAgencyZohoStatus(agency) {
   });
 
   const mapped = (invoices || []).map(mapZohoInvoice);
-  const unpaid = mapped.filter((inv) => (inv.balanceDue || 0) > 0);
+  const { overdueCount, totalOverdueBalance } = summarizeOverdueZohoInvoices(mapped);
 
   return {
     linked: true,
     zohoContactId: String(zohoContact.contact_id),
     invoices: mapped,
     invoiceCount: mapped.length,
-    unpaidCount: unpaid.length,
-    totalBalanceDue: unpaid.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0),
+    unpaidCount: overdueCount,
+    totalBalanceDue: totalOverdueBalance,
   };
 }
 

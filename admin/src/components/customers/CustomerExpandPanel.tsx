@@ -20,6 +20,7 @@ import {
   type CustomerZohoStatus,
   type ZohoInvoice,
 } from "../../lib/api";
+import { summarizeOverdueZohoInvoices } from "../../lib/zohoInvoiceStatus";
 import { formatCustomerPackageLabel, formatTitleCase } from "../../lib/formatText";
 import { displayCustomerStatus, normalizeSubscriptionStatus } from "../../lib/customerStatus";
 import { useSyncCooldown } from "../../hooks/useSyncCooldown";
@@ -115,15 +116,15 @@ function buildZohoStatusFromInvoices(
     | "creditBalance"
   >
 ): CustomerZohoStatus {
-  const unpaid = invoices.filter((inv) => (inv.balanceDue || 0) > 0);
+  const { overdueCount, totalOverdueBalance } = summarizeOverdueZohoInvoices(invoices);
   const creditBalance = Number(billing?.creditBalance) || 0;
   return {
     linked,
     zohoContactId,
     invoices,
     invoiceCount: invoices.length,
-    unpaidCount: unpaid.length,
-    totalBalanceDue: unpaid.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0),
+    unpaidCount: overdueCount,
+    totalBalanceDue: totalOverdueBalance,
     creditBalance: creditBalance > 0 ? creditBalance : 0,
     billedViaAgency: billing?.billedViaAgency,
     agencyName: billing?.agencyName,
@@ -274,13 +275,13 @@ function buildZohoNarrations(
   } else if (unpaidCount > 0 || balanceDue > 0) {
     rows.push({
       label: "Invoice",
-      text: `Customer has ${unpaidCount} unpaid invoice${unpaidCount === 1 ? "" : "s"} totaling ${formatCurrency(balanceDue)}.`,
+      text: `Customer has ${unpaidCount} overdue invoice${unpaidCount === 1 ? "" : "s"} totaling ${formatCurrency(balanceDue)}.`,
       tone: "bad",
     });
   } else {
     rows.push({
       label: "Invoice",
-      text: "Current invoice is paid — no outstanding invoice balance.",
+      text: "No overdue invoices — no outstanding invoice balance.",
       tone: "ok",
     });
   }
@@ -294,7 +295,7 @@ function buildZohoNarrations(
   } else if (unpaidCount > 0 || balanceDue > 0) {
     rows.push({
       label: "Payment",
-      text: `Customer has outstanding payments of ${formatCurrency(balanceDue)}.`,
+      text: `Customer has overdue payments of ${formatCurrency(balanceDue)}.`,
       tone: "bad",
     });
   } else if (integrations && !integrations.paymentsInSync) {
@@ -616,7 +617,7 @@ export function CustomerExpandPanel({
       const zohoSummary = res.zoho.linked
         ? `${res.zoho.invoiceCount} invoice${res.zoho.invoiceCount === 1 ? "" : "s"}${
             res.zoho.unpaidCount > 0
-              ? `, ${res.zoho.unpaidCount} unpaid (${formatCurrency(res.zoho.totalBalanceDue)})`
+              ? `, ${res.zoho.unpaidCount} overdue (${formatCurrency(res.zoho.totalBalanceDue)})`
               : ""
           }`
         : "No Zoho contact found";
@@ -1004,10 +1005,22 @@ export function CustomerExpandPanel({
 
         <Box hidden={activeTab !== "contact"}>
           <DetailGrid columns={{ base: "1fr", sm: "1fr 1fr" }}>
-            <DetailCard label="Phone" value={customer.phone} highlight />
+            <DetailCard
+              label="Phone"
+              value={
+                customer.phone ||
+                (customer.customerType === "B2B" ? customer.agencyPhone : null) ||
+                "—"
+              }
+              highlight
+            />
             <DetailCard
               label="Email"
-              value={customer.email}
+              value={
+                customer.email ||
+                (customer.customerType === "B2B" ? customer.agencyEmail : null) ||
+                "—"
+              }
               span={{ base: "1 / -1", sm: "span 1" }}
             />
           </DetailGrid>

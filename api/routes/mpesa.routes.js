@@ -13,8 +13,10 @@ const {
   b2cTimeout,
 } = require("../controllers/mpesa.controller");
 const { authenticate, requireRole } = require("../middleware/auth");
+const { requireMpesaCallbackAuth } = require("../middleware/webhookVerify");
 
 const router = express.Router();
+const mpesaGuard = requireMpesaCallbackAuth;
 
 router.get("/", test);
 
@@ -28,18 +30,18 @@ router.get("/callback", (_req, res) => {
     method: "POST",
   });
 });
-router.post("/callback", mpesaCallback);
+router.post("/callback", mpesaGuard, mpesaCallback);
 
 // Paybill / C2B (register these public URLs in Daraja): POST /api/payment/validation, POST /api/payment/confirmation
-router.post("/validation", mpesaValidation);
-router.post("/confirmation", mpesaConfirmation);
+router.post("/validation", mpesaGuard, mpesaValidation);
+router.post("/confirmation", mpesaGuard, mpesaConfirmation);
 
 router.post("/register", authenticate, requireRole("admin"), registerC2BUrls);
 router.post("/simulate", authenticate, requireRole("admin"), simulateC2B);
 router.get("/split/config", authenticate, getTransactionSplitConfig);
 router.put("/split/config", authenticate, requireRole("admin"), updateTransactionSplitConfig);
 router.get("/split/logs", authenticate, getTransactionSplitLog);
-router.post("/b2c/result", b2cResult);
-router.post("/b2c/timeout", b2cTimeout);
+router.post("/b2c/result", mpesaGuard, b2cResult);
+router.post("/b2c/timeout", mpesaGuard, b2cTimeout);
 
 module.exports = router;

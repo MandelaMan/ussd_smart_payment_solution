@@ -1,7 +1,15 @@
 let io = null;
 
 function initSocket(server, env) {
+  const cookie = require("cookie");
+  const jwt = require("jsonwebtoken");
   const { Server } = require("socket.io");
+  const {
+    COOKIE_NAME,
+    verifyToken,
+    loadUserFromToken,
+  } = require("../middleware/auth");
+
   const allowedOrigins = [
     env.ADMIN_ORIGIN,
     "http://localhost:5173",
@@ -15,6 +23,26 @@ function initSocket(server, env) {
       origin: allowedOrigins,
       credentials: true,
     },
+  });
+
+  io.use(async (socket, next) => {
+    try {
+      const rawCookie = socket.handshake.headers.cookie || "";
+      const cookies = cookie.parse(rawCookie);
+      const token = cookies[COOKIE_NAME];
+      if (!token) {
+        return next(new Error("Authentication required"));
+      }
+      const decoded = verifyToken(token);
+      const user = await loadUserFromToken(decoded);
+      if (!user) {
+        return next(new Error("Invalid or expired session"));
+      }
+      socket.user = user;
+      return next();
+    } catch {
+      return next(new Error("Authentication required"));
+    }
   });
 
   io.on("connection", (socket) => {

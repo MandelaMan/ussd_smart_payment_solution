@@ -1,4 +1,6 @@
 const { query } = require("../config/db");
+const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
+const { getUpcomingInvoiceForecast } = require("./billingForecastStore");
 
 function resolveDateRange(from, to) {
   const now = new Date();
@@ -35,6 +37,7 @@ async function getReportAnalytics({ from, to } = {}) {
     failureReasons,
     integrationHealth,
     arpuByBuilding,
+    upcomingInvoicesForecast,
   ] = await Promise.all([
     query(
       `SELECT
@@ -202,6 +205,7 @@ async function getReportAnalytics({ from, to } = {}) {
        LIMIT 8`,
       params
     ),
+    getUpcomingInvoiceForecast({ days: 7 }),
   ]);
 
   const [subscriberCounts] = await query(
@@ -256,7 +260,9 @@ async function getReportAnalytics({ from, to } = {}) {
       subscribers: Number(r.subscribers),
     })),
     packageMix: packageMix.map((r) => ({
-      package: r.mbps ? `${r.package} (${r.mbps}M)` : r.package,
+      package: r.mbps
+        ? `${formatProductNameForDisplay(r.package)} (${r.mbps}M)`
+        : formatProductNameForDisplay(r.package),
       subscribers: Number(r.subscribers),
       revenue: Number(r.revenue),
     })),
@@ -302,6 +308,12 @@ async function getReportAnalytics({ from, to } = {}) {
         revenue,
       };
     }),
+    upcomingInvoices: {
+      windowStart: upcomingInvoicesForecast.windowStart,
+      windowEnd: upcomingInvoicesForecast.windowEnd,
+      invoiceCount: upcomingInvoicesForecast.invoiceCount,
+      anticipatedAmount: upcomingInvoicesForecast.anticipatedAmount,
+    },
   };
 }
 

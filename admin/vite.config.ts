@@ -75,6 +75,10 @@ export default defineConfig({
         timeout: 15000,
         proxyTimeout: 15000,
       },
+      "/leads": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+      },
     },
   },
   build: {

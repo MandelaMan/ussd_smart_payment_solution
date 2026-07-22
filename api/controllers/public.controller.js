@@ -40,6 +40,11 @@ async function zohoWebhook(req, res, next) {
       req.headers["x-webhook-secret"] ||
       req.query.secret;
 
+    const isProd = process.env.NODE_ENV === "production";
+    if (isProd && !configuredSecret) {
+      console.error("[zoho] ZOHO_WEBHOOK_SECRET is not configured in production");
+      return res.status(503).json({ error: "Webhook not configured" });
+    }
     if (configuredSecret && providedSecret !== configuredSecret) {
       return res.status(401).json({ error: "Unauthorized" });
     }

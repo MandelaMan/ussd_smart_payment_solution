@@ -275,6 +275,18 @@ const config = defineConfig({
       background: "bg",
       color: "fg",
     },
+    "[data-sidebar] [data-nav-link]": {
+      fontFamily: "body",
+      fontSize: "sm",
+      fontWeight: "medium",
+      lineHeight: "1.45",
+    },
+    "[data-sidebar] [data-nav-sublink]": {
+      fontFamily: "body",
+      fontSize: "xs",
+      fontWeight: "medium",
+      lineHeight: "1.45",
+    },
   },
 });
 

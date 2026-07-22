@@ -21,6 +21,7 @@ const {
   calculateDowngradeQuote,
   estimateDueDateFromLastPayment,
 } = require("../utils/upgradeQuote");
+const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
 const {
   classifyPackageChangeByPrice,
   resolveBaselinePriceAtFrequency,
@@ -61,6 +62,8 @@ const {
   getZohoContactLookupKeys,
   resolveAgencyForCustomer,
   filterAgencyInvoicesForCustomer,
+  resolveEffectiveCustomerEmail,
+  resolveEffectiveCustomerPhone,
   b2bBillingMeta,
 } = require("../utils/b2bBilling");
 const {
@@ -68,6 +71,7 @@ const {
   filterZohoPaymentsForContact,
   zohoContactMatchesDashboardCustomer,
 } = require("../utils/zohoCustomerScope");
+const { summarizeOverdueZohoInvoices } = require("../utils/zohoInvoiceStatus");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
   String(process.env.ZOHO_INVOICE_TAX_INCLUSIVE || "true").toLowerCase() !==
@@ -196,9 +200,9 @@ async function buildZohoContactPayload(customer, existingContact = null) {
     customer.customerNumber || customer.customer_number || ""
   ).trim();
 
-  // C2B: company_name AND contact_name (Display Name) must be the customer number.
-  // Zoho often copies Display Name into Company Name — if Display Name is the person,
-  // company_name gets overwritten. Person details live only on contact_persons.
+  // C2B: company_name = customer number (lookup key). contact_name (Display Name)
+  // = person name when available. enforceZohoCompanyName re-asserts company_name
+  // if Zoho copies Display Name into Company Name.
   const companyName = isB2B
     ? String(customer.agencyName || customer.agency_name || "").trim()
     : customerNumber;
@@ -211,14 +215,18 @@ async function buildZohoContactPayload(customer, existingContact = null) {
     );
   }
 
+  const contactDisplayName = isB2B
+    ? companyName
+    : displayName || companyName;
+
   const payload = {
-    contact_name: companyName,
+    contact_name: contactDisplayName,
     company_name: companyName,
     contact_type: "customer",
     customer_sub_type: "business",
   };
 
-  let phone = formatZohoPhone(customer.phone);
+  let phone = formatZohoPhone(resolveEffectiveCustomerPhone(customer));
   let email = customer.email ? String(customer.email).trim() : undefined;
 
   if (isB2B && (customer.agencyId || customer.agency_id)) {
@@ -226,8 +234,9 @@ async function buildZohoContactPayload(customer, existingContact = null) {
       customer.agencyId || customer.agency_id
     );
     if (agency) {
-      phone = formatZohoPhone(agency.phone) || phone;
-      email = agency.email ? String(agency.email).trim() : email;
+      phone =
+        formatZohoPhone(resolveEffectiveCustomerPhone(customer, agency)) || phone;
+      email = resolveEffectiveCustomerEmail(customer, agency) || email;
     }
   }
 
@@ -264,7 +273,8 @@ async function buildZohoContactPayload(customer, existingContact = null) {
 
 /**
  * Zoho sometimes ignores company_name on the first write (especially when the
- * contact was created as Individual). Force company_name + business subtype.
+ * contact was created as Individual). Force company_name + business subtype
+ * without overwriting Display Name (contact_name).
  */
 async function enforceZohoCompanyName(contactId, expectedCompanyName, getContactFull_JS, updateContact_JS) {
   const expected = String(expectedCompanyName || "").trim();
@@ -275,30 +285,26 @@ async function enforceZohoCompanyName(contactId, expectedCompanyName, getContact
 
   let contact = await getContactFull_JS(contactId);
   const currentCompany = String(contact?.company_name || "").trim();
-  const currentName = String(contact?.contact_name || "").trim();
   const subtype = String(contact?.customer_sub_type || "").toLowerCase();
 
   const companyOk = normalizeCustomerRef(currentCompany) === expectedNorm;
-  const nameOk = normalizeCustomerRef(currentName) === expectedNorm;
   const subtypeOk = subtype === "business";
 
-  if (companyOk && nameOk && subtypeOk) return contact;
+  if (companyOk && subtypeOk) return contact;
 
   // Step 1: switch to business if needed (Individual often blocks company_name).
   if (!subtypeOk) {
     await updateContact_JS(contactId, {
       contact_type: "customer",
       customer_sub_type: "business",
-      contact_name: expected,
       company_name: expected,
     });
   }
 
-  // Step 2: always push company_name + display name as customer number.
+  // Step 2: re-assert company_name only — keep person Display Name intact.
   await updateContact_JS(contactId, {
     contact_type: "customer",
     customer_sub_type: "business",
-    contact_name: expected,
     company_name: expected,
   });
 
@@ -552,15 +558,16 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
             stored.zohoContactId,
             customer
           );
-        const unpaid = mapped.filter((inv) => (inv.balanceDue || 0) > 0);
+        const { overdueCount, totalOverdueBalance } =
+          summarizeOverdueZohoInvoices(mapped);
         const creditBalance = Number(stored.creditBalance) || 0;
         const result = {
           linked: true,
           zohoContactId: stored.zohoContactId,
           invoices: mapped,
           invoiceCount: mapped.length,
-          unpaidCount: unpaid.length,
-          totalBalanceDue: unpaid.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0),
+          unpaidCount: overdueCount,
+          totalBalanceDue: totalOverdueBalance,
           creditBalance: creditBalance > 0 ? creditBalance : 0,
           fromSnapshot: true,
           lastSyncedAt: stored.syncedAt,
@@ -744,7 +751,8 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     ? filterAgencyInvoicesForCustomer(mapped, customer.customerNumber)
     : mapped;
 
-  const unpaid = displayInvoices.filter((inv) => (inv.balanceDue || 0) > 0);
+  const { overdueCount, totalOverdueBalance } =
+    summarizeOverdueZohoInvoices(displayInvoices);
   const receivable = Number(zohoContact.outstanding_receivable_amount);
   const creditBalance =
     Number.isFinite(receivable) && receivable < 0 ? Math.abs(receivable) : 0;
@@ -754,8 +762,8 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     zohoContactId: zohoContact.contact_id,
     invoices: displayInvoices,
     invoiceCount: displayInvoices.length,
-    unpaidCount: unpaid.length,
-    totalBalanceDue: unpaid.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0),
+    unpaidCount: overdueCount,
+    totalBalanceDue: totalOverdueBalance,
     creditBalance,
     lastPaymentDate,
     ...(isB2BCustomer(customer) ? b2bBillingMeta(customer, agency) : {}),
@@ -880,8 +888,14 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     apartmentNumber: ctx.apartment_number,
     tispPassword: ctx.tisp_password,
     ipAddress: ctx.ip_address,
-    email: ctx.email,
-    phone: ctx.phone,
+    email: resolveEffectiveCustomerEmail(
+      { email: ctx.email, customer_type: ctx.customer_type },
+      { email: ctx.agency_email }
+    ),
+    phone: resolveEffectiveCustomerPhone(
+      { phone: ctx.phone, customer_type: ctx.customer_type },
+      { phone: ctx.agency_phone }
+    ),
     paymentFrequency: ctx.payment_frequency,
     isVatExempt: Boolean(ctx.is_vat_exempt),
     agencyName: ctx.agency_name || null,
@@ -891,7 +905,7 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     contactPerson: isB2B
       ? ctx.agency_contact_person || ctx.first_name
       : ctx.first_name,
-    dueDate: options.dueDate || undefined,
+    dueDate: options.dueDate || TISP_STANDARD_DUE_DATE,
   };
 }
 
@@ -1364,7 +1378,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   const tispDueDateRaw = options.tispDueDate
     ? String(options.tispDueDate).trim()
     : "";
-  const tispDueDate = tispDueDateRaw || null;
+  const tispDueDate = tispDueDateRaw || TISP_STANDARD_DUE_DATE;
 
   const ctx = await store.getCustomerContext(customerId);
   if (!ctx || ctx.status !== "active") {
@@ -1380,39 +1394,20 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   let tisp = { ok: true };
   try {
     if (!presence?.onTisp) {
-      if (!tispDueDate) {
-        throw new Error(
-          "Due date is required to create this customer on TISP"
-        );
-      }
       await createCustomerOnTisp(ctx, { dueDate: tispDueDate });
       tisp = { ok: true, created: true, dueDate: tispDueDate };
     } else {
-      // Prefer form date → snapshot → live Client Status. Never fall through to
-      // "today" on edit (buildTispSetClientPayload would otherwise reset DueDate).
-      let dueForUpdate = tispDueDate || presence.tispDueDate || null;
-      if (!dueForUpdate && ctx.customer_number) {
-        try {
-          const live = await getTISPCustomer(ctx.customer_number);
-          dueForUpdate =
-            integrationSnapshot.extractTispDueDate(live) || null;
-        } catch {
-          /* keep null — update will still run with whatever we have */
-        }
-      }
-      if (!dueForUpdate) {
-        // Contact-only edit — skip TISP package/due-date push when no date resolved.
-        tisp = { ok: true, skipped: true, reason: "no_due_date_change" };
-      } else {
-        await updateCustomerOnTisp(ctx, {
-          dueDate: dueForUpdate,
-        });
-        tisp = {
-          ok: true,
-          updated: true,
-          dueDate: dueForUpdate,
-        };
-      }
+      // Prefer form/standard due date. Never fall through to "today" on edit.
+      const dueForUpdate =
+        tispDueDate || presence.tispDueDate || TISP_STANDARD_DUE_DATE;
+      await updateCustomerOnTisp(ctx, {
+        dueDate: dueForUpdate,
+      });
+      tisp = {
+        ok: true,
+        updated: true,
+        dueDate: dueForUpdate,
+      };
     }
     await store.updateCustomerTispSync(customerId, "synced", null);
     // create/update already refresh live Client Status (+ preferred due date).
@@ -1900,10 +1895,10 @@ async function createCustomer(req, res, next) {
     if (!body.firstName || !body.lastName) {
       return res.status(400).json({ error: "First name and last name are required" });
     }
-    if (!body.phone || !body.email || !body.customerType || !body.apartmentNumber) {
+    if (!body.customerType || !body.apartmentNumber) {
       return res
         .status(400)
-        .json({ error: "Phone, email, customer type, and apartment number are required" });
+        .json({ error: "Customer type and apartment number are required" });
     }
     if (!body.buildingId || !body.productId || !body.paymentFrequency) {
       return res.status(400).json({
@@ -3627,12 +3622,6 @@ async function updateCustomer(req, res, next) {
     if (!body.firstName || !body.lastName) {
       return res.status(400).json({ error: "First name and last name are required" });
     }
-    if (!body.phone) {
-      return res.status(400).json({ error: "Phone is required" });
-    }
-    if (!body.email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
 
     const role = String(req.user?.role || "").toLowerCase();
     const isAdmin = role === "admin";
@@ -3652,7 +3641,7 @@ async function updateCustomer(req, res, next) {
     const updateZohoRecurring = body.updateZohoRecurring === true;
     const tispDueDate = body.tispDueDate
       ? String(body.tispDueDate).trim()
-      : null;
+      : TISP_STANDARD_DUE_DATE;
 
     const presenceBefore = await resolveCustomerIntegrationPresence(id);
     if (presenceBefore && !presenceBefore.onTisp && !tispDueDate) {

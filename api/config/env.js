@@ -115,4 +115,54 @@ const loadEnv = () => {
   };
 };
 
-module.exports = { loadEnv };
+const MIN_JWT_SECRET_LENGTH = 32;
+
+/**
+ * Validates required secrets at boot. Exits the process in production when
+ * critical auth configuration is missing or weak.
+ */
+function validateProductionSecrets(env) {
+  if (env.NODE_ENV !== "production") return;
+
+  const errors = [];
+
+  if (!env.JWT_SECRET || env.JWT_SECRET.length < MIN_JWT_SECRET_LENGTH) {
+    errors.push(
+      `JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters in production`
+    );
+  }
+
+  if (!process.env.ZOHO_WEBHOOK_SECRET) {
+    errors.push("ZOHO_WEBHOOK_SECRET is required in production");
+  }
+
+  if (!process.env.USSD_API_SECRET) {
+    errors.push("USSD_API_SECRET is required in production");
+  }
+
+  const whatsappConfigured = Boolean(
+    process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID
+  );
+  if (whatsappConfigured && !process.env.WHATSAPP_APP_SECRET) {
+    errors.push(
+      "WHATSAPP_APP_SECRET is required in production when WhatsApp is configured"
+    );
+  }
+
+  const mpesaConfigured = Boolean(
+    process.env.MPESA_CONSUMER_KEY || process.env.CONSUMER_KEY
+  );
+  if (mpesaConfigured && !process.env.MPESA_CALLBACK_SECRET) {
+    console.warn(
+      "[security] MPESA_CALLBACK_SECRET is not set — relying on IP allowlist for M-Pesa callbacks"
+    );
+  }
+
+  if (errors.length) {
+    console.error("[security] Production configuration errors:");
+    for (const msg of errors) console.error(`  - ${msg}`);
+    process.exit(1);
+  }
+}
+
+module.exports = { loadEnv, validateProductionSecrets, MIN_JWT_SECRET_LENGTH };

@@ -93,6 +93,53 @@ function resolveCustomerFullName(customer) {
     .trim();
 }
 
+/** B2B customers without an email fall back to the linked agency's email. */
+function resolveEffectiveCustomerEmail(customer, agency = null) {
+  const customerEmail = String(customer?.email || "").trim();
+  if (customerEmail.includes("@")) {
+    return customerEmail;
+  }
+
+  if (!isB2BCustomer(customer)) {
+    return customerEmail;
+  }
+
+  const agencyEmail = String(
+    agency?.email || customer?.agencyEmail || customer?.agency_email || ""
+  ).trim();
+  return agencyEmail.includes("@") ? agencyEmail : customerEmail;
+}
+
+function hasEffectiveCustomerEmail(customer, agency = null) {
+  const email = resolveEffectiveCustomerEmail(customer, agency);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function hasUsablePhone(value) {
+  return String(value || "").replace(/\D/g, "").length >= 9;
+}
+
+/** B2B customers without a phone fall back to the linked agency's phone. */
+function resolveEffectiveCustomerPhone(customer, agency = null) {
+  const customerPhone = String(customer?.phone || "").trim();
+  if (hasUsablePhone(customerPhone)) {
+    return customerPhone;
+  }
+
+  if (!isB2BCustomer(customer)) {
+    return customerPhone;
+  }
+
+  const agencyPhone = String(
+    agency?.phone || customer?.agencyPhone || customer?.agency_phone || ""
+  ).trim();
+  return hasUsablePhone(agencyPhone) ? agencyPhone : customerPhone;
+}
+
+function hasEffectiveCustomerPhone(customer, agency = null) {
+  return hasUsablePhone(resolveEffectiveCustomerPhone(customer, agency));
+}
+
 /**
  * Zoho line item title for a B2B managed house: building, apartment, and package.
  */
@@ -136,6 +183,10 @@ module.exports = {
   filterAgencyInvoicesForCustomer,
   b2bBillingMeta,
   resolveCustomerFullName,
+  resolveEffectiveCustomerEmail,
+  hasEffectiveCustomerEmail,
+  resolveEffectiveCustomerPhone,
+  hasEffectiveCustomerPhone,
   buildManagedHouseLineItemName,
   buildManagedHouseLineItemDescription,
 };

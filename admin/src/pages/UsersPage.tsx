@@ -116,6 +116,27 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
+    if (password.length < 8) {
+      toaster.create({
+        title: "Password must be at least 8 characters",
+        type: "error",
+      });
+      return;
+    }
+    if (password.length > 128) {
+      toaster.create({
+        title: "Password must be at most 128 characters",
+        type: "error",
+      });
+      return;
+    }
+    if (!/[a-z]/i.test(password) || !/\d/.test(password)) {
+      toaster.create({
+        title: "Password must include at least one letter and one number",
+        type: "error",
+      });
+      return;
+    }
     setSubmitting(true);
     try {
       await api.createUser({ name, email, password, role });
@@ -192,6 +213,20 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
     if (resetPassword.length < 8) {
       toaster.create({
         title: "Password must be at least 8 characters",
+        type: "error",
+      });
+      return;
+    }
+    if (resetPassword.length > 128) {
+      toaster.create({
+        title: "Password must be at most 128 characters",
+        type: "error",
+      });
+      return;
+    }
+    if (!/[a-z]/i.test(resetPassword) || !/\d/.test(resetPassword)) {
+      toaster.create({
+        title: "Password must include at least one letter and one number",
         type: "error",
       });
       return;
@@ -278,12 +313,18 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
             </Field.Root>
             <Field.Root required>
               <Field.Label>Email</Field.Label>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
             </Field.Root>
             <Field.Root required>
               <Field.Label>Password</Field.Label>
               <Input
                 type="password"
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -431,9 +472,10 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
             <Field.Label>New password</Field.Label>
             <Input
               type="password"
+              autoComplete="new-password"
               value={resetPassword}
               onChange={(e) => setResetPassword(e.target.value)}
-              placeholder="At least 8 characters"
+              placeholder="At least 8 characters with letters and numbers"
               autoFocus
             />
           </Field.Root>

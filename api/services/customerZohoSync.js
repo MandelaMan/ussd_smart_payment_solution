@@ -199,7 +199,6 @@ async function updateZohoContactDetails(customer, zohoContact) {
     await updateContact_JS(zohoContact.contact_id, {
       contact_type: "customer",
       customer_sub_type: "business",
-      contact_name: expected,
       company_name: expected,
     });
     contact = await getContactFull_JS(zohoContact.contact_id);

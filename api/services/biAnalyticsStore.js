@@ -1,5 +1,6 @@
 const { query } = require("../config/db");
 const { getReportAnalytics } = require("./reportAnalyticsStore");
+const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
 
 const MRR_EXPR = `
   CASE c.payment_frequency
@@ -223,7 +224,9 @@ async function getRevenueByPackage(filters, range) {
     params
   );
   return rows.map((r) => ({
-    package: r.mbps ? `${r.package} (${r.mbps}M)` : r.package,
+    package: r.mbps
+      ? `${formatProductNameForDisplay(r.package)} (${r.mbps}M)`
+      : formatProductNameForDisplay(r.package),
     packageId: r.product_id,
     customers: Number(r.customers),
     monthlyRevenue: Math.round(Number(r.monthly_revenue)),
@@ -378,7 +381,9 @@ async function getFilterOptions() {
     buildings: buildings.map((b) => ({ id: b.id, name: b.name })),
     products: products.map((p) => ({
       id: p.id,
-      name: p.mbps ? `${p.name} (${p.mbps}M)` : p.name,
+      name: p.mbps
+        ? `${formatProductNameForDisplay(p.name)} (${p.mbps}M)`
+        : formatProductNameForDisplay(p.name),
       hasDstv: Boolean(p.has_dstv),
     })),
     agencies: agencies.map((a) => ({ id: a.id, name: a.name })),

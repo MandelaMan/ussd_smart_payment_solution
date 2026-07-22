@@ -19,6 +19,7 @@ const TISP_REQUEST_TIMEOUT_MS = Number(
 /** TISP SetClientDetails only accepts "000000" (Postman reference payload). */
 const TISP_DEFAULT_SHORTCODE = process.env.TISP_SHORTCODE || "000000";
 const { DEFAULT_TZ } = require("../utils/billingPeriod");
+const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
 
 /** TISP expects compact JSON: no space after colons or commas. */
 function stringifyTispPayload(data) {
@@ -600,7 +601,7 @@ function buildTispSetClientPayload(input, transactionType) {
     Router: routerLocation,
     StaticIPAddress: resolvedIp,
     BillingCycle: tispCreateBillingCycle(),
-    DueDate: formatTispDueDate(input.dueDate || new Date()),
+    DueDate: formatTispDueDate(input.dueDate || TISP_STANDARD_DUE_DATE),
     PppoeUsername: String(apartmentNumber || ""),
     PppoePassword: String(tispPassword || ""),
     PppoeRemoteAddress: resolvedIp,
@@ -651,4 +652,5 @@ module.exports = {
   accountExistsOnTisp,
   formatTispDueDate,
   test,
+  TISP_STANDARD_DUE_DATE,
 };

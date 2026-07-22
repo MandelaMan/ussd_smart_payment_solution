@@ -40,6 +40,7 @@ import { canEditCustomerPackage } from "../../lib/rbac";
 import { DateField } from "../ui/DateField";
 import { TextStatus } from "../ui/TextStatus";
 import { normalizeSubscriptionStatus } from "../../lib/customerStatus";
+import { TISP_STANDARD_DUE_DATE } from "../../lib/tispConstants";
 
 const PAYMENT_FREQUENCIES = [
   { value: "monthly", label: "Monthly" },
@@ -134,7 +135,7 @@ export function CustomerForm({
   const [createInitialInvoice, setCreateInitialInvoice] = useState(false);
   const [createRecurringInvoice, setCreateRecurringInvoice] = useState(false);
   const [updateZohoRecurring, setUpdateZohoRecurring] = useState(false);
-  const [tispDueDate, setTispDueDate] = useState("");
+  const [tispDueDate, setTispDueDate] = useState(TISP_STANDARD_DUE_DATE);
   const [onTisp, setOnTisp] = useState(false);
   const [onZoho, setOnZoho] = useState(false);
   const [zohoInactive, setZohoInactive] = useState(false);
@@ -174,7 +175,7 @@ export function CustomerForm({
       setOnTisp(false);
       setOnZoho(false);
       setZohoInactive(false);
-      setTispDueDate("");
+      setTispDueDate(TISP_STANDARD_DUE_DATE);
       setZohoInvoiceCount(0);
       setZohoInvoicesInSync(false);
       setZohoPaymentsInSync(true);
@@ -199,7 +200,7 @@ export function CustomerForm({
     setOnTisp(localOnTisp);
     setOnZoho(localOnZoho);
     setZohoInactive(false);
-    setTispDueDate(customer.tispDueDate ? String(customer.tispDueDate).slice(0, 10) : "");
+    setTispDueDate(TISP_STANDARD_DUE_DATE);
     setDashboardLastPaymentDate(customer.lastPaymentDate || null);
     setCreateInitialInvoice(false);
     setCreateRecurringInvoice(false);
@@ -214,9 +215,7 @@ export function CustomerForm({
         setOnTisp(Boolean(res.onTisp));
         setOnZoho(Boolean(res.onZoho) || res.isB2B);
         setZohoInactive(Boolean(res.zohoInactive));
-        if (res.tispDueDate) {
-          setTispDueDate(String(res.tispDueDate).slice(0, 10));
-        }
+        setTispDueDate(TISP_STANDARD_DUE_DATE);
         setZohoInvoiceCount(Number(res.invoiceCount) || 0);
         setZohoInvoicesInSync(Boolean(res.invoicesInSync));
         setZohoPaymentsInSync(res.paymentsInSync !== false);
@@ -311,6 +310,25 @@ export function CustomerForm({
       })),
     [agencies]
   );
+
+  const selectedAgency = useMemo(
+    () => agencies.find((a) => String(a.id) === agencyId) ?? null,
+    [agencies, agencyId]
+  );
+
+  const b2bAgencyEmail =
+    selectedAgency?.email?.trim() || customer?.agencyEmail?.trim() || "";
+
+  const b2bAgencyPhone =
+    selectedAgency?.phone?.trim() || customer?.agencyPhone?.trim() || "";
+
+  const hasUsablePhone = (value: string) => value.replace(/\D/g, "").length >= 9;
+
+  const b2bUsesAgencyPhone =
+    customerType === "B2B" && hasUsablePhone(b2bAgencyPhone);
+  const b2bUsesAgencyEmail =
+    customerType === "B2B" &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b2bAgencyEmail);
 
   const selectedCategory = catalog.find((c) => String(c.id) === categoryId);
 
@@ -445,8 +463,18 @@ export function CustomerForm({
         label: "Name",
         value: [firstName, middleName, lastName].filter(Boolean).join(" ").trim() || "—",
       },
-      { label: "Phone", value: phone || "—" },
-      { label: "Email", value: email.trim() || "—" },
+      {
+        label: "Phone",
+        value:
+          phone.trim() ||
+          (customerType === "B2B" && b2bAgencyPhone ? `${b2bAgencyPhone} (agency)` : "—"),
+      },
+      {
+        label: "Email",
+        value:
+          email.trim() ||
+          (customerType === "B2B" && b2bAgencyEmail ? `${b2bAgencyEmail} (agency)` : "—"),
+      },
       {
         label: "Building",
         value: selectedBuilding?.name || customer?.buildingName || "—",
@@ -545,6 +573,8 @@ export function CustomerForm({
     agencies,
     agencyId,
     apartmentNumber,
+    b2bAgencyEmail,
+    b2bAgencyPhone,
     customer,
     customer?.buildingName,
     customer?.customerNumber,
@@ -610,11 +640,19 @@ export function CustomerForm({
       toaster.create({ title: "Select an agency for B2B customers", type: "error" });
       return false;
     }
-    if (!email.trim()) {
+    const effectivePhone =
+      phone.trim() || (customerType === "B2B" ? b2bAgencyPhone : "");
+    if (!hasUsablePhone(effectivePhone)) {
+      toaster.create({ title: "Phone is required", type: "error" });
+      return false;
+    }
+    const effectiveEmail =
+      email.trim() || (customerType === "B2B" ? b2bAgencyEmail : "");
+    if (!effectiveEmail) {
       toaster.create({ title: "Email is required", type: "error" });
       return false;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(effectiveEmail)) {
       toaster.create({ title: "Enter a valid email address", type: "error" });
       return false;
     }
@@ -727,7 +765,7 @@ export function CustomerForm({
           });
         }
         if (res.customer?.tispDueDate) {
-          setTispDueDate(String(res.customer.tispDueDate).slice(0, 10));
+          setTispDueDate(TISP_STANDARD_DUE_DATE);
         }
         if (res.tisp?.ok && (res.tisp.created || res.tisp.updated)) {
           setOnTisp(true);
@@ -1078,9 +1116,16 @@ export function CustomerForm({
         </FormSection>
 
         {isEdit && isActive ? (
-          <FormSection title="TISP">
+          <FormSection
+            title="TISP"
+            description={
+              onTisp
+                ? "Saving updates this customer on TISP (plan package and due date)."
+                : "This customer is missing on TISP. Set a due date below — saving will create them."
+            }
+          >
             <Box gridColumn={{ md: "span 2" }}>
-              <Flex align="center" gap={2} mb={1}>
+              <Flex align="center" gap={2}>
                 <Text fontSize="sm" color="fg.muted">
                   Status
                 </Text>
@@ -1097,11 +1142,6 @@ export function CustomerForm({
                       : "Not on TISP"}
                 </Text>
               </Flex>
-              <Text fontSize="sm" color="fg.muted" mb={3}>
-                {onTisp
-                  ? "Saving updates this customer on TISP (plan package and due date)."
-                  : "This customer is missing on TISP. Set a due date below — saving will create them."}
-              </Text>
             </Box>
 
             <Field.Root required={!onTisp} gridColumn={{ md: "span 2" }}>
@@ -1116,8 +1156,8 @@ export function CustomerForm({
               />
               <Field.HelperText>
                 {onTisp
-                  ? "Leave blank to keep the current TISP due date, or pick a new date to update it."
-                  : "Required to create this customer on TISP."}
+                  ? `Defaults to ${TISP_STANDARD_DUE_DATE} (2 Aug 2026). Leave as-is or pick another date to update TISP.`
+                  : `Required to create this customer on TISP. Default: ${TISP_STANDARD_DUE_DATE} (2 Aug 2026).`}
               </Field.HelperText>
             </Field.Root>
           </FormSection>
@@ -1359,19 +1399,40 @@ export function CustomerForm({
             <Field.Label>Last name</Field.Label>
             <Input value={lastName} onChange={(e) => setLastName(e.target.value)} disabled={fieldsDisabled} />
           </Field.Root>
-          <Field.Root required>
+          <Field.Root required={!b2bUsesAgencyPhone}>
             <Field.Label>Phone</Field.Label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="07xx xxx xxx" disabled={fieldsDisabled} />
-          </Field.Root>
-          <Field.Root required>
-            <Field.Label>Email</Field.Label>
             <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@example.com"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder={
+                customerType === "B2B" && b2bAgencyPhone
+                  ? b2bAgencyPhone
+                  : "07xx xxx xxx"
+              }
               disabled={fieldsDisabled}
             />
+            {b2bUsesAgencyPhone ? (
+              <Field.HelperText>Leave blank to use agency phone</Field.HelperText>
+            ) : null}
+          </Field.Root>
+          <Field.Root required={!b2bUsesAgencyEmail}>
+            <Field.Label>Email</Field.Label>
+            <Input
+              type={b2bUsesAgencyEmail ? "text" : "email"}
+              inputMode="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder={
+                customerType === "B2B" && b2bAgencyEmail
+                  ? b2bAgencyEmail
+                  : "name@example.com"
+              }
+              disabled={fieldsDisabled}
+            />
+            {b2bUsesAgencyEmail ? (
+              <Field.HelperText>Leave blank to use agency email</Field.HelperText>
+            ) : null}
           </Field.Root>
         </FormSection>
 
@@ -1427,7 +1488,9 @@ export function CustomerForm({
             description={
               needsIp
                 ? "Pick the subnet, then enter the last number of the IP address."
-                : `${selectedBuilding.name} uses PPOE — no static IP required.`
+                : isEdit
+                  ? `${selectedBuilding.name} uses PPOE — IP is managed automatically.`
+                  : `${selectedBuilding.name} uses PPOE — no static IP required. A password is generated on create.`
             }
           >
             {needsIp && ipRules ? (
@@ -1507,15 +1570,7 @@ export function CustomerForm({
                   </Field.HelperText>
                 </Field.Root>
               </Box>
-            ) : (
-              <Box gridColumn={{ md: "span 2" }}>
-                <Text fontSize="sm" color="fg.muted">
-                  {isEdit
-                    ? "This building uses PPOE — IP is managed automatically."
-                    : "A PPOE password will be generated automatically on create."}
-                </Text>
-              </Box>
-            )}
+            ) : null}
           </FormSection>
         )}
 

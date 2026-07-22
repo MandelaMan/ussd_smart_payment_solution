@@ -28,7 +28,7 @@ const EXAMPLE_ROW = [
   "Enaki",
   "monthly",
   "",
-  "Basic — Internet + Apartonet Channels",
+  "Basic - Internet + Apartonet Channels",
   "No",
   "",
   "10.12.10.",

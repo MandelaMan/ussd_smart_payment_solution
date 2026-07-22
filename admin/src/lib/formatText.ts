@@ -20,7 +20,7 @@ export function formatDisplayText(
   maxLength: number = DISPLAY_TEXT_MAX_LENGTH,
   titleCase?: boolean
 ): string {
-  const raw = String(value || "").trim();
+  const raw = repairUtf8Mojibake(String(value || "").trim());
   if (!raw) return "";
 
   const useTitleCase = titleCase ?? !isLikelyCode(raw);
@@ -33,7 +33,7 @@ export function getDisplayTextFull(
   value: string | null | undefined,
   titleCase?: boolean
 ): string {
-  const raw = String(value || "").trim();
+  const raw = repairUtf8Mojibake(String(value || "").trim());
   if (!raw) return "";
   const useTitleCase = titleCase ?? !isLikelyCode(raw);
   return useTitleCase ? formatTitleCase(raw) : raw;
@@ -41,24 +41,27 @@ export function getDisplayTextFull(
 
 /** Separators used between plan and category in stored product names. */
 const PRODUCT_NAME_SEPARATORS =
-  /\s*(?:·|•|―|–|—|-|\?\?|Â·|â€"|â€“|â€”|ΓÇö|ΓÇô|ΓÇ£)\s*/g;
+  /\s*(?:·|•|―|–|—|-|\?\?|Â·|â€"|â€“|â€”|ΓÇö|ΓÇô|ΓÇ£|γçö|γçô|γç£)\s*/gi;
 
 /**
- * Repair common UTF-8→Latin-1 mojibake that shows up when stage DB/connection
- * charset differs from local (e.g. em dash — stored/read as "ΓÇö").
+ * Repair common UTF-8→Latin-1 mojibake and normalize fancy dashes to ASCII.
+ * Em dashes often render as "ΓÇö" / "γçö" when charset is wrong.
  */
 function repairUtf8Mojibake(value: string): string {
   return value
-    .replace(/ΓÇö|â€"|â€”/g, "—")
-    .replace(/ΓÇô|â€“/g, "–")
-    .replace(/Â·|ΓÇ£/g, "·");
+    .replace(/ΓÇö|γçö|â€"|â€”|—|–/gi, "-")
+    .replace(/ΓÇô|γçô|â€“/gi, "-")
+    .replace(/Â·|ΓÇ£|γç£|·/gi, "-");
 }
 
-/** Normalize product name separators for display (fixes mojibake like "ΓÇö" / "??"). */
+/**
+ * Normalize product name separators for display.
+ * Uses ASCII " - " so chart/UI fonts never render em-dash mojibake (γçö).
+ */
 export function formatProductNameForDisplay(value: string | null | undefined): string {
   const raw = repairUtf8Mojibake(String(value || "").trim());
   if (!raw) return "";
-  return raw.replace(PRODUCT_NAME_SEPARATORS, " — ");
+  return raw.replace(PRODUCT_NAME_SEPARATORS, " - ");
 }
 
 /** Sentence-case labels for table headers (first letter upper, rest lower). Preserves C2B/B2B/TISP acronyms. */

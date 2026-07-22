@@ -30,7 +30,7 @@ const BRAND_NAME = "SUL Bix";
 const COPYRIGHT = "© 2026 SUL Solutions. All rights reserved.";
 const HERO_HEADLINE = "A unified hub for customer management and billing";
 const HERO_SUBCOPY =
-  "Manage subscribers, packages, and buildings; track M-Pesa collections; and keep Zoho and TISP integrations in sync — all in one place.";
+  "Manage subscribers, packages, and buildings; track collections; and keep integrations in sync — all in one place.";
 
 /** Decorative figures for the login hero — not live data */
 const DEMO_TILE_STATS = {
@@ -171,6 +171,7 @@ function MiniStatTile({
   icon,
   accent,
   top,
+  bottom,
   left,
   right,
   delay = 0,
@@ -180,6 +181,7 @@ function MiniStatTile({
   icon: React.ReactNode;
   accent: string;
   top?: string;
+  bottom?: string;
   left?: string;
   right?: string;
   delay?: number;
@@ -188,6 +190,7 @@ function MiniStatTile({
     <Box
       position="absolute"
       top={top}
+      bottom={bottom}
       left={left}
       right={right}
       zIndex={2}
@@ -361,9 +364,8 @@ function DesktopChartCard() {
   return (
     <Box
       position="absolute"
-      top="16%"
-      left="50%"
-      transform="translateX(-50%)"
+      top="17%"
+      left="8%"
       w="88%"
       maxW="340px"
       borderRadius="2xl"
@@ -379,8 +381,8 @@ function DesktopChartCard() {
       css={{
         animation: "login-chart-float 3.8s ease-in-out infinite",
         "@keyframes login-chart-float": {
-          "0%, 100%": { transform: "translateX(-50%) translateY(0)" },
-          "50%": { transform: "translateX(-50%) translateY(-10px)" },
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-10px)" },
         },
       }}
     >
@@ -472,7 +474,7 @@ function DesktopCustomerCard() {
   return (
     <Box
       position="absolute"
-      top="48%"
+      top="46%"
       left="0"
       w="88%"
       maxW="340px"
@@ -547,13 +549,18 @@ export function LoginPage() {
   const location = useLocation();
   const sessionExpired =
     (location.state as { reason?: string } | null)?.reason === "session_expired";
+  const redirectTo =
+    (location.state as { from?: { pathname?: string } } | null)?.from
+      ?.pathname || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  if (!loading && user) return <Navigate to="/" replace />;
+  if (!loading && user) {
+    return <Navigate to={redirectTo} replace />;
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -866,10 +873,10 @@ export function LoginPage() {
           position="relative"
           flex="1"
           w="full"
-          maxW="480px"
-          mx="auto"
-          minH="380px"
-          my={8}
+          maxW="460px"
+          alignSelf="flex-start"
+          minH="400px"
+          my={6}
           zIndex={1}
         >
           <DesktopChartCard />
@@ -879,7 +886,7 @@ export function LoginPage() {
             value={DEMO_TILE_STATS.transactions}
             icon={<FiActivity size={16} />}
             accent={BRAND.paleAzure}
-            top="4%"
+            top="2%"
             left="0"
             delay={0}
           />
@@ -897,7 +904,7 @@ export function LoginPage() {
             value={DEMO_TILE_STATS.returning}
             icon={<FiRepeat size={16} />}
             accent={BRAND.sandyBrown}
-            top="62%"
+            top="56%"
             right="0"
             delay={1}
           />

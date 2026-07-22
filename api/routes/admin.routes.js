@@ -90,6 +90,13 @@ const {
   listApartmentHistoryRecords,
   checkApartmentOccupancy,
 } = require("../controllers/apartments.controller");
+const {
+  listLeads,
+  getLeadStats,
+  getLead,
+  updateLead,
+  addLeadNote,
+} = require("../controllers/leads.controller");
 
 const { authenticate } = require("../middleware/auth");
 const {
@@ -237,5 +244,11 @@ router.get(
   requireConfigRead,
   apartmentHistory
 );
+
+router.get("/leads/stats", requireCustomerRead, getLeadStats);
+router.get("/leads", requireCustomerRead, listLeads);
+router.get("/leads/:id", requireCustomerRead, getLead);
+router.patch("/leads/:id", requireCustomerWrite, updateLead);
+router.post("/leads/:id/notes", requireCustomerWrite, addLeadNote);
 
 module.exports = router;

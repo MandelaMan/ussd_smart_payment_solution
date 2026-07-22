@@ -1,16 +1,19 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { AppShellSkeleton } from "./PageSkeletons";
 import { useAuth } from "../lib/auth";
 import { normalizeRole, type UserRole } from "../lib/rbac";
 
 export function ProtectedRoute() {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return <AppShellSkeleton />;
   }
 
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
   return <Outlet />;
 }
 
@@ -22,7 +25,7 @@ export function RoleRoute({
   redirectTo?: string;
 }) {
   const { user, loading } = useAuth();
-  if (loading) return null;
+  if (loading) return <AppShellSkeleton />;
   if (!user || !roles.includes(normalizeRole(user.role))) {
     return <Navigate to={redirectTo} replace />;
   }
@@ -39,6 +42,18 @@ export function FinanceRoute() {
 
 export function ReportsRoute() {
   return <RoleRoute roles={["admin", "cfo", "partner", "ceo"]} />;
+}
+
+/** Activity page — finance feed or support stats depending on role. */
+export function ActivityRoute() {
+  return <RoleRoute roles={["admin", "support", "cfo", "ceo"]} />;
+}
+
+/** Matches API requireCustomerRead — all authenticated roles. */
+export function CustomerReadRoute() {
+  return (
+    <RoleRoute roles={["admin", "support", "cfo", "partner", "ceo"]} />
+  );
 }
 
 export function ConfigRoute() {

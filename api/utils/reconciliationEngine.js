@@ -1,4 +1,7 @@
 const { normalizeSubscriptionStatus } = require("./subscriptionStatus");
+const {
+  isOverdueZohoInvoice,
+} = require("./zohoInvoiceStatus");
 
 const BILLING_STATUSES = [
   "current",
@@ -81,19 +84,6 @@ function isDisconnectedService(subscriptionStatus) {
 
 function isUnknownService(subscriptionStatus) {
   return normalizeSubscriptionStatus(subscriptionStatus) === "Not on TISP";
-}
-
-function isOverdueInvoice(invoice) {
-  if (!invoice) return false;
-  const balance = roundMoney(invoice.balanceDue ?? invoice.balance ?? 0);
-  if (balance <= 0) return false;
-  const status = String(invoice.status || "").toLowerCase();
-  if (status.includes("overdue")) return true;
-  if (invoice.dueDate) {
-    const due = new Date(invoice.dueDate);
-    if (!Number.isNaN(due.getTime()) && due < new Date()) return true;
-  }
-  return false;
 }
 
 function daysSince(dateStr) {
@@ -292,16 +282,24 @@ function detectBillingScenarios(ctx) {
     }
   }
 
-  // ── CRITICAL: Zoho overdue/outstanding + TISP service active ──
+  // ── CRITICAL: Active service + Zoho outstanding/overdue = free service ──
   if (accountActive && serviceActive && hasOutstanding) {
+    const freeServiceDetail = hasOverdue
+      ? `${overdueCount} overdue invoice${overdueCount === 1 ? "" : "s"} — customer is enjoying service without paying`
+      : `${formatKes(outstandingBalance)} open on Zoho while TISP service is active`;
     add({
       status: "connected_without_payment",
-      code: "zoho_overdue_tisp_active",
+      code: hasOverdue ? "zoho_overdue_tisp_active" : "zoho_outstanding_tisp_active",
       severity: "critical",
-      message: `Zoho: ${zohoLabel} · TISP: ${tispLabel} · Account: Active — customer has service but billing is unsettled`,
+      message: `Zoho: ${zohoLabel} · TISP: ${tispLabel} · Account: Active — ${freeServiceDetail}`,
       recommendations: [
         rec("disconnect_service", "Suspend TISP until Zoho balance is cleared"),
-        rec("contact_customer", `Collect ${formatKes(outstandingBalance)} or verify payment allocation`),
+        rec(
+          "contact_customer",
+          hasOverdue
+            ? `Collect ${formatKes(outstandingBalance)} overdue or verify payment allocation`
+            : `Collect ${formatKes(outstandingBalance)} or verify payment allocation`
+        ),
       ],
     });
   }
@@ -317,15 +315,23 @@ function detectBillingScenarios(ctx) {
     });
   }
 
-  // ── CRITICAL: Zoho paid + TISP disconnected ──
-  if (serviceDisconnected && !hasOutstanding && (ctx.lastMpesa || ctx.lastZoho)) {
+  // ── CRITICAL: No Zoho balance + TISP disconnected = not receiving expected service ──
+  if (
+    serviceDisconnected &&
+    !hasOutstanding &&
+    accountActive &&
+    !statuses.includes("disconnected_not_invoiced")
+  ) {
+    const billingLabel =
+      ctx.lastMpesa || ctx.lastZoho ? "Zoho: Paid up" : "Zoho: No open balance";
     add({
       status: "paid_but_disconnected",
       code: "zoho_paid_tisp_suspended",
       severity: "critical",
-      message: `Zoho: No balance due · TISP: ${tispLabel} — customer paid but service is off`,
+      message: `${billingLabel} · TISP: ${tispLabel} — customer is not receiving service despite settled billing`,
       recommendations: [
-        rec("reconnect_service", "Restore TISP after confirming Zoho invoices are paid"),
+        rec("reconnect_service", "Restore TISP after confirming Zoho invoices are fully paid"),
+        rec("refresh_tisp_status", "Verify suspension is not a stale TISP sync"),
       ],
     });
   }
@@ -649,7 +655,7 @@ function computeCustomerReconciliation(context = {}) {
       invoices.reduce((sum, inv) => sum + roundMoney(inv.balanceDue ?? inv.balance ?? 0), 0)
   );
   const expectedAmount = roundMoney(customer.packagePrice ?? 0);
-  const overdueInvoices = invoices.filter(isOverdueInvoice);
+  const overdueInvoices = invoices.filter(isOverdueZohoInvoice);
   const overdueCount = overdueInvoices.length;
   const openInvoices = invoices.filter((inv) => roundMoney(inv.balanceDue ?? 0) > 0);
   const openInvoiceCount = openInvoices.length;
@@ -836,6 +842,8 @@ function aggregateSummary(records = []) {
   }
 
   summary.billingGaps =
+    summary.connectedWithoutPayment +
+    summary.paidButDisconnected +
     summary.noZohoLink +
     summary.recurringInvoicesStopped +
     summary.missingInvoices +

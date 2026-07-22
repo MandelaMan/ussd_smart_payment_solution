@@ -30,11 +30,10 @@ export function BillingNavGroup({ onNavigate }: Props) {
   return (
     <Collapsible.Root open={open} onOpenChange={(e) => setOpen(e.open)}>
       <Flex
+        data-nav-link=""
         align="center"
         gap={0}
         borderRadius="md"
-        fontSize="sm"
-        fontWeight="medium"
         color={billingActive ? "white" : "brand.800"}
         bg={billingActive ? "brand.600" : "transparent"}
         borderLeft="3px solid"
@@ -64,6 +63,9 @@ export function BillingNavGroup({ onNavigate }: Props) {
               <Text
                 flex={1}
                 minW={0}
+                fontSize="sm"
+                fontFamily="body"
+                fontWeight="medium"
                 lineHeight="short"
                 whiteSpace="nowrap"
                 overflow="hidden"
@@ -122,14 +124,13 @@ export function BillingNavGroup({ onNavigate }: Props) {
 function SubLink({ label, isActive }: { label: string; isActive: boolean }) {
   return (
     <Flex
+      data-nav-sublink=""
       align="center"
       gap={2}
       px={2}
       py={2}
       minH="36px"
       borderRadius="md"
-      fontSize="xs"
-      fontWeight="medium"
       color={isActive ? "brand.700" : "brand.800"}
       bg={isActive ? "bg.panel" : "transparent"}
       borderLeft="2px solid"
@@ -143,7 +144,9 @@ function SubLink({ label, isActive }: { label: string; isActive: boolean }) {
       textOverflow="ellipsis"
       title={label}
     >
-      {label}
+      <Text as="span" fontSize="xs" fontFamily="body" fontWeight="medium">
+        {label}
+      </Text>
     </Flex>
   );
 }

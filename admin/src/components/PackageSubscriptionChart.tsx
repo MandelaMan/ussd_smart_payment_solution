@@ -1,5 +1,5 @@
 import { Box, Flex, Stack, Text } from "@chakra-ui/react";
-import { formatDisplayText, getDisplayTextFull } from "../lib/formatText";
+import { formatDisplayText, formatProductNameForDisplay, getDisplayTextFull } from "../lib/formatText";
 import { BRAND } from "../theme";
 
 type PackageItem = {
@@ -16,10 +16,11 @@ export function PackageSubscriptionChart({ data }: { data: PackageItem[] }) {
       {items.map((item, index) => {
         const share = item.subscribers / max;
         const barWidth = Math.max(share * 100, 22);
+        const label = formatProductNameForDisplay(item.name);
 
         return (
           <Box
-            key={item.name}
+            key={`${label}-${item.subscribers}-${index}`}
             py={3}
             borderBottom={index < items.length - 1 ? "1px solid" : undefined}
             borderColor="border"
@@ -39,9 +40,9 @@ export function PackageSubscriptionChart({ data }: { data: PackageItem[] }) {
                   fontWeight="medium"
                   color="white"
                   truncate
-                  title={getDisplayTextFull(item.name)}
+                  title={getDisplayTextFull(label)}
                 >
-                  {formatDisplayText(item.name)}
+                  {formatDisplayText(label)}
                 </Text>
                 <Text fontSize="sm" fontWeight="bold" color="white" flexShrink={0}>
                   {item.subscribers.toLocaleString()}

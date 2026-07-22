@@ -24,22 +24,24 @@ export function FormSection({
         {title}
       </Text>
       {description && (
-        <Text fontSize="xs" color="fg.muted" mt={0.5} mb={3}>
+        <Text fontSize="xs" color="fg.muted" mt={0.5} mb={children ? 3 : 0}>
           {description}
         </Text>
       )}
-      {!description && <Box mb={3} />}
-      <Grid
-        templateColumns={
-          sideBySide
-            ? "repeat(2, minmax(0, 1fr))"
-            : { base: "1fr", md: "repeat(2, minmax(0, 1fr))" }
-        }
-        gap={4}
-        css={{ "& > *": { minWidth: 0, width: "100%" } }}
-      >
-        {children}
-      </Grid>
+      {!description && children ? <Box mb={3} /> : null}
+      {children ? (
+        <Grid
+          templateColumns={
+            sideBySide
+              ? "repeat(2, minmax(0, 1fr))"
+              : { base: "1fr", md: "repeat(2, minmax(0, 1fr))" }
+          }
+          gap={4}
+          css={{ "& > *": { minWidth: 0, width: "100%" } }}
+        >
+          {children}
+        </Grid>
+      ) : null}
     </Box>
   );
 }

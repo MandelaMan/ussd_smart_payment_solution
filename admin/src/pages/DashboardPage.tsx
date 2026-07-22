@@ -25,6 +25,7 @@ import {
 } from "recharts";
 import { api, formatCurrency, formatMetricCurrency, type MonthlyPaymentChurnSummary } from "../lib/api";
 import type { ActivityItem, Stats } from "../lib/api";
+import { formatProductNameForDisplay } from "../lib/formatText";
 import { DisplayText } from "../components/ui/DisplayText";
 import { MetricCard } from "../components/MetricCard";
 import { PackageSubscriptionChart } from "../components/PackageSubscriptionChart";
@@ -310,7 +311,9 @@ export function DashboardPage() {
         ).toLocaleDateString("en-KE", { month: "long", year: "numeric" });
 
   const packageChartData = (subs.topPackages ?? []).slice(0, 5).map((p) => ({
-    name: p.mbps ? `${p.package} (${p.mbps}M)` : p.package,
+    name: p.mbps
+      ? `${formatProductNameForDisplay(p.package)} (${p.mbps}M)`
+      : formatProductNameForDisplay(p.package),
     subscribers: p.subscribers,
   }));
 

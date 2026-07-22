@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Box, Button, Input, Stack, Table, Text } from "@chakra-ui/react";
 import { FiChevronDown, FiChevronRight, FiRefreshCw } from "react-icons/fi";
+import { useSearchParams } from "react-router-dom";
 import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
 import { mergeInfinitePage, useMobileViewport } from "../../hooks/useMobileViewport";
 import {
@@ -78,10 +79,16 @@ export function BillingCustomerTable({
   const { user } = useAuth();
   const allowSync = canOperateFinance(user);
   const { syncing, runSync } = useBillingReconciliation();
+  const [searchParams] = useSearchParams();
+  const initialIssue = searchParams.get("issue") || "";
   const [searchInput, setSearchInput] = useState("");
   const { query: debouncedQuery, pending: searchPending } = useDebouncedSearch(searchInput);
   const [search, setSearch] = useState("");
-  const [issueTypeFilter, setIssueTypeFilter] = useState("");
+  const [issueTypeFilter, setIssueTypeFilter] = useState(() =>
+    BILLING_GAP_STATUSES.includes(initialIssue as (typeof BILLING_GAP_STATUSES)[number])
+      ? initialIssue
+      : ""
+  );
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<ReconciliationCustomerRow[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({

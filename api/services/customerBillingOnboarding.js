@@ -9,6 +9,7 @@ const { logActivity } = require("./activityLogStore");
 const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
 const {
   isB2BCustomer,
+  resolveEffectiveCustomerEmail,
 } = require("../utils/b2bBilling");
 const { buildSubscriptionLineItems } = require("../utils/zohoInvoiceLineItems");
 const {
@@ -138,7 +139,7 @@ async function emailSignupInvoiceOnce(invoice, customer, tracking = null) {
   }
 
   const invoiceId = String(invoice.invoice_id);
-  const toEmail = customer.email ? String(customer.email).trim() : null;
+  const toEmail = resolveEffectiveCustomerEmail(customer) || null;
   if (!toEmail) {
     return { emailed: false, reason: "no_email" };
   }

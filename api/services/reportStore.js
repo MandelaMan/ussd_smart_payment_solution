@@ -143,6 +143,14 @@ const REPORT_DEFINITIONS = [
     category: "Financial",
     dateFilter: false,
   },
+  {
+    id: "upcoming-invoices",
+    title: "Upcoming Invoices",
+    description:
+      "Invoices scheduled to go out in the next 7 days and anticipated collection amount.",
+    category: "Financial",
+    dateFilter: false,
+  },
 ];
 
 /** Partner-safe reports: aggregate metrics only — no transaction-level or internal ops data. */
@@ -951,6 +959,39 @@ async function paymentFrequencyMix() {
   };
 }
 
+async function upcomingInvoicesReport() {
+  const { getUpcomingInvoiceForecast } = require("./billingForecastStore");
+  const forecast = await getUpcomingInvoiceForecast({ days: 7 });
+  const headers = [
+    { key: "scheduled_date", label: "Scheduled Date" },
+    { key: "customer_number", label: "Customer No." },
+    { key: "customer_name", label: "Name" },
+    { key: "building", label: "Building" },
+    { key: "expected_amount", label: "Expected (KES)" },
+    { key: "frequency", label: "Frequency" },
+    { key: "source", label: "Source" },
+  ];
+  const rows = forecast.items.map((item) => ({
+    scheduled_date: item.scheduledDate,
+    customer_number: item.customerNumber,
+    customer_name: item.customerName,
+    building: item.buildingName || "",
+    expected_amount: item.expectedAmount,
+    frequency: item.paymentFrequency,
+    source: item.source === "trial" ? "Trial first invoice" : "Recurring",
+  }));
+  return {
+    title: "Upcoming Invoices (Next 7 Days)",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: forecast.invoiceCount,
+      totalOutstanding: forecast.anticipatedAmount,
+    },
+    period: { from: forecast.windowStart, to: forecast.windowEnd },
+  };
+}
+
 async function billingReconciliationReport() {
   const reconciliationStore = require("./reconciliationStore");
   const result = await reconciliationStore.listCustomers({ page: 1, limit: 10000 });
@@ -1002,6 +1043,7 @@ const RUNNERS = {
   "monthly-payment-churn": monthlyPaymentChurn,
   "payment-frequency-mix": paymentFrequencyMix,
   "billing-reconciliation": billingReconciliationReport,
+  "upcoming-invoices": upcomingInvoicesReport,
 };
 
 async function runReport(reportId, { from, to, month } = {}) {
