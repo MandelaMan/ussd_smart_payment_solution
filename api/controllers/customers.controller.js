@@ -7,6 +7,8 @@ const {
   formatTispError,
   accountExistsOnTisp,
   formatTispDueDate,
+  isTispDuplicateAccountError,
+  isTispAccountMissingError,
 } = require("./tisp.controller");
 const store = require("../services/customerModuleStore");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
@@ -192,6 +194,40 @@ function buildZohoContactPersonPayload(existingContact, personFields) {
   return person;
 }
 
+/**
+ * Zoho deletes omitted contact_persons on PUT. Preserve non-primary persons
+ * so updates do not look like deletes (error 3043 on contacts with recurring invoices).
+ */
+function buildZohoContactPersonsPayload(existingContact, primaryFields) {
+  const persons = Array.isArray(existingContact?.contact_persons)
+    ? existingContact.contact_persons
+    : [];
+  const primary = buildZohoContactPersonPayload(existingContact, primaryFields);
+  if (persons.length <= 1) return [primary];
+
+  const primaryId = primary.contact_person_id
+    ? String(primary.contact_person_id)
+    : null;
+  return persons.map((p) => {
+    const id = p?.contact_person_id ? String(p.contact_person_id) : null;
+    if (
+      (primaryId && id === primaryId) ||
+      (!primaryId && p.is_primary_contact)
+    ) {
+      return primary;
+    }
+    return {
+      contact_person_id: p.contact_person_id,
+      first_name: p.first_name || "",
+      last_name: p.last_name || "",
+      email: p.email || undefined,
+      phone: p.phone || undefined,
+      mobile: p.mobile || p.phone || undefined,
+      is_primary_contact: Boolean(p.is_primary_contact),
+    };
+  });
+}
+
 async function buildZohoContactPayload(customer, existingContact = null) {
   const { firstName, middleName, lastName } = resolveZohoPersonNames(customer);
   const displayName = [firstName, middleName, lastName].filter(Boolean).join(" ").trim();
@@ -247,25 +283,21 @@ async function buildZohoContactPayload(customer, existingContact = null) {
   if (email) payload.email = email;
 
   if (!isB2B && (firstName || lastName || displayName)) {
-    payload.contact_persons = [
-      buildZohoContactPersonPayload(existingContact, {
-        first_name: firstName || displayName,
-        last_name: lastName || firstName || displayName,
-        email,
-        phone,
-        mobile: phone,
-      }),
-    ];
+    payload.contact_persons = buildZohoContactPersonsPayload(existingContact, {
+      first_name: firstName || displayName,
+      last_name: lastName || firstName || displayName,
+      email,
+      phone,
+      mobile: phone,
+    });
   } else if (isB2B && displayName && displayName !== companyName) {
-    payload.contact_persons = [
-      buildZohoContactPersonPayload(existingContact, {
-        first_name: firstName || displayName,
-        last_name: lastName || companyName,
-        email,
-        phone,
-        mobile: phone,
-      }),
-    ];
+    payload.contact_persons = buildZohoContactPersonsPayload(existingContact, {
+      first_name: firstName || displayName,
+      last_name: lastName || companyName,
+      email,
+      phone,
+      mobile: phone,
+    });
   }
 
   return payload;
@@ -853,6 +885,20 @@ async function refreshTispStatus(customer, options = {}) {
       } catch (e) {
         console.warn("TISP not-found status persist failed:", e.message);
       }
+    } else if (preferredDueDate) {
+      // Client Status often fails after SetClientDetails; still persist the due
+      // date we just pushed so edit UI and Status stay in sync.
+      try {
+        await integrationSnapshot.upsertTispSnapshot(customer.id, {
+          dueDate: preferredDueDate,
+          duedate: preferredDueDate,
+        });
+      } catch (e) {
+        console.warn(
+          "TISP preferred due-date snapshot persist failed:",
+          e.message
+        );
+      }
     }
     try {
       await store.reconcileTispSyncStatus(customer.id);
@@ -1016,7 +1062,7 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
     .trim()
     .toUpperCase();
   if (!previousNumber || !currentNumber || previousNumber === currentNumber) {
-    return createCustomerOnTisp(ctx, meta);
+    return updateCustomerOnTisp(ctx, meta);
   }
 
   let preservedDueDate = meta.dueDate || null;
@@ -1054,6 +1100,12 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
       skipStatusRefresh: meta.skipStatusRefresh,
     });
   } catch (createErr) {
+    if (isTispDuplicateAccountError(createErr)) {
+      return await updateCustomerOnTisp(ctx, {
+        ...meta,
+        dueDate: preservedDueDate || meta.dueDate,
+      });
+    }
     // Best-effort rollback so the customer is not left disconnected.
     if (preservedDueDate) {
       try {
@@ -1097,6 +1149,16 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     ? String(meta.previousCustomerNumber).trim().toUpperCase()
     : null;
 
+  // Edits must never INSERT just because Client Status falsely says "missing".
+  // Prefer UPDATE whenever the caller says so, or we previously synced, or a
+  // local snapshot exists.
+  const preferUpdate =
+    meta.preferUpdate === true ||
+    meta.forceUpdate === true ||
+    meta.allowCreate === false ||
+    String(ctx.tisp_sync_status || "").toLowerCase() === "synced" ||
+    Boolean(ctx.tisp_due_date);
+
   try {
     // Customer number changed (apartment move / type convert). TISP UPDATE does
     // not rename AccountNumber — migrate old → new via release + INSERT.
@@ -1126,10 +1188,24 @@ async function pushCustomerToTisp(ctx, meta = {}) {
       }
     }
 
+    // Existence check failed / unavailable — still try UPDATE first on edits.
     try {
       return await updateCustomerOnTisp(ctx, meta);
-    } catch {
-      return await createCustomerOnTisp(ctx, meta);
+    } catch (updateErr) {
+      if (preferUpdate && !isTispAccountMissingError(updateErr)) {
+        // Soft Client Status failures / unrelated UPDATE errors: do not INSERT.
+        throw updateErr;
+      }
+
+      try {
+        return await createCustomerOnTisp(ctx, meta);
+      } catch (createErr) {
+        // Account already on TISP — Client Status lied. Fall back to UPDATE.
+        if (isTispDuplicateAccountError(createErr)) {
+          return await updateCustomerOnTisp(ctx, meta);
+        }
+        throw createErr;
+      }
     }
   } finally {
     if (!skipCooldown) {
@@ -1433,7 +1509,9 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   const tispDueDateRaw = options.tispDueDate
     ? String(options.tispDueDate).trim()
     : "";
-  const tispDueDate = tispDueDateRaw || TISP_STANDARD_DUE_DATE;
+  // Do not force the cycle default over a live TISP due date on edit.
+  // Prefer: explicit form value → current TISP due → standard default (create only).
+  const tispDueDate = tispDueDateRaw;
 
   const ctx = await store.getCustomerContext(customerId);
   if (!ctx || ctx.status !== "active") {
@@ -1448,36 +1526,26 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
 
   let tisp = { ok: true };
   try {
-    if (previousCustomerNumber) {
-      // Apartment / customer-number change: migrate AccountNumber on TISP
-      // (UPDATE old → INSERT/UPDATE new) instead of creating a duplicate.
-      await pushCustomerToTisp(ctx, {
-        previousCustomerNumber,
-        dueDate: tispDueDate || presence?.tispDueDate || TISP_STANDARD_DUE_DATE,
-        previousApartmentNumber: options.previousApartmentNumber,
-      });
-      tisp = {
-        ok: true,
-        migrated: true,
-        previousCustomerNumber,
-        customerNumber: ctx.customer_number,
-      };
-    } else if (!presence?.onTisp) {
-      await createCustomerOnTisp(ctx, { dueDate: tispDueDate });
-      tisp = { ok: true, created: true, dueDate: tispDueDate };
-    } else {
-      // Prefer form/standard due date. Never fall through to "today" on edit.
-      const dueForUpdate =
-        tispDueDate || presence.tispDueDate || TISP_STANDARD_DUE_DATE;
-      await updateCustomerOnTisp(ctx, {
-        dueDate: dueForUpdate,
-      });
-      tisp = {
-        ok: true,
-        updated: true,
-        dueDate: dueForUpdate,
-      };
-    }
+    // Always update-first on edit. Never INSERT just because Client Status
+    // reported onTisp=false (that caused "Duplicate Account Exists" on phone edits).
+    const dueForSync =
+      tispDueDate ||
+      presence?.tispDueDate ||
+      TISP_STANDARD_DUE_DATE;
+    await pushCustomerToTisp(ctx, {
+      previousCustomerNumber: previousCustomerNumber || undefined,
+      previousApartmentNumber: options.previousApartmentNumber,
+      dueDate: dueForSync,
+      preferUpdate: true,
+    });
+    tisp = {
+      ok: true,
+      updated: true,
+      migrated: Boolean(previousCustomerNumber),
+      previousCustomerNumber: previousCustomerNumber || undefined,
+      customerNumber: ctx.customer_number,
+      dueDate: dueForSync,
+    };
     await store.updateCustomerTispSync(customerId, "synced", null);
     // create/update already refresh live Client Status (+ preferred due date).
   } catch (e) {
@@ -1694,8 +1762,8 @@ async function listCustomers(req, res, next) {
     };
     let result = await store.listCustomers(listFilters);
 
-    // Only live-sync on explicit refresh — searching used to hit TISP+Zoho for
-    // every result row and made list search feel very slow.
+    // Explicit refresh button only — never block search on live TISP/Zoho.
+    // Search uses POST /customers/refresh-batch in the background after results render.
     if (refresh === "true") {
       const active = result.data.filter((c) => c.status === "active");
       const toRefresh = active
@@ -3752,7 +3820,7 @@ async function updateCustomer(req, res, next) {
     const updateZohoRecurring = body.updateZohoRecurring === true;
     const tispDueDate = body.tispDueDate
       ? String(body.tispDueDate).trim()
-      : TISP_STANDARD_DUE_DATE;
+      : null;
 
     const presenceBefore = await resolveCustomerIntegrationPresence(id);
     if (presenceBefore && !presenceBefore.onTisp && !tispDueDate) {
@@ -3798,7 +3866,7 @@ async function updateCustomer(req, res, next) {
         createInitialInvoice,
         createRecurringInvoice,
         updateZohoRecurring,
-        tispDueDate,
+        tispDueDate: tispDueDate || undefined,
         apartmentChanged: Boolean(apartmentChanged),
         previousCustomerNumber: previousCustomerNumber || undefined,
       });
@@ -4135,6 +4203,89 @@ async function retryBillingOnboarding(req, res, next) {
   }
 }
 
+async function refreshCustomersBatch(req, res, next) {
+  try {
+    const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const ids = [
+      ...new Set(
+        rawIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      ),
+    ].slice(0, 10);
+
+    // List/search needs TISP status + due date quickly. Zoho is optional/slower.
+    const includeZoho = req.body?.includeZoho === true;
+    const force = req.body?.force === true;
+
+    if (ids.length === 0) {
+      return res.json({ customers: [], refreshed: 0, skipped: 0 });
+    }
+
+    let refreshed = 0;
+    let skipped = 0;
+
+    const updated = await mapWithConcurrency(ids, 5, async (id) => {
+      if (!force && syncCooldown.getRemainingMs(id) > 0) {
+        skipped += 1;
+        const cached = await attachTispDueDate(await store.getCustomerById(id));
+        return cached;
+      }
+
+      let customer = await store.getCustomerById(id);
+      if (!customer || customer.status !== "active") {
+        skipped += 1;
+        return customer;
+      }
+
+      try {
+        await refreshTispStatus({
+          id: customer.id,
+          customerNumber: customer.customerNumber,
+        });
+        await store.reconcileTispSyncStatus(id);
+
+        if (includeZoho) {
+          try {
+            invalidateCustomerZoho(id);
+            const zoho = await fetchCustomerZohoInvoices(customer, {
+              skipCache: true,
+            });
+            await store.reconcileZohoBillingStatus(id, {
+              linked: zoho?.linked,
+              invoiceCount: zoho?.invoiceCount ?? 0,
+            });
+          } catch (e) {
+            console.warn(
+              `[refreshCustomersBatch] Zoho sync failed for ${customer.customerNumber}:`,
+              e.message
+            );
+          }
+        }
+
+        syncCooldown.recordSync(id);
+        refreshed += 1;
+        return attachTispDueDate(await store.getCustomerById(id));
+      } catch (e) {
+        console.warn(
+          `[refreshCustomersBatch] TISP sync failed for ${customer.customerNumber}:`,
+          e.message
+        );
+        syncCooldown.recordSync(id);
+        return attachTispDueDate(await store.getCustomerById(id));
+      }
+    });
+
+    return res.json({
+      customers: updated.filter(Boolean),
+      refreshed,
+      skipped,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function refreshCustomerStatus(req, res, next) {
   try {
     const id = Number(req.params.id);
@@ -4238,6 +4389,7 @@ module.exports = {
   getCustomerInvoices,
   getCustomerPayments,
   refreshCustomerStatus,
+  refreshCustomersBatch,
   retryBillingOnboarding,
   getUpgradeQuote,
   getDowngradeQuote,

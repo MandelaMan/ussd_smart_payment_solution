@@ -257,6 +257,39 @@ function isTispErrorText(text) {
   );
 }
 
+function tispErrorMessage(err) {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  return String(
+    err.message ||
+      err.response?.data?.message ||
+      err.response?.data?.Message ||
+      err.response?.data ||
+      ""
+  );
+}
+
+/** TISP INSERT rejected because AccountNumber already exists. */
+function isTispDuplicateAccountError(err) {
+  const lower = tispErrorMessage(err).toLowerCase();
+  return (
+    lower.includes("duplicate account") ||
+    lower.includes("account already exists") ||
+    lower.includes("already exist")
+  );
+}
+
+/** TISP UPDATE / Client Status: account is not on TISP yet. */
+function isTispAccountMissingError(err) {
+  const lower = tispErrorMessage(err).toLowerCase();
+  return (
+    lower.includes("account not found") ||
+    lower.includes("client not found") ||
+    lower.includes("not found") ||
+    lower.includes("does not exist")
+  );
+}
+
 /**
  * Map TISP JSON keys to the shape USSD / callers expect (sample ET-F502 uses duedate, package, amount, status).
  */
@@ -701,6 +734,8 @@ module.exports = {
   formatTispError,
   parseTispOperationResponse,
   accountExistsOnTisp,
+  isTispDuplicateAccountError,
+  isTispAccountMissingError,
   formatTispDueDate,
   test,
   TISP_STANDARD_DUE_DATE,

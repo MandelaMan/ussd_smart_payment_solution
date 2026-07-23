@@ -159,6 +159,7 @@ export function CustomersListPage() {
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const debouncedSearch = useDebouncedValue(searchInput, 450);
+  const [liveSyncing, setLiveSyncing] = useState(false);
   const loadRequestRef = useRef(0);
   const [buildingId, setBuildingId] = useState("");
   const [statusFilters, setStatusFilters] = useState<SubscriptionStatusLabel[]>(() =>
@@ -260,6 +261,7 @@ export function CustomersListPage() {
         if (customerType) params.customerType = customerType;
         params.sortBy = sortQuery.sortBy;
         params.sortDir = sortQuery.sortDir;
+        // Manual refresh only — search stays fast; live sync runs in background after.
         if (refresh) params.refresh = "true";
         const res = await api.listCustomers(params);
         if (requestId !== loadRequestRef.current) return;
@@ -268,6 +270,38 @@ export function CustomersListPage() {
         );
         setPagination(res.pagination);
         if (!append) setSelectedIds(new Set());
+
+        // After search: show DB rows immediately, then patch with live TISP status/due date.
+        if (query.length >= 2 && res.data.length > 0) {
+          const activeIds = res.data
+            .filter((c) => c.status === "active")
+            .map((c) => c.id)
+            .slice(0, 10);
+          if (activeIds.length > 0) {
+            setLiveSyncing(true);
+            void api
+              .refreshCustomersBatch(activeIds, { force: true })
+              .then((batch) => {
+                if (requestId !== loadRequestRef.current) return;
+                if (!batch.customers?.length) return;
+                const byId = new Map(batch.customers.map((c) => [c.id, c]));
+                setCustomers((prev) =>
+                  prev.map((c) => {
+                    const next = byId.get(c.id);
+                    return next ? { ...c, ...next } : c;
+                  })
+                );
+              })
+              .catch(() => {
+                /* keep DB snapshot — expand/refresh still available */
+              })
+              .finally(() => {
+                if (requestId === loadRequestRef.current) setLiveSyncing(false);
+              });
+          }
+        } else {
+          setLiveSyncing(false);
+        }
       } catch (e) {
         if (requestId !== loadRequestRef.current) return;
         const message = e instanceof Error ? e.message : "Failed to load customers";
@@ -1451,6 +1485,12 @@ export function CustomersListPage() {
             />
           </FilterField>
       </FilterToolbar>
+
+      {liveSyncing ? (
+        <Text fontSize="xs" color="fg.muted">
+          Updating live TISP status…
+        </Text>
+      ) : null}
 
       {error && (
         <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">

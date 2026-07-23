@@ -49,6 +49,34 @@ const PAYMENT_FREQUENCIES = [
   { value: "custom", label: "Custom period" },
 ];
 
+/** Normalize API/TISP dates to YYYY-MM-DD for <input type="date">. */
+function toDateInputValue(value: string | null | undefined): string {
+  if (value == null) return "";
+  const s = String(value).trim();
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{1,2})\s+([A-Za-z]{3}[a-z]*)\s+(\d{4})/);
+  if (m) {
+    const months: Record<string, string> = {
+      jan: "01",
+      feb: "02",
+      mar: "03",
+      apr: "04",
+      may: "05",
+      jun: "06",
+      jul: "07",
+      aug: "08",
+      sep: "09",
+      oct: "10",
+      nov: "11",
+      dec: "12",
+    };
+    const mon = months[m[2].slice(0, 3).toLowerCase()];
+    if (mon) return `${m[3]}-${mon}-${m[1].padStart(2, "0")}`;
+  }
+  return "";
+}
+
 const PPOE_PASSWORD_CHARS =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
 
@@ -222,7 +250,10 @@ export function CustomerForm({
     setOnTisp(localOnTisp);
     setOnZoho(localOnZoho);
     setZohoInactive(false);
-    setTispDueDate(TISP_STANDARD_DUE_DATE);
+    // Prefill with known due date — never overwrite with the cycle default while loading.
+    setTispDueDate(
+      toDateInputValue(customer.tispDueDate) || TISP_STANDARD_DUE_DATE
+    );
     setDashboardLastPaymentDate(customer.lastPaymentDate || null);
     setCreateInitialInvoice(false);
     setCreateRecurringInvoice(false);
@@ -237,7 +268,11 @@ export function CustomerForm({
         setOnTisp(Boolean(res.onTisp));
         setOnZoho(Boolean(res.onZoho) || res.isB2B);
         setZohoInactive(Boolean(res.zohoInactive));
-        setTispDueDate(TISP_STANDARD_DUE_DATE);
+        setTispDueDate(
+          toDateInputValue(res.tispDueDate) ||
+            toDateInputValue(customer.tispDueDate) ||
+            TISP_STANDARD_DUE_DATE
+        );
         setZohoInvoiceCount(Number(res.invoiceCount) || 0);
         setZohoInvoicesInSync(Boolean(res.invoicesInSync));
         setZohoPaymentsInSync(res.paymentsInSync !== false);
@@ -856,8 +891,14 @@ export function CustomerForm({
             type: "success",
           });
         }
-        if (res.customer?.tispDueDate) {
-          setTispDueDate(TISP_STANDARD_DUE_DATE);
+        if (res.customer?.tispDueDate || res.tisp?.dueDate) {
+          setTispDueDate(
+            toDateInputValue(res.customer?.tispDueDate) ||
+              toDateInputValue(
+                typeof res.tisp?.dueDate === "string" ? res.tisp.dueDate : null
+              ) ||
+              tispDueDate
+          );
         }
         if (res.tisp?.ok && (res.tisp.created || res.tisp.updated)) {
           setOnTisp(true);
@@ -1257,7 +1298,7 @@ export function CustomerForm({
               />
               <Field.HelperText>
                 {onTisp
-                  ? `Defaults to ${TISP_STANDARD_DUE_DATE} (2 Aug 2026). Leave as-is or pick another date to update TISP.`
+                  ? "Shows the current TISP due date. Change it and save to update TISP."
                   : `Required to create this customer on TISP. Default: ${TISP_STANDARD_DUE_DATE} (2 Aug 2026).`}
               </Field.HelperText>
             </Field.Root>

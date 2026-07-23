@@ -1834,6 +1834,23 @@ export const api = {
       tisp: { refreshed: boolean };
     }>(`/admin/customers/${id}/refresh`, { method: "POST" }),
 
+  refreshCustomersBatch: (
+    ids: number[],
+    options: { includeZoho?: boolean; force?: boolean } = {}
+  ) =>
+    request<{
+      customers: Customer[];
+      refreshed: number;
+      skipped: number;
+    }>("/admin/customers/refresh-batch", {
+      method: "POST",
+      body: JSON.stringify({
+        ids,
+        includeZoho: options.includeZoho === true,
+        force: options.force === true,
+      }),
+    }),
+
   retryBillingOnboarding: (id: number) =>
     request<{
       ok: boolean;

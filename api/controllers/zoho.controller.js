@@ -960,13 +960,8 @@ const createContact_JS = async (payload) => {
 
 const updateContact_JS = async (contactId, payload) => {
   if (!contactId || !payload) return null;
-  try {
-    const data = await withTimeout(
-      callZoho(`contacts/${contactId}`, "PUT", payload),
-      12_000,
-      "update-contact",
-    );
-    const contact = pickLean(data.contact);
+
+  const cacheContact = (contact) => {
     if (contact?.contact_id) {
       cache.set(norm(contact.contact_name || contact.company_name || ""), contact);
       if (contact.company_name) {
@@ -974,7 +969,45 @@ const updateContact_JS = async (contactId, payload) => {
       }
     }
     return contact;
+  };
+
+  const putOnce = async (body) => {
+    const data = await withTimeout(
+      callZoho(`contacts/${contactId}`, "PUT", body),
+      12_000,
+      "update-contact",
+    );
+    return cacheContact(pickLean(data.contact));
+  };
+
+  try {
+    return await putOnce(payload);
   } catch (error) {
+    const zohoCode = error.response?.data?.code;
+    const zohoMsg = String(error.response?.data?.message || error.message || "");
+    const looksLikePersonDelete =
+      Number(zohoCode) === 3043 ||
+      /recurring invoice/i.test(zohoMsg) ||
+      /delete only the contacts/i.test(zohoMsg);
+
+    // Zoho sometimes rejects PUTs that include contact_persons when the contact
+    // has recurring invoices (treats omitted persons as deletes). Retry without.
+    if (looksLikePersonDelete && payload?.contact_persons) {
+      try {
+        const { contact_persons, ...withoutPersons } = payload;
+        console.warn(
+          "updateContact_JS: retrying without contact_persons after Zoho 3043"
+        );
+        return await putOnce(withoutPersons);
+      } catch (retryError) {
+        console.error(
+          "updateContact_JS retry error:",
+          retryError.response?.data || retryError.message,
+        );
+        throw retryError;
+      }
+    }
+
     console.error(
       "updateContact_JS error:",
       error.response?.data || error.message,

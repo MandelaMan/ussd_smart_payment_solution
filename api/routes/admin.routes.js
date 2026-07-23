@@ -38,6 +38,7 @@ const {
   getCustomerInvoices,
   getCustomerPayments,
   refreshCustomerStatus,
+  refreshCustomersBatch,
   retryBillingOnboarding,
   getUpgradeQuote,
   getDowngradeQuote,
@@ -225,6 +226,7 @@ router.post(
 router.get("/customers", requireCustomerRead, listCustomers);
 router.get("/customers/export", requireCustomerRead, exportCustomers);
 router.post("/customers", requireCustomerWrite, createCustomer);
+router.post("/customers/refresh-batch", requireCustomerRead, refreshCustomersBatch);
 router.patch("/customers/:id", requireCustomerWrite, updateCustomer);
 router.post("/customers/:id/convert-type", requireCustomerWrite, convertCustomerType);
 router.post("/customers/bulk-cancel", requireCustomerWrite, bulkCancelSubscriptions);
