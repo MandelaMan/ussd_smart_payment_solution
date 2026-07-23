@@ -909,7 +909,7 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
       { phone: ctx.phone, customer_type: ctx.customer_type },
       { phone: ctx.agency_phone }
     ),
-    paymentFrequency: ctx.payment_frequency,
+    // Do not pass paymentFrequency — TISP BillingCycle is always Monthly.
     isVatExempt: Boolean(ctx.is_vat_exempt),
     agencyName: ctx.agency_name || null,
     agencyContactPerson: ctx.agency_contact_person || null,
@@ -1420,6 +1420,10 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   const createInitialInvoice = options.createInitialInvoice === true;
   const createRecurringInvoice = options.createRecurringInvoice === true;
   const updateZohoRecurring = options.updateZohoRecurring === true;
+  const previousCustomerNumber = options.previousCustomerNumber
+    ? String(options.previousCustomerNumber).trim().toUpperCase()
+    : null;
+  const apartmentChanged = options.apartmentChanged === true || Boolean(previousCustomerNumber);
   const tispDueDateRaw = options.tispDueDate
     ? String(options.tispDueDate).trim()
     : "";
@@ -1438,7 +1442,21 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
 
   let tisp = { ok: true };
   try {
-    if (!presence?.onTisp) {
+    if (previousCustomerNumber) {
+      // Apartment / customer-number change: migrate AccountNumber on TISP
+      // (UPDATE old → INSERT/UPDATE new) instead of creating a duplicate.
+      await pushCustomerToTisp(ctx, {
+        previousCustomerNumber,
+        dueDate: tispDueDate || presence?.tispDueDate || TISP_STANDARD_DUE_DATE,
+        previousApartmentNumber: options.previousApartmentNumber,
+      });
+      tisp = {
+        ok: true,
+        migrated: true,
+        previousCustomerNumber,
+        customerNumber: ctx.customer_number,
+      };
+    } else if (!presence?.onTisp) {
       await createCustomerOnTisp(ctx, { dueDate: tispDueDate });
       tisp = { ok: true, created: true, dueDate: tispDueDate };
     } else {
@@ -1479,17 +1497,34 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
         getRecurringInvoices_JS,
       } = require("./zoho.controller");
 
-      // Re-load context so Zoho gets the just-saved local fields.
+      // Re-load context so Zoho gets the just-saved local fields (incl. new customer number).
       const freshCtx = (await store.getCustomerContext(customerId)) || ctx;
       const customer = mapContextToCustomer(freshCtx);
       const wasOnZoho = Boolean(presence?.onZoho);
 
-      // Always: resolve existing contact or create, then push title-cased name fields.
+      // Always: resolve existing contact or create, then push company name + display name.
       let contact = await ensureZohoContactForCustomer(customer);
       if (!contact?.contact_id) {
         throw new Error("Zoho contact could not be linked");
       }
       contact = await updateZohoContactDetails(customer, contact);
+
+      // Apartment change → customer number changed: force company_name + contact_name refresh.
+      if (apartmentChanged) {
+        const { updateContact_JS, getContactFull_JS } = require("./zoho.controller");
+        const expectedCompany = String(customer.customerNumber || "").trim();
+        if (expectedCompany) {
+          contact =
+            (await enforceZohoCompanyName(
+              contact.contact_id,
+              expectedCompany,
+              getContactFull_JS,
+              updateContact_JS
+            )) || contact;
+        }
+        // Re-push full payload so Display Name (contact_name) matches person name.
+        contact = await updateZohoContactDetails(customer, contact);
+      }
 
       let invoice = null;
       let recurring = null;
@@ -1498,9 +1533,10 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
         invoice = await createSignupInvoice(customer, contact);
       }
 
-      if (createRecurringInvoice || updateZohoRecurring) {
+      if (createRecurringInvoice || updateZohoRecurring || apartmentChanged) {
         recurring = await ensureRecurringSubscription(customer, contact, {
           startDate: invoice?.period?.endDate,
+          previousCustomerNumber: previousCustomerNumber || undefined,
         });
       }
 
@@ -3722,6 +3758,8 @@ async function updateCustomer(req, res, next) {
     const {
       customer: updated,
       packageChanged,
+      apartmentChanged,
+      previousCustomerNumber,
     } = await store.updateCustomerDetails(
       id,
       {
@@ -3752,6 +3790,8 @@ async function updateCustomer(req, res, next) {
         createRecurringInvoice,
         updateZohoRecurring,
         tispDueDate,
+        apartmentChanged: Boolean(apartmentChanged),
+        previousCustomerNumber: previousCustomerNumber || undefined,
       });
       tisp = syncResult.tisp;
       zoho = syncResult.zoho;

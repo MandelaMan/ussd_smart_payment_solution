@@ -923,7 +923,7 @@ export function CustomerExpandPanel({
             ) : null}
             {customer.hasDstv && (
               <DetailCard
-                label="DSTV decoder serial"
+                label="DSTV IUC/Serial"
                 value={customer.dstvDecoderSerial || "Not set — edit customer to add"}
                 mono={Boolean(customer.dstvDecoderSerial)}
                 highlight={!customer.dstvDecoderSerial}

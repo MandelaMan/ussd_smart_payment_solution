@@ -19,7 +19,10 @@ const TISP_REQUEST_TIMEOUT_MS = Number(
 /** TISP SetClientDetails only accepts "000000" (Postman reference payload). */
 const TISP_DEFAULT_SHORTCODE = process.env.TISP_SHORTCODE || "000000";
 const { DEFAULT_TZ } = require("../utils/billingPeriod");
-const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
+const {
+  TISP_STANDARD_DUE_DATE,
+  TISP_BILLING_CYCLE,
+} = require("../utils/tispConstants");
 
 /** TISP expects compact JSON: no space after colons or commas. */
 function stringifyTispPayload(data) {
@@ -314,10 +317,13 @@ const getTISPCustomer = async (clientNo) => {
 
 /**
  * Register or update a client on TISP (SetClientDetails).
+ * Always forces BillingCycle to Monthly before send (create and update).
  */
 async function postSetClientDetails(payload, meta = {}) {
   let httpStatus = null;
   let responseData = null;
+  // Invariant: TISP renews monthly — never map dashboard payment frequency here.
+  payload = { ...payload, BillingCycle: TISP_BILLING_CYCLE };
   const customerNumber =
     meta.customerNumber ??
     payload?.AccountNumber ??
@@ -476,9 +482,9 @@ function formatTispTelephone(phone) {
   return digits;
 }
 
-/** TISP create API always uses Monthly — TISP renews monthly regardless of customer billing frequency. */
-function tispCreateBillingCycle(_frequency) {
-  return "Monthly";
+/** Always Monthly on TISP create/update — independent of dashboard payment frequency. */
+function tispBillingCycle() {
+  return TISP_BILLING_CYCLE;
 }
 
 function tispRouterLocation(buildingName) {
@@ -491,10 +497,6 @@ function tispRouterLocation(buildingName) {
 
 function tispPersonName(value) {
   return String(value ?? "").trim();
-}
-
-function billingcycleValue(_frequency) {
-  return "monthly";
 }
 
 /**
@@ -559,7 +561,6 @@ function collectTispClientInput({
   ipAddress,
   email,
   phone,
-  paymentFrequency,
   isVatExempt,
   contactPerson,
   agencyName,
@@ -567,9 +568,6 @@ function collectTispClientInput({
 }) {
   const packagetype = ipSetup === "PPOE" ? "Ppoe" : "IP";
   const hasIp = Boolean(ipAddress);
-  const billingcycle = billingcycleValue(
-    paymentFrequency === "custom" ? "monthly" : paymentFrequency,
-  );
   const packageLabel = buildTispPackageLabel({
     planName,
     categoryName,
@@ -579,7 +577,7 @@ function collectTispClientInput({
   return {
     packagetype,
     hasIp,
-    billingcycle,
+    billingcycle: tispBillingCycle(),
     packageLabel,
     shortCode: String(TISP_DEFAULT_SHORTCODE).trim(),
     firstName: tispNamePart(firstName),
@@ -648,7 +646,7 @@ function buildTispSetClientPayload(input, transactionType) {
     Package: packageLabel,
     Router: routerLocation,
     StaticIPAddress: resolvedIp,
-    BillingCycle: tispCreateBillingCycle(),
+    BillingCycle: tispBillingCycle(),
     DueDate: formatTispDueDate(input.dueDate || TISP_STANDARD_DUE_DATE),
     PppoeUsername: String(apartmentNumber || ""),
     PppoePassword: String(tispPassword || ""),
@@ -702,4 +700,5 @@ module.exports = {
   formatTispDueDate,
   test,
   TISP_STANDARD_DUE_DATE,
+  TISP_BILLING_CYCLE,
 };

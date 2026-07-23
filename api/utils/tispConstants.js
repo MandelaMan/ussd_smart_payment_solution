@@ -7,6 +7,13 @@ const TISP_STANDARD_DUE_DATE = String(
   process.env.TISP_STANDARD_DUE_DATE || "2026-08-02"
 ).trim();
 
+/**
+ * TISP SetClientDetails BillingCycle — always Monthly on INSERT and UPDATE.
+ * Dashboard payment frequency (yearly/quarterly/custom) must never change this.
+ */
+const TISP_BILLING_CYCLE = "Monthly";
+
 module.exports = {
   TISP_STANDARD_DUE_DATE,
+  TISP_BILLING_CYCLE,
 };

@@ -1288,7 +1288,7 @@ function assertDstvDecoderSerial(product, building, serial) {
   const normalized = normalizeDstvDecoderSerial(serial);
   if (!normalized) {
     throw new Error(
-      "DSTV decoder serial number is required for DSTV packages in decoder buildings"
+      "DSTV decoder IUC/Serial number is required for DSTV packages in decoder buildings"
     );
   }
   if (normalized.length < 4 || normalized.length > 50) {
@@ -1978,6 +1978,9 @@ async function updateCustomerDetails(id, data, options = {}) {
   const existing = await getCustomerById(id);
   if (!existing) throw new Error("Customer not found");
 
+  let apartmentChanged = false;
+  let previousCustomerNumber = null;
+
   const firstName = String(data.firstName || "").trim();
   const lastName = String(data.lastName || "").trim();
   const middleName = data.middleName ? String(data.middleName).trim() : null;
@@ -2127,14 +2130,22 @@ async function updateCustomerDetails(id, data, options = {}) {
       .trim()
       .toUpperCase();
     if (apartmentNumber !== existing.apartmentNumber) {
-      await switchCustomerApartment(id, apartmentNumber, {
+      const switchResult = await switchCustomerApartment(id, apartmentNumber, {
         ipAddress: data.ipAddress,
       });
+      previousCustomerNumber = switchResult.previousCustomerNumber;
+      apartmentChanged = true;
     }
   }
 
   const customer = await getCustomerById(id);
-  return { customer, contactChanged, packageChanged };
+  return {
+    customer,
+    contactChanged,
+    packageChanged,
+    apartmentChanged,
+    previousCustomerNumber,
+  };
 }
 
 async function convertCustomerType(customerId, targetType, agencyId = null) {

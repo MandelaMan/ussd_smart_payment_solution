@@ -415,12 +415,14 @@ export function CustomerForm({
   const buildingRequiresDecoderSerial = selectedBuilding
     ? selectedBuilding.dstvSetup === "decoder"
     : true;
-  const requiresDstvSerial = Boolean(
-    (isEdit && !canEditPackage
+  const packageHasDstv = Boolean(
+    isEdit && !canEditPackage
       ? customer?.hasDstv
-      : selectedCategory?.hasDstv || selectedPackage?.hasDstv || customer?.hasDstv) &&
-      buildingRequiresDecoderSerial
+      : selectedCategory?.hasDstv || selectedPackage?.hasDstv || customer?.hasDstv
   );
+  /** Show IUC/serial whenever package has DSTV; only mandatory on decoder POPs. */
+  const showDstvSerialField = packageHasDstv;
+  const requiresDstvSerial = Boolean(packageHasDstv && buildingRequiresDecoderSerial);
   const packageAmount =
     isEdit && !canEditPackage
       ? customer?.packagePrice
@@ -428,6 +430,8 @@ export function CustomerForm({
         ? Math.round((selectedPackage.monthlyPrice * Number(customPeriodDays)) / 30)
         : selectedPackage?.price ?? (isEdit ? customer?.packagePrice : undefined);
   const decoderFee =
+    !isEdit &&
+    packageHasDstv &&
     selectedCategory?.requiresDecoderFee
       ? selectedCategory.decoderFeeAmount || 2900
       : 0;
@@ -516,8 +520,8 @@ export function CustomerForm({
     items.push({ label: "VAT exempt", value: isVatExempt ? "Yes" : "No" });
 
     if (previewIp) items.push({ label: "IP address", value: previewIp });
-    if (requiresDstvSerial && dstvDecoderSerial.trim()) {
-      items.push({ label: "DSTV serial", value: dstvDecoderSerial.trim().toUpperCase() });
+    if (showDstvSerialField && dstvDecoderSerial.trim()) {
+      items.push({ label: "DSTV IUC/Serial", value: dstvDecoderSerial.trim().toUpperCase() });
     }
 
     if (isEdit && isActive) {
@@ -596,6 +600,7 @@ export function CustomerForm({
     previewCode,
     previewIp,
     requiresDstvSerial,
+    showDstvSerialField,
     selectedBuilding?.name,
     selectedPackage,
     trialPeriod,
@@ -658,8 +663,8 @@ export function CustomerForm({
     }
     if (requiresDstvSerial && !dstvDecoderSerial.trim()) {
       toaster.create({
-        title: "DSTV decoder serial required",
-        description: "Enter the decoder serial number for DSTV packages.",
+        title: "DSTV decoder IUC/Serial required",
+        description: "Enter the decoder IUC/serial number for DSTV packages in decoder buildings.",
         type: "error",
       });
       return false;
@@ -938,9 +943,9 @@ export function CustomerForm({
                   </Text>
                 </Box>
               )}
-              {requiresDstvSerial && (
-                <Field.Root required gridColumn={{ md: "span 2" }}>
-                  <Field.Label>DSTV decoder serial number</Field.Label>
+              {showDstvSerialField && (
+                <Field.Root required={requiresDstvSerial} gridColumn={{ md: "span 2" }}>
+                  <Field.Label>DSTV decoder IUC/Serial number</Field.Label>
                   <Input
                     value={dstvDecoderSerial}
                     onChange={(e) => setDstvDecoderSerial(e.target.value.toUpperCase())}
@@ -951,8 +956,10 @@ export function CustomerForm({
                     bg={!isActive ? "gray.50" : undefined}
                   />
                   <Field.HelperText>
-                    Update the decoder serial here. Changing the TV package requires Upgrade or
-                    Downgrade.
+                    {requiresDstvSerial
+                      ? "Required for DSTV packages in decoder-based buildings. Must be unique across all customers."
+                      : "Optional for headend buildings. Leave blank if not applicable."}{" "}
+                    Changing the TV package requires Upgrade or Downgrade.
                   </Field.HelperText>
                 </Field.Root>
               )}
@@ -1049,7 +1056,7 @@ export function CustomerForm({
               ))}
             </SelectField>
           </Field.Root>
-          {selectedCategory?.requiresDecoderFee && (
+          {!isEdit && packageHasDstv && selectedCategory?.requiresDecoderFee && (
             <Box gridColumn={{ md: "span 2" }} bg="orange.50" borderRadius="md" px={3} py={2}>
               <Text fontSize="sm" color="orange.800">
                 A one-off decoder payment of {formatCurrency(decoderFee)} applies for this
@@ -1057,9 +1064,9 @@ export function CustomerForm({
               </Text>
             </Box>
           )}
-          {requiresDstvSerial && (
-            <Field.Root required gridColumn={{ md: "span 2" }}>
-              <Field.Label>DSTV decoder serial number</Field.Label>
+          {showDstvSerialField && (
+            <Field.Root required={requiresDstvSerial} gridColumn={{ md: "span 2" }}>
+              <Field.Label>DSTV decoder IUC/Serial number</Field.Label>
               <Input
                 value={dstvDecoderSerial}
                 onChange={(e) => setDstvDecoderSerial(e.target.value.toUpperCase())}
@@ -1070,8 +1077,9 @@ export function CustomerForm({
                 bg={!isActive ? "gray.50" : undefined}
               />
               <Field.HelperText>
-                Required for DSTV packages in decoder-based buildings. Must be unique across all
-                customers. Found on the decoder label or activation card.
+                {requiresDstvSerial
+                  ? "Required for DSTV packages in decoder-based buildings. Must be unique across all customers. Found on the decoder label or activation card."
+                  : "Optional for headend buildings. Leave blank if not applicable."}
               </Field.HelperText>
             </Field.Root>
           )}
