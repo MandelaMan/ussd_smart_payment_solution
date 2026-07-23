@@ -286,6 +286,9 @@ export type Customer = {
   agencyEmail?: string | null;
   agencyPhone?: string | null;
   customerNumber: string;
+  ipSetup?: string | null;
+  ppoeUsername?: string | null;
+  tispPassword?: string | null;
   packagePrice: number;
   decoderFeeAmount: number | null;
   decoderFeeRequired: boolean;

@@ -900,6 +900,11 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     productName: ctx.product_name,
     apartmentNumber: ctx.apartment_number,
     tispPassword: ctx.tisp_password,
+    ppoeUsername:
+      ctx.ppoe_username ||
+      (String(ctx.ip_setup || "").toUpperCase() === "PPOE"
+        ? ctx.customer_number
+        : ctx.apartment_number),
     ipAddress: ctx.ip_address,
     email: resolveEffectiveCustomerEmail(
       { email: ctx.email, customer_type: ctx.customer_type },
@@ -969,6 +974,7 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
       .toUpperCase();
     input.ipAddress = "";
     input.apartmentNumber = `${releaseApt}-X`;
+    input.ppoeUsername = `${releaseApt}-X`;
     input.tispPassword = `x${String(Date.now()).slice(-6)}`;
   }
 
@@ -3777,6 +3783,9 @@ async function updateCustomer(req, res, next) {
         productId: body.productId,
         ipAddress: body.ipAddress,
         dstvDecoderSerial: body.dstvDecoderSerial,
+        ppoeUsername: body.ppoeUsername,
+        ppoePassword: body.ppoePassword,
+        tispPassword: body.tispPassword,
       },
       { allowPackageEdit: isAdmin && wantsPackageEdit }
     );

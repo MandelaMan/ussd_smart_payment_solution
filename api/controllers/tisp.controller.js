@@ -648,7 +648,11 @@ function buildTispSetClientPayload(input, transactionType) {
     StaticIPAddress: resolvedIp,
     BillingCycle: tispBillingCycle(),
     DueDate: formatTispDueDate(input.dueDate || TISP_STANDARD_DUE_DATE),
-    PppoeUsername: String(apartmentNumber || ""),
+    PppoeUsername: String(
+      input.ppoeUsername != null && String(input.ppoeUsername).trim() !== ""
+        ? input.ppoeUsername
+        : apartmentNumber || ""
+    ),
     PppoePassword: String(tispPassword || ""),
     PppoeRemoteAddress: resolvedIp,
     ShortCode: String(TISP_DEFAULT_SHORTCODE).trim(),

@@ -108,14 +108,36 @@ function buildCustomerSearchFilter(term, options = {}) {
   };
 }
 
+/** Random 7-char PPPoE password — uppercase + lowercase letters only. */
 function generatePppoePassword() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
   let out = "";
-  const bytes = crypto.randomBytes(6);
-  for (let i = 0; i < 6; i++) {
+  const bytes = crypto.randomBytes(7);
+  for (let i = 0; i < 7; i++) {
     out += chars[bytes[i] % chars.length];
   }
   return out;
+}
+
+function normalizePppoeUsername(value, fallback = null) {
+  const username = String(value || "").trim().toUpperCase();
+  if (username) return username;
+  const fb = String(fallback || "").trim().toUpperCase();
+  return fb || null;
+}
+
+function normalizePppoePassword(value, { required = false } = {}) {
+  const password = String(value || "").trim();
+  if (!password) {
+    if (required) throw new Error("PPPoE password is required");
+    return null;
+  }
+  if (!/^[A-Za-z]{4,50}$/.test(password)) {
+    throw new Error(
+      "PPPoE password must be 4–50 letters (uppercase and lowercase only)"
+    );
+  }
+  return password;
 }
 
 function splitFullName(fullName) {
@@ -196,6 +218,9 @@ function mapCustomerRow(row) {
     agencyEmail: row.agency_email || null,
     agencyPhone: row.agency_phone || null,
     customerNumber: row.customer_number,
+    ipSetup: row.ip_setup || row.building_ip_setup || null,
+    ppoeUsername: row.ppoe_username || null,
+    tispPassword: row.tisp_password || null,
     packagePrice: Number(row.package_price),
     decoderFeeAmount:
       row.decoder_fee_amount != null ? Number(row.decoder_fee_amount) : null,
@@ -230,6 +255,7 @@ const LAST_PAYMENT_SORT_EXPR = `COALESCE(c.last_payment_date, '1000-01-01')`;
 const CUSTOMER_SELECT = `
   SELECT c.*,
          b.name AS building_name,
+         b.ip_setup AS ip_setup,
          b.dstv_setup AS building_dstv_setup,
          p.name AS product_name,
          p.mbps AS product_mbps,
@@ -1442,7 +1468,21 @@ async function createCustomer(data) {
   const tispPassword =
     building.ip_setup === "STATIC"
       ? apartmentNumber
-      : generatePppoePassword();
+      : normalizePppoePassword(
+          data.ppoePassword || data.tispPassword,
+          { required: false }
+        ) || generatePppoePassword();
+
+  const ppoeUsername =
+    building.ip_setup === "PPOE"
+      ? normalizePppoeUsername(
+          data.ppoeUsername,
+          customerNumber
+        )
+      : null;
+  if (building.ip_setup === "PPOE" && !ppoeUsername) {
+    throw new Error("PPPoE username is required");
+  }
 
   const packagePrice = resolvePackagePrice(
     product,
@@ -1480,10 +1520,10 @@ async function createCustomer(data) {
        first_name, middle_name, last_name, phone, email, ip_address,
        is_vat_exempt, customer_type, apartment_number, payment_frequency,
        custom_period_days, building_id, product_id, agency_id,
-       customer_number, tisp_password, package_price,
+       customer_number, tisp_password, ppoe_username, package_price,
        decoder_fee_amount, decoder_fee_required, dstv_decoder_serial,
        trial_period_enabled, trial_ends_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       names.first_name,
       names.middle_name,
@@ -1503,6 +1543,7 @@ async function createCustomer(data) {
       data.agencyId || null,
       customerNumber,
       tispPassword,
+      ppoeUsername,
       packagePrice,
       decoderFeeAmount,
       decoderFeeRequired,
@@ -1818,6 +1859,14 @@ async function switchCustomerApartment(
     building.ip_setup === "STATIC" ? newApartment : generatePppoePassword();
 
   const previousIp = customer.ip_address || null;
+  const previousPpoeUsername = String(customer.ppoe_username || "").trim().toUpperCase();
+  const ppoeUsername =
+    String(building.ip_setup || "").toUpperCase() === "PPOE"
+      ? !previousPpoeUsername ||
+        previousPpoeUsername === String(previousCustomerNumber || "").toUpperCase()
+        ? newCustomerNumber
+        : previousPpoeUsername
+      : null;
 
   await query(
     `UPDATE apartment_history
@@ -1848,9 +1897,17 @@ async function switchCustomerApartment(
 
   await query(
     `UPDATE customers
-     SET apartment_number = ?, customer_number = ?, tisp_password = ?, ip_address = ?
+     SET apartment_number = ?, customer_number = ?, tisp_password = ?,
+         ppoe_username = ?, ip_address = ?
      WHERE id = ?`,
-    [newApartment, newCustomerNumber, tispPassword, resolvedIp, customerId]
+    [
+      newApartment,
+      newCustomerNumber,
+      tispPassword,
+      ppoeUsername,
+      resolvedIp,
+      customerId,
+    ]
   );
 
   await query(
@@ -2072,6 +2129,34 @@ async function updateCustomerDetails(id, data, options = {}) {
   assertDstvDecoderSerial(effectiveProduct, building, dstvDecoderSerial);
   await assertDstvSerialUnique(dstvDecoderSerial, id);
 
+  const isPpoe = String(building.ip_setup || "").toUpperCase() === "PPOE";
+  let ppoeUsername = existing.ppoeUsername || null;
+  let tispPassword = existing.tispPassword || null;
+  if (isPpoe) {
+    if (data.ppoeUsername !== undefined) {
+      ppoeUsername = normalizePppoeUsername(
+        data.ppoeUsername,
+        existing.customerNumber
+      );
+      if (!ppoeUsername) throw new Error("PPPoE username is required");
+    } else if (!ppoeUsername) {
+      ppoeUsername = existing.customerNumber;
+    }
+    if (data.ppoePassword !== undefined || data.tispPassword !== undefined) {
+      const incoming = String(data.ppoePassword ?? data.tispPassword ?? "").trim();
+      if (incoming && incoming === String(existing.tispPassword || "")) {
+        tispPassword = existing.tispPassword;
+      } else {
+        tispPassword = normalizePppoePassword(incoming, { required: true });
+      }
+    } else if (!tispPassword) {
+      tispPassword = generatePppoePassword();
+    }
+  } else {
+    ppoeUsername = null;
+    tispPassword = existing.tispPassword || existing.apartmentNumber;
+  }
+
   const contactChanged =
     firstName !== existing.firstName ||
     lastName !== existing.lastName ||
@@ -2084,6 +2169,7 @@ async function updateCustomerDetails(id, data, options = {}) {
      SET first_name = ?, middle_name = ?, last_name = ?, phone = ?, email = ?,
          is_vat_exempt = ?, customer_type = ?, agency_id = ?, ip_address = ?,
          dstv_decoder_serial = ?,
+         tisp_password = ?, ppoe_username = ?,
          product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?
      WHERE id = ?`,
     [
@@ -2097,6 +2183,8 @@ async function updateCustomerDetails(id, data, options = {}) {
       agencyId,
       ipCheck.ip,
       dstvDecoderSerial,
+      tispPassword,
+      isPpoe ? ppoeUsername : null,
       productId,
       paymentFrequency,
       customPeriodDays,

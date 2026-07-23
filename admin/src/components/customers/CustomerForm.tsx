@@ -49,6 +49,24 @@ const PAYMENT_FREQUENCIES = [
   { value: "custom", label: "Custom period" },
 ];
 
+const PPOE_PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+
+function generatePppoePassword(length = 7): string {
+  let out = "";
+  const bytes =
+    typeof crypto !== "undefined" && crypto.getRandomValues
+      ? crypto.getRandomValues(new Uint8Array(length))
+      : Array.from({ length }, () => Math.floor(Math.random() * 256));
+  for (let i = 0; i < length; i++) {
+    out += PPOE_PASSWORD_CHARS[Number(bytes[i]) % PPOE_PASSWORD_CHARS.length];
+  }
+  return out;
+}
+
+function isValidPppoePassword(value: string): boolean {
+  return /^[A-Za-z]{4,50}$/.test(value.trim());
+}
+
 const lockedPackageFieldProps = {
   readOnly: true,
   disabled: true,
@@ -131,6 +149,9 @@ export function CustomerForm({
   const [productId, setProductId] = useState("");
   const [agencyId, setAgencyId] = useState("");
   const [dstvDecoderSerial, setDstvDecoderSerial] = useState("");
+  const [ppoeUsername, setPpoeUsername] = useState("");
+  const [ppoePassword, setPpoePassword] = useState("");
+  const [ppoeUsernameTouched, setPpoeUsernameTouched] = useState(false);
   const [trialPeriod, setTrialPeriod] = useState(false);
   const [createInitialInvoice, setCreateInitialInvoice] = useState(false);
   const [createRecurringInvoice, setCreateRecurringInvoice] = useState(false);
@@ -267,6 +288,9 @@ export function CustomerForm({
     setBuildingId(String(customer.buildingId));
     setAgencyId(customer.agencyId ? String(customer.agencyId) : "");
     setDstvDecoderSerial(customer.dstvDecoderSerial || "");
+    setPpoeUsername(customer.ppoeUsername || customer.customerNumber || "");
+    setPpoePassword(customer.tispPassword || "");
+    setPpoeUsernameTouched(true);
     setProductId(String(customer.productId));
     if (customer.planId) {
       setPlanId(String(customer.planId));
@@ -391,6 +415,14 @@ export function CustomerForm({
   const selectedBuilding = buildings.find((b) => String(b.id) === buildingId);
   const ipRules = getBuildingIpRules(selectedBuilding);
   const needsIp = ipRules?.ipSetup === "STATIC";
+  const isPpoe = selectedBuilding?.ipSetup === "PPOE";
+
+  const previewCustomerNumber = useMemo(() => {
+    if (!selectedBuilding || !apartmentNumber.trim()) return "";
+    const code =
+      customerType === "B2B" ? selectedBuilding.b2bCode : selectedBuilding.c2bCode;
+    return `${code}-${apartmentNumber.trim().toUpperCase()}`;
+  }, [selectedBuilding, apartmentNumber, customerType]);
 
   useEffect(() => {
     if (!selectedBuilding) {
@@ -408,6 +440,25 @@ export function CustomerForm({
       setIpLastOctet("");
     }
   }, [selectedBuilding?.id]);
+
+  // Create: default PPPoE username to customer number; regenerate password when POP changes.
+  useEffect(() => {
+    if (isEdit) return;
+    if (!isPpoe) {
+      setPpoeUsername("");
+      setPpoePassword("");
+      setPpoeUsernameTouched(false);
+      return;
+    }
+    if (!ppoeUsernameTouched && previewCustomerNumber) {
+      setPpoeUsername(previewCustomerNumber);
+    }
+  }, [isEdit, isPpoe, previewCustomerNumber, ppoeUsernameTouched]);
+
+  useEffect(() => {
+    if (isEdit || !isPpoe) return;
+    setPpoePassword(generatePppoePassword());
+  }, [isEdit, isPpoe, buildingId]);
 
   const selectedPackage = showPackageEditor
     ? packages.find((p) => String(p.id) === productId) || null
@@ -520,6 +571,12 @@ export function CustomerForm({
     items.push({ label: "VAT exempt", value: isVatExempt ? "Yes" : "No" });
 
     if (previewIp) items.push({ label: "IP address", value: previewIp });
+    if (isPpoe && ppoeUsername.trim()) {
+      items.push({ label: "PPPoE username", value: ppoeUsername.trim().toUpperCase() });
+    }
+    if (isPpoe && ppoePassword.trim()) {
+      items.push({ label: "PPPoE password", value: ppoePassword.trim() });
+    }
     if (showDstvSerialField && dstvDecoderSerial.trim()) {
       items.push({ label: "DSTV IUC/Serial", value: dstvDecoderSerial.trim().toUpperCase() });
     }
@@ -592,11 +649,14 @@ export function CustomerForm({
     email,
     firstName,
     isEdit,
+    isPpoe,
     isVatExempt,
     lastName,
     middleName,
     paymentFrequency,
     phone,
+    ppoePassword,
+    ppoeUsername,
     previewCode,
     previewIp,
     requiresDstvSerial,
@@ -669,6 +729,26 @@ export function CustomerForm({
       });
       return false;
     }
+    if (isPpoe) {
+      if (!ppoeUsername.trim()) {
+        toaster.create({ title: "PPPoE username is required", type: "error" });
+        return false;
+      }
+      if (!ppoePassword.trim()) {
+        toaster.create({ title: "PPPoE password is required", type: "error" });
+        return false;
+      }
+      const passwordUnchanged =
+        isEdit && ppoePassword === (customer?.tispPassword || "");
+      if (!passwordUnchanged && !isValidPppoePassword(ppoePassword)) {
+        toaster.create({
+          title: "Invalid PPPoE password",
+          description: "Use 4–50 letters only (uppercase and lowercase).",
+          type: "error",
+        });
+        return false;
+      }
+    }
     if (isEdit && isActive && !onTisp && !tispDueDate.trim()) {
       toaster.create({
         title: "TISP due date required",
@@ -709,6 +789,12 @@ export function CustomerForm({
             : dstvDecoderSerial.trim()
               ? dstvDecoderSerial.trim().toUpperCase()
               : undefined,
+          ...(isPpoe
+            ? {
+                ppoeUsername: ppoeUsername.trim().toUpperCase(),
+                ppoePassword: ppoePassword.trim(),
+              }
+            : {}),
           ...(canEditPackage && isActive
             ? {
                 paymentFrequency: paymentFrequency as Customer["paymentFrequency"],
@@ -803,6 +889,12 @@ export function CustomerForm({
         dstvDecoderSerial: requiresDstvSerial
           ? dstvDecoderSerial.trim().toUpperCase()
           : undefined,
+        ...(isPpoe
+          ? {
+              ppoeUsername: ppoeUsername.trim().toUpperCase(),
+              ppoePassword: ppoePassword.trim(),
+            }
+          : {}),
         trialPeriod: trialPeriod || undefined,
       });
 
@@ -1496,9 +1588,7 @@ export function CustomerForm({
             description={
               needsIp
                 ? "Pick the subnet, then enter the last number of the IP address."
-                : isEdit
-                  ? `${selectedBuilding.name} uses PPOE — IP is managed automatically.`
-                  : `${selectedBuilding.name} uses PPOE — no static IP required. A password is generated on create.`
+                : `${selectedBuilding.name} uses PPOE — set the PPPoE username and password for TISP.`
             }
           >
             {needsIp && ipRules ? (
@@ -1578,6 +1668,57 @@ export function CustomerForm({
                   </Field.HelperText>
                 </Field.Root>
               </Box>
+            ) : null}
+            {isPpoe ? (
+              <Field.Root required>
+                <Field.Label>PPPoE username</Field.Label>
+                <Input
+                  value={ppoeUsername}
+                  onChange={(e) => {
+                    setPpoeUsernameTouched(true);
+                    setPpoeUsername(e.target.value.toUpperCase());
+                  }}
+                  placeholder={previewCustomerNumber || "e.g. SKY-302"}
+                  fontFamily="mono"
+                  readOnly={!isActive}
+                  disabled={fieldsDisabled}
+                  bg={!isActive ? "gray.50" : undefined}
+                />
+                <Field.HelperText>
+                  Defaults to the customer number. Sent to TISP as PppoeUsername.
+                </Field.HelperText>
+              </Field.Root>
+            ) : null}
+            {isPpoe ? (
+              <Field.Root required>
+                <Field.Label>PPPoE password</Field.Label>
+                <Flex gap={2} align="stretch">
+                  <Input
+                    value={ppoePassword}
+                    onChange={(e) => setPpoePassword(e.target.value)}
+                    placeholder="7-letter password"
+                    fontFamily="mono"
+                    readOnly={!isActive}
+                    disabled={fieldsDisabled}
+                    bg={!isActive ? "gray.50" : undefined}
+                    flex={1}
+                  />
+                  {isActive ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      flexShrink={0}
+                      disabled={fieldsDisabled}
+                      onClick={() => setPpoePassword(generatePppoePassword())}
+                    >
+                      Regenerate
+                    </Button>
+                  ) : null}
+                </Flex>
+                <Field.HelperText>
+                  Letters only (A–Z, a–z). Default is a random 7-character password.
+                </Field.HelperText>
+              </Field.Root>
             ) : null}
           </FormSection>
         )}
