@@ -318,6 +318,36 @@ const getTISPCustomer = async (clientNo) => {
 async function postSetClientDetails(payload, meta = {}) {
   let httpStatus = null;
   let responseData = null;
+  const customerNumber =
+    meta.customerNumber ??
+    payload?.AccountNumber ??
+    payload?.clientaccountnumber ??
+    null;
+  const packageLabel = String(payload?.Package ?? "").trim();
+
+  if (!isValidTispPackageLabel(packageLabel)) {
+    const errorMessage = packageLabel
+      ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")`
+      : 'TISP Package Missing (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")';
+    await logApiCall({
+      service: "tisp",
+      operation: meta.operation || "set_client_details",
+      method: "POST",
+      endpoint: SET_CLIENT_URL,
+      status: "failure",
+      httpStatus: null,
+      requestPayload: payload,
+      responsePayload: null,
+      errorMessage,
+      customerId: meta.customerId ?? null,
+      customerNumber,
+      retryable: true,
+      parentLogId: meta.parentLogId ?? null,
+    });
+    const err = new Error(errorMessage);
+    err._apiCallLogged = true;
+    throw err;
+  }
 
   try {
     const r = await postTispJson(SET_CLIENT_URL, payload, {
@@ -348,11 +378,7 @@ async function postSetClientDetails(payload, meta = {}) {
       responsePayload: responseData,
       errorMessage: success ? null : parsed.message,
       customerId: meta.customerId ?? null,
-      customerNumber:
-        meta.customerNumber ??
-        payload.AccountNumber ??
-        payload.clientaccountnumber ??
-        null,
+      customerNumber,
       retryable: true,
       parentLogId: meta.parentLogId ?? null,
     });
@@ -381,11 +407,7 @@ async function postSetClientDetails(payload, meta = {}) {
         responsePayload: e.response?.data ?? responseData,
         errorMessage: e.message,
         customerId: meta.customerId ?? null,
-        customerNumber:
-        meta.customerNumber ??
-        payload.AccountNumber ??
-        payload.clientaccountnumber ??
-        null,
+        customerNumber,
         retryable: true,
         parentLogId: meta.parentLogId ?? null,
       });
@@ -476,23 +498,49 @@ function billingcycleValue(_frequency) {
 }
 
 /**
- * TISP Package field — plan name only (e.g. "BASIC", "BASIC PLUS").
- * Category/speed suffixes are rejected by TISP as "Package Missing".
+ * Normalize category segments for TISP Package field.
+ * "Internet + Apartonet Channels" → "INTERNET + APARTONET CHANNELS"
  */
-function buildTispPackageLabel({ planName, productName }) {
-  const plan = String(planName || "").trim().toUpperCase();
-  if (plan) return plan;
+function formatTispCategorySegment(category) {
+  return String(category || "")
+    .split(/\s*\+\s*/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+    .join(" + ");
+}
 
-  if (productName) {
+/**
+ * TISP Package field for all POPs — strict `{PLAN} - {CATEGORY}` format.
+ * Example: "BASIC PLUS - INTERNET + APARTONET CHANNELS"
+ */
+function buildTispPackageLabel({ planName, categoryName, productName }) {
+  let plan = String(planName || "").trim();
+  let category = String(categoryName || "").trim();
+
+  if ((!plan || !category) && productName) {
     const parts = String(productName)
       .split(/\s*[·•―–—-]\s*|\s*\?\?\s*/)
       .map((s) => s.trim())
       .filter(Boolean);
-    // Product names are often "Plan · Category" — use the plan segment.
-    if (parts.length >= 1) return parts[0].toUpperCase();
+    if (!plan && parts.length >= 1) plan = parts[0];
+    if (!category && parts.length >= 2) category = parts.slice(1).join(" + ");
+  }
+
+  const planUpper = plan.toUpperCase();
+  const categorySegment = formatTispCategorySegment(category);
+
+  if (planUpper && categorySegment) {
+    return `${planUpper} - ${categorySegment}`;
   }
 
   return "";
+}
+
+/** True when Package matches `{PLAN} - {PART}[+ {PART}...]` (all uppercase). */
+function isValidTispPackageLabel(label) {
+  return /^[A-Z0-9]+(?: [A-Z0-9]+)* - [A-Z0-9]+(?: [A-Z0-9]+)*(?: \+ [A-Z0-9]+(?: [A-Z0-9]+)*)*$/.test(
+    String(label || "").trim()
+  );
 }
 
 function collectTispClientInput({
@@ -645,6 +693,7 @@ module.exports = {
   buildTispUpdateClientDetailsPayload,
   buildSetClientDetailsPayload,
   buildTispPackageLabel,
+  isValidTispPackageLabel,
   stringifyTispPayload,
   stringifyTispCreatePayload,
   formatTispError,

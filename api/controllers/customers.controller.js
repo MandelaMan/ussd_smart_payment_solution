@@ -327,6 +327,17 @@ async function ensureZohoContactForCustomer(customer) {
 
   const { updateContact_JS, getSpecificCustomer_JS, getContactFull_JS, markContactActive_JS } = require("./zoho.controller");
 
+  function markCreated(contact, created) {
+    if (contact && typeof contact === "object") {
+      Object.defineProperty(contact, "_wasCreated", {
+        value: Boolean(created),
+        enumerable: false,
+        configurable: true,
+      });
+    }
+    return contact;
+  }
+
   async function loadContactForUpdate(contactId) {
     const full = await getContactFull_JS(contactId);
     if (full?.contact_id) return full;
@@ -386,7 +397,7 @@ async function ensureZohoContactForCustomer(customer) {
       if (customer.id) {
         await integrationSnapshot.upsertZohoContact(customer.id, afterUpdate);
       }
-      return afterUpdate;
+      return markCreated(afterUpdate, false);
     } catch (e) {
       console.warn("Zoho contact refresh failed:", e.message);
       throw e;
@@ -408,6 +419,7 @@ async function ensureZohoContactForCustomer(customer) {
     }
   }
 
+  // Live lookup by customer number / email / name — update if found, never duplicate.
   const existing = await findZohoContactForCustomer(customer);
   if (existing?.contact_id) {
     return refreshExisting(existing);
@@ -454,15 +466,16 @@ async function ensureZohoContactForCustomer(customer) {
     } catch (e) {
       console.warn("Zoho contact snapshot failed:", e.message);
     }
-    return contact;
+    return markCreated(contact, true);
   }
 
+  // Final safety: another create may have won the race.
   const retry = await findZohoContactForCustomer(customer);
   if (retry?.contact_id) {
     return refreshExisting(retry);
   }
 
-  throw new Error("Zoho contact could not be linked");
+  throw new Error("Zoho contact creation returned no contact_id");
 }
 
 async function syncCustomerToZoho(customer) {
@@ -1398,7 +1411,7 @@ async function getCustomerIntegrations(req, res, next) {
  * invoice/recurring/due-date controls from the edit form.
  *
  * Always applies:
- * - TISP package = plan name only; real TISP errors fail the sync
+ * - TISP package = `{PLAN} - {CATEGORY}` (e.g. BASIC PLUS - INTERNET + APARTONET CHANNELS); real TISP errors fail the sync and are logged
  * - Live Client Status refresh after every successful TISP write
  * - Zoho lookup by customer number → email → name; update existing (by snapshot
  *   id first) instead of creating duplicates
@@ -1573,18 +1586,40 @@ async function runZohoSyncForCustomer(customerId, options = {}) {
 }
 
 async function syncNewCustomerToTisp(customerId, customerNumber, meta = {}) {
-  syncCooldown.assertSyncAllowed(customerId);
   try {
     const ctx = await store.getCustomerContext(customerId);
-    await createCustomerOnTisp(ctx, meta);
+    if (!ctx) throw new Error("Customer not found");
+
+    const number = String(
+      customerNumber || ctx.customer_number || ""
+    )
+      .trim()
+      .toUpperCase();
+
+    const syncMeta = { ...meta };
+    // Prefer update when the account already exists on TISP — never INSERT a duplicate.
+    // Keep their existing due date unless the caller passed an explicit one.
+    if (!syncMeta.dueDate && number) {
+      try {
+        const exists = await accountExistsOnTisp(number);
+        if (exists) {
+          const live = await getTISPCustomer(number);
+          if (live?.dueDate) {
+            syncMeta.dueDate = live.dueDate;
+          }
+        }
+      } catch {
+        /* fall through — pushCustomerToTisp still prefers UPDATE when present */
+      }
+    }
+
+    await pushCustomerToTisp(ctx, syncMeta);
     await store.updateCustomerTispSync(customerId, "synced", null);
     return null;
   } catch (e) {
     const tispError = formatTispError(e);
     await store.updateCustomerTispSync(customerId, "failed", tispError);
     return tispError;
-  } finally {
-    syncCooldown.recordSync(customerId);
   }
 }
 
@@ -2005,6 +2040,8 @@ async function createCustomer(req, res, next) {
         ? {
             ok: true,
             zohoContactId: zoho.zohoContactId,
+            contactCreated: zoho.contactCreated === true,
+            contactUpdated: zoho.contactUpdated === true,
             invoice: zoho.invoice,
             recurring: zoho.recurring,
             trial: zoho.trial || null,
@@ -3237,30 +3274,23 @@ async function deleteCustomerPermanently(req, res, next) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    const [onTisp, zohoContact] = await Promise.all([
-      accountExistsOnTisp(customer.customerNumber),
-      findZohoContactForCustomer(customer),
-    ]);
-
-    if (onTisp && zohoContact?.contact_id) {
-      return res.status(400).json({
-        error:
-          "Cannot delete this customer because accounts exist on both TISP and Zoho.",
-      });
-    }
-    if (onTisp) {
-      return res.status(400).json({
-        error: "Cannot delete this customer because an account exists on TISP.",
-      });
-    }
-    if (zohoContact?.contact_id) {
-      return res.status(400).json({
-        error: "Cannot delete this customer because a Zoho contact exists.",
-      });
-    }
-
+    // Hard-delete from the admin DB only — no TISP/Zoho presence checks.
+    // External accounts (if any) are left untouched.
     const deleted = await store.deleteCustomerCompletely(id);
     invalidateCustomerZoho(id);
+
+    try {
+      await logActivity({
+        eventType: "customer_deleted",
+        title: "Customer permanently deleted",
+        message: `${deleted.customerNumber} removed from admin database`,
+        source: "admin",
+        status: "success",
+        customerRef: deleted.customerNumber,
+      });
+    } catch (logErr) {
+      console.error("activity log (permanent delete) failed:", logErr.message);
+    }
 
     return res.json({ ok: true, customerNumber: deleted.customerNumber });
   } catch (err) {

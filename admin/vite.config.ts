@@ -84,6 +84,8 @@ export default defineConfig({
   build: {
     target: "es2020",
     cssCodeSplit: true,
+    // ECharts/Chakra vendor chunks routinely exceed Vite's 500 kB default.
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
         manualChunks(id) {

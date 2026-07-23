@@ -537,7 +537,7 @@ export function CustomerActionDialog({
             <Stack gap={4}>
               <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
                 This permanently removes the customer and all related records from the admin
-                database. It is only allowed when the customer has no account on TISP or Zoho.
+                database. TISP and Zoho accounts (if any) are not deleted or changed.
               </Box>
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={onClose}>

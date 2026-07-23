@@ -314,6 +314,7 @@ async function onboardNewCustomerBilling(customerId) {
     if (!zohoContact?.contact_id) {
       throw new Error("Zoho contact could not be linked");
     }
+    const contactCreated = zohoContact._wasCreated === true;
 
     const { updateZohoContactDetails } = require("./customerZohoSync");
     zohoContact = await updateZohoContactDetails(
@@ -424,6 +425,8 @@ async function onboardNewCustomerBilling(customerId) {
       ok: true,
       linked: true,
       zohoContactId: zohoContact.contact_id,
+      contactCreated,
+      contactUpdated: !contactCreated,
       invoice,
       recurring,
       trial: hasTrial ? { enabled: true, endsAt: trialEndsAt } : null,
