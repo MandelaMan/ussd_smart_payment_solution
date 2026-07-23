@@ -535,7 +535,7 @@ export function CeoDashboardPage() {
                 Reports
               </RouterLink>
               <RouterLink to="/analytics" style={{ color: BRAND.cerulean, fontWeight: 600 }}>
-                Business Intelligence
+                Analytics
               </RouterLink>
               <RouterLink to="/customers" style={{ color: BRAND.cerulean, fontWeight: 600 }}>
                 Customers

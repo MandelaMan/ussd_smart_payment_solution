@@ -56,4 +56,16 @@ const authApiLimiter = createRateLimiter({
   message: { error: "Too many requests. Please slow down." },
 });
 
-module.exports = { createRateLimiter, loginLimiter, authApiLimiter };
+/** Soft limit for /auth/me — focus/visibility checks call this often. */
+const authMeLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: "Too many requests. Please slow down." },
+});
+
+module.exports = {
+  createRateLimiter,
+  loginLimiter,
+  authApiLimiter,
+  authMeLimiter,
+};

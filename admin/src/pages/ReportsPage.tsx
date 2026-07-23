@@ -9,23 +9,17 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
-import {
-  FiBarChart2,
-  FiDownload,
-  FiFile,
-  FiFileText,
-} from "react-icons/fi";
-import { api, type ReportAnalytics, type ReportDefinition } from "../lib/api";
+import { FiDownload, FiFile, FiFileText } from "react-icons/fi";
+import { Link as RouterLink } from "react-router-dom";
+import { api, type ReportDefinition } from "../lib/api";
 import { ReportsPageSkeleton } from "../components/PageSkeletons";
-import { BusinessInsightsPanel } from "../components/reports/BusinessInsightsPanel";
-import { UpcomingInvoicesForecastStrip } from "../components/billing/UpcomingInvoicesForecastStrip";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { DateField } from "../components/ui/DateField";
 import { PAGE_STACK_GAP, PageErrorBanner, PageHeader } from "../components/ui/pageLayout";
 import { toaster } from "../components/ui/toaster";
 import { useAuth } from "../lib/auth";
-import { isPartner } from "../lib/rbac";
+import { canAccessFinance, isPartner } from "../lib/rbac";
 
 const CATEGORY_COLORS: Record<string, string> = {
   Financial: "green",
@@ -51,14 +45,11 @@ function defaultMonth() {
 export function ReportsPage() {
   const { user } = useAuth();
   const partnerView = isPartner(user);
-  const showAnalytics = !partnerView;
+  const showAnalyticsLink = canAccessFinance(user);
 
   const [reports, setReports] = useState<ReportDefinition[]>([]);
-  const [analytics, setAnalytics] = useState<ReportAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [analyticsLoading, setAnalyticsLoading] = useState(showAnalytics);
   const [error, setError] = useState("");
-  const [analyticsError, setAnalyticsError] = useState("");
   const [from, setFrom] = useState(defaultFromDate);
   const [to, setTo] = useState(defaultToDate);
   const [month, setMonth] = useState(defaultMonth);
@@ -84,29 +75,6 @@ export function ReportsPage() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!showAnalytics) return undefined;
-
-    let cancelled = false;
-    (async () => {
-      setAnalyticsLoading(true);
-      setAnalyticsError("");
-      try {
-        const data = await api.getReportAnalytics({ from, to });
-        if (!cancelled) setAnalytics(data);
-      } catch (e) {
-        if (!cancelled) {
-          setAnalyticsError(e instanceof Error ? e.message : "Failed to load analytics");
-        }
-      } finally {
-        if (!cancelled) setAnalyticsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [from, to, showAnalytics]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, ReportDefinition[]>();
@@ -147,13 +115,25 @@ export function ReportsPage() {
         setDownloading(null);
       }
     },
-    [from, to]
+    [from, to, month]
   );
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
       <PageHeader
-        title={partnerView ? "Reports" : "Reports & Analytics"}
+        title="Reports"
+        description={
+          partnerView
+            ? "Export subscriber, revenue, and occupancy summaries for your records."
+            : "Download Excel or PDF exports for sharing and record-keeping."
+        }
+        actions={
+          showAnalyticsLink ? (
+            <Button asChild size="sm" variant="outline">
+              <RouterLink to="/analytics">Open Analytics</RouterLink>
+            </Button>
+          ) : undefined
+        }
       />
 
       <FilterToolbar>
@@ -194,54 +174,12 @@ export function ReportsPage() {
           pb={1}
         >
           <Text fontSize="xs" color="fg.muted">
-            {showAnalytics
-              ? "Charts and time-based report exports"
-              : "Time-based report exports"}
+            Applies to time-based and month-based report exports
           </Text>
         </Box>
       </FilterToolbar>
 
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
-      {analyticsError ? <PageErrorBanner>{analyticsError}</PageErrorBanner> : null}
-
-      {showAnalytics && analytics?.upcomingInvoices && !analyticsLoading ? (
-        <UpcomingInvoicesForecastStrip
-          forecast={{
-            windowDays: 7,
-            windowStart: analytics.upcomingInvoices.windowStart,
-            windowEnd: analytics.upcomingInvoices.windowEnd,
-            invoiceCount: analytics.upcomingInvoices.invoiceCount,
-            anticipatedAmount: analytics.upcomingInvoices.anticipatedAmount,
-          }}
-        />
-      ) : null}
-
-      {showAnalytics ? (
-        <Box>
-          <Flex align="center" gap={2} mb={4}>
-            <FiBarChart2 size={16} color="#166a82" />
-            <Text fontSize="md" fontWeight="semibold" color="brand.800">
-              Visual analytics
-            </Text>
-          </Flex>
-          <BusinessInsightsPanel
-            data={analytics}
-            loading={analyticsLoading}
-            error={analyticsError}
-          />
-        </Box>
-      ) : null}
-
-      <Box borderTop={showAnalytics ? "1px solid" : undefined} borderColor="border.muted" pt={showAnalytics ? 2 : 0}>
-        <Text fontSize="md" fontWeight="semibold" color="brand.800" mb={1}>
-          Downloadable reports
-        </Text>
-        <Text fontSize="sm" color="fg.muted" mb={4}>
-          {partnerView
-            ? "Export subscriber, revenue, and occupancy summaries for your records."
-            : "Export detailed data in Excel or PDF for sharing and record-keeping."}
-        </Text>
-      </Box>
 
       {loading ? (
         <ReportsPageSkeleton />

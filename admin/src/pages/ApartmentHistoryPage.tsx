@@ -5,11 +5,13 @@ import { useTableSort } from "../hooks/useTableSort";
 import {
   Badge,
   Box,
+  Button,
   Input,
   Table,
   Text,
 } from "@chakra-ui/react";
 import { FiChevronDown, FiChevronRight } from "react-icons/fi";
+import { Link as RouterLink } from "react-router-dom";
 import {
   api,
   formatDate,
@@ -345,7 +347,13 @@ export function ApartmentHistoryPage() {
   return (
     <ListPageStack>
       <MobilePageChrome
-        title="Apartment history"
+        title="Occupancy ledger"
+        description="Cross-building occupancy events. Open Apartments for unit-centric views."
+        desktopActions={
+          <Button asChild size="sm" variant="outline">
+            <RouterLink to="/apartments">Apartments overview</RouterLink>
+          </Button>
+        }
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Tenant, customer #, apartment…"

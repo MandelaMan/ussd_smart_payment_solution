@@ -13,6 +13,7 @@
     "db:status": "node api/config/migrate.js --status",
     "db:seed": "node scripts/seed-admin.js",
     "db:seed-dummy": "node scripts/seed-dummy-data.js",
+    "db:cleanup-enaki-test": "node scripts/cleanup-enaki-test-customers.js",
     "db:backfill-activity": "node scripts/backfill-activity.js",
     "db:import-logs": "node scripts/import-logs-to-mysql.js",
     "build:admin": "cd admin && npm install && npm run build",

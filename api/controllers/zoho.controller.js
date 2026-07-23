@@ -361,6 +361,24 @@ const getRecurringInvoices_JS = async (params = {}) => {
   }
 };
 
+const getRecurringInvoice_JS = async (recurringInvoiceId) => {
+  if (!recurringInvoiceId) return null;
+  try {
+    const data = await withTimeout(
+      callZoho(`recurringinvoices/${recurringInvoiceId}`, "GET"),
+      10_000,
+      "get-recurring-invoice",
+    );
+    return data.recurring_invoice || data.recurringinvoice || data;
+  } catch (error) {
+    console.error(
+      "getRecurringInvoice_JS error:",
+      error.response?.data || error.message,
+    );
+    return null;
+  }
+};
+
 // Resume a stopped recurring invoice
 const resumeRecurringInvoice_JS = async (recurringInvoiceId) => {
   if (!recurringInvoiceId) return null;
@@ -1444,6 +1462,7 @@ module.exports = {
   // Programmatic/core JS functions
   getInvoices_JS,
   getRecurringInvoices_JS,
+  getRecurringInvoice_JS,
   resumeRecurringInvoice_JS,
   stopRecurringInvoice_JS,
   createRecurringInvoice_JS,

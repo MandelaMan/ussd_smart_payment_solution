@@ -179,6 +179,7 @@ export function CustomersListPage() {
   const [actionType, setActionType] = useState<CustomerAction | null>(null);
   const [actionProductId, setActionProductId] = useState("");
   const [newApartment, setNewApartment] = useState("");
+  const [switchIpAddress, setSwitchIpAddress] = useState("");
   const [cancelNotes, setCancelNotes] = useState("");
   const [actionPackages, setActionPackages] = useState<Product[]>([]);
   const [apartmentHistory, setApartmentHistory] = useState<ApartmentHistoryEntry[]>([]);
@@ -641,6 +642,7 @@ export function CustomersListPage() {
     setActionType(type);
     setActionProductId("");
     setNewApartment("");
+    setSwitchIpAddress("");
     setCancelNotes("");
     setActionPackages([]);
     setApartmentHistory([]);
@@ -1136,7 +1138,8 @@ export function CustomersListPage() {
       } else if (actionType === "switch") {
         const res = await api.switchCustomerApartment(
           actionCustomer.id,
-          newApartment.trim()
+          newApartment.trim(),
+          { ipAddress: switchIpAddress.trim() || undefined }
         );
         if (res.tisp && !res.tisp.ok) {
           toaster.create({
@@ -1145,8 +1148,23 @@ export function CustomersListPage() {
             type: "warning",
             duration: 10000,
           });
+        } else if (res.zoho && res.zoho.ok === false) {
+          toaster.create({
+            title: "Apartment moved",
+            description: `Zoho sync failed: ${res.zoho.error || "update failed"}`,
+            type: "warning",
+            duration: 10000,
+          });
         } else {
-          toaster.create({ title: "Apartment switched", type: "success" });
+          toaster.create({
+            title: "Apartment switched",
+            description: res.customer?.customerNumber
+              ? `Updated to ${res.customer.customerNumber}${
+                  res.customer.ipAddress ? ` · IP ${res.customer.ipAddress}` : ""
+                }`
+              : undefined,
+            type: "success",
+          });
         }
       } else if (actionType === "disconnect") {
         const res = await api.disconnectCustomer(actionCustomer.id);
@@ -1799,9 +1817,11 @@ export function CustomersListPage() {
       />
       <CustomerActionDialog
         customer={actionCustomer}
+        buildings={buildings}
         actionType={actionType}
         actionProductId={actionProductId}
         newApartment={newApartment}
+        switchIpAddress={switchIpAddress}
         cancelNotes={cancelNotes}
         actionPackages={actionPackages}
         apartmentHistory={apartmentHistory}
@@ -1823,6 +1843,7 @@ export function CustomersListPage() {
         onPaymentMethodChange={setUpgradePaymentMethod}
         onCancelPendingUpgrade={handleCancelPendingUpgrade}
         onApartmentChange={setNewApartment}
+        onSwitchIpChange={setSwitchIpAddress}
         onNotesChange={setCancelNotes}
       />
       <CustomerImportProgressDialog

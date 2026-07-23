@@ -51,6 +51,12 @@ function appendReportSummaryRows(sheet, report, startRowIndex) {
   if (summary.totalOutstanding != null) {
     writeLabelValue("Total outstanding (KES)", summary.totalOutstanding, true);
   }
+  if (summary.activeCustomers != null) {
+    writeLabelValue("Active customers", summary.activeCustomers, true);
+  }
+  if (summary.totalAmount != null) {
+    writeLabelValue("Total amount (KES)", summary.totalAmount, true);
+  }
 
   if (Array.isArray(summary.byReason) && summary.byReason.length) {
     rowIndex += 1;
@@ -159,6 +165,12 @@ async function toExcel(report) {
   if (report.summary?.totalOutstanding != null) {
     summaryParts.push(`Total outstanding: ${report.summary.totalOutstanding}`);
   }
+  if (report.summary?.activeCustomers != null) {
+    summaryParts.push(`Active customers: ${report.summary.activeCustomers}`);
+  }
+  if (report.summary?.totalAmount != null) {
+    summaryParts.push(`Total amount: ${report.summary.totalAmount}`);
+  }
   const summaryRow = sheet.addRow([summaryParts.join(" · ")]);
   summaryRow.getCell(1).font = { italic: true, color: { argb: "FF666666" } };
 
@@ -212,6 +224,18 @@ function toPdf(report) {
       if (report.summary.totalOutstanding != null) {
         doc.text(
           `Total outstanding (KES): ${Number(report.summary.totalOutstanding).toLocaleString("en-KE")}`,
+          startX,
+          y
+        );
+        y = doc.y + 2;
+      }
+      if (report.summary.activeCustomers != null) {
+        doc.text(`Active customers: ${report.summary.activeCustomers}`, startX, y);
+        y = doc.y + 2;
+      }
+      if (report.summary.totalAmount != null) {
+        doc.text(
+          `Total amount (KES): ${Number(report.summary.totalAmount).toLocaleString("en-KE")}`,
           startX,
           y
         );
@@ -319,6 +343,14 @@ function toPdf(report) {
     if (report.summary?.totalOutstanding != null) {
       footerParts.push(
         `Total outstanding: KES ${Number(report.summary.totalOutstanding).toLocaleString("en-KE")}`
+      );
+    }
+    if (report.summary?.activeCustomers != null) {
+      footerParts.push(`Active customers: ${report.summary.activeCustomers}`);
+    }
+    if (report.summary?.totalAmount != null) {
+      footerParts.push(
+        `Total amount: KES ${Number(report.summary.totalAmount).toLocaleString("en-KE")}`
       );
     }
     doc.text(footerParts.join(" · "), startX, y + 8, {

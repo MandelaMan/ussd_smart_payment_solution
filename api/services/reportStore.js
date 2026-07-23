@@ -51,6 +51,14 @@ const REPORT_DEFINITIONS = [
     dateFilter: false,
   },
   {
+    id: "customers-by-pop-package",
+    title: "Customers by POP & Package",
+    description:
+      "Active customers grouped by POP (building) and package, with package amounts and totals.",
+    category: "Customers",
+    dateFilter: false,
+  },
+  {
     id: "building-occupancy",
     title: "Building Occupancy",
     description: "Active customers and unique apartments per building.",
@@ -161,6 +169,7 @@ const PARTNER_REPORT_IDS = new Set([
   "arpu-analysis",
   "subscriber-census",
   "package-distribution",
+  "customers-by-pop-package",
   "building-occupancy",
   "agency-performance",
   "customer-lifecycle",
@@ -408,6 +417,70 @@ async function packageDistribution() {
     title: "Package Distribution",
     headers,
     rows: rows.map((r) => formatRow(r, headers)),
+  };
+}
+
+/**
+ * Customers grouped by POP (building) and package with package amounts.
+ * Amounts use each customer's package_price; totals cover active subscribers only.
+ */
+async function customersByPopPackage() {
+  const headers = [
+    { key: "pop", label: "POP" },
+    { key: "package", label: "Package" },
+    { key: "mbps", label: "Mbps" },
+    { key: "frequency", label: "Frequency" },
+    { key: "customers", label: "Active Customers" },
+    { key: "unit_amount", label: "Package Amount (KES)" },
+    { key: "total_amount", label: "Total Amount (KES)" },
+  ];
+  const rows = await query(
+    `SELECT b.name AS pop,
+            p.name AS \`package\`,
+            p.mbps,
+            c.payment_frequency AS frequency,
+            COUNT(*) AS customers,
+            ROUND(AVG(c.package_price), 2) AS unit_amount,
+            ROUND(SUM(c.package_price), 2) AS total_amount
+     FROM customers c
+     JOIN products p ON p.id = c.product_id
+     JOIN buildings b ON b.id = c.building_id
+     WHERE c.status = 'active'
+     GROUP BY b.id, b.name, p.id, p.name, p.mbps, c.payment_frequency
+     ORDER BY b.name ASC, total_amount DESC, p.mbps DESC`
+  );
+
+  let totalCustomers = 0;
+  let totalAmount = 0;
+  for (const row of rows) {
+    totalCustomers += Number(row.customers) || 0;
+    totalAmount += Number(row.total_amount) || 0;
+  }
+
+  const formatted = rows.map((r) => formatRow(r, headers));
+  formatted.push(
+    formatRow(
+      {
+        pop: "TOTAL",
+        package: "",
+        mbps: "",
+        frequency: "",
+        customers: totalCustomers,
+        unit_amount: "",
+        total_amount: Math.round(totalAmount * 100) / 100,
+      },
+      headers
+    )
+  );
+
+  return {
+    title: "Customers by POP & Package",
+    headers,
+    rows: formatted,
+    summary: {
+      activeCustomers: totalCustomers,
+      totalAmount: Math.round(totalAmount * 100) / 100,
+    },
   };
 }
 
@@ -1030,6 +1103,7 @@ const RUNNERS = {
   "top-customers": topCustomers,
   "subscriber-census": subscriberCensus,
   "package-distribution": packageDistribution,
+  "customers-by-pop-package": customersByPopPackage,
   "building-occupancy": buildingOccupancy,
   "agency-performance": agencyPerformance,
   "tisp-sync-health": tispSyncHealth,

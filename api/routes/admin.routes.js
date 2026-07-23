@@ -88,6 +88,9 @@ const {
 const { getDashboard: getPartnerDashboard } = require("../controllers/partner.controller");
 const {
   listApartmentHistoryRecords,
+  listApartments,
+  getApartment,
+  getApartmentUnitHistory,
   checkApartmentOccupancy,
 } = require("../controllers/apartments.controller");
 const {
@@ -200,6 +203,17 @@ router.post("/agencies/:id/invoices", requireAgencyWrite, createAgencyInvoice);
 
 router.get("/apartments/history", requireConfigRead, listApartmentHistoryRecords);
 router.get("/apartments/check", requireConfigRead, checkApartmentOccupancy);
+router.get("/apartments", requireConfigRead, listApartments);
+router.get(
+  "/apartments/:buildingId/:apartmentNumber/history",
+  requireConfigRead,
+  getApartmentUnitHistory
+);
+router.get(
+  "/apartments/:buildingId/:apartmentNumber",
+  requireConfigRead,
+  getApartment
+);
 
 router.get("/customers/import/template", requireCustomerWrite, downloadImportTemplate);
 router.post(

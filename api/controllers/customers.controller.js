@@ -940,10 +940,26 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
   )
     .trim()
     .toUpperCase();
-  const payload = buildTispUpdateClientDetailsPayload({
+
+  const input = {
     ...tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate }),
     customerNumber: accountNumber,
-  });
+  };
+
+  // When releasing an old account before renumbering, free IP / PPPoE so the
+  // new AccountNumber can claim them. Do not apply the new apartment/IP here.
+  if (meta.releaseNetwork) {
+    const releaseApt = String(
+      meta.previousApartmentNumber || ctx.apartment_number || accountNumber
+    )
+      .trim()
+      .toUpperCase();
+    input.ipAddress = "";
+    input.apartmentNumber = `${releaseApt}-X`;
+    input.tispPassword = `x${String(Date.now()).slice(-6)}`;
+  }
+
+  const payload = buildTispUpdateClientDetailsPayload(input);
   const result = await postSetClientDetails(payload, {
     customerId: ctx.id,
     customerNumber: accountNumber,
@@ -965,13 +981,13 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
 
 /**
  * Move a TISP client from previousAccountNumber → ctx.customer_number
- * (e.g. CL-A10 → CLB-A10 on C2B↔B2B conversion).
+ * (apartment switch / C2B↔B2B conversion).
  *
- * TISP keys accounts by AccountNumber and rejects INSERT when the same
- * IP/PPPoE is still held by the old number, so we:
+ * TISP keys accounts by AccountNumber and does NOT rename it on UPDATE.
+ * IP/PPPoE held by the old number also block INSERT of the new number, so we:
  * 1) read due date from the old account
- * 2) release the old account (DueDate = today)
- * 3) INSERT the new account with the preserved due date
+ * 2) release network resources on the old account (DueDate = today, clear IP/PPPoE)
+ * 3) INSERT the new account with the new AccountNumber and preserved due date
  */
 async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
   const previousNumber = String(previousAccountNumber || "")
@@ -985,18 +1001,29 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
   }
 
   let preservedDueDate = meta.dueDate || null;
+  let previousApartment = meta.previousApartmentNumber || null;
   try {
     const live = await getTISPCustomer(previousNumber);
     preservedDueDate =
       integrationSnapshot.extractTispDueDate(live) || preservedDueDate;
+    if (!previousApartment) {
+      previousApartment =
+        live?.PppoeUsername ||
+        live?.pppoeUsername ||
+        live?.ApartmentNumber ||
+        live?.apartmentNumber ||
+        null;
+    }
   } catch {
     /* keep meta due date / fallback below */
   }
 
-  // Free IP / PPPoE held by the old account number.
+  // Free IP / PPPoE on the old AccountNumber so INSERT can claim them.
   await updateCustomerOnTisp(ctx, {
     accountNumber: previousNumber,
     dueDate: new Date(),
+    releaseNetwork: true,
+    previousApartmentNumber: previousApartment,
     skipStatusRefresh: true,
     parentLogId: meta.parentLogId ?? null,
   });
@@ -1052,17 +1079,18 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     : null;
 
   try {
-    const onCurrent = await accountExistsOnTisp(currentNumber);
-    if (onCurrent) {
-      return await updateCustomerOnTisp(ctx, meta);
-    }
-
-    // Explicit migration (type convert / apartment switch).
+    // Customer number changed (apartment move / type convert). TISP UPDATE does
+    // not rename AccountNumber — migrate old → new via release + INSERT.
     if (previousNumber && previousNumber !== currentNumber) {
       const onPrevious = await accountExistsOnTisp(previousNumber);
       if (onPrevious) {
         return await migrateTispAccountNumber(ctx, previousNumber, meta);
       }
+    }
+
+    const onCurrent = await accountExistsOnTisp(currentNumber);
+    if (onCurrent) {
+      return await updateCustomerOnTisp(ctx, meta);
     }
 
     // Recovery: local number already converted (CLB-A10) but TISP still has
@@ -1071,7 +1099,11 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     if (altNumber) {
       const onAlt = await accountExistsOnTisp(altNumber);
       if (onAlt) {
-        return await migrateTispAccountNumber(ctx, altNumber, meta);
+        return await migrateTispAccountNumber(ctx, altNumber, {
+          ...meta,
+          previousApartmentNumber:
+            meta.previousApartmentNumber || ctx.apartment_number,
+        });
       }
     }
 
@@ -2861,26 +2893,31 @@ async function changePaymentFrequency(req, res, next) {
 
 async function switchApartment(req, res, next) {
   try {
-    const { apartmentNumber } = req.body || {};
+    const { apartmentNumber, ipAddress } = req.body || {};
     if (!apartmentNumber) {
       return res.status(400).json({ error: "apartmentNumber is required" });
     }
 
     const result = await store.switchCustomerApartment(
       Number(req.params.id),
-      apartmentNumber
+      apartmentNumber,
+      { ipAddress }
     );
 
     let tispError = null;
     try {
       await pushCustomerToTisp(result.customer, {
         previousCustomerNumber: result.previousCustomerNumber,
+        previousApartmentNumber: result.oldApartment,
       });
       await store.updateCustomerTispSync(Number(req.params.id), "synced", null);
     } catch (e) {
       tispError = e.message;
     }
-    const zoho = await runZohoSyncForCustomer(Number(req.params.id));
+    const zoho = await runZohoSyncForCustomer(Number(req.params.id), {
+      previousCustomerNumber: result.previousCustomerNumber,
+      syncRecurring: true,
+    });
 
     const customer = await store.getCustomerById(Number(req.params.id));
 
@@ -2888,7 +2925,9 @@ async function switchApartment(req, res, next) {
       await logActivity({
         eventType: "customer_apartment_switched",
         title: "Customer apartment switched",
-        message: `${customer?.customerNumber}: ${result.oldApartment} → ${result.newApartment}`,
+        message: `${customer?.customerNumber}: ${result.oldApartment} → ${result.newApartment}${
+          result.ipAddress ? ` · IP ${result.ipAddress}` : ""
+        }`,
         source: "tisp",
         status: tispError ? "failed" : "success",
         customerRef: customer?.customerNumber,

@@ -159,6 +159,20 @@ function TimelineStep({ entry, index, total, highlight }: TimelineStepProps) {
           : ""}
       </Text>
 
+      {entry.ipAddress ? (
+        <Text
+          mt={1}
+          fontSize="2xs"
+          fontFamily="mono"
+          color="fg.muted"
+          lineHeight="1.45"
+          textAlign="center"
+          px={1}
+        >
+          IP {entry.ipAddress}
+        </Text>
+      ) : null}
+
       <Text mt={1} fontSize="2xs" color="fg.subtle" lineHeight="1.45" textAlign="center" px={1}>
         {REASON_DESCRIPTIONS[entry.reason] || "Occupancy record for this apartment."}
       </Text>

@@ -9,8 +9,20 @@ import {
   Text,
 } from "@chakra-ui/react";
 import { formatTitleCase } from "../../lib/formatText";
-import { type ApartmentHistoryEntry, type Customer } from "../../lib/api";
+import {
+  api,
+  type ApartmentHistoryEntry,
+  type ApartmentOccupancy,
+  type Building,
+  type Customer,
+} from "../../lib/api";
+import {
+  getBuildingIpRules,
+  validateIpForBuilding,
+} from "../../lib/buildingIpRules";
+import { embeddedFieldInputStyles } from "../../theme";
 import { ModalShell } from "../ui/ModalShell";
+import { SelectField } from "../ui/SelectField";
 import {
   ApartmentHistoryTimeline,
   ApartmentHistoryTimelineSkeleton,
@@ -22,9 +34,11 @@ import type { Product, PendingUpgrade, UpgradePaymentMethod, UpgradeQuote } from
 
 type Props = {
   customer: Customer | null;
+  buildings?: Building[];
   actionType: CustomerAction | null;
   actionProductId: string;
   newApartment: string;
+  switchIpAddress: string;
   cancelNotes: string;
   actionPackages: Product[];
   apartmentHistory: ApartmentHistoryEntry[];
@@ -46,6 +60,7 @@ type Props = {
   onPaymentMethodChange: (method: UpgradePaymentMethod) => void;
   onCancelPendingUpgrade?: () => void;
   onApartmentChange: (value: string) => void;
+  onSwitchIpChange: (value: string) => void;
   onNotesChange: (value: string) => void;
 };
 
@@ -79,11 +94,253 @@ function ModalHeader({
   );
 }
 
+function MoveApartmentForm({
+  customer,
+  building,
+  newApartment,
+  switchIpAddress,
+  loading,
+  onApartmentChange,
+  onSwitchIpChange,
+  onSubmit,
+  onClose,
+}: {
+  customer: Customer;
+  building: Building | undefined;
+  newApartment: string;
+  switchIpAddress: string;
+  loading: boolean;
+  onApartmentChange: (value: string) => void;
+  onSwitchIpChange: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  const [occupancy, setOccupancy] = useState<ApartmentOccupancy | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [ipPrefix, setIpPrefix] = useState("");
+  const [ipLastOctet, setIpLastOctet] = useState("");
+
+  const ipRules = getBuildingIpRules(building);
+  const needsIp = occupancy?.needsIpInput === true;
+
+  useEffect(() => {
+    const apt = newApartment.trim();
+    if (!apt || !customer.buildingId) {
+      setOccupancy(null);
+      return;
+    }
+    let cancelled = false;
+    setChecking(true);
+    const timer = window.setTimeout(() => {
+      api
+        .checkApartmentOccupancy(customer.buildingId, apt, customer.id)
+        .then((res) => {
+          if (!cancelled) setOccupancy(res);
+        })
+        .catch(() => {
+          if (!cancelled) setOccupancy(null);
+        })
+        .finally(() => {
+          if (!cancelled) setChecking(false);
+        });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [newApartment, customer.buildingId, customer.id]);
+
+  useEffect(() => {
+    const prefixes = ipRules?.prefixes || [];
+    if (!prefixes.length) {
+      setIpPrefix("");
+      return;
+    }
+    if (!ipPrefix || !prefixes.includes(ipPrefix)) {
+      setIpPrefix(prefixes[0]);
+    }
+  }, [ipRules?.prefixes, ipPrefix]);
+
+  useEffect(() => {
+    if (!needsIp) {
+      setIpLastOctet("");
+      onSwitchIpChange("");
+      return;
+    }
+    const result = validateIpForBuilding(building, ipPrefix, ipLastOctet);
+    onSwitchIpChange(result.ok ? result.ip : "");
+  }, [needsIp, building, ipPrefix, ipLastOctet, onSwitchIpChange]);
+
+  const previewIp =
+    needsIp && ipLastOctet
+      ? validateIpForBuilding(building, ipPrefix, ipLastOctet)
+      : null;
+
+  const apartmentOk =
+    Boolean(newApartment.trim()) &&
+    occupancy?.available === true &&
+    newApartment.trim().toUpperCase() !==
+      String(customer.apartmentNumber || "").toUpperCase();
+
+  const ipOk = !needsIp || Boolean(switchIpAddress);
+  const canSubmit = apartmentOk && ipOk && !checking && !loading;
+
+  const previewNumber = (() => {
+    const apt = newApartment.trim().toUpperCase();
+    if (!apt || !building) return "";
+    const code =
+      customer.customerType === "B2B" ? building.b2bCode : building.c2bCode;
+    return code ? `${code}-${apt}` : apt;
+  })();
+
+  return (
+    <Stack gap={4}>
+      <Text fontSize="sm" color="fg.muted">
+        Move within <strong>{formatTitleCase(customer.buildingName)}</strong>.
+        Customer number
+        {building?.ipSetup === "STATIC" ? ", IP," : ""} and billing details will
+        be updated for the new apartment.
+      </Text>
+      <Field.Root required w="full">
+        <Field.Label>New apartment number</Field.Label>
+        <Input
+          value={newApartment}
+          onChange={(e) => onApartmentChange(e.target.value.toUpperCase())}
+          placeholder="e.g. S445"
+        />
+        <Field.HelperText>Current: {customer.apartmentNumber}</Field.HelperText>
+      </Field.Root>
+
+      {checking && newApartment.trim() ? (
+        <Text fontSize="xs" color="fg.muted">
+          Checking apartment…
+        </Text>
+      ) : null}
+
+      {occupancy && !occupancy.available && occupancy.tenant ? (
+        <Text fontSize="sm" color="red.600">
+          Apartment {occupancy.tenant.apartmentNumber} already has an active
+          tenant: {occupancy.tenant.customerName} (
+          {occupancy.tenant.customerNumber})
+        </Text>
+      ) : null}
+
+      {occupancy?.available && occupancy.apartmentKnown && occupancy.lastIp ? (
+        <Text fontSize="sm" color="green.700">
+          Apartment exists — reusing previous IP {occupancy.lastIp}.
+          {previewNumber ? ` New customer number: ${previewNumber}.` : null}
+        </Text>
+      ) : null}
+
+      {occupancy?.available && needsIp && ipRules ? (
+        <Field.Root required w="full">
+          <Field.Label>IP address for new apartment</Field.Label>
+          <Text fontSize="xs" color="fg.muted" mb={2}>
+            This apartment is new (no prior occupancy). Select the static IP to
+            assign.
+          </Text>
+          <Flex
+            direction={{ base: "column", sm: "row" }}
+            gap={3}
+            align={{ sm: "stretch" }}
+          >
+            {ipRules.prefixes.length > 1 ? (
+              <Box maxW={{ sm: "220px" }} w={{ base: "100%", sm: "auto" }} flexShrink={0}>
+                <SelectField
+                  fieldProps={{
+                    value: ipPrefix,
+                    onChange: (e) => setIpPrefix(e.target.value),
+                    fontFamily: "mono",
+                  }}
+                >
+                  {ipRules.prefixes.map((p) => (
+                    <option key={p} value={p}>
+                      {p}x
+                    </option>
+                  ))}
+                </SelectField>
+              </Box>
+            ) : null}
+            <Flex
+              align="stretch"
+              flex={1}
+              minW={0}
+              borderWidth="1px"
+              borderColor="border"
+              borderRadius="md"
+              bg="bg.panel"
+              boxShadow="sm"
+              overflow="hidden"
+              _focusWithin={{
+                borderColor: "brand.500",
+                boxShadow: "0 0 0 1px var(--chakra-colors-brand-500)",
+              }}
+            >
+              <Flex
+                align="center"
+                px={3}
+                fontSize="sm"
+                color="fg.muted"
+                fontFamily="mono"
+                bg="bg.subtle"
+                borderRightWidth="1px"
+                borderColor="border"
+                flexShrink={0}
+              >
+                {ipPrefix || "—"}
+              </Flex>
+              <Input
+                type="number"
+                min={1}
+                max={254}
+                value={ipLastOctet}
+                onChange={(e) => setIpLastOctet(e.target.value)}
+                placeholder="1–254"
+                aria-label="Host number"
+                flex={1}
+                minW={0}
+                {...embeddedFieldInputStyles}
+              />
+            </Flex>
+          </Flex>
+          <Field.HelperText>
+            {previewIp?.ok
+              ? `Assigned IP: ${previewIp.ip}`
+              : "Enter a host number from 1 to 254."}
+          </Field.HelperText>
+        </Field.Root>
+      ) : null}
+
+      {occupancy?.available && previewNumber && !needsIp ? (
+        <Text fontSize="xs" color="fg.muted">
+          New customer number: {previewNumber}
+        </Text>
+      ) : null}
+
+      <Flex justify="flex-end" gap={2}>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          colorPalette="brand"
+          loading={loading}
+          disabled={!canSubmit}
+          onClick={onSubmit}
+        >
+          Confirm move
+        </Button>
+      </Flex>
+    </Stack>
+  );
+}
+
 export function CustomerActionDialog({
   customer,
+  buildings = [],
   actionType,
   actionProductId,
   newApartment,
+  switchIpAddress,
   cancelNotes,
   actionPackages,
   apartmentHistory,
@@ -105,6 +362,7 @@ export function CustomerActionDialog({
   onPaymentMethodChange,
   onCancelPendingUpgrade,
   onApartmentChange,
+  onSwitchIpChange,
   onNotesChange,
 }: Props) {
   const [cancelStep, setCancelStep] = useState<1 | 2>(1);
@@ -198,34 +456,17 @@ export function CustomerActionDialog({
         ) : null}
 
         {actionType === "switch" && customer ? (
-          <Stack gap={4}>
-            <Text fontSize="sm" color="fg.muted">
-              Move within <strong>{formatTitleCase(customer.buildingName)}</strong>. Customer number and IP
-              rules will be recalculated for the new apartment.
-            </Text>
-            <Field.Root required w="full">
-              <Field.Label>New apartment number</Field.Label>
-              <Input
-                value={newApartment}
-                onChange={(e) => onApartmentChange(e.target.value.toUpperCase())}
-                placeholder="e.g. S445"
-              />
-              <Field.HelperText>Current: {customer.apartmentNumber}</Field.HelperText>
-            </Field.Root>
-            <Flex justify="flex-end" gap={2}>
-              <Button variant="ghost" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                colorPalette="brand"
-                loading={loading}
-                disabled={!newApartment.trim()}
-                onClick={onSubmit}
-              >
-                Confirm
-              </Button>
-            </Flex>
-          </Stack>
+          <MoveApartmentForm
+            customer={customer}
+            building={buildings.find((b) => b.id === customer.buildingId)}
+            newApartment={newApartment}
+            switchIpAddress={switchIpAddress}
+            loading={loading}
+            onApartmentChange={onApartmentChange}
+            onSwitchIpChange={onSwitchIpChange}
+            onSubmit={onSubmit}
+            onClose={onClose}
+          />
         ) : null}
 
         {actionType === "disconnect" ? (

@@ -85,7 +85,7 @@ export function Sidebar({ open, onClose }: Props) {
     },
     {
       to: "/apartments",
-      label: "Apartment History",
+      label: "Apartments",
       icon: FiLayers,
       visible: canAccessConfig(user),
     },
@@ -103,7 +103,7 @@ export function Sidebar({ open, onClose }: Props) {
     },
     {
       to: "/analytics",
-      label: "Business Intelligence",
+      label: "Analytics",
       icon: FiPieChart,
       visible: canAccessFinance(user),
     },

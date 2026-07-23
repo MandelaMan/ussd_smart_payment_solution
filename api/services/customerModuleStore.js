@@ -1177,6 +1177,105 @@ async function assertApartmentAvailable(
   );
 }
 
+async function apartmentHasHistory(buildingId, apartmentNumber) {
+  const rows = await query(
+    `SELECT id FROM apartment_history
+     WHERE building_id = ? AND apartment_number = ?
+     LIMIT 1`,
+    [buildingId, String(apartmentNumber || "").trim().toUpperCase()]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Last known static IP for an apartment (from prior/current occupants).
+ */
+async function findLastIpForApartment(
+  buildingId,
+  apartmentNumber,
+  excludeCustomerId = null
+) {
+  const apt = String(apartmentNumber || "").trim().toUpperCase();
+  const params = [buildingId, apt];
+  let excludeSql = "";
+  if (excludeCustomerId) {
+    excludeSql = " AND c.id <> ?";
+    params.push(Number(excludeCustomerId));
+  }
+  const rows = await query(
+    `SELECT COALESCE(
+              NULLIF(TRIM(h.ip_address), ''),
+              NULLIF(TRIM(c.ip_address), '')
+            ) AS ipAddress
+     FROM apartment_history h
+     INNER JOIN customers c ON c.id = h.customer_id
+     WHERE h.building_id = ?
+       AND h.apartment_number = ?
+       AND (
+         (h.ip_address IS NOT NULL AND TRIM(h.ip_address) <> '')
+         OR (c.ip_address IS NOT NULL AND TRIM(c.ip_address) <> '')
+       )
+       ${excludeSql}
+     ORDER BY COALESCE(h.moved_out_at, h.moved_in_at) DESC, h.id DESC
+     LIMIT 1`,
+    params
+  );
+  const ip = rows[0]?.ipAddress ? String(rows[0].ipAddress).trim() : "";
+  return ip || null;
+}
+
+async function inspectApartmentForMove(
+  buildingId,
+  apartmentNumber,
+  excludeCustomerId = null
+) {
+  const apt = String(apartmentNumber || "").trim().toUpperCase();
+  const building = await getBuildingById(buildingId);
+  if (!building) throw new Error("Building not found");
+
+  const tenant = await findActiveTenantInApartment(
+    buildingId,
+    apt,
+    excludeCustomerId
+  );
+  const apartmentKnown = await apartmentHasHistory(buildingId, apt);
+  const lastIp = await findLastIpForApartment(
+    buildingId,
+    apt,
+    excludeCustomerId
+  );
+
+  let lastIpAvailable = false;
+  if (lastIp) {
+    const holder = await findCustomerByIp(lastIp);
+    lastIpAvailable =
+      !holder ||
+      (excludeCustomerId != null && Number(holder.id) === Number(excludeCustomerId));
+  }
+
+  const ipSetup = String(building.ip_setup || "").toUpperCase();
+  const needsIpInput =
+    ipSetup === "STATIC" && !(apartmentKnown && lastIp && lastIpAvailable);
+
+  return {
+    available: !tenant,
+    apartmentKnown,
+    lastIp: lastIpAvailable ? lastIp : null,
+    needsIpInput,
+    ipSetup,
+    tenant: tenant
+      ? {
+          id: tenant.id,
+          customerNumber: tenant.customer_number,
+          customerName: [tenant.first_name, tenant.middle_name, tenant.last_name]
+            .filter(Boolean)
+            .join(" "),
+          apartmentNumber: tenant.apartment_number,
+        }
+      : null,
+  };
+}
+
 function normalizeDstvDecoderSerial(value) {
   const serial = String(value || "").trim().toUpperCase();
   return serial || null;
@@ -1420,9 +1519,16 @@ async function createCustomer(data) {
 
   await query(
     `INSERT INTO apartment_history
-       (building_id, apartment_number, customer_id, customer_number, customer_name, reason)
-     VALUES (?, ?, ?, ?, ?, 'signup')`,
-    [building.id, apartmentNumber, customerId, customerNumber, customerName]
+       (building_id, apartment_number, customer_id, customer_number, customer_name, ip_address, reason)
+     VALUES (?, ?, ?, ?, ?, ?, 'signup')`,
+    [
+      building.id,
+      apartmentNumber,
+      customerId,
+      customerNumber,
+      customerName,
+      resolvedIp || null,
+    ]
   );
 
   await query(
@@ -1647,7 +1753,11 @@ async function changeCustomerPaymentFrequency(
   };
 }
 
-async function switchCustomerApartment(customerId, newApartmentRaw) {
+async function switchCustomerApartment(
+  customerId,
+  newApartmentRaw,
+  options = {}
+) {
   const customer = await getCustomerContext(customerId);
   if (!customer) throw new Error("Customer not found");
   if (customer.status !== "active") {
@@ -1664,6 +1774,39 @@ async function switchCustomerApartment(customerId, newApartmentRaw) {
 
   await assertApartmentAvailable(building.id, newApartment, customerId);
 
+  const inspection = await inspectApartmentForMove(
+    building.id,
+    newApartment,
+    customerId
+  );
+
+  let resolvedIp = customer.ip_address || null;
+  if (String(building.ip_setup || "").toUpperCase() === "PPOE") {
+    resolvedIp = null;
+  } else {
+    const providedIp =
+      options.ipAddress != null && String(options.ipAddress).trim() !== ""
+        ? String(options.ipAddress).trim()
+        : null;
+    const candidateIp = providedIp || inspection.lastIp || null;
+    const ipCheck = validateIpForBuilding(building, candidateIp);
+    if (!ipCheck.ok) {
+      throw new Error(ipCheck.error);
+    }
+    if (!ipCheck.ip) {
+      throw new Error(
+        "IP address is required for this apartment — select an IP for the new apartment"
+      );
+    }
+    if (ipCheck.ip !== customer.ip_address) {
+      const ipTaken = await findCustomerByIp(ipCheck.ip);
+      if (ipTaken && Number(ipTaken.id) !== Number(customerId)) {
+        throw new Error("IP address is already assigned");
+      }
+    }
+    resolvedIp = ipCheck.ip;
+  }
+
   const newCustomerNumber = buildCustomerNumber(
     building,
     customer.customer_type,
@@ -1674,10 +1817,15 @@ async function switchCustomerApartment(customerId, newApartmentRaw) {
   const tispPassword =
     building.ip_setup === "STATIC" ? newApartment : generatePppoePassword();
 
+  const previousIp = customer.ip_address || null;
+
   await query(
-    `UPDATE apartment_history SET moved_out_at = NOW(), reason = 'switch_out'
+    `UPDATE apartment_history
+     SET moved_out_at = NOW(),
+         reason = 'switch_out',
+         ip_address = COALESCE(NULLIF(TRIM(ip_address), ''), ?)
      WHERE customer_id = ? AND moved_out_at IS NULL`,
-    [customerId]
+    [previousIp, customerId]
   );
 
   const customerName = [customer.first_name, customer.middle_name, customer.last_name]
@@ -1686,26 +1834,36 @@ async function switchCustomerApartment(customerId, newApartmentRaw) {
 
   await query(
     `INSERT INTO apartment_history
-       (building_id, apartment_number, customer_id, customer_number, customer_name, reason)
-     VALUES (?, ?, ?, ?, ?, 'switch_in')`,
+       (building_id, apartment_number, customer_id, customer_number, customer_name, ip_address, reason)
+     VALUES (?, ?, ?, ?, ?, ?, 'switch_in')`,
     [
       building.id,
       newApartment,
       customerId,
       newCustomerNumber,
       customerName,
+      resolvedIp || null,
     ]
   );
 
   await query(
-    `UPDATE customers SET apartment_number = ?, customer_number = ?, tisp_password = ? WHERE id = ?`,
-    [newApartment, newCustomerNumber, tispPassword, customerId]
+    `UPDATE customers
+     SET apartment_number = ?, customer_number = ?, tisp_password = ?, ip_address = ?
+     WHERE id = ?`,
+    [newApartment, newCustomerNumber, tispPassword, resolvedIp, customerId]
   );
 
   await query(
     `INSERT INTO customer_events (customer_id, event_type, old_apartment, new_apartment, notes)
-     VALUES (?, 'switch_apartment', ?, ?, 'Apartment switched within building')`,
-    [customerId, oldApartment, newApartment]
+     VALUES (?, 'switch_apartment', ?, ?, ?)`,
+    [
+      customerId,
+      oldApartment,
+      newApartment,
+      resolvedIp
+        ? `Apartment switched within building (IP ${resolvedIp})`
+        : "Apartment switched within building",
+    ]
   );
 
   const updated = await getCustomerContext(customerId);
@@ -1714,6 +1872,7 @@ async function switchCustomerApartment(customerId, newApartmentRaw) {
     building,
     oldApartment,
     newApartment,
+    ipAddress: resolvedIp,
     tispPassword,
     previousCustomerNumber,
   };
@@ -1731,9 +1890,12 @@ async function cancelCustomer(customerId, notes) {
   ]);
 
   await query(
-    `UPDATE apartment_history SET moved_out_at = NOW(), reason = 'cancel'
+    `UPDATE apartment_history
+     SET moved_out_at = NOW(),
+         reason = 'cancel',
+         ip_address = COALESCE(NULLIF(TRIM(ip_address), ''), ?)
      WHERE customer_id = ? AND moved_out_at IS NULL`,
-    [customerId]
+    [customer.ip_address || null, customerId]
   );
 
   await query(
@@ -1965,7 +2127,9 @@ async function updateCustomerDetails(id, data, options = {}) {
       .trim()
       .toUpperCase();
     if (apartmentNumber !== existing.apartmentNumber) {
-      await switchCustomerApartment(id, apartmentNumber);
+      await switchCustomerApartment(id, apartmentNumber, {
+        ipAddress: data.ipAddress,
+      });
     }
   }
 
@@ -2065,7 +2229,11 @@ async function getApartmentHistory(buildingId, apartmentNumber) {
             c.payment_frequency AS paymentFrequency, c.custom_period_days AS customPeriodDays,
             c.package_price AS packagePrice, c.last_payment_date AS lastPaymentDate,
             c.subscription_status AS subscriptionStatus,
-            p.name AS productName, p.mbps AS productMbps
+            p.name AS productName, p.mbps AS productMbps,
+            COALESCE(
+              NULLIF(TRIM(h.ip_address), ''),
+              CASE WHEN h.moved_out_at IS NULL THEN NULLIF(TRIM(c.ip_address), '') ELSE NULL END
+            ) AS ipAddress
      FROM apartment_history h
      JOIN buildings b ON b.id = h.building_id
      JOIN customers c ON c.id = h.customer_id
@@ -2091,6 +2259,7 @@ function mapApartmentHistoryRow(row) {
     reason: row.reason,
     customerStatus: row.customerStatus,
     isCurrent: row.movedOutAt == null,
+    ipAddress: row.ipAddress || null,
     phone: row.phone,
     email: row.email,
     customerType: row.customerType,
@@ -2165,7 +2334,11 @@ async function listApartmentHistory(filters = {}) {
             c.payment_frequency AS paymentFrequency, c.custom_period_days AS customPeriodDays,
             c.package_price AS packagePrice, c.last_payment_date AS lastPaymentDate,
             c.subscription_status AS subscriptionStatus,
-            p.name AS productName, p.mbps AS productMbps
+            p.name AS productName, p.mbps AS productMbps,
+            COALESCE(
+              NULLIF(TRIM(h.ip_address), ''),
+              CASE WHEN h.moved_out_at IS NULL THEN NULLIF(TRIM(c.ip_address), '') ELSE NULL END
+            ) AS ipAddress
      FROM apartment_history h
      JOIN buildings b ON b.id = h.building_id
      JOIN customers c ON c.id = h.customer_id
@@ -2520,6 +2693,211 @@ async function getSubscriberStats(days = 29) {
   };
 }
 
+function mapApartmentUnitRow(row) {
+  const occupied = Boolean(row.currentCustomerId);
+  return {
+    buildingId: Number(row.buildingId),
+    buildingName: row.buildingName,
+    c2bCode: row.c2bCode,
+    b2bCode: row.b2bCode,
+    ipSetup: row.ipSetup,
+    dstvSetup: row.dstvSetup || null,
+    apartmentNumber: row.apartmentNumber,
+    occupancyStatus: occupied ? "occupied" : "vacant",
+    occupied,
+    currentIp: row.currentIp || null,
+    lastKnownIp: row.lastKnownIp || row.currentIp || null,
+    currentCustomerId: row.currentCustomerId != null ? Number(row.currentCustomerId) : null,
+    currentCustomerNumber: row.currentCustomerNumber || null,
+    tenureCount: Number(row.tenureCount || 0),
+    firstOccupiedAt: row.firstOccupiedAt || null,
+    lastActivityAt: row.lastActivityAt || null,
+    occupiedSince: occupied ? row.occupiedSince || null : null,
+  };
+}
+
+async function listApartments(filters = {}) {
+  const page = Math.max(1, Number(filters.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(filters.limit) || 25));
+  const offset = (page - 1) * limit;
+
+  const { resolveListSort } = require("../utils/listSort");
+
+  const listFrom = `
+    FROM (
+      SELECT building_id,
+             apartment_number,
+             COUNT(*) AS tenure_count,
+             MIN(moved_in_at) AS first_occupied_at,
+             MAX(COALESCE(moved_out_at, moved_in_at)) AS last_activity_at
+      FROM apartment_history
+      GROUP BY building_id, apartment_number
+    ) units
+    JOIN buildings b ON b.id = units.building_id
+    LEFT JOIN apartment_history open_h
+      ON open_h.building_id = units.building_id
+     AND open_h.apartment_number = units.apartment_number
+     AND open_h.moved_out_at IS NULL
+    LEFT JOIN customers open_c ON open_c.id = open_h.customer_id
+    LEFT JOIN (
+      SELECT h1.building_id,
+             h1.apartment_number,
+             h1.ip_address
+      FROM apartment_history h1
+      INNER JOIN (
+        SELECT building_id, apartment_number, MAX(id) AS max_id
+        FROM apartment_history
+        WHERE ip_address IS NOT NULL AND TRIM(ip_address) <> ''
+        GROUP BY building_id, apartment_number
+      ) latest ON latest.max_id = h1.id
+    ) last_ip
+      ON last_ip.building_id = units.building_id
+     AND last_ip.apartment_number = units.apartment_number
+  `;
+
+  const whereClauses = ["1=1"];
+  const whereParams = [];
+  if (filters.buildingId) {
+    whereClauses.push("units.building_id = ?");
+    whereParams.push(Number(filters.buildingId));
+  }
+  if (filters.apartmentNumber) {
+    whereClauses.push("units.apartment_number LIKE ?");
+    whereParams.push(`%${String(filters.apartmentNumber).trim().toUpperCase()}%`);
+  }
+  if (filters.search) {
+    const term = `%${String(filters.search).trim()}%`;
+    whereClauses.push(
+      `(units.apartment_number LIKE ? OR b.name LIKE ? OR open_h.customer_number LIKE ? OR COALESCE(NULLIF(TRIM(open_h.ip_address), ''), NULLIF(TRIM(open_c.ip_address), ''), NULLIF(TRIM(last_ip.ip_address), '')) LIKE ?)`
+    );
+    whereParams.push(term, term, term, term);
+  }
+  if (filters.occupancy === "occupied") {
+    whereClauses.push("open_h.customer_id IS NOT NULL");
+  } else if (filters.occupancy === "vacant") {
+    whereClauses.push("open_h.customer_id IS NULL");
+  }
+
+  const sort = resolveListSort(filters, {
+    allowed: [
+      { key: "buildingName", sql: "b.name" },
+      { key: "apartmentNumber", sql: "units.apartment_number" },
+      {
+        key: "occupancyStatus",
+        sql: "CASE WHEN open_h.customer_id IS NULL THEN 0 ELSE 1 END",
+      },
+      {
+        key: "currentIp",
+        sql: "COALESCE(NULLIF(TRIM(open_h.ip_address), ''), NULLIF(TRIM(open_c.ip_address), ''), NULLIF(TRIM(last_ip.ip_address), ''))",
+      },
+      { key: "tenureCount", sql: "units.tenure_count" },
+      { key: "lastActivityAt", sql: "units.last_activity_at" },
+    ],
+    defaultSort: { sortBy: "buildingName", sortDir: "asc" },
+  });
+
+  const [countRow] = await query(
+    `SELECT COUNT(*) AS total ${listFrom} WHERE ${whereClauses.join(" AND ")}`,
+    whereParams
+  );
+
+  const rows = await query(
+    `SELECT b.id AS buildingId,
+            b.name AS buildingName,
+            b.c2b_code AS c2bCode,
+            b.b2b_code AS b2bCode,
+            b.ip_setup AS ipSetup,
+            b.dstv_setup AS dstvSetup,
+            units.apartment_number AS apartmentNumber,
+            units.tenure_count AS tenureCount,
+            units.first_occupied_at AS firstOccupiedAt,
+            units.last_activity_at AS lastActivityAt,
+            open_h.customer_id AS currentCustomerId,
+            open_h.customer_number AS currentCustomerNumber,
+            open_h.moved_in_at AS occupiedSince,
+            COALESCE(
+              NULLIF(TRIM(open_h.ip_address), ''),
+              NULLIF(TRIM(open_c.ip_address), '')
+            ) AS currentIp,
+            COALESCE(
+              NULLIF(TRIM(open_h.ip_address), ''),
+              NULLIF(TRIM(open_c.ip_address), ''),
+              NULLIF(TRIM(last_ip.ip_address), '')
+            ) AS lastKnownIp
+     ${listFrom}
+     WHERE ${whereClauses.join(" AND ")}
+     ORDER BY ${sort.orderClause}, units.apartment_number ASC
+     LIMIT ? OFFSET ?`,
+    [...whereParams, limit, offset]
+  );
+
+  return {
+    data: rows.map(mapApartmentUnitRow),
+    pagination: {
+      page,
+      limit,
+      total: Number(countRow.total),
+      pages: Math.ceil(Number(countRow.total) / limit) || 1,
+    },
+  };
+}
+
+async function getApartment(buildingId, apartmentNumber) {
+  const apt = String(apartmentNumber || "").trim().toUpperCase();
+  const building = await getBuildingById(buildingId);
+  if (!building) return null;
+
+  const [stats] = await query(
+    `SELECT COUNT(*) AS tenureCount,
+            MIN(moved_in_at) AS firstOccupiedAt,
+            MAX(COALESCE(moved_out_at, moved_in_at)) AS lastActivityAt
+     FROM apartment_history
+     WHERE building_id = ? AND apartment_number = ?`,
+    [buildingId, apt]
+  );
+  if (!stats || Number(stats.tenureCount) === 0) return null;
+
+  const [open] = await query(
+    `SELECT h.customer_id AS currentCustomerId,
+            h.customer_number AS currentCustomerNumber,
+            h.moved_in_at AS occupiedSince,
+            COALESCE(NULLIF(TRIM(h.ip_address), ''), NULLIF(TRIM(c.ip_address), '')) AS currentIp
+     FROM apartment_history h
+     LEFT JOIN customers c ON c.id = h.customer_id
+     WHERE h.building_id = ? AND h.apartment_number = ? AND h.moved_out_at IS NULL
+     LIMIT 1`,
+    [buildingId, apt]
+  );
+
+  const [lastIpRow] = await query(
+    `SELECT ip_address AS ipAddress
+     FROM apartment_history
+     WHERE building_id = ? AND apartment_number = ?
+       AND ip_address IS NOT NULL AND TRIM(ip_address) <> ''
+     ORDER BY id DESC
+     LIMIT 1`,
+    [buildingId, apt]
+  );
+
+  return mapApartmentUnitRow({
+    buildingId: building.id,
+    buildingName: building.name,
+    c2bCode: building.c2b_code,
+    b2bCode: building.b2b_code,
+    ipSetup: building.ip_setup,
+    dstvSetup: building.dstv_setup,
+    apartmentNumber: apt,
+    tenureCount: stats.tenureCount,
+    firstOccupiedAt: stats.firstOccupiedAt,
+    lastActivityAt: stats.lastActivityAt,
+    currentCustomerId: open?.currentCustomerId ?? null,
+    currentCustomerNumber: open?.currentCustomerNumber ?? null,
+    occupiedSince: open?.occupiedSince ?? null,
+    currentIp: open?.currentIp ?? null,
+    lastKnownIp: open?.currentIp || lastIpRow?.ipAddress || null,
+  });
+}
+
 module.exports = {
   generatePppoePassword,
   splitFullName,
@@ -2564,8 +2942,13 @@ module.exports = {
   convertCustomerType,
   findActiveTenantInApartment,
   assertApartmentAvailable,
+  inspectApartmentForMove,
+  apartmentHasHistory,
+  findLastIpForApartment,
   getApartmentHistory,
   listApartmentHistory,
+  listApartments,
+  getApartment,
   getCustomerEvents,
   findCustomerByNumber,
   findCustomerByIp,

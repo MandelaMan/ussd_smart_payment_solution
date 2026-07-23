@@ -11,6 +11,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import {
   api,
+  isUnauthorizedError,
   registerAuthSessionExpiredHandler,
   resetAuthSessionExpiredFlag,
   type User,
@@ -85,9 +86,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const session = await api.me();
       applySession(session.user, session.expiresAt);
-    } catch {
-      clearSessionTimer();
-      setUser(null);
+    } catch (err) {
+      // Only clear the session on a real auth failure. Network blips, aborts,
+      // rate limits, and proxy restarts must not force a login redirect.
+      if (isUnauthorizedError(err)) {
+        clearSessionTimer();
+        setUser(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -115,8 +120,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .then((session) => {
           applySession(session.user, session.expiresAt);
         })
-        .catch(() => {
-          handleSessionExpired();
+        .catch((err) => {
+          // Focus/visibility checks fire often in local dev. Do not log the
+          // user out (or bump token_version via logout) unless the cookie is gone.
+          if (isUnauthorizedError(err)) {
+            handleSessionExpired();
+          }
         });
     };
 

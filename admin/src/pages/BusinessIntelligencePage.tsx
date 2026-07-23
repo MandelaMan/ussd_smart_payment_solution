@@ -98,7 +98,10 @@ export function BusinessIntelligencePage() {
 
   return (
     <Stack gap={4} pb={6}>
-      <PageHeader title="Business Intelligence" />
+      <PageHeader
+        title="Analytics"
+        description="Interactive KPIs and charts. Use Reports for downloadable Excel and PDF exports."
+      />
 
       <BiFilters
         filters={draftFilters}

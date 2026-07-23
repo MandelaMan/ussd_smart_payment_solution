@@ -1,5 +1,6 @@
 const {
   getRecurringInvoices_JS,
+  getRecurringInvoice_JS,
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
   stopRecurringInvoice_JS,
@@ -69,6 +70,27 @@ function buildRecurringLineItem(customer, period) {
   return buildRecurringLineItems(customer, period)[0];
 }
 
+/**
+ * Zoho profile name, e.g. "ET-P204 - Quarterly Invoice".
+ * Order number (reference_number) stays the bare customer number.
+ */
+function buildRecurringProfileName(
+  customerNumber,
+  paymentFrequency,
+  customPeriodDays
+) {
+  const number = String(customerNumber || "").trim();
+  const freq = String(paymentFrequency || "monthly").toLowerCase();
+  let freqLabel = "Monthly";
+  if (freq === "quarterly") freqLabel = "Quarterly";
+  else if (freq === "yearly") freqLabel = "Yearly";
+  else if (freq === "custom") {
+    const days = Number(customPeriodDays);
+    freqLabel = days > 0 ? `${days}-Day` : "Custom";
+  }
+  return `${number} - ${freqLabel} Invoice`;
+}
+
 function isActiveRecurring(recurring) {
   const status = String(
     recurring?.status || recurring?.recurrence_status || "active",
@@ -76,19 +98,87 @@ function isActiveRecurring(recurring) {
   return !["stopped", "expired", "inactive"].includes(status);
 }
 
-async function findRecurringForCustomer(contactId, customerNumber) {
+async function findRecurringForCustomer(
+  contactId,
+  customerNumber,
+  previousCustomerNumber = null
+) {
   const list = await getRecurringInvoices_JS({
     customer_id: contactId,
     per_page: 50,
   });
-  const ref = String(customerNumber || "").trim().toUpperCase();
-  return (list || []).find((row) => {
-    if (!isActiveRecurring(row)) return false;
-    const rowRef = String(row.reference_number || row.recurrence_name || "")
-      .trim()
-      .toUpperCase();
-    return rowRef === ref || rowRef.includes(ref);
+  const refs = [
+    String(customerNumber || "").trim().toUpperCase(),
+    String(previousCustomerNumber || "").trim().toUpperCase(),
+  ].filter(Boolean);
+
+  const active = (list || []).filter(isActiveRecurring);
+  const matched = active.find((row) => {
+    const rowRef = String(row.reference_number || "").trim().toUpperCase();
+    const rowName = String(row.recurrence_name || "").trim().toUpperCase();
+    return refs.some(
+      (ref) =>
+        rowRef === ref ||
+        rowRef.includes(ref) ||
+        rowName === ref ||
+        rowName.startsWith(`${ref} `) ||
+        rowName.startsWith(`${ref}-`) ||
+        rowName.includes(`${ref} `)
+    );
   });
+  if (matched) return matched;
+
+  // After apartment/type change, fall back to the only active profile on the contact.
+  if (previousCustomerNumber && active.length === 1) {
+    return active[0];
+  }
+  return null;
+}
+
+async function updateRecurringProfileFields(
+  recurringInvoiceId,
+  { recurrenceName, referenceNumber, lineItems = null }
+) {
+  // Identity fields first — Zoho often rejects line_items without line_item_id.
+  let updated = await updateRecurringInvoice_JS(recurringInvoiceId, {
+    recurrence_name: recurrenceName,
+    reference_number: referenceNumber,
+  });
+
+  if (!lineItems?.length) {
+    return { updated, identityUpdated: true, lineItemsUpdated: false };
+  }
+
+  try {
+    const full =
+      (await getRecurringInvoice_JS(recurringInvoiceId)) || updated || {};
+    const existingItems = Array.isArray(full.line_items) ? full.line_items : [];
+    const merged = lineItems.map((item, idx) => {
+      const existing = existingItems[idx];
+      if (existing?.line_item_id) {
+        return { ...item, line_item_id: existing.line_item_id };
+      }
+      return item;
+    });
+    updated = await updateRecurringInvoice_JS(recurringInvoiceId, {
+      recurrence_name: recurrenceName,
+      reference_number: referenceNumber,
+      line_items: merged,
+      is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    });
+    return { updated, identityUpdated: true, lineItemsUpdated: true };
+  } catch (e) {
+    console.warn(
+      "Zoho recurring line-item update failed after profile rename:",
+      e.message || e
+    );
+    return {
+      updated,
+      identityUpdated: true,
+      lineItemsUpdated: false,
+      warning: e.message || String(e),
+    };
+  }
 }
 
 /**
@@ -109,28 +199,39 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     customPeriodDays: customer.customPeriodDays,
   });
   const lineItem = buildRecurringLineItems(customer, period, options);
-  const referenceNumber = customer.customerNumber;
-  const recurrenceName = `${customer.customerNumber} subscription`;
+  // Order Number in Zoho Books = reference_number
+  const referenceNumber = String(customer.customerNumber || "").trim();
+  // Profile Name in Zoho Books = recurrence_name
+  const recurrenceName = buildRecurringProfileName(
+    referenceNumber,
+    customer.paymentFrequency,
+    customer.customPeriodDays
+  );
 
   const existing = await findRecurringForCustomer(
     zohoContact.contact_id,
     customer.customerNumber,
+    options.previousCustomerNumber
   );
 
   if (existing?.recurring_invoice_id) {
     const id = String(existing.recurring_invoice_id);
     if (recurrenceMatches(existing, recurrence)) {
-      const updated = await updateRecurringInvoice_JS(id, {
-        recurrence_name: recurrenceName,
-        reference_number: referenceNumber,
-        line_items: lineItem,
-        is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+      const syncLineItems = options.syncLineItems !== false;
+      const result = await updateRecurringProfileFields(id, {
+        recurrenceName,
+        referenceNumber,
+        lineItems: syncLineItems ? lineItem : null,
       });
       return {
         created: false,
         updated: true,
         recurringInvoiceId: id,
-        recurring: updated,
+        recurring: result.updated,
+        recurrenceName,
+        referenceNumber,
+        lineItemsUpdated: result.lineItemsUpdated,
+        warning: result.warning,
       };
     }
 
@@ -168,6 +269,8 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     updated: false,
     recurringInvoiceId: String(created.recurring_invoice_id),
     recurring: created,
+    recurrenceName,
+    referenceNumber,
     startDate,
   };
 }
@@ -244,6 +347,7 @@ async function pushCustomerBillingToZoho(ctx, options = {}) {
   if (syncRecurring) {
     recurring = await ensureRecurringSubscription(customer, updatedContact, {
       startDate: options.recurringStartDate,
+      previousCustomerNumber: options.previousCustomerNumber,
     });
   }
 
@@ -279,6 +383,7 @@ async function pushCustomerBillingToZoho(ctx, options = {}) {
 
 module.exports = {
   mapContextToCustomer,
+  buildRecurringProfileName,
   ensureRecurringSubscription,
   updateZohoContactDetails,
   pushCustomerBillingToZoho,

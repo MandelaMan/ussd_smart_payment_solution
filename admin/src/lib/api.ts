@@ -15,9 +15,26 @@ export function resetAuthSessionExpiredFlag() {
 
 export function notifyAuthSessionExpired(path: string) {
   if (authSessionExpiredNotified) return;
-  if (path.startsWith("/auth/login")) return;
+  // /auth/me is handled by AuthProvider.refresh / focus validation.
+  if (path.startsWith("/auth/login") || path.startsWith("/auth/me")) return;
   authSessionExpiredNotified = true;
   authSessionExpiredHandler?.();
+}
+
+export class ApiError extends Error {
+  status: number;
+  path: string;
+
+  constructor(message: string, status: number, path: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.path = path;
+  }
+}
+
+export function isUnauthorizedError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
 }
 
 function rejectApiResponse(res: Response, body: Record<string, unknown>, path: string): never {
@@ -28,7 +45,7 @@ function rejectApiResponse(res: Response, body: Record<string, unknown>, path: s
     (typeof body.error === "string" && body.error) ||
     (typeof body.message === "string" && body.message) ||
     `Request failed (${res.status})`;
-  throw new Error(message);
+  throw new ApiError(message, res.status, path);
 }
 
 export type User = {
@@ -417,6 +434,7 @@ export type ApartmentHistoryEntry = {
   reason: "signup" | "switch_in" | "switch_out" | "cancel" | string;
   customerStatus: "active" | "cancelled";
   isCurrent: boolean;
+  ipAddress?: string | null;
   phone: string | null;
   email: string | null;
   customerType: "C2B" | "B2B";
@@ -429,8 +447,32 @@ export type ApartmentHistoryEntry = {
   productMbps: number | null;
 };
 
+export type ApartmentUnit = {
+  buildingId: number;
+  buildingName: string;
+  c2bCode: string;
+  b2bCode: string;
+  ipSetup: "STATIC" | "PPOE" | string;
+  dstvSetup?: string | null;
+  apartmentNumber: string;
+  occupancyStatus: "occupied" | "vacant";
+  occupied: boolean;
+  currentIp: string | null;
+  lastKnownIp: string | null;
+  currentCustomerId: number | null;
+  currentCustomerNumber: string | null;
+  tenureCount: number;
+  firstOccupiedAt: string | null;
+  lastActivityAt: string | null;
+  occupiedSince: string | null;
+};
+
 export type ApartmentOccupancy = {
   available: boolean;
+  apartmentKnown?: boolean;
+  lastIp?: string | null;
+  needsIpInput?: boolean;
+  ipSetup?: string | null;
   tenant: {
     id: number;
     customerNumber: string;
@@ -1265,11 +1307,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       ...(options.headers || {}),
     },
     ...options,
+    cache: options.cache ?? "no-store",
   });
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    rejectApiResponse(res, body, path);
+  // Conditional GETs (304) have no body — treat as failure for JSON APIs.
+  if (res.status === 304 || !res.ok) {
+    const body = res.status === 304 ? {} : await res.json().catch(() => ({}));
+    rejectApiResponse(res, body as Record<string, unknown>, path);
   }
 
   return res.json();
@@ -2082,11 +2126,23 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  switchCustomerApartment: (id: number, apartmentNumber: string) =>
-    request<{ ok: boolean; customer: Customer; tisp?: { ok: boolean; error?: string } }>(
-      `/admin/customers/${id}/switch-apartment`,
-      { method: "POST", body: JSON.stringify({ apartmentNumber }) }
-    ),
+  switchCustomerApartment: (
+    id: number,
+    apartmentNumber: string,
+    options: { ipAddress?: string } = {}
+  ) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      tisp?: { ok: boolean; error?: string };
+      zoho?: { ok?: boolean; error?: string; contactUpdated?: boolean };
+    }>(`/admin/customers/${id}/switch-apartment`, {
+      method: "POST",
+      body: JSON.stringify({
+        apartmentNumber,
+        ipAddress: options.ipAddress,
+      }),
+    }),
 
   cancelCustomer: (id: number, notes?: string) =>
     request<{
@@ -2143,6 +2199,21 @@ export const api = {
   getApartmentHistory: (buildingId: number, apartmentNumber: string) =>
     request<{ history: ApartmentHistoryEntry[] }>(
       `/admin/buildings/${buildingId}/apartments/${encodeURIComponent(apartmentNumber)}/history`
+    ),
+
+  listApartments: (params: Record<string, string | undefined> = {}) =>
+    request<Paginated<ApartmentUnit>>(
+      `/admin/apartments${buildQueryString(params)}`
+    ),
+
+  getApartment: (buildingId: number, apartmentNumber: string) =>
+    request<{ apartment: ApartmentUnit }>(
+      `/admin/apartments/${buildingId}/${encodeURIComponent(apartmentNumber)}`
+    ),
+
+  getApartmentUnitHistory: (buildingId: number, apartmentNumber: string) =>
+    request<{ history: ApartmentHistoryEntry[] }>(
+      `/admin/apartments/${buildingId}/${encodeURIComponent(apartmentNumber)}/history`
     ),
 
   listApartmentHistory: (params: Record<string, string | undefined> = {}) =>

@@ -336,6 +336,7 @@ async function getTvAdoption(filters) {
   const rows = await query(
     `SELECT
       CASE
+        WHEN cat.code = 'dstv_only' THEN 'DSTV Only'
         WHEN p.has_dstv = 1 AND pl.name LIKE '%Premium%' THEN 'Premium TV'
         WHEN p.has_dstv = 1 THEN 'Internet + TV'
         ELSE 'Internet Only'
@@ -345,6 +346,7 @@ async function getTvAdoption(filters) {
      JOIN products p ON p.id = c.product_id
      LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
      LEFT JOIN package_plans pl ON pl.id = v.plan_id
+     LEFT JOIN package_categories cat ON cat.id = pl.category_id
      WHERE c.status = 'active'${filterSql}
      GROUP BY segment`,
     filterParams

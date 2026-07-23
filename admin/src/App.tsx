@@ -72,6 +72,19 @@ const ApartmentHistoryPage = lazyPage(
   () => import("./pages/ApartmentHistoryPage"),
   "ApartmentHistoryPage"
 );
+const ApartmentsPage = lazyPage(() => import("./pages/ApartmentsPage"), "ApartmentsPage");
+const ApartmentDetailLayout = lazyPage(
+  () => import("./pages/ApartmentDetailLayout"),
+  "ApartmentDetailLayout"
+);
+const ApartmentOverviewPage = lazyPage(
+  () => import("./pages/ApartmentOverviewPage"),
+  "ApartmentOverviewPage"
+);
+const ApartmentUnitHistoryPage = lazyPage(
+  () => import("./pages/ApartmentUnitHistoryPage"),
+  "ApartmentUnitHistoryPage"
+);
 const BuildingsPage = lazyPage(() => import("./pages/BuildingsPage"), "BuildingsPage");
 const ProductsPage = lazyPage(() => import("./pages/ProductsPage"), "ProductsPage");
 const AgenciesPage = lazyPage(() => import("./pages/AgenciesPage"), "AgenciesPage");
@@ -277,10 +290,43 @@ export default function App() {
                     path="apartments"
                     element={
                       <LazyRoute>
+                        <ApartmentsPage />
+                      </LazyRoute>
+                    }
+                  />
+                  <Route
+                    path="apartments/ledger"
+                    element={
+                      <LazyRoute>
                         <ApartmentHistoryPage />
                       </LazyRoute>
                     }
                   />
+                  <Route
+                    path="apartments/:buildingId/:apartmentNumber"
+                    element={
+                      <LazyRoute>
+                        <ApartmentDetailLayout />
+                      </LazyRoute>
+                    }
+                  >
+                    <Route
+                      index
+                      element={
+                        <LazyRoute>
+                          <ApartmentOverviewPage />
+                        </LazyRoute>
+                      }
+                    />
+                    <Route
+                      path="history"
+                      element={
+                        <LazyRoute>
+                          <ApartmentUnitHistoryPage />
+                        </LazyRoute>
+                      }
+                    />
+                  </Route>
                   <Route
                     path="buildings"
                     element={
