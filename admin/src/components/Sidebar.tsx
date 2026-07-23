@@ -20,8 +20,6 @@ import {
   FiLayers,
   FiPieChart,
   FiSettings,
-  FiList,
-  FiRefreshCw,
   FiMessageSquare,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
@@ -32,7 +30,6 @@ import {
   canAccessReports,
   canOperateFinance,
   canManageUsers,
-  canAccessOps,
   normalizeRole,
   roleLabel,
 } from "../lib/rbac";
@@ -96,12 +93,6 @@ export function Sidebar({ open, onClose }: Props) {
       visible: canAccessFinance(user),
     },
     {
-      to: "/synchronization",
-      label: "Synchronization",
-      icon: FiRefreshCw,
-      visible: canOperateFinance(user),
-    },
-    {
       to: "/analytics",
       label: "Analytics",
       icon: FiPieChart,
@@ -114,16 +105,10 @@ export function Sidebar({ open, onClose }: Props) {
       visible: canAccessReports(user),
     },
     {
-      to: "/logs",
-      label: "Logs",
-      icon: FiList,
-      visible: canAccessOps(user),
-    },
-    {
       to: "/settings",
       label: "Settings",
       icon: FiSettings,
-      visible: canManageUsers(user),
+      visible: canManageUsers(user) || canOperateFinance(user),
     },
   ];
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Badge,
@@ -13,15 +13,23 @@ import { FiCheck, FiCopy, FiX } from "react-icons/fi";
 import { api, type AppSettings } from "../lib/api";
 import { TabStrip } from "../components/ui/TabStrip";
 import { UsersPage } from "./UsersPage";
+import { LogsPage } from "./LogsPage";
+import { SynchronizationPage } from "./SynchronizationPage";
 import { toaster } from "../components/ui/toaster";
 import { PAGE_STACK_GAP, PageHeader } from "../components/ui/pageLayout";
+import { useAuth } from "../lib/auth";
+import {
+  canAccessOps,
+  canManageUsers,
+  canOperateFinance,
+} from "../lib/rbac";
 
-const TABS = [
-  { id: "permissions", label: "Users & permissions" },
-  { id: "webhooks", label: "Webhooks" },
-] as const;
+type TabId = "permissions" | "webhooks" | "logs" | "synchronization";
 
-type TabId = (typeof TABS)[number]["id"];
+type SettingsTab = {
+  id: TabId;
+  label: string;
+};
 
 function ConfigRow({
   label,
@@ -226,16 +234,38 @@ function RolesPanel({ settings }: { settings: AppSettings }) {
 }
 
 export function SettingsPage() {
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
+
+  const tabs = useMemo(() => {
+    const all: SettingsTab[] = [
+      { id: "permissions", label: "Users & permissions" },
+      { id: "webhooks", label: "Webhooks" },
+      { id: "logs", label: "Logs" },
+      { id: "synchronization", label: "Synchronization" },
+    ];
+    return all.filter((tab) => {
+      if (tab.id === "permissions" || tab.id === "webhooks") return canManageUsers(user);
+      if (tab.id === "logs") return canAccessOps(user);
+      if (tab.id === "synchronization") return canOperateFinance(user);
+      return false;
+    });
+  }, [user]);
+
   const activeTab: TabId =
-    tabParam === "webhooks" || tabParam === "permissions" ? tabParam : "permissions";
+    tabs.find((tab) => tab.id === tabParam)?.id ?? tabs[0]?.id ?? "permissions";
+
+  const needsSettingsPayload =
+    activeTab === "permissions" || activeTab === "webhooks";
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(needsSettingsPayload);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (!needsSettingsPayload) return undefined;
+
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -254,10 +284,11 @@ export function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [needsSettingsPayload]);
 
   function setTab(id: TabId) {
-    setSearchParams(id === "permissions" ? {} : { tab: id }, { replace: true });
+    const defaultTab = tabs[0]?.id;
+    setSearchParams(id === defaultTab ? {} : { tab: id }, { replace: true });
   }
 
   return (
@@ -272,7 +303,7 @@ export function SettingsPage() {
         bg="bg.panel"
       >
         <TabStrip
-          tabs={[...TABS]}
+          tabs={tabs}
           active={activeTab}
           onChange={(id) => setTab(id as TabId)}
           fitContent
@@ -298,6 +329,12 @@ export function SettingsPage() {
             ) : settings ? (
               <WebhooksPanel settings={settings} />
             ) : null
+          ) : null}
+
+          {activeTab === "logs" ? <LogsPage embedded /> : null}
+
+          {activeTab === "synchronization" ? (
+            <SynchronizationPage embedded />
           ) : null}
         </Box>
       </Box>

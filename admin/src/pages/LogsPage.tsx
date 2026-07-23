@@ -63,7 +63,7 @@ const PAGE_SIZE = 20;
 
 type LogSortKey = "endpoint" | "service" | "createdAt" | "customerNumber" | "status";
 
-export function LogsPage() {
+export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const isMobile = useMobileViewport();
   const [service, setService] = useState("");
   const [status, setStatus] = useState("");
@@ -214,60 +214,81 @@ export function LogsPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <MobilePageChrome
-        title="Logs"
-        searchValue={searchInput}
-        onSearchChange={setSearchInput}
-        searchPlaceholder="Endpoint, customer, error…"
-        sortOptions={[
-          {
-            key: "createdAt",
-            label: "Called",
-            active: sorts[0]?.sortBy === "createdAt",
-            direction: sorts[0]?.sortBy === "createdAt" ? sorts[0].sortDir : undefined,
-            onClick: () => handleSort("createdAt", "desc"),
-          },
-          {
-            key: "service",
-            label: "Service",
-            active: sorts[0]?.sortBy === "service",
-            direction: sorts[0]?.sortBy === "service" ? sorts[0].sortDir : undefined,
-            onClick: () => handleSort("service"),
-          },
-          {
-            key: "status",
-            label: "Status",
-            active: sorts[0]?.sortBy === "status",
-            direction: sorts[0]?.sortBy === "status" ? sorts[0].sortDir : undefined,
-            onClick: () => handleSort("status"),
-          },
-          {
-            key: "endpoint",
-            label: "Endpoint",
-            active: sorts[0]?.sortBy === "endpoint",
-            direction: sorts[0]?.sortBy === "endpoint" ? sorts[0].sortDir : undefined,
-            onClick: () => handleSort("endpoint"),
-          },
-        ]}
-        desktopActions={
-          <Flex gap={2} align="center" flexWrap="wrap">
-            <DataTableExportButton
-              entityLabel="logs"
-              viewCount={rows.length}
-              totalCount={pagination.total}
-              loading={exporting}
-              onExport={handleExport}
-            />
-            <Button size="sm" variant="outline" onClick={() => load()} loading={loading}>
-              <FiRefreshCw style={{ marginRight: 6 }} />
-              Refresh
-            </Button>
-          </Flex>
-        }
-      />
+      {embedded ? (
+        <Flex justify="flex-end" gap={2} flexWrap="wrap">
+          <DataTableExportButton
+            entityLabel="logs"
+            viewCount={rows.length}
+            totalCount={pagination.total}
+            loading={exporting}
+            onExport={handleExport}
+          />
+          <Button size="sm" variant="outline" onClick={() => load()} loading={loading}>
+            <FiRefreshCw style={{ marginRight: 6 }} />
+            Refresh
+          </Button>
+        </Flex>
+      ) : (
+        <MobilePageChrome
+          title="Logs"
+          searchValue={searchInput}
+          onSearchChange={setSearchInput}
+          searchPlaceholder="Endpoint, customer, error…"
+          sortOptions={[
+            {
+              key: "createdAt",
+              label: "Called",
+              active: sorts[0]?.sortBy === "createdAt",
+              direction: sorts[0]?.sortBy === "createdAt" ? sorts[0].sortDir : undefined,
+              onClick: () => handleSort("createdAt", "desc"),
+            },
+            {
+              key: "service",
+              label: "Service",
+              active: sorts[0]?.sortBy === "service",
+              direction: sorts[0]?.sortBy === "service" ? sorts[0].sortDir : undefined,
+              onClick: () => handleSort("service"),
+            },
+            {
+              key: "status",
+              label: "Status",
+              active: sorts[0]?.sortBy === "status",
+              direction: sorts[0]?.sortBy === "status" ? sorts[0].sortDir : undefined,
+              onClick: () => handleSort("status"),
+            },
+            {
+              key: "endpoint",
+              label: "Endpoint",
+              active: sorts[0]?.sortBy === "endpoint",
+              direction: sorts[0]?.sortBy === "endpoint" ? sorts[0].sortDir : undefined,
+              onClick: () => handleSort("endpoint"),
+            },
+          ]}
+          desktopActions={
+            <Flex gap={2} align="center" flexWrap="wrap">
+              <DataTableExportButton
+                entityLabel="logs"
+                viewCount={rows.length}
+                totalCount={pagination.total}
+                loading={exporting}
+                onExport={handleExport}
+              />
+              <Button size="sm" variant="outline" onClick={() => load()} loading={loading}>
+                <FiRefreshCw style={{ marginRight: 6 }} />
+                Refresh
+              </Button>
+            </Flex>
+          }
+        />
+      )}
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
+          <FilterField
+            label="Search"
+            flex={FILTER_FLEX.search}
+            minW={0}
+            hideOnMobile={!embedded}
+          >
             <Input
               size="sm"
               placeholder="Endpoint, customer, error…"
@@ -275,7 +296,12 @@ export function LogsPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </FilterField>
-          <FilterField label="Service" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
+          <FilterField
+            label="Service"
+            flex={FILTER_FLEX.standard}
+            minW={0}
+            hideOnMobile={!embedded}
+          >
             <SelectField
               size="sm"
               fieldProps={{
@@ -292,7 +318,12 @@ export function LogsPage() {
               <option value="mpesa">M-Pesa</option>
             </SelectField>
           </FilterField>
-          <FilterField label="Status" flex={FILTER_FLEX.standard} minW={0} hideOnMobile>
+          <FilterField
+            label="Status"
+            flex={FILTER_FLEX.standard}
+            minW={0}
+            hideOnMobile={!embedded}
+          >
             <SelectField
               size="sm"
               fieldProps={{

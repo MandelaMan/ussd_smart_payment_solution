@@ -34,15 +34,15 @@ export const BILLING_RECONCILIATION_GUIDES: BillingGuide[] = [
     title: "Keeping data fresh",
     whenToUse: "Counts look stale, a customer was just fixed, or you need the latest Zoho/TISP status.",
     steps: [
-      "Click Sync on Billing (or Synchronization for full integration jobs).",
+      "Click Sync on Billing (or Settings → Synchronization for full integration jobs).",
       "Wait for the progress banner to finish — quick sync uses cached DB snapshots where possible.",
       "Search a customer in Billing Gaps to force a live Zoho lookup for that account only.",
       "After fixing a customer in Customers, use Retry billing or TISP sync on their profile.",
     ],
     whereToCheck: [
-      "Synchronization page — job history and integration health.",
+      "Settings → Synchronization — job history and integration health.",
       "Customer detail — TISP sync status and Zoho invoice panel.",
-      "Logs — API errors from Zoho or TISP.",
+      "Settings → Logs — API errors from Zoho or TISP.",
     ],
   },
   {
@@ -94,12 +94,12 @@ export const BILLING_RECONCILIATION_GUIDES: BillingGuide[] = [
       "Expand the customer panel and review System status for TISP vs Zoho mismatch.",
       "Fix the root cause (wrong reference, duplicate invoice, frequency mismatch, etc.).",
       "Re-run Sync or refresh that customer from their profile.",
-      "If the issue persists, check Logs for the underlying API message.",
+      "If the issue persists, check Settings → Logs for the underlying API message.",
     ],
     whereToCheck: [
       "Customer expand panel — validations and recommended actions.",
-      "Logs — filter by customer number or zoho/tisp service.",
-      "Synchronization — failed job details.",
+      "Settings → Logs — filter by customer number or zoho/tisp service.",
+      "Settings → Synchronization — failed job details.",
     ],
   },
   {

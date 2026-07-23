@@ -42,6 +42,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "https://app.sulsolutions.biz",
+  "https://staging-app.sulsolutions.biz",
 ].filter(Boolean);
 
 app.use(
@@ -65,10 +66,9 @@ app.use(
     }
 
     const origin = req.header("Origin");
+    // Same-origin browser navigations (e.g. GET /admin/login) often send no Origin.
+    // Only enforce the allowlist when Origin is present (cross-origin / XHR / fetch).
     if (!origin) {
-      if (env.NODE_ENV === "production") {
-        return callback(new Error("Origin header required"));
-      }
       return callback(null, { origin: true, credentials: true });
     }
     if (allowedOrigins.includes(origin)) {

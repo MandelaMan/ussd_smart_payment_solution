@@ -7,6 +7,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "https://app.sulsolutions.biz",
+  "https://staging-app.sulsolutions.biz",
 ].filter(Boolean);
 
 const PUBLIC_MUTATION_PREFIXES = [

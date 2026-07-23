@@ -8,6 +8,7 @@ import { ScrollToTop } from "./components/ScrollToTop";
 import {
   ProtectedRoute,
   AdminRoute,
+  SettingsRoute,
   FinanceRoute,
   ReportsRoute,
   ConfigRoute,
@@ -32,10 +33,6 @@ const RoleHomePage = lazyPage(() => import("./pages/RoleHomePage"), "RoleHomePag
 const ActivityPage = lazyPage(() => import("./pages/ActivityPage"), "ActivityPage");
 const LeadsPage = lazyPage(() => import("./pages/LeadsPage"), "LeadsPage");
 const TransactionsPage = lazyPage(() => import("./pages/TransactionsPage"), "TransactionsPage");
-const SynchronizationPage = lazyPage(
-  () => import("./pages/SynchronizationPage"),
-  "SynchronizationPage"
-);
 const BusinessIntelligencePage = lazyPage(
   () => import("./pages/BusinessIntelligencePage"),
   "BusinessIntelligencePage"
@@ -62,7 +59,6 @@ const BillingCommunicationsPage = lazyPage(
 );
 const ReportsPage = lazyPage(() => import("./pages/ReportsPage"), "ReportsPage");
 const SettingsPage = lazyPage(() => import("./pages/SettingsPage"), "SettingsPage");
-const LogsPage = lazyPage(() => import("./pages/LogsPage"), "LogsPage");
 const CustomersListPage = lazyPage(
   () => import("./pages/CustomersListPage"),
   "CustomersListPage"
@@ -144,11 +140,7 @@ export default function App() {
                   />
                   <Route
                     path="synchronization"
-                    element={
-                      <LazyRoute>
-                        <SynchronizationPage />
-                      </LazyRoute>
-                    }
+                    element={<Navigate to="/settings?tab=synchronization" replace />}
                   />
                   <Route
                     path="analytics"
@@ -238,7 +230,7 @@ export default function App() {
                     }
                   />
                 </Route>
-                <Route element={<AdminRoute />}>
+                <Route element={<SettingsRoute />}>
                   <Route
                     path="settings"
                     element={
@@ -247,13 +239,11 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
+                </Route>
+                <Route element={<AdminRoute />}>
                   <Route
                     path="logs"
-                    element={
-                      <LazyRoute>
-                        <LogsPage />
-                      </LazyRoute>
-                    }
+                    element={<Navigate to="/settings?tab=logs" replace />}
                   />
                   <Route path="users" element={<Navigate to="/settings" replace />} />
                 </Route>

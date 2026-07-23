@@ -36,6 +36,11 @@ export function AdminRoute() {
   return <RoleRoute roles={["admin"]} />;
 }
 
+/** Settings hub: users/webhooks/logs (admin) and synchronization (admin + CFO). */
+export function SettingsRoute() {
+  return <RoleRoute roles={["admin", "cfo"]} />;
+}
+
 export function FinanceRoute() {
   return <RoleRoute roles={["admin", "cfo", "ceo"]} />;
 }

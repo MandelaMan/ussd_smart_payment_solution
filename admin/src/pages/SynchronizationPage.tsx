@@ -296,7 +296,9 @@ function SyncModuleSection({
   );
 }
 
-export function SynchronizationPage() {
+export function SynchronizationPage({
+  embedded = false,
+}: { embedded?: boolean } = {}) {
   const [overview, setOverview] = useState<Awaited<ReturnType<typeof api.getSyncOverview>> | null>(null);
   const [jobs, setJobs] = useState<SyncJobRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -418,34 +420,53 @@ export function SynchronizationPage() {
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
-      <Box display={{ base: "block", lg: "none" }}>
-        <MobilePageChrome title="Synchronization" headerActions={refreshButton} />
-      </Box>
+      {!embedded ? (
+        <>
+          <Box display={{ base: "block", lg: "none" }}>
+            <MobilePageChrome title="Synchronization" headerActions={refreshButton} />
+          </Box>
 
-      <Box display={{ base: "none", lg: "block" }}>
-        <PageHeader
-          title="Synchronization"
-          actions={
-            <HStack>
-              <Badge colorPalette={overview?.redisConnected ? "green" : "red"} variant="subtle">
-                Redis {overview?.redisConnected ? "ok" : "offline"}
-              </Badge>
-              <Badge colorPalette={connected ? "green" : "orange"} variant="subtle">
-                Live {connected ? "on" : "off"}
-              </Badge>
-              {!overview?.syncEnabled && (
-                <Badge colorPalette="orange" variant="subtle">
-                  Inline mode
-                </Badge>
-              )}
-              <Button size="sm" variant="outline" colorPalette="brand" onClick={() => load()}>
-                <FiRefreshCw />
-                Refresh
-              </Button>
-            </HStack>
-          }
-        />
-      </Box>
+          <Box display={{ base: "none", lg: "block" }}>
+            <PageHeader
+              title="Synchronization"
+              actions={
+                <HStack>
+                  <Badge colorPalette={overview?.redisConnected ? "green" : "red"} variant="subtle">
+                    Redis {overview?.redisConnected ? "ok" : "offline"}
+                  </Badge>
+                  <Badge colorPalette={connected ? "green" : "orange"} variant="subtle">
+                    Live {connected ? "on" : "off"}
+                  </Badge>
+                  {!overview?.syncEnabled && (
+                    <Badge colorPalette="orange" variant="subtle">
+                      Inline mode
+                    </Badge>
+                  )}
+                  <Button size="sm" variant="outline" colorPalette="brand" onClick={() => load()}>
+                    <FiRefreshCw />
+                    Refresh
+                  </Button>
+                </HStack>
+              }
+            />
+          </Box>
+        </>
+      ) : (
+        <Flex justify="flex-end" align="center" gap={2} flexWrap="wrap">
+          <Badge colorPalette={overview?.redisConnected ? "green" : "red"} variant="subtle">
+            Redis {overview?.redisConnected ? "ok" : "offline"}
+          </Badge>
+          <Badge colorPalette={connected ? "green" : "orange"} variant="subtle">
+            Live {connected ? "on" : "off"}
+          </Badge>
+          {!overview?.syncEnabled && (
+            <Badge colorPalette="orange" variant="subtle">
+              Inline mode
+            </Badge>
+          )}
+          {refreshButton}
+        </Flex>
+      )}
 
       <HStack gap={2} display={{ base: "flex", lg: "none" }} flexWrap="wrap" px={0}>
         <Badge colorPalette={overview?.redisConnected ? "green" : "red"} variant="subtle">

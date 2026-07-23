@@ -15,6 +15,7 @@ function initSocket(server, env) {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://app.sulsolutions.biz",
+    "https://staging-app.sulsolutions.biz",
   ].filter(Boolean);
 
   io = new Server(server, {
