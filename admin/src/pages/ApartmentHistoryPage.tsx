@@ -350,9 +350,18 @@ export function ApartmentHistoryPage() {
         title="Occupancy ledger"
         description="Cross-building occupancy events. Open Apartments for unit-centric views."
         desktopActions={
-          <Button asChild size="sm" variant="outline">
-            <RouterLink to="/apartments">Apartments overview</RouterLink>
-          </Button>
+          <>
+            <DataTableExportButton
+              entityLabel="apartment history"
+              viewCount={rows.length}
+              totalCount={pagination.total}
+              loading={exporting}
+              onExport={handleExport}
+            />
+            <Button asChild size="sm" variant="outline">
+              <RouterLink to="/apartments">Apartments overview</RouterLink>
+            </Button>
+          </>
         }
         searchValue={searchInput}
         onSearchChange={setSearchInput}
@@ -393,15 +402,6 @@ export function ApartmentHistoryPage() {
             onClick: () => handleSort("apartmentNumber"),
           },
         ]}
-        desktopActions={
-          <DataTableExportButton
-            entityLabel="apartment history"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        }
       />
 
       <FilterToolbar>

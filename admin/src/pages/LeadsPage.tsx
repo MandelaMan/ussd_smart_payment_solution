@@ -492,14 +492,13 @@ export function LeadsPage() {
               Public form:
             </Text>
             <Box
-              as="a"
-              href={links.formUrl}
-              target="_blank"
-              rel="noreferrer"
+              asChild
               color="brand.600"
               fontSize="sm"
             >
-              {links.formUrl}
+              <a href={links.formUrl} target="_blank" rel="noreferrer">
+                {links.formUrl}
+              </a>
             </Box>
             <Button
               size="xs"

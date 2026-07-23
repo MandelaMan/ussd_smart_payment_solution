@@ -18,9 +18,9 @@ import {
 import { AppToaster } from "./components/ui/AppToaster";
 import { LoginPage } from "./pages/LoginPage";
 
-function lazyPage<T extends Record<string, ComponentType>>(
+function lazyPage<T extends Record<string, unknown>>(
   loader: () => Promise<T>,
-  exportName: keyof T
+  exportName: keyof T & string
 ) {
   return lazy(async () => {
     const mod = await loader();
