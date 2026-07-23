@@ -78,7 +78,7 @@ function toDateInputValue(value: string | null | undefined): string {
 }
 
 const PPOE_PASSWORD_CHARS =
-  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%&*_+-";
 
 function generatePppoePassword(length = 7): string {
   let out = "";
@@ -93,7 +93,8 @@ function generatePppoePassword(length = 7): string {
 }
 
 function isValidPppoePassword(value: string): boolean {
-  return /^[A-Za-z0-9]{4,50}$/.test(value.trim());
+  // Printable ASCII excluding space (letters, numbers, special characters).
+  return /^[\x21-\x7E]{4,50}$/.test(value.trim());
 }
 
 const lockedPackageFieldProps = {
@@ -779,7 +780,7 @@ export function CustomerForm({
       if (!passwordUnchanged && !isValidPppoePassword(ppoePassword)) {
         toaster.create({
           title: "Invalid PPPoE password",
-          description: "Use 4–50 letters and numbers only.",
+          description: "Use 4–50 characters: letters, numbers, and special characters (no spaces).",
           type: "error",
         });
         return false;
@@ -1758,7 +1759,8 @@ export function CustomerForm({
                   ) : null}
                 </Flex>
                   <Field.HelperText>
-                    Letters and numbers only. Default is a random 7-character password.
+                    Letters, numbers, and special characters allowed (no spaces). Default is a
+                    random 7-character password.
                   </Field.HelperText>
               </Field.Root>
             ) : null}
