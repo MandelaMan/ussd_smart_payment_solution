@@ -49,7 +49,8 @@ const PAYMENT_FREQUENCIES = [
   { value: "custom", label: "Custom period" },
 ];
 
-const PPOE_PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+const PPOE_PASSWORD_CHARS =
+  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
 
 function generatePppoePassword(length = 7): string {
   let out = "";
@@ -64,7 +65,7 @@ function generatePppoePassword(length = 7): string {
 }
 
 function isValidPppoePassword(value: string): boolean {
-  return /^[A-Za-z]{4,50}$/.test(value.trim());
+  return /^[A-Za-z0-9]{4,50}$/.test(value.trim());
 }
 
 const lockedPackageFieldProps = {
@@ -743,7 +744,7 @@ export function CustomerForm({
       if (!passwordUnchanged && !isValidPppoePassword(ppoePassword)) {
         toaster.create({
           title: "Invalid PPPoE password",
-          description: "Use 4–50 letters only (uppercase and lowercase).",
+          description: "Use 4–50 letters and numbers only.",
           type: "error",
         });
         return false;
@@ -1715,9 +1716,9 @@ export function CustomerForm({
                     </Button>
                   ) : null}
                 </Flex>
-                <Field.HelperText>
-                  Letters only (A–Z, a–z). Default is a random 7-character password.
-                </Field.HelperText>
+                  <Field.HelperText>
+                    Letters and numbers only. Default is a random 7-character password.
+                  </Field.HelperText>
               </Field.Root>
             ) : null}
           </FormSection>

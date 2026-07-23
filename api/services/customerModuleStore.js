@@ -108,9 +108,9 @@ function buildCustomerSearchFilter(term, options = {}) {
   };
 }
 
-/** Random 7-char PPPoE password — uppercase + lowercase letters only. */
+/** Random 7-char PPPoE password — letters + digits. */
 function generatePppoePassword() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
   let out = "";
   const bytes = crypto.randomBytes(7);
   for (let i = 0; i < 7; i++) {
@@ -132,9 +132,9 @@ function normalizePppoePassword(value, { required = false } = {}) {
     if (required) throw new Error("PPPoE password is required");
     return null;
   }
-  if (!/^[A-Za-z]{4,50}$/.test(password)) {
+  if (!/^[A-Za-z0-9]{4,50}$/.test(password)) {
     throw new Error(
-      "PPPoE password must be 4–50 letters (uppercase and lowercase only)"
+      "PPPoE password must be 4–50 characters (letters and numbers only)"
     );
   }
   return password;
