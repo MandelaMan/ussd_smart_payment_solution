@@ -653,8 +653,11 @@ function buildTispSetClientPayload(input, transactionType) {
 
   const packageType = ipSetup === "PPOE" ? "PPPOE" : "IP";
   const first = tispPersonName(firstName).toUpperCase();
-  const middle = tispPersonName(middleName);
-  const last = tispPersonName(lastName).toUpperCase();
+  // TISP rejects blank MiddleName/LastName — send "-" when empty (not for Zoho).
+  const middleRaw = tispPersonName(middleName);
+  const lastRaw = tispPersonName(lastName);
+  const middle = middleRaw || "-";
+  const last = lastRaw ? lastRaw.toUpperCase() : "-";
   const resolvedIp = String(ipAddress || "").trim();
   const routerLocation = tispRouterLocation(buildingName);
   const packageLabel = buildTispPackageLabel({

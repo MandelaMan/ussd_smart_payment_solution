@@ -134,8 +134,10 @@ function formatZohoPhone(phone) {
 
 /** Title-case a person name part — "JOHN" / "john" → "John" (not ALL CAPS). */
 function capitalizeZohoPersonName(value) {
-  return String(value || "")
-    .trim()
+  const trimmed = String(value || "").trim();
+  // TISP uses "-" as empty-name placeholder — never forward that to Zoho.
+  if (!trimmed || trimmed === "-") return "";
+  return trimmed
     .split(/\s+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
@@ -144,9 +146,13 @@ function capitalizeZohoPersonName(value) {
 
 /** Resolve and title-case person name fields from camelCase or snake_case customer objects. */
 function resolveZohoPersonNames(customer) {
-  let first = customer?.firstName ?? customer?.first_name ?? "";
-  let middle = customer?.middleName ?? customer?.middle_name ?? "";
-  let last = customer?.lastName ?? customer?.last_name ?? "";
+  const blankToEmpty = (v) => {
+    const s = String(v ?? "").trim();
+    return !s || s === "-" ? "" : s;
+  };
+  let first = blankToEmpty(customer?.firstName ?? customer?.first_name);
+  let middle = blankToEmpty(customer?.middleName ?? customer?.middle_name);
+  let last = blankToEmpty(customer?.lastName ?? customer?.last_name);
 
   if (!String(first).trim() && !String(last).trim()) {
     const full = String(
