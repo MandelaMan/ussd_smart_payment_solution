@@ -168,25 +168,34 @@ function buildTispNarration(
   if (integrations && !integrations.onTisp) {
     return {
       label: "TISP",
-      text: "This customer is not on TISP yet. They need to be created before service can be managed there.",
+      text: "Not on TISP yet — still on Books as Suspended until they are created and connected.",
       tone: "bad",
     };
   }
 
   const statusLower = service.toLowerCase();
-  if (statusLower.includes("not on tisp")) {
+  if (customer.status === "cancelled" || statusLower.includes("cancel")) {
     return {
-      label: "TISP",
-      text: "This customer is not on TISP yet.",
+      label: "Status",
+      text: "Cancelled — churned and no longer counted as a current customer.",
       tone: "bad",
+    };
+  }
+  if (statusLower.includes("pause")) {
+    return {
+      label: "Status",
+      text: dueLabel
+        ? `Paused at customer request (away). Internet stopped; due date ${dueLabel}. Still counted as a customer.`
+        : "Paused at customer request (away). Still counted as a customer; internet is stopped until they return.",
+      tone: "warn",
     };
   }
   if (statusLower.includes("suspend")) {
     return {
-      label: "TISP",
+      label: "Status",
       text: dueLabel
-        ? `Customer is currently Suspended on TISP. Their due date is ${dueLabel}.`
-        : "Customer is currently Suspended on TISP.",
+        ? `Suspended — on Books but not active on TISP. Due date ${dueLabel}.`
+        : "Suspended — on Books but not active on TISP (or service stopped).",
       tone: "warn",
     };
   }
@@ -194,8 +203,8 @@ function buildTispNarration(
     return {
       label: "TISP",
       text: dueLabel
-        ? `Customer is currently Disconnected on TISP. Their due date is ${dueLabel}.`
-        : "Customer is currently Disconnected on TISP.",
+        ? `Disconnected on TISP (shown as Suspended). Due date ${dueLabel}.`
+        : "Disconnected on TISP (shown as Suspended).",
       tone: "warn",
     };
   }
@@ -203,8 +212,8 @@ function buildTispNarration(
     return {
       label: "TISP",
       text: dueLabel
-        ? `Customer is currently Active on TISP. Their internet expires on ${dueLabel}.`
-        : "Customer is currently Active on TISP.",
+        ? `Active on TISP and Books. Internet expires on ${dueLabel}.`
+        : "Active on TISP and Books.",
       tone: "ok",
     };
   }
@@ -212,8 +221,8 @@ function buildTispNarration(
   return {
     label: "TISP",
     text: dueLabel
-      ? `TISP status is ${service}. Due date is ${dueLabel}.`
-      : `TISP status is ${service}.`,
+      ? `Status is ${service}. Due date is ${dueLabel}.`
+      : `Status is ${service}.`,
     tone: "neutral",
   };
 }

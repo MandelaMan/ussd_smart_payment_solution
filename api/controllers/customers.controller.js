@@ -841,18 +841,27 @@ async function refreshTispStatus(customer, options = {}) {
     ? integrationSnapshot.normalizeTispDueDateValue(options.preferredDueDate)
     : null;
 
+  const preservePaused =
+    normalizeSubscriptionStatus(customer.subscriptionStatus) === "Paused";
+
   try {
     const tisp = await getTISPCustomer(customer.customerNumber);
     const status =
       tisp?.status ?? tisp?.Status ?? tisp?.subscriptionStatus ?? null;
     if (status) {
-      const normalized = normalizeSubscriptionStatus(String(status));
+      let normalized = normalizeSubscriptionStatus(String(status));
+      // Local "Paused" (away) must not be overwritten by TISP Suspended after we
+      // stop service for a temporary pause.
+      if (preservePaused && normalized !== "Active" && normalized !== "Cancelled") {
+        normalized = "Paused";
+      }
       await store.updateCustomerSubscriptionStatus(customer.id, normalized);
       customer.subscriptionStatus = normalized;
     } else {
       // Account payload returned but without a service status — treat as present/active.
-      await store.updateCustomerSubscriptionStatus(customer.id, "Active");
-      customer.subscriptionStatus = "Active";
+      const normalized = preservePaused ? "Paused" : "Active";
+      await store.updateCustomerSubscriptionStatus(customer.id, normalized);
+      customer.subscriptionStatus = normalized;
     }
 
     const liveDue = integrationSnapshot.extractTispDueDate(tisp);
@@ -879,11 +888,12 @@ async function refreshTispStatus(customer, options = {}) {
       message.includes("no client");
     if (notFound) {
       try {
-        await store.updateCustomerSubscriptionStatus(customer.id, "Not on TISP");
-        customer.subscriptionStatus = "Not on TISP";
+        const notOnTispStatus = preservePaused ? "Paused" : "Not on TISP";
+        await store.updateCustomerSubscriptionStatus(customer.id, notOnTispStatus);
+        customer.subscriptionStatus = notOnTispStatus;
         try {
           await integrationSnapshot.upsertTispSnapshot(customer.id, {
-            status: "Not on TISP",
+            status: notOnTispStatus,
           });
         } catch (e) {
           console.warn("TISP not-found snapshot persist failed:", e.message);
@@ -1840,6 +1850,7 @@ const CUSTOMER_EXPORT_COLUMNS = [
   { key: "productName", label: "Package" },
   { key: "paymentFrequency", label: "Billing" },
   { key: "subscriptionStatus", label: "Status" },
+  { key: "dstvDecoderSerial", label: "DSTV IUC/Serial" },
   { key: "packagePrice", label: "Price" },
   { key: "phone", label: "Phone" },
   { key: "email", label: "Email" },
@@ -1879,6 +1890,7 @@ function mapCustomerExportRow(row) {
     productName: row.productName,
     paymentFrequency: row.paymentFrequency,
     subscriptionStatus: row.subscriptionStatus,
+    dstvDecoderSerial: row.dstvDecoderSerial || "",
     packagePrice: row.packagePrice,
     phone: row.phone,
     email: row.email || "",
@@ -3286,6 +3298,37 @@ async function cancelSubscription(req, res, next) {
 }
 
 /**
+ * Shared TISP "stop service today" push used by disconnect (Suspended) and pause (Paused).
+ */
+async function stopTispServiceToday(ctx) {
+  const stopDate = new Date();
+  const dueDateLabel = formatTispDueDate(stopDate);
+  const tisp = { ok: true, skipped: true, dueDate: dueDateLabel };
+
+  try {
+    const onTisp = await accountExistsOnTisp(ctx.customer_number);
+    if (onTisp) {
+      await updateCustomerOnTisp(ctx, {
+        dueDate: stopDate,
+        skipCooldown: true,
+      });
+      tisp.ok = true;
+      tisp.skipped = false;
+    } else {
+      tisp.ok = true;
+      tisp.skipped = true;
+      tisp.reason = "not_on_tisp";
+    }
+  } catch (e) {
+    tisp.ok = false;
+    tisp.skipped = false;
+    tisp.error = formatTispError(e);
+  }
+
+  return tisp;
+}
+
+/**
  * Disconnect service on TISP by setting due date to today.
  * Keeps the local account active; sets subscription status to Suspended.
  */
@@ -3304,40 +3347,16 @@ async function disconnectCustomer(req, res, next) {
       return res.status(400).json({ error: "Customer is not active" });
     }
 
-    const disconnectDate = new Date();
-    const dueDateLabel = formatTispDueDate(disconnectDate);
-    const tisp = { ok: true, skipped: true };
-
-    try {
-      const onTisp = await accountExistsOnTisp(ctx.customer_number);
-      if (onTisp) {
-        await updateCustomerOnTisp(ctx, {
-          dueDate: disconnectDate,
-          skipCooldown: true,
-        });
-        tisp.ok = true;
-        tisp.skipped = false;
-        tisp.dueDate = dueDateLabel;
-      } else {
-        tisp.ok = true;
-        tisp.skipped = true;
-        tisp.reason = "not_on_tisp";
-        tisp.dueDate = dueDateLabel;
-      }
-    } catch (e) {
-      tisp.ok = false;
-      tisp.skipped = false;
-      tisp.error = formatTispError(e);
-    }
+    const tisp = await stopTispServiceToday(ctx);
 
     await store.disconnectCustomer(customerId, notes);
 
     try {
       await integrationSnapshot.upsertTispSnapshot(customerId, {
         status: "Suspended",
-        DueDate: dueDateLabel,
-        dueDate: dueDateLabel,
-        duedate: dueDateLabel,
+        DueDate: tisp.dueDate,
+        dueDate: tisp.dueDate,
+        duedate: tisp.dueDate,
       });
     } catch (e) {
       console.warn("TISP snapshot save (disconnect) failed:", e.message);
@@ -3358,6 +3377,79 @@ async function disconnectCustomer(req, res, next) {
     await logActivity({
       eventType: "customer_disconnected",
       title: "Customer disconnected on TISP",
+      message: [
+        customer?.customerNumber || "",
+        tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
+        tisp.skipped ? "not on TISP" : null,
+        tisp.error || null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      source: "admin",
+      status: tisp.ok ? "success" : "failed",
+      customerRef: customer?.customerNumber,
+    });
+
+    return res.json({
+      ok: true,
+      customer,
+      tisp,
+    });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
+/**
+ * Pause service at customer request (away temporarily).
+ * Same TISP stop as disconnect, but marks status Paused (not Suspended).
+ */
+async function pauseCustomer(req, res, next) {
+  try {
+    const { notes } = req.body || {};
+    const customerId = Number(req.params.id);
+    const ctx = await store.getCustomerContext(customerId);
+    if (!ctx) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+    if (ctx.status === "cancelled") {
+      return res.status(400).json({ error: "Cannot pause a cancelled customer" });
+    }
+    if (ctx.status !== "active") {
+      return res.status(400).json({ error: "Customer is not active" });
+    }
+
+    const tisp = await stopTispServiceToday(ctx);
+
+    await store.pauseCustomer(customerId, notes);
+
+    try {
+      await integrationSnapshot.upsertTispSnapshot(customerId, {
+        status: "Paused",
+        DueDate: tisp.dueDate,
+        dueDate: tisp.dueDate,
+        duedate: tisp.dueDate,
+      });
+    } catch (e) {
+      console.warn("TISP snapshot save (pause) failed:", e.message);
+    }
+
+    try {
+      await store.updateCustomerTispSync(
+        customerId,
+        tisp.ok ? "synced" : "failed",
+        tisp.ok ? null : tisp.error || "TISP pause failed"
+      );
+    } catch {
+      /* best-effort */
+    }
+
+    const customer = await store.getCustomerById(customerId);
+
+    await logActivity({
+      eventType: "customer_paused",
+      title: "Customer service paused",
       message: [
         customer?.customerNumber || "",
         tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
@@ -4409,6 +4501,7 @@ module.exports = {
   switchApartment,
   cancelSubscription,
   disconnectCustomer,
+  pauseCustomer,
   deleteCustomerPermanently,
   bulkCancelSubscriptions,
   apartmentHistory,

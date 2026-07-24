@@ -84,9 +84,16 @@ async function processCustomerSyncJob(job) {
             result.raw?.Status ??
             result.raw?.subscriptionStatus ??
             null;
-          const normalized = rawStatus
+          const previousStatus = normalizeSubscriptionStatus(
+            customer.subscriptionStatus || customer.subscription_status
+          );
+          const preservePaused = previousStatus === "Paused";
+          let normalized = rawStatus
             ? normalizeSubscriptionStatus(String(rawStatus))
             : "Active";
+          if (preservePaused && normalized !== "Active" && normalized !== "Cancelled") {
+            normalized = "Paused";
+          }
 
           await customerStore.updateCustomerSubscriptionStatus(
             customer.id,
@@ -100,14 +107,19 @@ async function processCustomerSyncJob(job) {
           await customerStore.updateCustomerTispSync(customer.id, "synced", null);
           updated += 1;
         } else if (isTispNotFoundError(result.error)) {
+          const previousStatus = normalizeSubscriptionStatus(
+            customer.subscriptionStatus || customer.subscription_status
+          );
+          const notOnTispStatus =
+            previousStatus === "Paused" ? "Paused" : "Not on TISP";
           await customerStore.updateCustomerSubscriptionStatus(
             customer.id,
-            "Not on TISP"
+            notOnTispStatus
           );
           // Keep snapshot in sync so list filters and expand panel agree.
           try {
             await integrationSnapshot.upsertTispSnapshot(customer.id, {
-              status: "Not on TISP",
+              status: notOnTispStatus,
             });
           } catch (e) {
             console.warn("TISP snapshot clear failed:", e.message);
@@ -130,13 +142,18 @@ async function processCustomerSyncJob(job) {
         const message = err?.message || "TISP sync failed";
         try {
           if (isTispNotFoundError(message)) {
+            const previousStatus = normalizeSubscriptionStatus(
+              customer.subscriptionStatus || customer.subscription_status
+            );
+            const notOnTispStatus =
+              previousStatus === "Paused" ? "Paused" : "Not on TISP";
             await customerStore.updateCustomerSubscriptionStatus(
               customer.id,
-              "Not on TISP"
+              notOnTispStatus
             );
             try {
               await integrationSnapshot.upsertTispSnapshot(customer.id, {
-                status: "Not on TISP",
+                status: notOnTispStatus,
               });
             } catch {
               /* ignore */

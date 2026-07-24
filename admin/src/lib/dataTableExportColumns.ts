@@ -42,6 +42,7 @@ export const agencyExportColumns: ExportColumn<Agency>[] = [
   { header: "Contact", value: (row) => row.contactPerson },
   { header: "Phone", value: (row) => row.phone },
   { header: "Email", value: (row) => row.email },
+  { header: "Discount %", value: (row) => row.discountPercent },
   { header: "Active Customers", value: (row) => row.activeCustomers },
 ];
 

@@ -1,4 +1,5 @@
 const { query } = require("../config/db");
+const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
 
 const REPORT_DEFINITIONS = [
   {
@@ -141,6 +142,14 @@ const REPORT_DEFINITIONS = [
     id: "payment-frequency-mix",
     title: "Billing Frequency Mix",
     description: "Active subscribers grouped by monthly, quarterly, or yearly billing.",
+    category: "Customers",
+    dateFilter: false,
+  },
+  {
+    id: "dstv-iuc-roster",
+    title: "DSTV IUC / Serial Roster",
+    description:
+      "DSTV customers with IUC/serial number, customer number, building, and Active / Suspended status.",
     category: "Customers",
     dateFilter: false,
   },
@@ -1000,6 +1009,7 @@ async function monthlyPaymentChurn(month) {
     month: period.month,
     summary: {
       total: summary.total,
+      totalLabel: "Total churned",
       totalOutstanding: summary.totalOutstanding,
       byReason: summary.byReason.map((r) => ({
         label: r.label,
@@ -1032,6 +1042,72 @@ async function paymentFrequencyMix() {
   };
 }
 
+/**
+ * Per-customer DSTV decoder IUC/serial roster.
+ * Active DSTV accounts only; Account Status is Active / Suspended / Paused.
+ */
+async function dstvIucRoster() {
+  const headers = [
+    { key: "iuc_serial", label: "IUC/Serial Number" },
+    { key: "customer_number", label: "Customer No" },
+    { key: "building", label: "Building" },
+    { key: "account_status", label: "Account Status" },
+  ];
+
+  const rows = await query(
+    `SELECT c.customer_number,
+      b.name AS building,
+      c.dstv_decoder_serial AS iuc_serial,
+      c.subscription_status
+     FROM customers c
+     JOIN products p ON p.id = c.product_id
+     JOIN buildings b ON b.id = c.building_id
+     WHERE p.has_dstv = 1
+       AND c.status = 'active'
+     ORDER BY
+       b.name ASC,
+       c.customer_number ASC
+     LIMIT 10000`
+  );
+
+  let activeCount = 0;
+  let suspendedCount = 0;
+  let pausedCount = 0;
+
+  const formatted = rows.map((r) => {
+    const accountStatus = normalizeSubscriptionStatus(r.subscription_status);
+
+    if (accountStatus === "Active") activeCount += 1;
+    else if (accountStatus === "Suspended") suspendedCount += 1;
+    else if (accountStatus === "Paused") pausedCount += 1;
+
+    return formatRow(
+      {
+        iuc_serial: r.iuc_serial || "",
+        customer_number: r.customer_number,
+        building: r.building,
+        account_status: accountStatus,
+      },
+      headers
+    );
+  });
+
+  return {
+    title: "DSTV IUC / Serial Roster",
+    headers,
+    rows: formatted,
+    summary: {
+      total: formatted.length,
+      totalLabel: "Total DSTV customers",
+      lines: [
+        { label: "Active", value: activeCount },
+        { label: "Suspended", value: suspendedCount },
+        { label: "Paused", value: pausedCount },
+      ],
+    },
+  };
+}
+
 async function upcomingInvoicesReport() {
   const { getUpcomingInvoiceForecast } = require("./billingForecastStore");
   const forecast = await getUpcomingInvoiceForecast({ days: 7 });
@@ -1059,6 +1135,7 @@ async function upcomingInvoicesReport() {
     rows: rows.map((r) => formatRow(r, headers)),
     summary: {
       total: forecast.invoiceCount,
+      totalLabel: "Total invoices",
       totalOutstanding: forecast.anticipatedAmount,
     },
     period: { from: forecast.windowStart, to: forecast.windowEnd },
@@ -1116,6 +1193,7 @@ const RUNNERS = {
   "churn-analysis": churnAnalysis,
   "monthly-payment-churn": monthlyPaymentChurn,
   "payment-frequency-mix": paymentFrequencyMix,
+  "dstv-iuc-roster": dstvIucRoster,
   "billing-reconciliation": billingReconciliationReport,
   "upcoming-invoices": upcomingInvoicesReport,
 };

@@ -267,9 +267,13 @@ export function AgencyDetailPage() {
             accent="cerulean"
           />
           <MetricCard
-            label="Total active amount"
-            value={formatCurrency(billing.totalActiveAmount)}
-            sub="Sum of active package prices"
+            label="Invoice amount"
+            value={formatCurrency(billing.totalInvoiceAmount ?? billing.totalActiveAmount)}
+            sub={
+              billing.discountPercent
+                ? `${billing.discountPercent}% discount · list ${formatCurrency(billing.totalActiveAmount)}`
+                : "Sum of active package prices"
+            }
             accent="teal"
           />
           <MetricCard
@@ -538,6 +542,7 @@ export function AgencyDetailPage() {
           mode={invoiceDialog.mode}
           customer={invoiceDialog.mode === "customer" ? invoiceDialog.customer : null}
           customers={customers}
+          defaultDiscountPercent={agency?.discountPercent}
           submitting={creatingInvoice}
           onClose={() => setInvoiceDialog({ open: false })}
           onSubmit={handleCreateInvoice}

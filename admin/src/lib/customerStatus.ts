@@ -1,18 +1,42 @@
 export type SubscriptionStatusLabel =
   | "Active"
   | "Suspended"
-  | "Not on TISP"
+  | "Paused"
   | "Cancelled";
+
+/** @deprecated Prefer Suspended — kept for URL/API backwards compatibility. */
+export type LegacySubscriptionStatusLabel = "Not on TISP";
 
 export const SUBSCRIPTION_STATUS_FILTER_OPTIONS: Array<{
   value: SubscriptionStatusLabel;
   label: string;
+  description: string;
   color: string;
 }> = [
-  { value: "Active", label: "Active", color: "green.500" },
-  { value: "Suspended", label: "Suspended", color: "orange.500" },
-  { value: "Not on TISP", label: "Not on TISP", color: "fg.subtle" },
-  { value: "Cancelled", label: "Cancelled", color: "red.400" },
+  {
+    value: "Active",
+    label: "Active",
+    description: "Live on TISP and on Books — currently using the service",
+    color: "green.500",
+  },
+  {
+    value: "Suspended",
+    label: "Suspended",
+    description: "On Books, but not live on TISP (includes not yet on TISP)",
+    color: "orange.500",
+  },
+  {
+    value: "Paused",
+    label: "Paused",
+    description: "Away temporarily — asked for internet to be paused",
+    color: "blue.500",
+  },
+  {
+    value: "Cancelled",
+    label: "Cancelled",
+    description: "Churned — excluded from customer counts and reports",
+    color: "red.400",
+  },
 ];
 
 export const SUBSCRIPTION_STATUS_OPTIONS: Array<{
@@ -20,27 +44,34 @@ export const SUBSCRIPTION_STATUS_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "", label: "All statuses" },
-  ...SUBSCRIPTION_STATUS_FILTER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+  ...SUBSCRIPTION_STATUS_FILTER_OPTIONS.map((o) => ({
+    value: o.value,
+    label: o.label,
+  })),
 ];
 
 const ALLOWED = new Set<SubscriptionStatusLabel>([
   "Active",
   "Suspended",
-  "Not on TISP",
+  "Paused",
   "Cancelled",
 ]);
 
 const CANONICAL_BY_LOWER = new Map<string, SubscriptionStatusLabel>([
   ["active", "Active"],
   ["suspended", "Suspended"],
-  ["not on tisp", "Not on TISP"],
-  ["not_on_tisp", "Not on TISP"],
-  ["unknown", "Not on TISP"],
+  ["paused", "Paused"],
+  ["pause", "Paused"],
+  ["not on tisp", "Suspended"],
+  ["not_on_tisp", "Suspended"],
+  ["unknown", "Suspended"],
   ["cancelled", "Cancelled"],
   ["canceled", "Cancelled"],
 ]);
 
-export function parseStatusFilterParam(value: string | null | undefined): SubscriptionStatusLabel[] {
+export function parseStatusFilterParam(
+  value: string | null | undefined
+): SubscriptionStatusLabel[] {
   if (!value?.trim()) return [];
   const seen = new Set<SubscriptionStatusLabel>();
   const out: SubscriptionStatusLabel[] = [];
@@ -60,16 +91,28 @@ export function serializeStatusFilter(values: SubscriptionStatusLabel[]): string
   return values.join(",");
 }
 
+/**
+ * Normalize raw TISP / DB service status into a canonical label.
+ * "Not on TISP" / empty / unknown → Suspended (on Books, not actively on TISP).
+ */
 export function normalizeSubscriptionStatus(
   value: string | null | undefined
 ): SubscriptionStatusLabel {
   const raw = String(value ?? "").trim();
-  if (!raw) return "Not on TISP";
+  if (!raw) return "Suspended";
   const lower = raw.toLowerCase();
   if (lower === "active" || lower.startsWith("active ")) return "Active";
+  if (lower.includes("pause")) return "Paused";
   if (lower.includes("suspend")) return "Suspended";
   if (lower.includes("cancel")) return "Cancelled";
-  return "Not on TISP";
+  if (
+    lower.includes("not on tisp") ||
+    lower === "not_on_tisp" ||
+    lower === "unknown"
+  ) {
+    return "Suspended";
+  }
+  return "Suspended";
 }
 
 export function displayCustomerStatus(customer: {

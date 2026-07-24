@@ -23,6 +23,10 @@ function cellValue(val) {
   return String(val);
 }
 
+function summaryTotalLabel(summary) {
+  return summary?.totalLabel || "Total";
+}
+
 function appendReportSummaryRows(sheet, report, startRowIndex) {
   let rowIndex = startRowIndex;
   const summary = report.summary;
@@ -46,7 +50,7 @@ function appendReportSummaryRows(sheet, report, startRowIndex) {
   rowIndex += 1;
 
   if (summary.total != null) {
-    writeLabelValue("Total churned", summary.total, true);
+    writeLabelValue(summaryTotalLabel(summary), summary.total, true);
   }
   if (summary.totalOutstanding != null) {
     writeLabelValue("Total outstanding (KES)", summary.totalOutstanding, true);
@@ -56,6 +60,12 @@ function appendReportSummaryRows(sheet, report, startRowIndex) {
   }
   if (summary.totalAmount != null) {
     writeLabelValue("Total amount (KES)", summary.totalAmount, true);
+  }
+
+  if (Array.isArray(summary.lines) && summary.lines.length) {
+    for (const item of summary.lines) {
+      writeLabelValue(item.label || "", item.value ?? "");
+    }
   }
 
   if (Array.isArray(summary.byReason) && summary.byReason.length) {
@@ -160,7 +170,7 @@ async function toExcel(report) {
   sheet.addRow([]);
   const summaryParts = [`Total rows: ${report.rows.length}`];
   if (report.summary?.total != null) {
-    summaryParts.push(`Total churned: ${report.summary.total}`);
+    summaryParts.push(`${summaryTotalLabel(report.summary)}: ${report.summary.total}`);
   }
   if (report.summary?.totalOutstanding != null) {
     summaryParts.push(`Total outstanding: ${report.summary.totalOutstanding}`);
@@ -170,6 +180,11 @@ async function toExcel(report) {
   }
   if (report.summary?.totalAmount != null) {
     summaryParts.push(`Total amount: ${report.summary.totalAmount}`);
+  }
+  if (Array.isArray(report.summary?.lines)) {
+    for (const item of report.summary.lines) {
+      summaryParts.push(`${item.label}: ${item.value ?? ""}`);
+    }
   }
   const summaryRow = sheet.addRow([summaryParts.join(" · ")]);
   summaryRow.getCell(1).font = { italic: true, color: { argb: "FF666666" } };
@@ -218,7 +233,7 @@ function toPdf(report) {
       y = doc.y + 4;
       doc.fontSize(9).font("Helvetica").fillColor("#333333");
       if (report.summary.total != null) {
-        doc.text(`Total churned: ${report.summary.total}`, startX, y);
+        doc.text(`${summaryTotalLabel(report.summary)}: ${report.summary.total}`, startX, y);
         y = doc.y + 2;
       }
       if (report.summary.totalOutstanding != null) {
@@ -240,6 +255,12 @@ function toPdf(report) {
           y
         );
         y = doc.y + 2;
+      }
+      if (Array.isArray(report.summary.lines) && report.summary.lines.length) {
+        for (const item of report.summary.lines) {
+          doc.text(`${item.label || ""}: ${item.value ?? ""}`, startX, y);
+          y = doc.y + 2;
+        }
       }
       if (Array.isArray(report.summary.byReason) && report.summary.byReason.length) {
         y += 4;
@@ -338,7 +359,7 @@ function toPdf(report) {
     doc.font("Helvetica-Oblique").fontSize(8).fillColor("#666666");
     const footerParts = [`Total rows: ${report.rows.length}`];
     if (report.summary?.total != null) {
-      footerParts.push(`Total churned: ${report.summary.total}`);
+      footerParts.push(`${summaryTotalLabel(report.summary)}: ${report.summary.total}`);
     }
     if (report.summary?.totalOutstanding != null) {
       footerParts.push(
@@ -352,6 +373,11 @@ function toPdf(report) {
       footerParts.push(
         `Total amount: KES ${Number(report.summary.totalAmount).toLocaleString("en-KE")}`
       );
+    }
+    if (Array.isArray(report.summary?.lines)) {
+      for (const item of report.summary.lines) {
+        footerParts.push(`${item.label}: ${item.value ?? ""}`);
+      }
     }
     doc.text(footerParts.join(" · "), startX, y + 8, {
       width: pageWidth,

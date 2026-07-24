@@ -20,7 +20,7 @@ async function getPartnerDashboard({ months = 12 } = {}) {
   ] = await Promise.all([
     query(`
       SELECT
-        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS total,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
         SUM(CASE WHEN status = 'active' AND customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b,

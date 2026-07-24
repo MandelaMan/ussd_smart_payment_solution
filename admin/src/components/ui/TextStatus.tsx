@@ -7,8 +7,11 @@ const STATUS_COLORS: Record<string, string> = {
   synced: "green.600",
   pending: "orange.600",
   suspended: "orange.600",
-  unknown: "gray.500",
-  "not on tisp": "gray.500",
+  paused: "blue.600",
+  unknown: "orange.600",
+  "not on tisp": "orange.600",
+  cancelled: "gray.500",
+  canceled: "gray.500",
   failed: "red.600",
   error: "red.600",
 };
@@ -17,8 +20,9 @@ function resolveColor(status: string) {
   const key = status.trim().toLowerCase();
   if (STATUS_COLORS[key]) return STATUS_COLORS[key];
   if (key.includes("active")) return "green.600";
+  if (key.includes("pause")) return "blue.600";
   if (key.includes("suspend")) return "orange.600";
-  if (key.includes("unknown") || key.includes("tisp")) return "gray.500";
+  if (key.includes("unknown") || key.includes("tisp")) return "orange.600";
   if (key.includes("cancel")) return "gray.500";
   if (key.includes("fail") || key.includes("error")) return "red.600";
   return "gray.700";

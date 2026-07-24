@@ -137,8 +137,21 @@ app.get("/leads/embed", (_req, res) => {
 });
 
 const adminDist = path.join(__dirname, "admin", "dist");
-app.use("/admin", express.static(adminDist));
+app.use(
+  "/admin",
+  express.static(adminDist, {
+    setHeaders(res, filePath) {
+      // Never long-cache the SPA shell — hashed JS/CSS can stay immutable.
+      if (filePath.endsWith("index.html")) {
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      } else if (/\.[a-f0-9]{8,}\.(js|css)$/i.test(filePath)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+    },
+  })
+);
 app.get(/^\/admin(\/.*)?$/, (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.sendFile(path.join(adminDist, "index.html"));
 });
 

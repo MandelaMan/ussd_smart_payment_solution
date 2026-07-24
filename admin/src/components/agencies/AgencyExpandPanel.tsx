@@ -42,6 +42,14 @@ export function AgencyExpandPanel({ agency, onEdit, canEdit = true }: Props) {
         <DetailCard label="Phone" value={agency.phone} />
         <DetailCard label="Active customers" value={String(agency.activeCustomers ?? 0)} />
         <DetailCard
+          label="Discount"
+          value={
+            agency.discountPercent != null && agency.discountPercent > 0
+              ? `${agency.discountPercent}%`
+              : "None"
+          }
+        />
+        <DetailCard
           label="Added"
           value={agency.createdAt ? formatDate(agency.createdAt) : null}
         />

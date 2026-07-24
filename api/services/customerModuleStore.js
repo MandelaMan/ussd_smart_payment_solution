@@ -751,18 +751,21 @@ async function listAgencies(filters = {}) {
 
   const agencies = await query(
     `SELECT a.id, a.name, a.email, a.phone, a.contact_person AS contactPerson,
+            a.discount_percent AS discountPercent,
             a.created_at AS createdAt,
             COUNT(DISTINCT CASE WHEN c.status = 'active' THEN c.id END) AS activeCustomers
      FROM agencies a
      LEFT JOIN customers c ON c.agency_id = a.id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY a.id, a.name, a.email, a.phone, a.contact_person, a.created_at
+     GROUP BY a.id, a.name, a.email, a.phone, a.contact_person, a.discount_percent, a.created_at
      ORDER BY ${sort.orderClause} LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
 
   for (const agency of agencies) {
     agency.activeCustomers = Number(agency.activeCustomers || 0);
+    agency.discountPercent =
+      agency.discountPercent != null ? Number(agency.discountPercent) : null;
   }
 
   return {
@@ -777,24 +780,41 @@ async function listAgencies(filters = {}) {
   };
 }
 
+function normalizeAgencyDiscountPercentInput(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n > 100) throw new Error("Discount percent cannot exceed 100");
+  return Math.round(n * 1000) / 1000;
+}
+
 async function getAgencyById(id) {
   const rows = await query(
-    `SELECT id, name, email, phone, contact_person AS contactPerson, created_at AS createdAt
+    `SELECT id, name, email, phone, contact_person AS contactPerson,
+            discount_percent AS discountPercent, created_at AS createdAt
      FROM agencies WHERE id = ? LIMIT 1`,
     [id]
   );
-  return rows[0] || null;
+  const row = rows[0] || null;
+  if (row) {
+    row.discountPercent =
+      row.discountPercent != null ? Number(row.discountPercent) : null;
+  }
+  return row;
 }
 
 async function createAgency(data) {
-  const { name, email, phone, contactPerson } = data;
+  const { name, email, phone, contactPerson, discountPercent } = data;
+  const discount = normalizeAgencyDiscountPercentInput(discountPercent);
   const result = await query(
-    `INSERT INTO agencies (name, email, phone, contact_person) VALUES (?, ?, ?, ?)`,
+    `INSERT INTO agencies (name, email, phone, contact_person, discount_percent)
+     VALUES (?, ?, ?, ?, ?)`,
     [
       String(name).trim(),
       String(email).trim().toLowerCase(),
       String(phone).trim(),
       contactPerson ? String(contactPerson).trim() : null,
+      discount,
     ]
   );
   return result.insertId;
@@ -814,14 +834,20 @@ async function updateAgency(id, data) {
         ? String(data.contactPerson).trim()
         : null
       : existing.contactPerson;
+  const discountPercent =
+    data.discountPercent !== undefined
+      ? normalizeAgencyDiscountPercentInput(data.discountPercent)
+      : existing.discountPercent;
 
   if (!name || !email || !phone) {
     throw new Error("Name, email, and phone are required");
   }
 
   await query(
-    `UPDATE agencies SET name = ?, email = ?, phone = ?, contact_person = ? WHERE id = ?`,
-    [name, email, phone, contactPerson, id]
+    `UPDATE agencies
+     SET name = ?, email = ?, phone = ?, contact_person = ?, discount_percent = ?
+     WHERE id = ?`,
+    [name, email, phone, contactPerson, discountPercent, id]
   );
 }
 
@@ -1944,9 +1970,13 @@ async function cancelCustomer(customerId, notes) {
     throw new Error("Customer is already cancelled");
   }
 
-  await query(`UPDATE customers SET status = 'cancelled' WHERE id = ?`, [
-    customerId,
-  ]);
+  await query(
+    `UPDATE customers
+     SET status = 'cancelled',
+         subscription_status = 'Cancelled'
+     WHERE id = ?`,
+    [customerId]
+  );
 
   await query(
     `UPDATE apartment_history
@@ -1986,6 +2016,31 @@ async function disconnectCustomer(customerId, notes) {
     `INSERT INTO customer_events (customer_id, event_type, notes)
      VALUES (?, 'disconnect', ?)`,
     [customerId, notes || "Disconnected on TISP (due date set to today)"]
+  );
+
+  return customer;
+}
+
+/**
+ * Temporary pause: keep account active, mark Paused (customer away / not using service).
+ * Caller is responsible for pushing due date = today to TISP when on network.
+ */
+async function pauseCustomer(customerId, notes) {
+  const customer = await getCustomerContext(customerId);
+  if (!customer) throw new Error("Customer not found");
+  if (customer.status === "cancelled") {
+    throw new Error("Cannot pause a cancelled customer");
+  }
+  if (customer.status !== "active") {
+    throw new Error("Customer is not active");
+  }
+
+  await updateCustomerSubscriptionStatus(customerId, "Paused");
+
+  await query(
+    `INSERT INTO customer_events (customer_id, event_type, notes)
+     VALUES (?, 'pause', ?)`,
+    [customerId, notes || "Service paused at customer request (away)"]
   );
 
   return customer;
@@ -2706,22 +2761,23 @@ async function getSubscriberStats(days = 29) {
     [agencyCount],
     topBuildings,
     topPackages,
-    [tispService],
+    [serviceBreakdown],
   ] = await Promise.all([
     query(`
       SELECT
-        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS total,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
-        SUM(CASE WHEN customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b_count,
-        SUM(CASE WHEN customer_type = 'B2B' THEN 1 ELSE 0 END) AS b2b_count,
-        SUM(CASE WHEN tisp_sync_status = 'failed' THEN 1 ELSE 0 END) AS tisp_failed,
-        SUM(CASE WHEN tisp_sync_status = 'pending' THEN 1 ELSE 0 END) AS tisp_pending
+        SUM(CASE WHEN status = 'active' AND customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b_count,
+        SUM(CASE WHEN status = 'active' AND customer_type = 'B2B' THEN 1 ELSE 0 END) AS b2b_count,
+        SUM(CASE WHEN status = 'active' AND tisp_sync_status = 'failed' THEN 1 ELSE 0 END) AS tisp_failed,
+        SUM(CASE WHEN status = 'active' AND tisp_sync_status = 'pending' THEN 1 ELSE 0 END) AS tisp_pending
       FROM customers
     `),
     query(
       `SELECT COUNT(*) AS count FROM customers
-       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+       WHERE status = 'active'
+         AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
       [days]
     ),
     query(`SELECT COUNT(*) AS count FROM buildings`),
@@ -2731,7 +2787,6 @@ async function getSubscriberStats(days = 29) {
       FROM customers c
       JOIN buildings b ON b.id = c.building_id
       WHERE c.status = 'active'
-        AND LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active'
       GROUP BY b.id, b.name
       ORDER BY subscribers DESC
       LIMIT 20
@@ -2741,7 +2796,6 @@ async function getSubscriberStats(days = 29) {
       FROM customers c
       JOIN products p ON p.id = c.product_id
       WHERE c.status = 'active'
-        AND LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active'
       GROUP BY p.id, p.name, p.mbps
       ORDER BY subscribers DESC
       LIMIT 8
@@ -2749,23 +2803,23 @@ async function getSubscriberStats(days = 29) {
     query(`
       SELECT
         SUM(CASE WHEN LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active' THEN 1 ELSE 0 END) AS active_count,
-        SUM(CASE WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%' THEN 1 ELSE 0 END) AS suspended_count,
+        SUM(CASE WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%pause%' THEN 1 ELSE 0 END) AS paused_count,
         SUM(CASE
+          WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%pause%' THEN 0
           WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%cancel%' THEN 0
+          WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%' THEN 1
           WHEN c.subscription_status IS NULL
             OR TRIM(c.subscription_status) = ''
             OR LOWER(TRIM(c.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
-            OR (
-              LOWER(TRIM(c.subscription_status)) <> 'active'
-              AND LOWER(c.subscription_status) NOT LIKE '%suspend%'
-            )
-          THEN 1 ELSE 0 END) AS unknown_count
+            OR LOWER(TRIM(c.subscription_status)) <> 'active'
+          THEN 1 ELSE 0 END) AS suspended_count
       FROM customers c
       WHERE c.status = 'active'
     `),
   ]);
 
   return {
+    // "Customers" = active accounts only (cancelled are churn, not current customers).
     total: Number(row?.total || 0),
     active: Number(row?.active_count || 0),
     cancelled: Number(row?.cancelled_count || 0),
@@ -2785,12 +2839,13 @@ async function getSubscriberStats(days = 29) {
       mbps: Number(d.mbps),
       subscribers: Number(d.subscribers),
     })),
-    // Heavy lifetime payment JOINs removed — unused by the dashboard UI.
     avgCustomerPayment: 0,
     avgPaymentsPerCustomer: 0,
-    tispActive: Number(tispService?.active_count || 0),
-    tispSuspended: Number(tispService?.suspended_count || 0),
-    tispUnknown: Number(tispService?.unknown_count || 0),
+    tispActive: Number(serviceBreakdown?.active_count || 0),
+    tispSuspended: Number(serviceBreakdown?.suspended_count || 0),
+    tispPaused: Number(serviceBreakdown?.paused_count || 0),
+    // Legacy alias — same as suspended (includes not-on-TISP).
+    tispUnknown: Number(serviceBreakdown?.suspended_count || 0),
   };
 }
 
@@ -3038,6 +3093,7 @@ module.exports = {
   switchCustomerApartment,
   cancelCustomer,
   disconnectCustomer,
+  pauseCustomer,
   deleteCustomerCompletely,
   updateCustomerDetails,
   convertCustomerType,

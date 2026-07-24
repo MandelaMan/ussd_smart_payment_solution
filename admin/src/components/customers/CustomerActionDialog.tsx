@@ -385,7 +385,8 @@ export function CustomerActionDialog({
   if (actionType === "downgrade") title = "Downgrade package";
   if (actionType === "changePaymentFrequency") title = "Update frequency";
   if (actionType === "switch") title = "Move apartment";
-  if (actionType === "disconnect") title = "Disconnect customer";
+  if (actionType === "disconnect") title = "Suspend on TISP";
+  if (actionType === "pause") title = "Pause service";
   if (actionType === "cancel") title = "Cancel subscription";
   if (actionType === "deletePermanent") title = "Delete customer permanently";
   if (actionType === "history") {
@@ -469,20 +470,41 @@ export function CustomerActionDialog({
           />
         ) : null}
 
+        {actionType === "pause" ? (
+          <Stack gap={4}>
+            <Box bg="blue.50" borderRadius="md" px={3} py={3} fontSize="sm" color="blue.900">
+              Pause service for{" "}
+              <strong>{formatTitleCase(customer?.fullName)}</strong> (
+              {customer?.customerNumber}) while they are away. They stay an active customer on
+              billing; status becomes <strong>Paused</strong>. TISP due date is set to today so
+              internet stops until they return.
+            </Box>
+            <Flex justify="flex-end" gap={2}>
+              <Button variant="ghost" onClick={onClose}>
+                Keep active
+              </Button>
+              <Button colorPalette="blue" loading={loading} onClick={onSubmit}>
+                Pause service
+              </Button>
+            </Flex>
+          </Stack>
+        ) : null}
+
         {actionType === "disconnect" ? (
           <Stack gap={4}>
             <Box bg="orange.50" borderRadius="md" px={3} py={3} fontSize="sm" color="orange.900">
-              This will disconnect{" "}
+              Suspend{" "}
               <strong>{formatTitleCase(customer?.fullName)}</strong> (
-              {customer?.customerNumber}) on TISP by setting the due date to today. The account
-              stays active here; service status becomes Suspended. Zoho billing is not changed.
+              {customer?.customerNumber}) on TISP by setting the due date to today. They stay
+              active on Books with status <strong>Suspended</strong> (on billing, not live on
+              TISP). Zoho billing is not changed.
             </Box>
             <Flex justify="flex-end" gap={2}>
               <Button variant="ghost" onClick={onClose}>
                 Keep connected
               </Button>
               <Button colorPalette="orange" loading={loading} onClick={onSubmit}>
-                Disconnect on TISP
+                Suspend on TISP
               </Button>
             </Flex>
           </Stack>
@@ -492,9 +514,9 @@ export function CustomerActionDialog({
           cancelStep === 1 ? (
             <Stack gap={4}>
               <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                This will mark the subscription as cancelled. The customer record is kept for
-                history. TISP due date is set to today, and C2B Zoho contacts are marked inactive
-                (recurring billing stopped).
+                This will mark the subscription as cancelled. The customer is kept for history but
+                excluded from customer counts and reports. TISP due date is set to today, and C2B
+                Zoho contacts are marked inactive (recurring billing stopped).
               </Box>
               <Field.Root w="full">
                 <Field.Label>Notes (optional)</Field.Label>

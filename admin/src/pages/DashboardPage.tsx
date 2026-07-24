@@ -284,6 +284,7 @@ export function DashboardPage() {
     topPackages: rawSubs?.topPackages ?? [],
     tispActive: Number(rawSubs?.tispActive ?? rawSubs?.tispConnected ?? 0),
     tispSuspended: Number(rawSubs?.tispSuspended ?? rawSubs?.tispDisconnected ?? 0),
+    tispPaused: Number(rawSubs?.tispPaused ?? 0),
     tispUnknown: Number(rawSubs?.tispUnknown ?? 0),
   };
 
@@ -498,9 +499,9 @@ export function DashboardPage() {
               >
                 <MetricCard
                   accent="cerulean"
-                  label="Total Subscribers"
+                  label="Total Customers"
                   value={subs.total}
-                  sub={`${subs.active} active`}
+                  sub={`${subs.tispActive} active · ${subs.tispSuspended} suspended · ${subs.cancelled} cancelled (excluded)`}
                 />
                 <MetricCard
                   accent="cerulean"
@@ -520,15 +521,14 @@ export function DashboardPage() {
                 />
                 <MetricCard
                   accent="cerulean"
-                  label="TISP Active / Suspended"
+                  label="Active / Suspended"
                   value={`${subs.tispActive} / ${subs.tispSuspended}`}
-                  sub={`${subs.tispSuspended} suspended`}
-                  sub2={
-                    subs.tispUnknown > 0
-                      ? `${subs.tispUnknown} not on TISP`
-                      : `${subs.active} active accounts`
+                  sub={
+                    subs.tispPaused > 0
+                      ? `${subs.tispPaused} paused (away)`
+                      : "Live vs stopped on TISP"
                   }
-                  to="/customers?status=Active"
+                  to="/customers?status=Active,Suspended"
                 />
               </Grid>
             </Box>

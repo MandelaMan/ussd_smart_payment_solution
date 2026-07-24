@@ -135,6 +135,8 @@ export type Agency = {
   email: string;
   phone: string;
   contactPerson: string | null;
+  /** Optional negotiated discount % from onboarding (e.g. 14.88). */
+  discountPercent: number | null;
   createdAt: string;
   activeCustomers?: number;
 };
@@ -191,6 +193,9 @@ export type AgencyBilling = {
   activeCustomers: number;
   cancelledCustomers: number;
   totalActiveAmount: number;
+  discountPercent: number | null;
+  /** Package prices after agency discount (invoice amount). */
+  totalInvoiceAmount: number;
 };
 
 export type AgencyInvoiceDiscount = {
@@ -201,7 +206,8 @@ export type AgencyInvoiceDiscount = {
 export type AgencyInvoicePayload = {
   mode: "consolidated" | "customer";
   customerId?: number;
-  discount?: AgencyInvoiceDiscount;
+  /** Explicit discount for this invoice; null clears standing agency discount. */
+  discount?: AgencyInvoiceDiscount | null;
 };
 
 export type AgencyZohoStatus = {
@@ -991,6 +997,7 @@ export type Stats = {
     avgPaymentsPerCustomer: number;
     tispActive: number;
     tispSuspended: number;
+    tispPaused?: number;
     tispUnknown: number;
   };
   zoho: { total: number; success: number };
@@ -1716,6 +1723,7 @@ export const api = {
     email: string;
     phone: string;
     contactPerson?: string;
+    discountPercent?: number | null;
   }) =>
     request<{ ok: boolean; id: number }>("/admin/agencies", {
       method: "POST",
@@ -1729,6 +1737,7 @@ export const api = {
       email: string;
       phone: string;
       contactPerson: string;
+      discountPercent: number | null;
     }>
   ) =>
     request<{ ok: boolean; agency: Agency }>(`/admin/agencies/${id}`, {
@@ -2188,6 +2197,16 @@ export const api = {
       customer: Customer;
       tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
     }>(`/admin/customers/${id}/disconnect`, {
+      method: "POST",
+      body: JSON.stringify({ notes }),
+    }),
+
+  pauseCustomer: (id: number, notes?: string) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+    }>(`/admin/customers/${id}/pause`, {
       method: "POST",
       body: JSON.stringify({ notes }),
     }),

@@ -9,6 +9,7 @@ async function listCustomersForSync(options = {}) {
   return rows.map((row) => ({
     id: row.id,
     customerNumber: row.customer_number,
+    subscriptionStatus: row.subscription_status,
   }));
 }
 
@@ -16,6 +17,7 @@ async function mapCustomerRow(row) {
   return {
     id: row.id,
     customerNumber: row.customer_number,
+    subscriptionStatus: row.subscription_status,
   };
 }
 

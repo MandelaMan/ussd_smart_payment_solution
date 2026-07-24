@@ -6,6 +6,8 @@ const {
 const {
   buildManagedHouseLineItemName,
   buildManagedHouseLineItemDescription,
+  normalizeAgencyDiscountPercent,
+  applyAgencyUnitDiscount,
 } = require("../utils/b2bBilling");
 const { logActivity } = require("../services/activityLogStore");
 const {
@@ -37,10 +39,15 @@ function formatCurrency(amount) {
   return `KES ${n.toLocaleString("en-KE", { maximumFractionDigits: 0 })}`;
 }
 
-function computeAgencyBilling(customers) {
+function computeAgencyBilling(customers, discountPercent = null) {
   const active = customers.filter((c) => c.status === "active");
+  const pct = normalizeAgencyDiscountPercent(discountPercent);
   const totalActiveAmount = active.reduce(
     (sum, c) => sum + Number(c.packagePrice || 0),
+    0
+  );
+  const totalInvoiceAmount = active.reduce(
+    (sum, c) => sum + applyAgencyUnitDiscount(c.packagePrice, pct),
     0
   );
   return {
@@ -48,6 +55,8 @@ function computeAgencyBilling(customers) {
     activeCustomers: active.length,
     cancelledCustomers: customers.length - active.length,
     totalActiveAmount,
+    discountPercent: pct,
+    totalInvoiceAmount,
   };
 }
 
@@ -183,14 +192,15 @@ async function fetchAgencyZohoStatus(agency) {
   };
 }
 
-function buildCustomerLineItem(customer) {
+function buildCustomerLineItem(customer, discountPercent = null) {
   const period = computeBillingPeriod({
     paymentFrequency: customer.paymentFrequency || "monthly",
     customPeriodDays: customer.customPeriodDays,
   });
+  const grossRate = Number(customer.packagePrice || 0);
   const lineItem = {
     name: buildManagedHouseLineItemName(customer),
-    rate: Number(customer.packagePrice || 0),
+    rate: applyAgencyUnitDiscount(grossRate, discountPercent),
     quantity: 1,
     description: buildManagedHouseLineItemDescription(customer, period),
   };
@@ -228,6 +238,35 @@ function resolveInvoiceDiscount(subtotal, discount) {
   return { zohoDiscountPercent, discountAmount };
 }
 
+/** Prefer invoice-time discount; otherwise use the agency's onboarded percent.
+ *  Pass `explicitDiscount: true` when the request included a `discount` field
+ *  (including null / off) so operators can clear the standing agency discount
+ *  for a single invoice.
+ */
+function resolveEffectiveAgencyDiscount(
+  agency,
+  requestDiscount,
+  { explicitDiscount = false } = {}
+) {
+  if (explicitDiscount) {
+    if (
+      !requestDiscount ||
+      requestDiscount.value == null ||
+      requestDiscount.value === "" ||
+      Number(requestDiscount.value) <= 0
+    ) {
+      return null;
+    }
+    return {
+      type: requestDiscount.type === "amount" ? "amount" : "percent",
+      value: Number(requestDiscount.value),
+    };
+  }
+  const pct = normalizeAgencyDiscountPercent(agency?.discountPercent);
+  if (pct) return { type: "percent", value: pct };
+  return null;
+}
+
 async function listAgencies(req, res, next) {
   try {
     const { search, page, limit, sortBy, sortDir } = req.query;
@@ -240,13 +279,19 @@ async function listAgencies(req, res, next) {
 
 async function createAgency(req, res, next) {
   try {
-    const { name, email, phone, contactPerson } = req.body || {};
+    const { name, email, phone, contactPerson, discountPercent } = req.body || {};
     if (!name || !email || !phone) {
       return res
         .status(400)
         .json({ error: "Name, email, and phone are required" });
     }
-    const id = await store.createAgency({ name, email, phone, contactPerson });
+    const id = await store.createAgency({
+      name,
+      email,
+      phone,
+      contactPerson,
+      discountPercent,
+    });
     const agency = await store.getAgencyById(id);
     let zoho = { ok: false };
     try {
@@ -260,6 +305,7 @@ async function createAgency(req, res, next) {
     }
     return res.status(201).json({ ok: true, id, agency, zoho });
   } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
     return next(err);
   }
 }
@@ -271,7 +317,7 @@ async function getAgency(req, res, next) {
       return res.status(404).json({ error: "Agency not found" });
     }
     const customers = await store.listCustomersByAgency(agency.id);
-    const billing = computeAgencyBilling(customers);
+    const billing = computeAgencyBilling(customers, agency.discountPercent);
 
     let zoho = {
       linked: false,
@@ -316,7 +362,9 @@ async function getAgencyInvoices(req, res, next) {
 async function createAgencyInvoice(req, res, next) {
   try {
     const agencyId = Number(req.params.id);
-    const { mode = "consolidated", customerId, discount } = req.body || {};
+    const body = req.body || {};
+    const { mode = "consolidated", customerId, discount } = body;
+    const explicitDiscount = Object.prototype.hasOwnProperty.call(body, "discount");
 
     const agency = await store.getAgencyById(agencyId);
     if (!agency) {
@@ -325,10 +373,16 @@ async function createAgencyInvoice(req, res, next) {
 
     const customers = await store.listCustomersByAgency(agencyId);
     const activeCustomers = customers.filter((c) => c.status === "active");
+    const effectiveDiscount = resolveEffectiveAgencyDiscount(agency, discount, {
+      explicitDiscount,
+    });
+    const percentDiscount =
+      effectiveDiscount?.type === "percent" ? effectiveDiscount.value : null;
 
     let lineItems = [];
     let referenceNumber = agency.name;
     let billedCustomers = [];
+    let grossSubtotal = 0;
 
     if (mode === "customer") {
       const customer = customers.find((c) => c.id === Number(customerId));
@@ -343,7 +397,8 @@ async function createAgencyInvoice(req, res, next) {
       if (amount <= 0) {
         return res.status(400).json({ error: "Customer has no billable package price" });
       }
-      lineItems = [buildCustomerLineItem(customer)];
+      grossSubtotal = amount;
+      lineItems = [buildCustomerLineItem(customer, percentDiscount)];
       referenceNumber = customer.customerNumber;
       billedCustomers = [customer];
     } else if (mode === "consolidated") {
@@ -354,19 +409,34 @@ async function createAgencyInvoice(req, res, next) {
       if (billable.length === 0) {
         return res.status(400).json({ error: "No billable active customers" });
       }
-      lineItems = billable.map(buildCustomerLineItem);
+      grossSubtotal = billable.reduce(
+        (sum, c) => sum + Number(c.packagePrice || 0),
+        0
+      );
+      lineItems = billable.map((c) => buildCustomerLineItem(c, percentDiscount));
       billedCustomers = billable;
       referenceNumber = `${agency.name} — ${billable.length} customers`;
     } else {
       return res.status(400).json({ error: "Invalid invoice mode" });
     }
 
-    const subtotal = lineItemsSubtotal(lineItems);
-    const { zohoDiscountPercent, discountAmount } = resolveInvoiceDiscount(
-      subtotal,
-      discount
-    );
-    const invoiceTotal = Math.max(0, subtotal - discountAmount);
+    let zohoDiscountPercent = null;
+    let discountAmount = 0;
+    let invoiceTotal = lineItemsSubtotal(lineItems);
+
+    if (effectiveDiscount?.type === "amount") {
+      // Fixed amount stays as Zoho entity-level discount on full (gross) rates.
+      lineItems = billedCustomers.map((c) => buildCustomerLineItem(c, null));
+      const subtotal = lineItemsSubtotal(lineItems);
+      ({ zohoDiscountPercent, discountAmount } = resolveInvoiceDiscount(
+        subtotal,
+        effectiveDiscount
+      ));
+      invoiceTotal = Math.max(0, subtotal - discountAmount);
+      grossSubtotal = subtotal;
+    } else if (percentDiscount) {
+      discountAmount = Math.max(0, grossSubtotal - invoiceTotal);
+    }
 
     const zohoContact = await ensureZohoContactForAgency(agency);
     const invoice = await createInvoice_JS({
@@ -409,10 +479,11 @@ async function createAgencyInvoice(req, res, next) {
           agencyName: agency.name,
           mode,
           customerIds: billedCustomers.map((c) => c.id),
-          subtotal,
+          subtotal: grossSubtotal,
           discountAmount,
-          discountType: discount?.type || null,
-          discountValue: discount?.value ?? null,
+          discountType: effectiveDiscount?.type || null,
+          discountValue: effectiveDiscount?.value ?? null,
+          agencyDiscountPercent: agency.discountPercent ?? null,
         },
       });
     } catch (logErr) {
@@ -424,7 +495,7 @@ async function createAgencyInvoice(req, res, next) {
       invoice: {
         id: invoiceId,
         invoiceNumber,
-        subtotal,
+        subtotal: grossSubtotal,
         discountAmount,
         total: invoiceTotal,
         status: invoice.status || "draft",
@@ -435,6 +506,10 @@ async function createAgencyInvoice(req, res, next) {
         customerNumber: c.customerNumber,
         fullName: c.fullName,
         packagePrice: c.packagePrice,
+        billedRate: applyAgencyUnitDiscount(
+          c.packagePrice,
+          percentDiscount
+        ),
       })),
     });
   } catch (err) {
@@ -446,8 +521,14 @@ async function createAgencyInvoice(req, res, next) {
 async function updateAgency(req, res, next) {
   try {
     const id = Number(req.params.id);
-    const { name, email, phone, contactPerson } = req.body || {};
-    await store.updateAgency(id, { name, email, phone, contactPerson });
+    const { name, email, phone, contactPerson, discountPercent } = req.body || {};
+    await store.updateAgency(id, {
+      name,
+      email,
+      phone,
+      contactPerson,
+      discountPercent,
+    });
     const agency = await store.getAgencyById(id);
     let zoho = { ok: false };
     try {

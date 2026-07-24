@@ -4,12 +4,15 @@ import "./index.css";
 import App from "./App";
 
 /**
- * Stale PWAs were auto-reloading mid-session and re-applying an old cached
- * shell (white band + raised bottom nav). Bust SW/caches before first paint,
- * and never force a mid-session reload on update.
+ * In development, clear any leftover production service workers so Vite HMR
+ * is never blocked by a cached /admin shell.
+ *
+ * Production updates are handled by AppUpdateBanner (prompt → reload).
  */
 async function prepareServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+
+  if (!import.meta.env.DEV) return;
 
   const hadController = Boolean(navigator.serviceWorker.controller);
   const regs = await navigator.serviceWorker.getRegistrations();
@@ -20,27 +23,10 @@ async function prepareServiceWorker() {
     await Promise.all(keys.map((key) => caches.delete(key)));
   }
 
-  // One reload releases an active controller that was still serving old CSS.
-  if (
-    import.meta.env.DEV &&
-    hadController &&
-    !sessionStorage.getItem("sul-sw-bust")
-  ) {
+  if (hadController && !sessionStorage.getItem("sul-sw-bust")) {
     sessionStorage.setItem("sul-sw-bust", "1");
     window.location.reload();
     return "reload";
-  }
-
-  if (import.meta.env.PROD) {
-    const { registerSW } = await import("virtual:pwa-register");
-    registerSW({
-      immediate: true,
-      // Do not call updateSW() here — auto mid-session reload was restoring
-      // stale mobile-nav CSS (white band + raised pill).
-      onNeedRefresh() {
-        /* update applies on the next cold visit after caches expire */
-      },
-    });
   }
 
   return "ok";

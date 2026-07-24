@@ -91,8 +91,17 @@ async function getKpiSnapshot(filters, range) {
       query(
         `SELECT
           SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS active,
-          SUM(CASE WHEN c.status = 'active' AND LOWER(c.subscription_status) LIKE '%active%' THEN 1 ELSE 0 END) AS tisp_active,
-          SUM(CASE WHEN c.status = 'active' AND LOWER(c.subscription_status) LIKE '%suspend%' THEN 1 ELSE 0 END) AS suspended,
+          SUM(CASE WHEN c.status = 'active' AND LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active' THEN 1 ELSE 0 END) AS tisp_active,
+          SUM(CASE
+            WHEN c.status <> 'active' THEN 0
+            WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%pause%' THEN 0
+            WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%cancel%' THEN 0
+            WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%' THEN 1
+            WHEN c.subscription_status IS NULL
+              OR TRIM(c.subscription_status) = ''
+              OR LOWER(TRIM(c.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
+              OR LOWER(TRIM(c.subscription_status)) <> 'active'
+            THEN 1 ELSE 0 END) AS suspended,
           SUM(CASE WHEN c.status = 'active' AND (LOWER(c.subscription_status) LIKE '%disconnect%' OR LOWER(c.subscription_status) LIKE '%inactive%') THEN 1 ELSE 0 END) AS disconnected,
           SUM(CASE WHEN c.created_at >= ? AND c.created_at <= ? THEN 1 ELSE 0 END) AS new_customers,
           SUM(CASE WHEN c.status = 'cancelled' AND c.updated_at >= ? AND c.updated_at <= ? THEN 1 ELSE 0 END) AS churned

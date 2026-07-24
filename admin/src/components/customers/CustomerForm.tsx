@@ -242,7 +242,7 @@ export function CustomerForm({
     const localOnTisp =
       customer.tispSyncStatus === "synced" ||
       (Boolean(customer.subscriptionStatus) &&
-        normalizeSubscriptionStatus(customer.subscriptionStatus) !== "Not on TISP" &&
+        normalizeSubscriptionStatus(customer.subscriptionStatus) === "Active" &&
         customer.tispSyncStatus !== "failed");
     const localOnZoho =
       customer.customerType === "B2B" ||
@@ -502,15 +502,15 @@ export function CustomerForm({
     : null;
   const buildingRequiresDecoderSerial = selectedBuilding
     ? selectedBuilding.dstvSetup === "decoder"
-    : true;
+    : false;
   const packageHasDstv = Boolean(
     isEdit && !canEditPackage
       ? customer?.hasDstv
       : selectedCategory?.hasDstv || selectedPackage?.hasDstv || customer?.hasDstv
   );
-  /** Show IUC/serial whenever package has DSTV; only mandatory on decoder POPs. */
-  const showDstvSerialField = packageHasDstv;
-  const requiresDstvSerial = Boolean(packageHasDstv && buildingRequiresDecoderSerial);
+  /** Show IUC/serial only for DSTV packages in decoder buildings (hidden for headend). */
+  const showDstvSerialField = Boolean(packageHasDstv && buildingRequiresDecoderSerial);
+  const requiresDstvSerial = showDstvSerialField;
   const packageAmount =
     isEdit && !canEditPackage
       ? customer?.packagePrice
@@ -1091,10 +1091,8 @@ export function CustomerForm({
                     bg={!isActive ? "gray.50" : undefined}
                   />
                   <Field.HelperText>
-                    {requiresDstvSerial
-                      ? "Required for DSTV packages in decoder-based buildings. Must be unique across all customers."
-                      : "Optional for headend buildings. Leave blank if not applicable."}{" "}
-                    Changing the TV package requires Upgrade or Downgrade.
+                    Required for DSTV packages in decoder-based buildings. Must be unique across
+                    all customers. Changing the TV package requires Upgrade or Downgrade.
                   </Field.HelperText>
                 </Field.Root>
               )}
@@ -1212,9 +1210,8 @@ export function CustomerForm({
                 bg={!isActive ? "gray.50" : undefined}
               />
               <Field.HelperText>
-                {requiresDstvSerial
-                  ? "Required for DSTV packages in decoder-based buildings. Must be unique across all customers. Found on the decoder label or activation card."
-                  : "Optional for headend buildings. Leave blank if not applicable."}
+                Required for DSTV packages in decoder-based buildings. Must be unique across all
+                customers. Found on the decoder label or activation card.
               </Field.HelperText>
             </Field.Root>
           )}

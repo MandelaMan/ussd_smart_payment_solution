@@ -17,6 +17,7 @@ import {
   ActivityRoute,
 } from "./components/ProtectedRoute";
 import { AppToaster } from "./components/ui/AppToaster";
+import { AppUpdateBanner } from "./components/ui/AppUpdateBanner";
 import { LoginPage } from "./pages/LoginPage";
 
 function lazyPage<T extends Record<string, unknown>>(
@@ -354,6 +355,7 @@ export default function App() {
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          <AppUpdateBanner />
           <AppToaster />
         </AuthProvider>
       </BrowserRouter>

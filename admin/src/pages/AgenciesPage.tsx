@@ -80,6 +80,7 @@ export function AgenciesPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [contactPerson, setContactPerson] = useState("");
+  const [discountPercent, setDiscountPercent] = useState("");
   const { sorts, toggleSort, sortQuery } = useTableSort<AgencySortKey>({
     sortBy: "name",
     sortDir: "asc",
@@ -135,6 +136,7 @@ export function AgenciesPage() {
     setEmail("");
     setPhone("");
     setContactPerson("");
+    setDiscountPercent("");
   }
 
   function openEdit(agency: Agency) {
@@ -143,6 +145,11 @@ export function AgenciesPage() {
     setEmail(agency.email);
     setPhone(agency.phone);
     setContactPerson(agency.contactPerson || "");
+    setDiscountPercent(
+      agency.discountPercent != null && agency.discountPercent > 0
+        ? String(agency.discountPercent)
+        : ""
+    );
   }
 
   function closeEdit() {
@@ -150,11 +157,27 @@ export function AgenciesPage() {
     resetForm();
   }
 
+  function parseDiscountInput() {
+    const raw = discountPercent.trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error("Discount percent must be a number between 0 and 100");
+    }
+    return n;
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await api.createAgency({ name, email, phone, contactPerson: contactPerson || undefined });
+      await api.createAgency({
+        name,
+        email,
+        phone,
+        contactPerson: contactPerson || undefined,
+        discountPercent: parseDiscountInput(),
+      });
       toaster.create({ title: "Agency created", type: "success" });
       resetForm();
       setShowForm(false);
@@ -179,6 +202,7 @@ export function AgenciesPage() {
         email,
         phone,
         contactPerson: contactPerson || undefined,
+        discountPercent: parseDiscountInput(),
       });
       toaster.create({ title: "Agency updated", type: "success" });
       closeEdit();
@@ -288,6 +312,7 @@ export function AgenciesPage() {
           <AgencyForm
             name={name} setName={setName} email={email} setEmail={setEmail}
             phone={phone} setPhone={setPhone} contactPerson={contactPerson} setContactPerson={setContactPerson}
+            discountPercent={discountPercent} setDiscountPercent={setDiscountPercent}
             onSubmit={handleCreate} submitting={submitting} onCancel={() => { setShowForm(false); resetForm(); }}
           />
         </Box>
@@ -399,6 +424,7 @@ export function AgenciesPage() {
           <AgencyForm
             name={name} setName={setName} email={email} setEmail={setEmail}
             phone={phone} setPhone={setPhone} contactPerson={contactPerson} setContactPerson={setContactPerson}
+            discountPercent={discountPercent} setDiscountPercent={setDiscountPercent}
             onSubmit={handleUpdate} submitting={editSubmitting} onCancel={closeEdit} submitLabel="Save changes"
           />
         </Dialog.Body>
@@ -409,12 +435,14 @@ export function AgenciesPage() {
 
 function AgencyForm({
   name, setName, email, setEmail, phone, setPhone, contactPerson, setContactPerson,
+  discountPercent, setDiscountPercent,
   onSubmit, submitting, onCancel, submitLabel = "Save agency",
 }: {
   name: string; setName: (v: string) => void;
   email: string; setEmail: (v: string) => void;
   phone: string; setPhone: (v: string) => void;
   contactPerson: string; setContactPerson: (v: string) => void;
+  discountPercent: string; setDiscountPercent: (v: string) => void;
   onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
   submitLabel?: string;
 }) {
@@ -425,6 +453,18 @@ function AgencyForm({
         <Field.Root required><Field.Label>Contact person</Field.Label><Input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} /></Field.Root>
         <Field.Root required><Field.Label>Email</Field.Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field.Root>
         <Field.Root required><Field.Label>Phone</Field.Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></Field.Root>
+        <Field.Root>
+          <Field.Label>Discount % (optional)</Field.Label>
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            step={0.01}
+            placeholder="0"
+            value={discountPercent}
+            onChange={(e) => setDiscountPercent(e.target.value)}
+          />
+        </Field.Root>
       </Grid>
       <Flex gap={2} mt={4}>
         <Button type="submit" colorPalette="brand" loading={submitting}>{submitLabel}</Button>

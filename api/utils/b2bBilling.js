@@ -176,6 +176,28 @@ function buildManagedHouseLineItemDescription(customer, period) {
   return parts.join(" · ") || "B2B managed house subscription";
 }
 
+/**
+ * Optional agency discount % from onboarding (e.g. 14.88).
+ * Returns null when no discount applies.
+ */
+function normalizeAgencyDiscountPercent(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(100, Math.round(n * 1000) / 1000);
+}
+
+/**
+ * Negotiated unit rate after agency discount.
+ * Example: 6950 @ 14.88% → 5916
+ */
+function applyAgencyUnitDiscount(packagePrice, discountPercent) {
+  const price = Math.round(Number(packagePrice) || 0);
+  const pct = normalizeAgencyDiscountPercent(discountPercent);
+  if (!pct || price <= 0) return price;
+  return Math.round(price * (1 - pct / 100));
+}
+
 module.exports = {
   isB2BCustomer,
   getZohoContactLookupKeys,
@@ -189,4 +211,6 @@ module.exports = {
   hasEffectiveCustomerPhone,
   buildManagedHouseLineItemName,
   buildManagedHouseLineItemDescription,
+  normalizeAgencyDiscountPercent,
+  applyAgencyUnitDiscount,
 };

@@ -426,7 +426,32 @@ export function CustomersListPage() {
       setBulkNotes("");
       clearSelection();
       setExpanded(null);
-      await loadCustomers(true);
+      const cancelledIds = new Set(
+        res.results.filter((row) => row.ok).map((row) => row.id)
+      );
+      if (cancelledIds.size) {
+        setCustomers((prev) => {
+          const patched = prev.map((c) =>
+            cancelledIds.has(c.id)
+              ? { ...c, status: "cancelled" as const, subscriptionStatus: "Cancelled" }
+              : c
+          );
+          if (statusFilters.length > 0 && !statusFilters.includes("Cancelled")) {
+            return patched.filter((c) => !cancelledIds.has(c.id));
+          }
+          return patched;
+        });
+        setPagination((prev) => {
+          if (!prev) return prev;
+          if (statusFilters.length > 0 && !statusFilters.includes("Cancelled")) {
+            return {
+              ...prev,
+              total: Math.max(0, Number(prev.total || 0) - cancelledIds.size),
+            };
+          }
+          return prev;
+        });
+      }
     } catch (err) {
       toaster.create({
         title: err instanceof Error ? err.message : "Bulk cancel failed",
@@ -1204,14 +1229,32 @@ export function CustomersListPage() {
         const res = await api.disconnectCustomer(actionCustomer.id);
         if (res.tisp && res.tisp.ok === false) {
           toaster.create({
-            title: "Disconnected locally with TISP issues",
+            title: "Suspended locally with TISP issues",
             description: res.tisp.error || "TISP update failed",
             type: "warning",
             duration: 10000,
           });
         } else {
           toaster.create({
-            title: "Customer disconnected",
+            title: "Customer suspended on TISP",
+            description: res.tisp?.dueDate
+              ? `TISP due date set to ${res.tisp.dueDate}`
+              : undefined,
+            type: "success",
+          });
+        }
+      } else if (actionType === "pause") {
+        const res = await api.pauseCustomer(actionCustomer.id);
+        if (res.tisp && res.tisp.ok === false) {
+          toaster.create({
+            title: "Paused locally with TISP issues",
+            description: res.tisp.error || "TISP update failed",
+            type: "warning",
+            duration: 10000,
+          });
+        } else {
+          toaster.create({
+            title: "Service paused",
             description: res.tisp?.dueDate
               ? `TISP due date set to ${res.tisp.dueDate}`
               : undefined,
@@ -1220,27 +1263,37 @@ export function CustomersListPage() {
         }
       } else if (actionType === "cancel") {
         const res = await api.cancelCustomer(actionCustomer.id, cancelNotes || undefined);
-        const issues = [
-          res.tisp && res.tisp.ok === false ? `TISP: ${res.tisp.error || "update failed"}` : null,
-          res.zoho && res.zoho.ok === false ? `Zoho: ${res.zoho.error || "update failed"}` : null,
-        ].filter(Boolean);
-        if (issues.length) {
-          toaster.create({
-            title: "Subscription cancelled with sync issues",
-            description: issues.join(" · "),
-            type: "warning",
-            duration: 10000,
+        toaster.create({
+          title: "Subscription cancelled",
+          description: "TISP and Zoho are updating in the background",
+          type: "success",
+        });
+        if (res.customer) {
+          setCustomers((prev) => {
+            const patched = prev.map((c) =>
+              c.id === res.customer.id ? { ...c, ...res.customer } : c
+            );
+            // Hide from current view when Cancelled is not in the status filter.
+            if (
+              statusFilters.length > 0 &&
+              !statusFilters.includes("Cancelled")
+            ) {
+              return patched.filter((c) => c.status !== "cancelled");
+            }
+            return patched;
           });
-        } else {
-          toaster.create({
-            title: "Subscription cancelled",
-            description: [
-              res.tisp?.dueDate ? `TISP due date set to ${res.tisp.dueDate}` : null,
-              res.zoho?.contactInactivated ? "Zoho contact marked inactive" : null,
-            ]
-              .filter(Boolean)
-              .join(" · ") || undefined,
-            type: "success",
+          setPagination((prev) => {
+            if (!prev) return prev;
+            if (
+              statusFilters.length > 0 &&
+              !statusFilters.includes("Cancelled")
+            ) {
+              return {
+                ...prev,
+                total: Math.max(0, Number(prev.total || 0) - 1),
+              };
+            }
+            return prev;
           });
         }
       } else if (actionType === "deletePermanent") {
@@ -1249,10 +1302,24 @@ export function CustomersListPage() {
         setExpanded(null);
       }
       closeAction();
-      await loadCustomers(true);
-      if (wasExpanded && actionType !== "deletePermanent") {
+      // Cancel already patched local rows — skip slow live refresh.
+      // Other actions still refresh so TISP/due-date stay accurate.
+      if (actionType === "deletePermanent") {
+        void loadCustomers(false);
+      } else if (actionType !== "cancel") {
+        await loadCustomers(true);
+      }
+      if (wasExpanded && actionType !== "deletePermanent" && actionType !== "cancel") {
         setExpanded(customerId);
         setPanelRefreshKey((k) => k + 1);
+      } else if (wasExpanded && actionType === "cancel") {
+        // Keep panel open only when Cancelled is still visible in the list.
+        if (!statusFilters.length || statusFilters.includes("Cancelled")) {
+          setExpanded(customerId);
+          setPanelRefreshKey((k) => k + 1);
+        } else {
+          setExpanded(null);
+        }
       }
     } catch (err) {
       toaster.create({
@@ -1445,7 +1512,12 @@ export function CustomersListPage() {
       ) : null}
 
       <FilterToolbar>
-          <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
+          <FilterField
+            label="Search"
+            flex={{ base: "1 1 100%", lg: "1.45" }}
+            minW={0}
+            hideOnMobile
+          >
             <Input
               size="sm"
               h={FILTER_CONTROL_HEIGHT}
@@ -1477,7 +1549,12 @@ export function CustomersListPage() {
             </SelectField>
           </FilterField>
 
-          <FilterField label="Status" flex={FILTER_FLEX.standard} minW={{ base: 0, lg: "220px" }} hideOnMobile>
+          <FilterField
+            label="Status"
+            flex={{ base: "1 1 100%", sm: "1 1 calc(50% - 6px)", lg: "1.15" }}
+            minW={{ base: 0, lg: "240px" }}
+            hideOnMobile
+          >
             <StatusMultiSelect
               size="sm"
               value={statusFilters}
