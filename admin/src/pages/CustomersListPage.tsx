@@ -70,7 +70,7 @@ import {
   dataTableExpandRowProps,
 } from "../components/ui/DataTable";
 import { TextStatus } from "../components/ui/TextStatus";
-import type { ListPagination, CustomerImportEvent } from "../lib/api";
+import type { CancelCustomerPayload, ListPagination, CustomerImportEvent } from "../lib/api";
 import {
   SUBSCRIPTION_STATUS_FILTER_OPTIONS,
   displayCustomerStatus,
@@ -96,12 +96,17 @@ import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hidePr
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobileFAB, MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { ListPageStack } from "../components/ui/pageLayout";
 import { MobileCardListSkeleton, DataTableLoadingSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_CONTROL_HEIGHT } from "../theme";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
+
+function todayDateInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 type CustomerSortKey =
   | "customerType"
@@ -182,6 +187,10 @@ export function CustomersListPage() {
   const [newApartment, setNewApartment] = useState("");
   const [switchIpAddress, setSwitchIpAddress] = useState("");
   const [cancelNotes, setCancelNotes] = useState("");
+  const [cancelOnuCollectedAt, setCancelOnuCollectedAt] = useState(todayDateInputValue);
+  const [cancelDstvDecoderCollectedAt, setCancelDstvDecoderCollectedAt] = useState(
+    todayDateInputValue
+  );
   const [actionPackages, setActionPackages] = useState<Product[]>([]);
   const [apartmentHistory, setApartmentHistory] = useState<ApartmentHistoryEntry[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
@@ -203,6 +212,10 @@ export function CustomersListPage() {
   const [bulkCancelOpen, setBulkCancelOpen] = useState(false);
   const [bulkCancelStep, setBulkCancelStep] = useState<1 | 2>(1);
   const [bulkNotes, setBulkNotes] = useState("");
+  const [bulkOnuCollectedAt, setBulkOnuCollectedAt] = useState(todayDateInputValue);
+  const [bulkDstvDecoderCollectedAt, setBulkDstvDecoderCollectedAt] = useState(
+    todayDateInputValue
+  );
   const [bulkLoading, setBulkLoading] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [convertCustomer, setConvertCustomer] = useState<Customer | null>(null);
@@ -346,6 +359,24 @@ export function CustomersListPage() {
     [selectedCustomers]
   );
 
+  const activeSelectedCustomers = useMemo(
+    () => selectedCustomers.filter((customer) => customer.status === "active"),
+    [selectedCustomers]
+  );
+
+  const bulkNeedsDstvDecoder = useMemo(
+    () =>
+      activeSelectedCustomers.some(
+        (customer) => customer.hasDstv && customer.dstvSerialRequired
+      ),
+    [activeSelectedCustomers]
+  );
+
+  const bulkCancelFormValid =
+    bulkNotes.trim().length > 0 &&
+    Boolean(bulkOnuCollectedAt) &&
+    (!bulkNeedsDstvDecoder || Boolean(bulkDstvDecoderCollectedAt));
+
   const allPageSelected =
     pageCustomerIds.length > 0 &&
     pageCustomerIds.every((id) => selectedIds.has(id));
@@ -392,6 +423,8 @@ export function CustomersListPage() {
 
   function openBulkCancelDialog() {
     setBulkCancelStep(1);
+    setBulkOnuCollectedAt(todayDateInputValue());
+    setBulkDstvDecoderCollectedAt(todayDateInputValue());
     setBulkCancelOpen(true);
   }
 
@@ -400,15 +433,41 @@ export function CustomersListPage() {
     setBulkCancelOpen(false);
     setBulkCancelStep(1);
     setBulkNotes("");
+    setBulkOnuCollectedAt(todayDateInputValue());
+    setBulkDstvDecoderCollectedAt(todayDateInputValue());
+  }
+
+  function buildCancelPayload(reason: string, needsDstvDecoder: boolean): CancelCustomerPayload {
+    const payload: CancelCustomerPayload = {
+      reason: reason.trim(),
+      notes: reason.trim(),
+      onuCollectedAt: cancelOnuCollectedAt,
+    };
+    if (needsDstvDecoder) {
+      payload.dstvDecoderCollectedAt = cancelDstvDecoderCollectedAt;
+    }
+    return payload;
+  }
+
+  function buildBulkCancelPayload(needsDstvDecoder: boolean): CancelCustomerPayload {
+    const payload: CancelCustomerPayload = {
+      reason: bulkNotes.trim(),
+      notes: bulkNotes.trim(),
+      onuCollectedAt: bulkOnuCollectedAt,
+    };
+    if (needsDstvDecoder) {
+      payload.dstvDecoderCollectedAt = bulkDstvDecoderCollectedAt;
+    }
+    return payload;
   }
 
   async function submitBulkCancel() {
-    if (!activeSelectedIds.length) return;
+    if (!activeSelectedIds.length || !bulkCancelFormValid) return;
     setBulkLoading(true);
     try {
       const res = await api.bulkCancelCustomers(
         activeSelectedIds,
-        bulkNotes.trim() || undefined
+        buildBulkCancelPayload(bulkNeedsDstvDecoder)
       );
       toaster.create({
         title: `Cancelled ${res.succeeded} of ${res.total} subscription(s)`,
@@ -424,6 +483,8 @@ export function CustomersListPage() {
       setBulkCancelOpen(false);
       setBulkCancelStep(1);
       setBulkNotes("");
+      setBulkOnuCollectedAt(todayDateInputValue());
+      setBulkDstvDecoderCollectedAt(todayDateInputValue());
       clearSelection();
       setExpanded(null);
       const cancelledIds = new Set(
@@ -703,6 +764,8 @@ export function CustomersListPage() {
     setNewApartment("");
     setSwitchIpAddress("");
     setCancelNotes("");
+    setCancelOnuCollectedAt(todayDateInputValue());
+    setCancelDstvDecoderCollectedAt(todayDateInputValue());
     setActionPackages([]);
     setApartmentHistory([]);
     setUpgradeQuote(null);
@@ -1262,7 +1325,13 @@ export function CustomersListPage() {
           });
         }
       } else if (actionType === "cancel") {
-        const res = await api.cancelCustomer(actionCustomer.id, cancelNotes || undefined);
+        const needsDstvDecoder = Boolean(
+          actionCustomer.hasDstv && actionCustomer.dstvSerialRequired
+        );
+        const res = await api.cancelCustomer(
+          actionCustomer.id,
+          buildCancelPayload(cancelNotes, needsDstvDecoder)
+        );
         toaster.create({
           title: "Subscription cancelled",
           description: "TISP and Zoho are updating in the background",
@@ -1377,7 +1446,10 @@ export function CustomersListPage() {
 
   return (
     <ListPageStack>
-      <MobilePageChrome
+      <ListPageTableSection
+        chrome={
+          <ListPageStickyChrome>
+            <MobilePageChrome
         title="Customers"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
@@ -1503,15 +1575,9 @@ export function CustomersListPage() {
             ) : null}
           </Flex>
         }
-      />
+            />
 
-      {canMutate ? (
-        <MobileFAB to="/customers/new" aria-label="Add customer">
-          <FiUserPlus size={24} />
-        </MobileFAB>
-      ) : null}
-
-      <FilterToolbar>
+            <FilterToolbar embedded>
           <FilterField
             label="Search"
             flex={{ base: "1 1 100%", lg: "1.45" }}
@@ -1561,7 +1627,15 @@ export function CustomersListPage() {
               onChange={applyStatusFilters}
             />
           </FilterField>
-      </FilterToolbar>
+            </FilterToolbar>
+          </ListPageStickyChrome>
+        }
+      >
+      {canMutate ? (
+        <MobileFAB to="/customers/new" aria-label="Add customer">
+          <FiUserPlus size={24} />
+        </MobileFAB>
+      ) : null}
 
       {liveSyncing ? (
         <Text fontSize="xs" color="fg.muted">
@@ -1919,6 +1993,7 @@ export function CustomersListPage() {
           />
         )}
       </DataTableCard>
+      </ListPageTableSection>
 
       {canMutate ? (
         <>
@@ -1940,6 +2015,8 @@ export function CustomersListPage() {
         newApartment={newApartment}
         switchIpAddress={switchIpAddress}
         cancelNotes={cancelNotes}
+        cancelOnuCollectedAt={cancelOnuCollectedAt}
+        cancelDstvDecoderCollectedAt={cancelDstvDecoderCollectedAt}
         actionPackages={actionPackages}
         apartmentHistory={apartmentHistory}
         upgradeQuote={upgradeQuote}
@@ -1962,6 +2039,8 @@ export function CustomersListPage() {
         onApartmentChange={setNewApartment}
         onSwitchIpChange={setSwitchIpAddress}
         onNotesChange={setCancelNotes}
+        onOnuCollectedAtChange={setCancelOnuCollectedAt}
+        onDstvDecoderCollectedAtChange={setCancelDstvDecoderCollectedAt}
       />
       <CustomerImportProgressDialog
         open={importDialogOpen}
@@ -1991,24 +2070,47 @@ export function CustomersListPage() {
             </Box>
             <Stack gap={4} px={5} py={4}>
               <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                Customers will be marked as cancelled and removed from active billing.
-                This action should only be used when you are sure.
+                Customers will be marked as cancelled and excluded from active counts. Apartment
+                history is kept. TISP due date is set to today and Zoho contacts are marked
+                inactive.
               </Box>
-              <Field.Root>
-                <Field.Label>Notes (optional)</Field.Label>
+              <Field.Root required>
+                <Field.Label>Reason for cancellation</Field.Label>
                 <Textarea
                   value={bulkNotes}
                   onChange={(e) => setBulkNotes(e.target.value)}
-                  placeholder="Reason for cancellation…"
+                  placeholder="Reason applies to all selected customers…"
                   rows={3}
                 />
               </Field.Root>
+              <Field.Root required>
+                <Field.Label>ONU collected on</Field.Label>
+                <Input
+                  type="date"
+                  value={bulkOnuCollectedAt}
+                  onChange={(e) => setBulkOnuCollectedAt(e.target.value)}
+                />
+              </Field.Root>
+              {bulkNeedsDstvDecoder ? (
+                <Field.Root required>
+                  <Field.Label>DSTV decoder collected on</Field.Label>
+                  <Input
+                    type="date"
+                    value={bulkDstvDecoderCollectedAt}
+                    onChange={(e) => setBulkDstvDecoderCollectedAt(e.target.value)}
+                  />
+                  <Text fontSize="xs" color="fg.muted" mt={1}>
+                    At least one selected customer has a DSTV decoder package.
+                  </Text>
+                </Field.Root>
+              ) : null}
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={closeBulkCancelDialog}>
                   Keep subscriptions
                 </Button>
                 <Button
                   colorPalette="red"
+                  disabled={!bulkCancelFormValid}
                   onClick={() => setBulkCancelStep(2)}
                 >
                   Continue
@@ -2043,6 +2145,7 @@ export function CustomersListPage() {
                 <Button
                   colorPalette="red"
                   loading={bulkLoading}
+                  disabled={!bulkCancelFormValid}
                   onClick={() => void submitBulkCancel()}
                 >
                   Yes, cancel subscriptions

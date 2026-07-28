@@ -40,6 +40,8 @@ type Props = {
   newApartment: string;
   switchIpAddress: string;
   cancelNotes: string;
+  cancelOnuCollectedAt: string;
+  cancelDstvDecoderCollectedAt: string;
   actionPackages: Product[];
   apartmentHistory: ApartmentHistoryEntry[];
   upgradeQuote: UpgradeQuote | null;
@@ -62,6 +64,8 @@ type Props = {
   onApartmentChange: (value: string) => void;
   onSwitchIpChange: (value: string) => void;
   onNotesChange: (value: string) => void;
+  onOnuCollectedAtChange: (value: string) => void;
+  onDstvDecoderCollectedAtChange: (value: string) => void;
 };
 
 function ModalHeader({
@@ -342,6 +346,8 @@ export function CustomerActionDialog({
   newApartment,
   switchIpAddress,
   cancelNotes,
+  cancelOnuCollectedAt,
+  cancelDstvDecoderCollectedAt,
   actionPackages,
   apartmentHistory,
   upgradeQuote,
@@ -364,7 +370,15 @@ export function CustomerActionDialog({
   onApartmentChange,
   onSwitchIpChange,
   onNotesChange,
+  onOnuCollectedAtChange,
+  onDstvDecoderCollectedAtChange,
 }: Props) {
+  const needsDstvDecoder =
+    Boolean(customer?.hasDstv) && Boolean(customer?.dstvSerialRequired);
+  const cancelFormValid =
+    cancelNotes.trim().length > 0 &&
+    Boolean(cancelOnuCollectedAt) &&
+    (!needsDstvDecoder || Boolean(cancelDstvDecoderCollectedAt));
   const [cancelStep, setCancelStep] = useState<1 | 2>(1);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
 
@@ -514,23 +528,45 @@ export function CustomerActionDialog({
           cancelStep === 1 ? (
             <Stack gap={4}>
               <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                This will mark the subscription as cancelled. The customer is kept for history but
-                excluded from customer counts and reports. TISP due date is set to today, and C2B
-                Zoho contacts are marked inactive (recurring billing stopped).
+                This marks the subscription as cancelled. The customer stays in apartment history
+                but is excluded from active counts. TISP due date is set to today and C2B Zoho
+                contacts are marked inactive.
               </Box>
-              <Field.Root w="full">
-                <Field.Label>Notes (optional)</Field.Label>
+              <Field.Root w="full" required>
+                <Field.Label>Reason for cancellation</Field.Label>
                 <Input
                   value={cancelNotes}
                   onChange={(e) => onNotesChange(e.target.value)}
-                  placeholder="Reason for cancellation"
+                  placeholder="e.g. Moved out, switched provider…"
                 />
               </Field.Root>
+              <Field.Root w="full" required>
+                <Field.Label>ONU collected on</Field.Label>
+                <Input
+                  type="date"
+                  value={cancelOnuCollectedAt}
+                  onChange={(e) => onOnuCollectedAtChange(e.target.value)}
+                />
+              </Field.Root>
+              {needsDstvDecoder ? (
+                <Field.Root w="full" required>
+                  <Field.Label>DSTV decoder collected on</Field.Label>
+                  <Input
+                    type="date"
+                    value={cancelDstvDecoderCollectedAt}
+                    onChange={(e) => onDstvDecoderCollectedAtChange(e.target.value)}
+                  />
+                </Field.Root>
+              ) : null}
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={onClose}>
                   Keep subscription
                 </Button>
-                <Button colorPalette="red" onClick={() => setCancelStep(2)}>
+                <Button
+                  colorPalette="red"
+                  disabled={!cancelFormValid}
+                  onClick={() => setCancelStep(2)}
+                >
                   Continue
                 </Button>
               </Flex>

@@ -388,6 +388,31 @@ async function postSetClientDetails(payload, meta = {}) {
     throw err;
   }
 
+  // Normalize PackageType in case a caller built the payload by hand.
+  try {
+    payload.PackageType = resolveTispPackageType(payload.PackageType || payload.packagetype);
+  } catch (e) {
+    const errorMessage = e.message || "Invalid TISP PackageType";
+    await logApiCall({
+      service: "tisp",
+      operation: meta.operation || "set_client_details",
+      method: "POST",
+      endpoint: SET_CLIENT_URL,
+      status: "failure",
+      httpStatus: null,
+      requestPayload: payload,
+      responsePayload: null,
+      errorMessage,
+      customerId: meta.customerId ?? null,
+      customerNumber,
+      retryable: true,
+      parentLogId: meta.parentLogId ?? null,
+    });
+    const err = new Error(errorMessage);
+    err._apiCallLogged = true;
+    throw err;
+  }
+
   try {
     const r = await postTispJson(SET_CLIENT_URL, payload, {
       wireFormat:
@@ -533,6 +558,28 @@ function tispPersonName(value) {
 }
 
 /**
+ * Map building ip_setup → TISP SetClientDetails PackageType.
+ * Wire values confirmed against successful api_call_logs: "IP" | "PPPOE".
+ */
+function resolveTispPackageType(ipSetup) {
+  const raw = String(ipSetup ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+  // Building enum is PPOE; TISP wire value is PPPOE. Accept either.
+  if (raw === "PPOE" || raw === "PPPOE") return "PPPOE";
+  if (raw === "STATIC" || raw === "IP") return "IP";
+  if (!raw) {
+    throw new Error(
+      "Building IP setup is required for TISP PackageType (STATIC→IP, PPOE→PPPOE)"
+    );
+  }
+  throw new Error(
+    `Unsupported building IP setup "${ipSetup}" for TISP PackageType (expected STATIC or PPOE)`
+  );
+}
+
+/**
  * Normalize category segments for TISP Package field.
  * "Internet + Apartonet Channels" → "INTERNET + APARTONET CHANNELS"
  */
@@ -599,7 +646,7 @@ function collectTispClientInput({
   agencyName,
   agencyContactPerson,
 }) {
-  const packagetype = ipSetup === "PPOE" ? "Ppoe" : "IP";
+  const packagetype = resolveTispPackageType(ipSetup);
   const hasIp = Boolean(ipAddress);
   const packageLabel = buildTispPackageLabel({
     planName,
@@ -651,7 +698,7 @@ function buildTispSetClientPayload(input, transactionType) {
     phone,
   } = input;
 
-  const packageType = ipSetup === "PPOE" ? "PPPOE" : "IP";
+  const packageType = resolveTispPackageType(ipSetup);
   const first = tispPersonName(firstName).toUpperCase();
   // TISP rejects blank MiddleName/LastName — send "-" when empty (not for Zoho).
   const middleRaw = tispPersonName(middleName);
@@ -731,6 +778,7 @@ module.exports = {
   buildTispUpdateClientDetailsPayload,
   buildSetClientDetailsPayload,
   buildTispPackageLabel,
+  resolveTispPackageType,
   isValidTispPackageLabel,
   stringifyTispPayload,
   stringifyTispCreatePayload,

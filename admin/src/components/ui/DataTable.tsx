@@ -17,12 +17,18 @@ export const dataTableColumnHeaderProps: TableColumnHeaderProps = {
   color: "brand.700",
   textTransform: "none",
   letterSpacing: "normal",
-  py: 2,
+  py: 2.5,
   px: 3,
-  borderBottom: "2px solid",
-  borderColor: "brand.200",
+  borderBottomWidth: "1px",
+  borderBottomStyle: "solid",
+  borderBottomColor: "brand.200",
   bg: "brand.50",
   whiteSpace: "nowrap",
+  position: "sticky",
+  top: "var(--list-page-sticky-top, 0px)",
+  zIndex: 40,
+  // Opaque top cover so row text cannot peek above the header while scrolling.
+  boxShadow: "0 -8px 0 0 #e6f3f7",
 };
 
 /** @deprecated Use dataTableColumnHeaderProps — headers now use sentence case everywhere. */
@@ -179,6 +185,16 @@ export function DataTableSortHeader<T extends string = string>({
 }
 
 const tableRootCss = {
+  borderCollapse: "separate",
+  borderSpacing: 0,
+  "& thead th": {
+    backgroundColor: "#e6f3f7",
+    backgroundClip: "border-box",
+  },
+  "& tbody tr": {
+    position: "relative",
+    zIndex: 0,
+  },
   "& tbody tr:nth-of-type(odd):not([data-expand-panel])": {
     bg: "bg.subtle",
   },
@@ -240,10 +256,8 @@ export function DataTableCard({
       <Box
         bg="bg.panel"
         borderRadius={{ base: 0, lg: "sm" }}
-        borderWidth={{ base: 0, lg: "1px" }}
-        borderStyle="solid"
-        borderColor="border"
-        overflow="hidden"
+        borderWidth={0}
+        overflow="visible"
         minH={loading ? TABLE_VIEWPORT_MIN_H : undefined}
         display="flex"
         flexDirection="column"
@@ -302,13 +316,14 @@ export function DataTable({
 
   return (
     <Box
-      overflowX="auto"
+      w="full"
+      minW={0}
       flex={fill ? 1 : undefined}
       minH={fill ? 0 : undefined}
       h={fill ? "full" : undefined}
-      w="full"
       display={fill ? "flex" : undefined}
       flexDirection={fill ? "column" : undefined}
+      overflowX={{ base: "auto", lg: "visible" }}
       css={{ WebkitOverflowScrolling: "touch" }}
     >
       <Table.Root

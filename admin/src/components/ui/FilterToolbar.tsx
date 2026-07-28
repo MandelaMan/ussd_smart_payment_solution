@@ -16,25 +16,25 @@ export const FILTER_FLEX = {
 export function FilterToolbar({
   children,
   actions,
-  zIndex = 2,
+  /** @deprecated Kept for call-site compatibility — filters are borderless everywhere. */
+  embedded: _embedded = false,
 }: {
   children: ReactNode;
   /** Trailing actions (e.g. Export) — full-width on mobile, inline on desktop. */
   actions?: ReactNode;
-  zIndex?: number;
+  /** Inside ListPageStickyChrome — no separate sticky positioning. */
+  embedded?: boolean;
 }) {
   return (
     <Box
+      data-sticky-list-filters
       display={{ base: "none", lg: "block" }}
-      bg="bg.panel"
-      borderRadius={{ base: "xl", lg: "lg" }}
-      px={{ base: 3.5, lg: 3 }}
-      py={{ base: 3.5, lg: 2.5 }}
-      border="1px solid"
-      borderColor="border.muted"
-      position="relative"
-      zIndex={zIndex}
-      boxShadow={{ base: "sm", lg: "none" }}
+      bg="transparent"
+      border="none"
+      boxShadow="none"
+      borderRadius="none"
+      px={0}
+      py={0}
       w="full"
       minW={0}
     >

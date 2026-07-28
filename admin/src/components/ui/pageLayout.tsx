@@ -23,10 +23,19 @@ export const mobileStickyHeaderProps = {
   boxShadow: { base: "0 1px 0 rgba(15, 23, 42, 0.04)", lg: "none" },
 };
 
-/** List page stack — tight on mobile for edge-to-edge lists. */
+/** List page stack — fills the main pane on desktop so table regions can scroll internally. */
 export function ListPageStack({ children }: { children: ReactNode }) {
   return (
-    <Box display="flex" flexDirection="column" gap={PAGE_STACK_GAP} minW={0} maxW="100%">
+    <Box
+      display="flex"
+      flexDirection="column"
+      gap={PAGE_STACK_GAP}
+      minW={0}
+      maxW="100%"
+      flex={{ lg: 1 }}
+      minH={{ lg: 0 }}
+      h={{ lg: "100%" }}
+    >
       {children}
     </Box>
   );
@@ -120,8 +129,10 @@ export function PageHeader({
         justify="space-between"
         align={{ base: "start", md: "center" }}
         direction={{ base: "column", md: "row" }}
-        gap={2}
+        gap={{ base: 2, md: 6 }}
         minW={0}
+        w="full"
+        py={1}
       >
         {content}
       </Flex>

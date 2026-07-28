@@ -23,6 +23,7 @@ import { FilterField } from "../module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../ui/FilterToolbar";
 import { SelectField } from "../ui/SelectField";
 import { MobilePageChrome } from "../ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../ui/ListPageStickyChrome";
 import {
   DataTable,
   DataTableCard,
@@ -49,7 +50,7 @@ import { useBillingReconciliation } from "./BillingReconciliationContext";
 import { useAuth } from "../../lib/auth";
 import { canOperateFinance } from "../../lib/rbac";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 30;
 
 type Props = {
   reloadKey?: number;
@@ -238,23 +239,69 @@ export function BillingCommunicationsTable({
   }
 
   return (
-    <Stack gap={3}>
-      <Box display={{ base: "block", lg: "none" }}>
-        <MobilePageChrome
-          title="Communications"
-          searchValue={searchInput}
-          onSearchChange={setSearchInput}
-          searchPlaceholder="Customer number or name…"
-          headerActions={
-            allowSync ? (
-              <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
-                <FiRefreshCw />
-              </Button>
-            ) : undefined
-          }
-        />
-      </Box>
+    <>
+    <ListPageTableSection
+      chrome={
+        <ListPageStickyChrome>
+          <Box display={{ base: "block", lg: "none" }}>
+            <MobilePageChrome
+              title="Communications"
+              searchValue={searchInput}
+              onSearchChange={setSearchInput}
+              searchPlaceholder="Customer number or name…"
+              headerActions={
+                allowSync ? (
+                  <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+                    <FiRefreshCw />
+                  </Button>
+                ) : undefined
+              }
+            />
+          </Box>
 
+          <FilterToolbar
+            embedded
+            actions={
+              <DataTableExportButton
+                entityLabel="communications"
+                viewCount={rows.length}
+                totalCount={pagination.total}
+                loading={exporting}
+                onExport={handleExport}
+              />
+            }
+          >
+            <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
+              <Input
+                size="sm"
+                placeholder="Customer number or name…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </FilterField>
+            <FilterField label="Billing gap" flex={FILTER_FLEX.standard} hideOnMobile>
+              <SelectField
+                size="sm"
+                fieldProps={{
+                  value: statusFilter,
+                  onChange: (e) => setStatusFilter(e.target.value),
+                }}
+              >
+                <option value="">All gaps</option>
+                <option value="overdue">Overdue</option>
+                <option value="missing_invoice,stale_billing">Missing invoice</option>
+                <option value="recurring_invoice_stopped">Recurring invoice</option>
+                <option value="no_zoho_link">Not in Zoho Books</option>
+                <option value="disconnected_not_invoiced">Disconnected, not invoiced</option>
+                <option value="paid_but_disconnected">Paid but disconnected</option>
+                <option value="connected_without_payment">Connected without payment</option>
+                <option value="payment_under_review">Payment under review</option>
+              </SelectField>
+            </FilterField>
+          </FilterToolbar>
+        </ListPageStickyChrome>
+      }
+    >
       {!mailConfigured && (
         <Box py={2} px={3} bg="orange.50" border="1px solid" borderColor="orange.100" borderRadius="md">
           <Text fontSize="sm" color="orange.800" display={{ base: "none", lg: "block" }}>
@@ -266,46 +313,6 @@ export function BillingCommunicationsTable({
           </Text>
         </Box>
       )}
-
-      <FilterToolbar
-        actions={
-          <DataTableExportButton
-            entityLabel="communications"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        }
-      >
-        <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
-          <Input
-            size="sm"
-            placeholder="Customer number or name…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-        </FilterField>
-        <FilterField label="Billing gap" flex={FILTER_FLEX.standard} hideOnMobile>
-          <SelectField
-            size="sm"
-            fieldProps={{
-              value: statusFilter,
-              onChange: (e) => setStatusFilter(e.target.value),
-            }}
-          >
-            <option value="">All gaps</option>
-            <option value="overdue">Overdue</option>
-            <option value="missing_invoice,stale_billing">Missing invoice</option>
-            <option value="recurring_invoice_stopped">Recurring invoice</option>
-            <option value="no_zoho_link">Not in Zoho Books</option>
-            <option value="disconnected_not_invoiced">Disconnected, not invoiced</option>
-            <option value="paid_but_disconnected">Paid but disconnected</option>
-            <option value="connected_without_payment">Connected without payment</option>
-            <option value="payment_under_review">Payment under review</option>
-          </SelectField>
-        </FilterField>
-      </FilterToolbar>
 
       {allowSend && sendableSelected.length > 0 && (
         <Flex justify="flex-end">
@@ -481,6 +488,7 @@ export function BillingCommunicationsTable({
           )}
         </DataTableCard>
       )}
+    </ListPageTableSection>
 
       <BillingEmailPreviewDialog
         open={previewOpen}
@@ -494,6 +502,6 @@ export function BillingCommunicationsTable({
         }}
         sending={sending}
       />
-    </Stack>
+    </>
   );
 }

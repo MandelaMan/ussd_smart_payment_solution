@@ -299,8 +299,10 @@ export type Customer = {
   decoderFeeAmount: number | null;
   decoderFeeRequired: boolean;
   hasDstv: boolean;
+  dstvSerialRequired?: boolean;
   dstvDecoderSerial: string | null;
   dstvSerialMissing: boolean;
+  buildingDstvSetup?: "headend_coax" | "decoder";
   subscriptionStatus: string | null;
   tispSyncStatus: "pending" | "synced" | "failed";
   tispSyncError: string | null;
@@ -313,6 +315,9 @@ export type Customer = {
   lastPaymentDate: string | null;
   tispDueDate: string | null;
   status: "active" | "cancelled";
+  cancellationReason?: string | null;
+  onuCollectedAt?: string | null;
+  dstvDecoderCollectedAt?: string | null;
   upgradePaymentStatus?: "none" | "payment_pending";
   createdAt: string;
   updatedAt: string;
@@ -454,6 +459,9 @@ export type ApartmentHistoryEntry = {
   subscriptionStatus: string | null;
   productName: string | null;
   productMbps: number | null;
+  onuCollectedAt?: string | null;
+  dstvDecoderCollectedAt?: string | null;
+  cancellationReason?: string | null;
 };
 
 export type ApartmentUnit = {
@@ -1378,6 +1386,13 @@ async function downloadReportFile(
   URL.revokeObjectURL(url);
 }
 
+export type CancelCustomerPayload = {
+  reason: string;
+  notes?: string;
+  onuCollectedAt: string;
+  dstvDecoderCollectedAt?: string;
+};
+
 export const api = {
   login: (email: string, password: string) =>
     request<AuthSession>("/auth/login", {
@@ -1574,6 +1589,7 @@ export const api = {
     id: number,
     data: Partial<{
       planVariantId: number;
+      buildingId: number;
       name: string;
       mbps: number;
       price: number;
@@ -1587,6 +1603,11 @@ export const api = {
     request<{ ok: boolean; product: Product }>(`/admin/products/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+
+  deleteProduct: (id: number) =>
+    request<{ ok: boolean; id: number }>(`/admin/products/${id}`, {
+      method: "DELETE",
     }),
 
   listAgencies: (params: Record<string, string | undefined> = {}) =>
@@ -2173,14 +2194,15 @@ export const api = {
       }),
     }),
 
-  cancelCustomer: (id: number, notes?: string) =>
+  cancelCustomer: (id: number, payload: CancelCustomerPayload) =>
     request<{
       ok: boolean;
       customer: Customer;
-      tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+      tisp?: { ok: boolean; skipped?: boolean; pending?: boolean; dueDate?: string; error?: string; reason?: string };
       zoho?: {
         ok: boolean;
         skipped?: boolean;
+        pending?: boolean;
         contactInactivated?: boolean;
         recurringStopped?: number;
         error?: string;
@@ -2188,7 +2210,7 @@ export const api = {
       };
     }>(`/admin/customers/${id}/cancel`, {
       method: "POST",
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify(payload),
     }),
 
   disconnectCustomer: (id: number, notes?: string) =>
@@ -2216,7 +2238,7 @@ export const api = {
       method: "DELETE",
     }),
 
-  bulkCancelCustomers: (ids: number[], notes?: string) =>
+  bulkCancelCustomers: (ids: number[], payload: CancelCustomerPayload) =>
     request<{
       ok: boolean;
       total: number;
@@ -2227,12 +2249,12 @@ export const api = {
         ok: boolean;
         customerNumber?: string | null;
         error?: string;
-        tisp?: { ok: boolean; error?: string };
-        zoho?: { ok: boolean; error?: string };
+        tisp?: { ok: boolean; error?: string; pending?: boolean };
+        zoho?: { ok: boolean; error?: string; pending?: boolean };
       }>;
     }>("/admin/customers/bulk-cancel", {
       method: "POST",
-      body: JSON.stringify({ ids, notes }),
+      body: JSON.stringify({ ids, ...payload }),
     }),
 
   getApartmentHistory: (buildingId: number, apartmentNumber: string) =>

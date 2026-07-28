@@ -29,6 +29,7 @@ import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
 import { SelectField } from "../components/ui/SelectField";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
@@ -53,7 +54,7 @@ import {
   type ExportScope,
 } from "../lib/tableExport";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 
 const REASON_LABELS: Record<string, string> = {
   signup: "Signed up",
@@ -346,7 +347,10 @@ export function ApartmentHistoryPage() {
 
   return (
     <ListPageStack>
-      <MobilePageChrome
+      <ListPageTableSection
+        chrome={
+          <ListPageStickyChrome>
+            <MobilePageChrome
         title="Occupancy ledger"
         description="Cross-building occupancy events. Open Apartments for unit-centric views."
         desktopActions={
@@ -402,9 +406,9 @@ export function ApartmentHistoryPage() {
             onClick: () => handleSort("apartmentNumber"),
           },
         ]}
-      />
+            />
 
-      <FilterToolbar>
+            <FilterToolbar embedded>
           <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input
               size="sm"
@@ -416,7 +420,10 @@ export function ApartmentHistoryPage() {
           </FilterField>
 
           {advancedFilters}
-      </FilterToolbar>
+            </FilterToolbar>
+          </ListPageStickyChrome>
+        }
+      >
 
       {showUnitTimeline ? (
         <Box
@@ -618,6 +625,7 @@ export function ApartmentHistoryPage() {
           </Box>
         )}
       </DataTableCard>
+      </ListPageTableSection>
     </ListPageStack>
   );
 }

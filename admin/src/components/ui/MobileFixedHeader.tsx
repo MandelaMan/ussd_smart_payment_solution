@@ -1,11 +1,5 @@
 import { Box } from "@chakra-ui/react";
-import {
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 type Props = {
   children: ReactNode;

@@ -28,9 +28,10 @@ import { toaster } from "../components/ui/toaster";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
-import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { DisplayText } from "../components/ui/DisplayText";
 import { SelectField } from "../components/ui/SelectField";
 import {
@@ -43,7 +44,7 @@ import {
 } from "../components/ui/DataTable";
 import { BRAND } from "../theme";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 
 type LeadSortKey = "createdAt" | "name" | "status" | "source";
 
@@ -363,8 +364,11 @@ export function LeadsPage() {
   );
 
   return (
-    <Stack gap={PAGE_STACK_GAP}>
-      <MobilePageChrome
+    <ListPageStack>
+      <ListPageTableSection
+        chrome={
+          <ListPageStickyChrome>
+            <MobilePageChrome
         title="Leads"
         description="WhatsApp, website, and embed enquiries"
         searchValue={searchInput}
@@ -443,7 +447,58 @@ export function LeadsPage() {
             onClick: () => handleSort("status", "asc"),
           },
         ]}
-      />
+            />
+
+            <FilterToolbar embedded>
+        <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
+          <Input
+            size="sm"
+            placeholder="Name, phone, email…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            borderRadius="md"
+          />
+        </FilterField>
+        <FilterField label="Status" flex={FILTER_FLEX.standard} minW="140px" hideOnMobile>
+          <SelectField
+            size="sm"
+            fieldProps={{
+              value: status,
+              onChange: (e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              },
+            }}
+          >
+            <option value="">All statuses</option>
+            <option value="new">New</option>
+            <option value="contacted">Contacted</option>
+            <option value="qualified">Qualified</option>
+            <option value="converted">Converted</option>
+            <option value="closed">Closed</option>
+          </SelectField>
+        </FilterField>
+        <FilterField label="Source" flex={FILTER_FLEX.standard} minW="140px" hideOnMobile>
+          <SelectField
+            size="sm"
+            fieldProps={{
+              value: source,
+              onChange: (e) => {
+                setSource(e.target.value);
+                setPage(1);
+              },
+            }}
+          >
+            <option value="">All sources</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="web">Website</option>
+            <option value="embed">Embed</option>
+          </SelectField>
+        </FilterField>
+            </FilterToolbar>
+          </ListPageStickyChrome>
+        }
+      >
 
       {stats ? (
         <Flex gap={3} flexWrap="wrap">
@@ -531,54 +586,6 @@ export function LeadsPage() {
           </Text>
         </Stack>
       </Box>
-
-      <FilterToolbar>
-        <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
-          <Input
-            size="sm"
-            placeholder="Name, phone, email…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            borderRadius="md"
-          />
-        </FilterField>
-        <FilterField label="Status" flex={FILTER_FLEX.standard} minW="140px" hideOnMobile>
-          <SelectField
-            size="sm"
-            fieldProps={{
-              value: status,
-              onChange: (e) => {
-                setStatus(e.target.value);
-                setPage(1);
-              },
-            }}
-          >
-            <option value="">All statuses</option>
-            <option value="new">New</option>
-            <option value="contacted">Contacted</option>
-            <option value="qualified">Qualified</option>
-            <option value="converted">Converted</option>
-            <option value="closed">Closed</option>
-          </SelectField>
-        </FilterField>
-        <FilterField label="Source" flex={FILTER_FLEX.standard} minW="140px" hideOnMobile>
-          <SelectField
-            size="sm"
-            fieldProps={{
-              value: source,
-              onChange: (e) => {
-                setSource(e.target.value);
-                setPage(1);
-              },
-            }}
-          >
-            <option value="">All sources</option>
-            <option value="whatsapp">WhatsApp</option>
-            <option value="web">Website</option>
-            <option value="embed">Embed</option>
-          </SelectField>
-        </FilterField>
-      </FilterToolbar>
 
       {error ? (
         <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">
@@ -727,6 +734,7 @@ export function LeadsPage() {
           />
         )}
       </DataTableCard>
-    </Stack>
+      </ListPageTableSection>
+    </ListPageStack>
   );
 }

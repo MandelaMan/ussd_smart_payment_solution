@@ -136,7 +136,7 @@ export function ReportsPage() {
         }
       />
 
-      <FilterToolbar>
+      <FilterToolbar embedded>
         <FilterField label="From" flex={FILTER_FLEX.standard}>
           <DateField
             size="sm"

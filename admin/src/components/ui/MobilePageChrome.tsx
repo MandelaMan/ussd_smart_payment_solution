@@ -355,8 +355,10 @@ export function MobilePageChrome({
         display={{ base: "none", lg: "flex" }}
         justify="space-between"
         align="center"
-        gap={2}
-        mb={2}
+        gap={6}
+        minW={0}
+        w="full"
+        py={1}
       >
         <Box>
           <Heading size="lg">{title}</Heading>

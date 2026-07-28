@@ -20,6 +20,7 @@ const {
   listProducts,
   createProduct,
   updateProduct,
+  deleteProduct,
 } = require("../controllers/products.controller");
 const { getPackageCatalog } = require("../controllers/packageCatalog.controller");
 const {
@@ -30,6 +31,7 @@ const {
   createAgencyInvoice,
   updateAgency,
 } = require("../controllers/agencies.controller");
+const { listOnus, getOnuAbility } = require("../controllers/olt.controller");
 const {
   listCustomers,
   exportCustomers,
@@ -54,6 +56,7 @@ const {
   cancelSubscription,
   disconnectCustomer,
   pauseCustomer,
+  linkCustomerOlt,
   deleteCustomerPermanently,
   apartmentHistory,
   downloadImportTemplate,
@@ -195,6 +198,7 @@ router.get("/package-catalog", requireConfigRead, getPackageCatalog);
 router.get("/products", requireConfigRead, listProducts);
 router.post("/products", requireConfigWrite, createProduct);
 router.patch("/products/:id", requireConfigWrite, updateProduct);
+router.delete("/products/:id", requireConfigWrite, deleteProduct);
 
 router.get("/agencies", requireConfigRead, listAgencies);
 router.post("/agencies", requireAgencyWrite, createAgency);
@@ -254,6 +258,9 @@ router.post(
 );
 router.post("/customers/:id/switch-apartment", requireCustomerWrite, switchApartment);
 router.post("/customers/:id/cancel", requireCustomerWrite, cancelSubscription);
+router.get("/olt/onu-list", requireCustomerRead, listOnus);
+router.get("/olt/onu-ability", requireCustomerRead, getOnuAbility);
+router.post("/customers/:id/olt-link", requireCustomerWrite, linkCustomerOlt);
 router.post("/customers/:id/disconnect", requireCustomerWrite, disconnectCustomer);
 router.post("/customers/:id/pause", requireCustomerWrite, pauseCustomer);
 router.delete("/customers/:id", requireAdmin, deleteCustomerPermanently);

@@ -1,9 +1,9 @@
-import { Box, Button, Flex, Heading, Stack, Text } from "@chakra-ui/react";
+import { Box, Button, Flex, Heading, Text } from "@chakra-ui/react";
 import { FiDownload, FiRefreshCw } from "react-icons/fi";
 import type { ReactNode } from "react";
 import type { ReconciliationSummary } from "../../lib/api";
 import { BillingSyncProgressBanner } from "./BillingSyncProgressBanner";
-import { PAGE_STACK_GAP } from "../ui/pageLayout";
+import { ListPageStack } from "../ui/pageLayout";
 
 type Props = {
   title: string;
@@ -35,7 +35,7 @@ export function BillingModuleShell({
   children,
 }: Props) {
   return (
-    <Stack gap={PAGE_STACK_GAP} minW={0} maxW="100%">
+    <ListPageStack>
       <Flex
         display={{ base: "none", lg: "flex" }}
         justify="space-between"
@@ -43,6 +43,7 @@ export function BillingModuleShell({
         gap={3}
         wrap="wrap"
         minW={0}
+        flexShrink={0}
       >
         <Box minW={0} flex="1">
           <Heading size="lg">{title}</Heading>
@@ -84,7 +85,9 @@ export function BillingModuleShell({
           compact
         />
       )}
-      {children}
-    </Stack>
+      <Box flex={{ lg: 1 }} minH={{ lg: 0 }} minW={0} display="flex" flexDirection="column">
+        {children}
+      </Box>
+    </ListPageStack>
   );
 }

@@ -1,6 +1,7 @@
 const moment = require("moment-timezone");
 const { postSetISPPayment } = require("../controllers/tisp.controller");
 const customerStore = require("./customerModuleStore");
+const oltEmsService = require("./oltEmsService");
 const { logActivity } = require("./activityLogStore");
 const { formatDateOnly } = require("../utils/lastPaymentDate");
 const { DEFAULT_TZ } = require("../utils/billingPeriod");
@@ -69,10 +70,19 @@ async function handleSubscriptionPaymentReceived({
   }
 
   const paidOn = formatDateOnly(paymentDate) || moment.tz(DEFAULT_TZ).format("YYYY-MM-DD");
+
+  const customerRow = await customerStore.findCustomerByNumber(accountRef);
+  let subscriptionStatus = null;
+  if (customerRow?.id) {
+    const ctx = await customerStore.getCustomerContext(customerRow.id);
+    subscriptionStatus = ctx?.subscription_status;
+  }
+
   await customerStore.recordCustomerLastPayment(accountRef, paidOn);
 
   let tispOk = false;
   let tispError = null;
+  let olt = { ok: true, skipped: true, reason: "not_checked" };
 
   if (!skipTisp && Number(amount) > 0) {
     const payload = buildExternalTispPaymentPayload({
@@ -96,6 +106,18 @@ async function handleSubscriptionPaymentReceived({
     }
   }
 
+  if (
+    customerRow?.id &&
+    tispOk &&
+    oltEmsService.shouldActivateOnPayment(subscriptionStatus)
+  ) {
+    const ctx = await customerStore.getCustomerContext(customerRow.id);
+    olt = await oltEmsService.activateOnuForCustomer(ctx, {
+      customerId: customerRow.id,
+      customerNumber: accountRef,
+    });
+  }
+
   try {
     await logActivity({
       eventType: tispOk ? "subscription_payment_reconciled" : "subscription_payment_partial",
@@ -104,7 +126,7 @@ async function handleSubscriptionPaymentReceived({
         ? `${accountRef}: ${source} payment applied — service extended`
         : `${accountRef}: ${tispError || "TISP update pending"}`,
       source: source.toLowerCase().includes("zoho") ? "zoho" : "mpesa",
-      status: tispOk ? "success" : "failed",
+      status: tispOk && (olt.ok || olt.skipped) ? "success" : "failed",
       customerRef: accountRef,
       amount: amount != null ? Number(amount) : null,
       referenceId: referenceId ? String(referenceId) : null,
@@ -114,9 +136,10 @@ async function handleSubscriptionPaymentReceived({
   }
 
   return {
-    ok: tispOk || skipTisp,
+    ok: (tispOk || skipTisp) && (olt.ok || olt.skipped),
     tispOk,
     tispError,
+    olt,
     customerNumber: accountRef,
     paymentDate: paidOn,
   };

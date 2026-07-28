@@ -47,6 +47,10 @@ a,
   -webkit-tap-highlight-color: transparent;
 }
 
+:root {
+  --list-page-sticky-top: 0px;
+}
+
 @media (max-width: 47.99em) {
   /*
    * iOS Safari zooms the page when focused controls are < 16px.

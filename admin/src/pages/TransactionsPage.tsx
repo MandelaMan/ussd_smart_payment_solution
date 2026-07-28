@@ -22,6 +22,7 @@ import { DateField } from "../components/ui/DateField";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { SelectField } from "../components/ui/SelectField";
 import { DisplayText } from "../components/ui/DisplayText";
 import {
@@ -82,7 +83,7 @@ export function TransactionsPage() {
   const [rows, setRows] = useState<UnifiedTransaction[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({
     page: 1,
-    limit: 20,
+    limit: 30,
     total: 0,
     pages: 1,
   });
@@ -96,7 +97,7 @@ export function TransactionsPage() {
   const filters = (): Record<string, string> => {
     const p: Record<string, string> = {
       page: String(page),
-      limit: "20",
+      limit: "30",
       sortBy: sortQuery.sortBy,
       sortDir: sortQuery.sortDir,
     };
@@ -256,7 +257,10 @@ export function TransactionsPage() {
 
   return (
     <ListPageStack>
-      <MobilePageChrome
+      <ListPageTableSection
+        chrome={
+          <ListPageStickyChrome>
+            <MobilePageChrome
         title="Transactions"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
@@ -318,9 +322,9 @@ export function TransactionsPage() {
             onExport={handleExport}
           />
         }
-      />
+            />
 
-      <FilterToolbar>
+            <FilterToolbar embedded>
           <FilterField label="Source" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
             <SelectField
               size="sm"
@@ -352,7 +356,10 @@ export function TransactionsPage() {
           </FilterField>
 
           {advancedFilters}
-      </FilterToolbar>
+            </FilterToolbar>
+          </ListPageStickyChrome>
+        }
+      >
 
       {error && (
         <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">
@@ -486,6 +493,7 @@ export function TransactionsPage() {
           />
         )}
       </DataTableCard>
+      </ListPageTableSection>
     </ListPageStack>
   );
 }

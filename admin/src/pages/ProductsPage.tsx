@@ -11,7 +11,6 @@ import {
   Grid,
   Heading,
   Input,
-  Stack,
   Table,
   Text,
 } from "@chakra-ui/react";
@@ -33,9 +32,10 @@ import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
-import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { ProductExpandPanel } from "../components/products/ProductExpandPanel";
 import { DisplayText } from "../components/ui/DisplayText";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
@@ -63,7 +63,7 @@ const FREQUENCIES = [
   { value: "yearly", label: "Yearly" },
 ];
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 
 type ProductSortKey =
   | "categoryName"
@@ -103,6 +103,8 @@ export function ProductsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
+  const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const [categoryId, setCategoryId] = useState("");
@@ -275,11 +277,20 @@ export function ProductsPage() {
   async function handleUpdate(e: FormEvent) {
     e.preventDefault();
     if (!editing) return;
+    if (!selectedVariant) {
+      toaster.create({ title: "Select a valid package variant", type: "error" });
+      return;
+    }
+    if (!buildingId) {
+      toaster.create({ title: "Select a building", type: "error" });
+      return;
+    }
     setEditSubmitting(true);
     const expandedId = editing.id;
     try {
       const res = await api.updateProduct(editing.id, {
-        ...(selectedVariant ? { planVariantId: selectedVariant.id } : {}),
+        planVariantId: selectedVariant.id,
+        buildingId: Number(buildingId),
         mbps: Number(mbps),
         price: Number(price),
         monthlyPrice: monthlyPrice ? Number(monthlyPrice) : Number(price),
@@ -305,7 +316,25 @@ export function ProductsPage() {
     }
   }
 
-  const catalogLinkedEdit = Boolean(editing?.planVariantId);
+  async function handleDeleteConfirm() {
+    if (!deletingProduct) return;
+    setDeleteSubmitting(true);
+    try {
+      await api.deleteProduct(deletingProduct.id);
+      toaster.create({ title: "Package deleted", type: "success" });
+      setDeletingProduct(null);
+      if (expanded === deletingProduct.id) setExpanded(null);
+      if (editing?.id === deletingProduct.id) closeEdit();
+      await load({ bustCache: true });
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Failed to delete package",
+        type: "error",
+      });
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  }
 
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
@@ -346,10 +375,13 @@ export function ProductsPage() {
   }
 
   return (
-    <Stack gap={PAGE_STACK_GAP}>
-      <MobilePageChrome
+    <ListPageStack>
+      <ListPageTableSection
+        chrome={
+          <ListPageStickyChrome>
+            <MobilePageChrome
         title="Packages"
-        description="Base package structure is fixed per category and plan. Set building-specific prices below."
+        description="Set and manage building-specific package prices. Edit or delete unused packages as needed."
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Package name…"
@@ -400,9 +432,9 @@ export function ProductsPage() {
             ) : null}
           </Flex>
         }
-      />
+            />
 
-      <FilterToolbar>
+            <FilterToolbar embedded>
           <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input size="sm" placeholder="Package name…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} borderRadius="md" />
           </FilterField>
@@ -443,7 +475,10 @@ export function ProductsPage() {
               ))}
             </SelectField>
           </FilterField>
-      </FilterToolbar>
+            </FilterToolbar>
+          </ListPageStickyChrome>
+        }
+      >
 
       {showForm && (
         <Box bg="bg.panel" borderRadius="lg" border="1px solid" borderColor="border.muted" p={5}>
@@ -522,7 +557,13 @@ export function ProductsPage() {
                   />
                 )}
                 renderExpanded={(p) => (
-                  <ProductExpandPanel product={p} onEdit={openEdit} canEdit={canMutate} />
+                  <ProductExpandPanel
+                    product={p}
+                    onEdit={openEdit}
+                    onDelete={canMutate ? setDeletingProduct : undefined}
+                    canEdit={canMutate}
+                    deleting={deleteSubmitting && deletingProduct?.id === p.id}
+                  />
                 )}
               />
             }
@@ -570,7 +611,13 @@ export function ProductsPage() {
                     {isOpen && (
                       <Table.Row {...dataTableExpandRowProps}>
                         <Table.Cell colSpan={9} p={3} bg="surface.50" borderBottom="none">
-                          <ProductExpandPanel product={p} onEdit={openEdit} canEdit={canMutate} />
+                          <ProductExpandPanel
+                            product={p}
+                            onEdit={openEdit}
+                            onDelete={canMutate ? setDeletingProduct : undefined}
+                            canEdit={canMutate}
+                            deleting={deleteSubmitting && deletingProduct?.id === p.id}
+                          />
                         </Table.Cell>
                       </Table.Row>
                     )}
@@ -583,10 +630,11 @@ export function ProductsPage() {
           />
         )}
       </DataTableCard>
+      </ListPageTableSection>
 
       <AppDialog open={!!editing} onOpenChange={(d) => !d.open && closeEdit()} maxW="2xl">
         <Dialog.Header borderBottomWidth="1px" borderColor="border.muted" pr={12}>
-          <Dialog.Title>Edit building price</Dialog.Title>
+          <Dialog.Title>Edit package</Dialog.Title>
         </Dialog.Header>
         <Dialog.Body py={5} overflowY="auto" maxH="min(70vh, 640px)" minW={0}>
           <ProductForm
@@ -602,13 +650,58 @@ export function ProductsPage() {
             extraBandwidth={extraBandwidth} setExtraBandwidth={setExtraBandwidth}
             buildings={buildings} isActive={isActive} setIsActive={setIsActive}
             selectedCategory={selectedCategory} selectedPlan={selectedPlan} selectedVariant={selectedVariant}
-            readOnlyStructure={catalogLinkedEdit} showStatus
+            readOnlyStructure={false} showStatus
             onSubmit={handleUpdate} submitting={editSubmitting} onCancel={closeEdit}
             submitLabel="Save changes"
           />
         </Dialog.Body>
       </AppDialog>
-    </Stack>
+
+      <AppDialog
+        open={Boolean(deletingProduct)}
+        onOpenChange={(d) => {
+          if (!d.open && !deleteSubmitting) setDeletingProduct(null);
+        }}
+        maxW="md"
+      >
+        <Box px={5} py={4} borderBottomWidth="1px" borderColor="border.muted">
+          <Heading size="sm">Delete package</Heading>
+          {deletingProduct ? (
+            <Text fontSize="sm" color="fg.muted" mt={1}>
+              Remove{" "}
+              <Text as="span" fontWeight="semibold" color="fg">
+                {deletingProduct.planName || deletingProduct.name}
+              </Text>
+              {" "}
+              for {deletingProduct.buildingName}? This cannot be undone.
+            </Text>
+          ) : null}
+        </Box>
+        <Flex
+          px={5}
+          py={4}
+          gap={2}
+          justify="flex-end"
+          borderTopWidth="1px"
+          borderColor="border.muted"
+        >
+          <Button
+            variant="ghost"
+            disabled={deleteSubmitting}
+            onClick={() => setDeletingProduct(null)}
+          >
+            Cancel
+          </Button>
+          <Button
+            colorPalette="red"
+            loading={deleteSubmitting}
+            onClick={() => void handleDeleteConfirm()}
+          >
+            Delete package
+          </Button>
+        </Flex>
+      </AppDialog>
+    </ListPageStack>
   );
 }
 

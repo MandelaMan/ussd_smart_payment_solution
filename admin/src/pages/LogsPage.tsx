@@ -7,7 +7,6 @@ import {
   Button,
   Flex,
   Input,
-  Stack,
   Table,
   Text,
 } from "@chakra-ui/react";
@@ -21,9 +20,10 @@ import { LogExpandPanel } from "../components/LogExpandPanel";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
-import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { SelectField } from "../components/ui/SelectField";
 import {
   DataTable,
@@ -59,7 +59,7 @@ const SERVICE_COLORS: Record<string, string> = {
   other: "gray",
 };
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 
 type LogSortKey = "endpoint" | "service" | "createdAt" | "customerNumber" | "status";
 
@@ -213,23 +213,75 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
   }
 
   return (
-    <Stack gap={PAGE_STACK_GAP}>
-      {embedded ? (
-        <Flex justify="flex-end" gap={2} flexWrap="wrap">
-          <DataTableExportButton
-            entityLabel="logs"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-          <Button size="sm" variant="outline" onClick={() => load()} loading={loading}>
-            <FiRefreshCw style={{ marginRight: 6 }} />
-            Refresh
-          </Button>
-        </Flex>
-      ) : (
-        <MobilePageChrome
+    <ListPageStack>
+      <ListPageTableSection
+        chrome={
+          embedded ? (
+            <ListPageStickyChrome>
+              <Flex justify="flex-end" gap={2} flexWrap="wrap">
+                <DataTableExportButton
+                  entityLabel="logs"
+                  viewCount={rows.length}
+                  totalCount={pagination.total}
+                  loading={exporting}
+                  onExport={handleExport}
+                />
+                <Button size="sm" variant="outline" onClick={() => load()} loading={loading}>
+                  <FiRefreshCw style={{ marginRight: 6 }} />
+                  Refresh
+                </Button>
+              </Flex>
+              <FilterToolbar embedded>
+                <FilterField
+                  label="Search"
+                  flex={FILTER_FLEX.search}
+                  minW={0}
+                >
+                  <Input
+                    size="sm"
+                    placeholder="Endpoint, customer, error…"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                  />
+                </FilterField>
+                <FilterField label="Service" flex={FILTER_FLEX.standard} minW={0}>
+                  <SelectField
+                    size="sm"
+                    fieldProps={{
+                      value: service,
+                      onChange: (e) => {
+                        setService(e.target.value);
+                        setPage(1);
+                      },
+                    }}
+                  >
+                    <option value="">All services</option>
+                    <option value="tisp">TISP</option>
+                    <option value="zoho">Zoho</option>
+                    <option value="mpesa">M-Pesa</option>
+                  </SelectField>
+                </FilterField>
+                <FilterField label="Status" flex={FILTER_FLEX.standard} minW={0}>
+                  <SelectField
+                    size="sm"
+                    fieldProps={{
+                      value: status,
+                      onChange: (e) => {
+                        setStatus(e.target.value);
+                        setPage(1);
+                      },
+                    }}
+                  >
+                    <option value="">All</option>
+                    <option value="success">Success</option>
+                    <option value="failure">Failure</option>
+                  </SelectField>
+                </FilterField>
+              </FilterToolbar>
+            </ListPageStickyChrome>
+          ) : (
+            <ListPageStickyChrome>
+              <MobilePageChrome
           title="Logs"
           searchValue={searchInput}
           onSearchChange={setSearchInput}
@@ -279,15 +331,13 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
               </Button>
             </Flex>
           }
-        />
-      )}
-
-      <FilterToolbar>
+              />
+              <FilterToolbar embedded>
           <FilterField
             label="Search"
             flex={FILTER_FLEX.search}
             minW={0}
-            hideOnMobile={!embedded}
+            hideOnMobile
           >
             <Input
               size="sm"
@@ -300,7 +350,7 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
             label="Service"
             flex={FILTER_FLEX.standard}
             minW={0}
-            hideOnMobile={!embedded}
+            hideOnMobile
           >
             <SelectField
               size="sm"
@@ -322,7 +372,7 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
             label="Status"
             flex={FILTER_FLEX.standard}
             minW={0}
-            hideOnMobile={!embedded}
+            hideOnMobile
           >
             <SelectField
               size="sm"
@@ -339,7 +389,11 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
               <option value="failure">Failure</option>
             </SelectField>
           </FilterField>
-      </FilterToolbar>
+              </FilterToolbar>
+            </ListPageStickyChrome>
+          )
+        }
+      >
 
       {error ? (
         <Text color="red.600" fontSize="sm">
@@ -507,6 +561,7 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
           />
         )}
       </DataTableCard>
-    </Stack>
+      </ListPageTableSection>
+    </ListPageStack>
   );
 }

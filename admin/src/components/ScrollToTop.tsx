@@ -9,6 +9,10 @@ export function scrollAppToTop() {
     main.scrollTop = 0;
     main.scrollLeft = 0;
   }
+  document.querySelectorAll<HTMLElement>("[data-list-table-scroll]").forEach((el) => {
+    el.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    el.scrollTop = 0;
+  });
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   document.documentElement.scrollTop = 0;
   document.body.scrollTop = 0;

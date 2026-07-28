@@ -8,7 +8,6 @@ import {
   Grid,
   Heading,
   Input,
-  Stack,
   Table,
   Text,
 } from "@chakra-ui/react";
@@ -36,13 +35,14 @@ import {
   type ExportScope,
 } from "../lib/tableExport";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
+import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { SelectField } from "../components/ui/SelectField";
 import {
   EmptyState,
   inlineFormCardProps,
-  PAGE_STACK_GAP,
+  ListPageStack,
   PageErrorBanner,
-  PageHeader,
 } from "../components/ui/pageLayout";
 import {
   UserActionMenu,
@@ -273,32 +273,65 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   }
 
   return (
-    <Stack gap={PAGE_STACK_GAP}>
-      <PageHeader
-        title={embedded ? "Users" : "User Management"}
-        headingSize={embedded ? "sm" : "lg"}
-        sticky={!embedded}
-        actions={
-          <Flex gap={2} align="center">
-            <DataTableExportButton
-              entityLabel="users"
-              viewCount={sortedUsers.length}
-              totalCount={users.length}
-              loading={exporting}
-              onExport={handleExport}
-            />
-            <Button
-              size={embedded ? "sm" : "md"}
-              colorPalette="brand"
-              onClick={() => setShowForm(!showForm)}
-            >
-              <FiUserPlus />
-              Add User
-            </Button>
-          </Flex>
+    <ListPageStack>
+      <ListPageTableSection
+        chrome={
+          embedded ? (
+            <ListPageStickyChrome>
+              <Flex justify="space-between" align="center" gap={2} flexWrap="wrap" minW={0}>
+                <Heading size="sm">Users</Heading>
+                <Flex gap={2} align="center">
+                  <DataTableExportButton
+                    entityLabel="users"
+                    viewCount={sortedUsers.length}
+                    totalCount={users.length}
+                    loading={exporting}
+                    onExport={handleExport}
+                  />
+                  <Button
+                    size="sm"
+                    colorPalette="brand"
+                    onClick={() => setShowForm(!showForm)}
+                  >
+                    <FiUserPlus />
+                    Add User
+                  </Button>
+                </Flex>
+              </Flex>
+            </ListPageStickyChrome>
+          ) : (
+            <ListPageStickyChrome>
+              <MobilePageChrome
+                title="User Management"
+                desktopActions={
+                  <Flex gap={2} align="center">
+                    <DataTableExportButton
+                      entityLabel="users"
+                      viewCount={sortedUsers.length}
+                      totalCount={users.length}
+                      loading={exporting}
+                      onExport={handleExport}
+                    />
+                    <Button colorPalette="brand" onClick={() => setShowForm(!showForm)}>
+                      <FiUserPlus />
+                      Add User
+                    </Button>
+                  </Flex>
+                }
+                headerActions={
+                  <Button
+                    size="sm"
+                    colorPalette="brand"
+                    onClick={() => setShowForm(!showForm)}
+                  >
+                    <FiUserPlus />
+                  </Button>
+                }
+              />
+            </ListPageStickyChrome>
+          )
         }
-      />
-
+      >
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       {showForm ? (
@@ -451,6 +484,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           />
         )}
       </DataTableCard>
+      </ListPageTableSection>
 
       <AppDialog
         open={Boolean(resetUser)}
@@ -500,6 +534,6 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           </Button>
         </Flex>
       </AppDialog>
-    </Stack>
+    </ListPageStack>
   );
 }

@@ -88,6 +88,12 @@ async function updateProduct(req, res, next) {
           error: "Another package in this building already uses this price",
         });
       }
+      if (msg.includes("uk_product_building_variant")) {
+        return res.status(409).json({
+          error:
+            "A price for this package variant already exists for the selected building",
+        });
+      }
       return res.status(409).json({ error: "Duplicate package record" });
     }
     if (err.message === "Product not found") {
@@ -100,4 +106,25 @@ async function updateProduct(req, res, next) {
   }
 }
 
-module.exports = { listProducts, createProduct, updateProduct };
+async function deleteProduct(req, res, next) {
+  try {
+    const result = await store.deleteProduct(Number(req.params.id));
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err.message === "Product not found") {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.code === "ER_ROW_IS_REFERENCED_2" || err.code === "ER_ROW_IS_REFERENCED") {
+      return res.status(409).json({
+        error:
+          "Cannot delete package — it is still referenced by other records. Mark it inactive instead.",
+      });
+    }
+    if (err.message) {
+      return res.status(400).json({ error: err.message });
+    }
+    return next(err);
+  }
+}
+
+module.exports = { listProducts, createProduct, updateProduct, deleteProduct };

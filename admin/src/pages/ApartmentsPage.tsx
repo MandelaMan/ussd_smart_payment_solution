@@ -23,7 +23,8 @@ import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
-import { EmptyState, PAGE_STACK_GAP, PageErrorBanner } from "../components/ui/pageLayout";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
+import { EmptyState, ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
 import { SelectField } from "../components/ui/SelectField";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { DisplayText } from "../components/ui/DisplayText";
@@ -37,7 +38,7 @@ import {
 } from "../components/ui/DataTable";
 import { toaster } from "../components/ui/toaster";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 30;
 
 type ApartmentSortKey =
   | "buildingName"
@@ -164,8 +165,11 @@ export function ApartmentsPage() {
   const activeFilterCount = (buildingId ? 1 : 0) + (occupancy ? 1 : 0);
 
   return (
-    <Stack gap={PAGE_STACK_GAP}>
-      <MobilePageChrome
+    <ListPageStack>
+      <ListPageTableSection
+        chrome={
+          <ListPageStickyChrome>
+            <MobilePageChrome
         title="Apartments"
         description="Unit inventory by building — occupancy and network details."
         searchValue={searchInput}
@@ -255,10 +259,10 @@ export function ApartmentsPage() {
             <RouterLink to="/apartments/ledger">Occupancy ledger</RouterLink>
           </Button>
         }
-      />
+            />
 
-      <Box display={{ base: "none", lg: "block" }}>
-        <FilterToolbar>
+            <Box display={{ base: "none", lg: "block" }}>
+        <FilterToolbar embedded>
           <FilterField label="Building" flex={FILTER_FLEX.wide}>
             <SearchableSelect
               value={buildingId}
@@ -287,7 +291,10 @@ export function ApartmentsPage() {
             </SelectField>
           </FilterField>
         </FilterToolbar>
-      </Box>
+            </Box>
+          </ListPageStickyChrome>
+        }
+      >
 
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
@@ -441,6 +448,7 @@ export function ApartmentsPage() {
           />
         )}
       </DataTableCard>
-    </Stack>
+      </ListPageTableSection>
+    </ListPageStack>
   );
 }

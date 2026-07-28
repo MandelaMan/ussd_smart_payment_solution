@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { Button, Box, Input, Stack, Table, Text } from "@chakra-ui/react";
+import { Button, Box, Input, Table, Text } from "@chakra-ui/react";
 import { FiChevronDown, FiChevronRight, FiRefreshCw } from "react-icons/fi";
 import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
 import { useMobileViewport } from "../../hooks/useMobileViewport";
@@ -23,6 +23,7 @@ import {
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../PageSkeletons";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../ui/MobileDataList";
 import { MobilePageChrome } from "../ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../ui/ListPageStickyChrome";
 import { DataTableExportButton } from "../ui/DataTableExportButton";
 import { unmatchedMpesaExportColumns } from "../../lib/dataTableExportColumns";
 import {
@@ -35,7 +36,7 @@ import { useBillingReconciliation } from "./BillingReconciliationContext";
 import { useAuth } from "../../lib/auth";
 import { canOperateFinance } from "../../lib/rbac";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 30;
 
 type Props = {
   reloadKey?: number;
@@ -130,44 +131,49 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
   }
 
   return (
-    <Stack gap={3}>
-      <Box display={{ base: "block", lg: "none" }}>
-        <MobilePageChrome
-          title="Unallocated M-Pesa"
-          searchValue={searchInput}
-          onSearchChange={setSearchInput}
-          searchPlaceholder="Receipt, account, phone…"
-          headerActions={
-            allowSync ? (
-              <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
-                <FiRefreshCw />
-              </Button>
-            ) : undefined
-          }
-        />
-      </Box>
+    <ListPageTableSection
+      chrome={
+        <ListPageStickyChrome>
+          <Box display={{ base: "block", lg: "none" }}>
+            <MobilePageChrome
+              title="Unallocated M-Pesa"
+              searchValue={searchInput}
+              onSearchChange={setSearchInput}
+              searchPlaceholder="Receipt, account, phone…"
+              headerActions={
+                allowSync ? (
+                  <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+                    <FiRefreshCw />
+                  </Button>
+                ) : undefined
+              }
+            />
+          </Box>
 
-      <FilterToolbar
-        actions={
-          <DataTableExportButton
-            entityLabel="unallocated payments"
-            viewCount={rows.length}
-            totalCount={filtered.length}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        }
-      >
-        <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
-          <Input
-            size="sm"
-            placeholder="Receipt, account ref, phone, customer…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-        </FilterField>
-      </FilterToolbar>
-
+          <FilterToolbar
+            embedded
+            actions={
+              <DataTableExportButton
+                entityLabel="unallocated payments"
+                viewCount={rows.length}
+                totalCount={filtered.length}
+                loading={exporting}
+                onExport={handleExport}
+              />
+            }
+          >
+            <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
+              <Input
+                size="sm"
+                placeholder="Receipt, account ref, phone, customer…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </FilterField>
+          </FilterToolbar>
+        </ListPageStickyChrome>
+      }
+    >
       {error && (
         <Text color="red.600" fontSize="sm">
           {error}
@@ -311,6 +317,6 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
       />
         </DataTableCard>
       )}
-    </Stack>
+    </ListPageTableSection>
   );
 }

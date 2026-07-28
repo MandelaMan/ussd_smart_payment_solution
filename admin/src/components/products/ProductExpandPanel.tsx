@@ -1,5 +1,5 @@
 import { Box, Button, Flex, Text } from "@chakra-ui/react";
-import { FiEdit2, FiPackage } from "react-icons/fi";
+import { FiEdit2, FiPackage, FiTrash2 } from "react-icons/fi";
 import { formatCurrency, splitVatInclusive, type Product } from "../../lib/api";
 import { formatTitleCase } from "../../lib/formatText";
 import { EntityExpandShell, StatusPill } from "../module/EntityExpandShell";
@@ -7,7 +7,9 @@ import { EntityExpandShell, StatusPill } from "../module/EntityExpandShell";
 type Props = {
   product: Product;
   onEdit: (product: Product) => void;
+  onDelete?: (product: Product) => void;
   canEdit?: boolean;
+  deleting?: boolean;
 };
 
 function periodPriceLabel(frequency: Product["paymentFrequency"]) {
@@ -21,7 +23,13 @@ function periodPriceLabel(frequency: Product["paymentFrequency"]) {
   }
 }
 
-export function ProductExpandPanel({ product, onEdit, canEdit = true }: Props) {
+export function ProductExpandPanel({
+  product,
+  onEdit,
+  onDelete,
+  canEdit = true,
+  deleting = false,
+}: Props) {
   const { exclVat, vat } = splitVatInclusive(product.price);
   const extraBandwidth = Number(product.extraBandwidth || 0);
   const totalBandwidth = Number(product.mbps || 0) + extraBandwidth;
@@ -50,10 +58,24 @@ export function ProductExpandPanel({ product, onEdit, canEdit = true }: Props) {
       } · ${formatTitleCase(product.paymentFrequency)}`}
       value={
         canEdit ? (
-          <Button size="sm" variant="outline" onClick={() => onEdit(product)}>
-            <FiEdit2 />
-            Edit price
-          </Button>
+          <Flex gap={2} flexWrap="wrap">
+            <Button size="sm" variant="outline" onClick={() => onEdit(product)}>
+              <FiEdit2 />
+              Edit
+            </Button>
+            {onDelete ? (
+              <Button
+                size="sm"
+                variant="outline"
+                colorPalette="red"
+                loading={deleting}
+                onClick={() => onDelete(product)}
+              >
+                <FiTrash2 />
+                Delete
+              </Button>
+            ) : null}
+          </Flex>
         ) : undefined
       }
       status={

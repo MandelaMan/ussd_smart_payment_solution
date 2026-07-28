@@ -37,11 +37,9 @@ function LayoutShell() {
           flex="1"
           minH={0}
           minW={0}
-          // Avoid a flex-column scrollport on mobile — it breaks position:sticky headers.
-          display={{ base: "block", lg: "flex" }}
-          flexDirection="column"
+          display="block"
           overflow="auto"
-          overflowX="hidden"
+          overflowX="auto"
           WebkitOverflowScrolling="touch"
           p={{ base: 0, lg: 3 }}
           pt={{ base: 0, lg: 3 }}
@@ -53,10 +51,12 @@ function LayoutShell() {
           }}
         >
           <Box
-            flex={{ lg: 1 }}
             minW={0}
             w="full"
+            h={{ lg: "100%" }}
             minH={{ lg: 0 }}
+            display={{ lg: "flex" }}
+            flexDirection="column"
             px={{ base: 4, lg: 0 }}
           >
             <MobilePageTransition />

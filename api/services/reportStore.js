@@ -761,12 +761,18 @@ async function churnAnalysis(from, to) {
     { key: "building", label: "Building" },
     { key: "package", label: "Last Package" },
     { key: "customer_type", label: "Type" },
+    { key: "cancellation_reason", label: "Reason" },
+    { key: "onu_collected_at", label: "ONU Collected" },
+    { key: "dstv_decoder_collected_at", label: "DSTV Decoder Collected" },
     { key: "tenure_days", label: "Tenure (Days)" },
   ];
   const rows = await query(
     `SELECT c.updated_at AS cancelled_at, c.customer_number,
       CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name) AS full_name,
       b.name AS building, p.name AS package, c.customer_type,
+      COALESCE(c.cancellation_reason, '') AS cancellation_reason,
+      c.onu_collected_at,
+      c.dstv_decoder_collected_at,
       DATEDIFF(c.updated_at, c.created_at) AS tenure_days
      FROM customers c
      JOIN buildings b ON b.id = c.building_id
@@ -795,6 +801,9 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
     c.customer_type,
     COALESCE(c.subscription_status, '') AS subscription_status,
     c.last_payment_date,
+    COALESCE(c.cancellation_reason, '') AS cancellation_detail,
+    c.onu_collected_at,
+    c.dstv_decoder_collected_at,
     NULL AS oldest_overdue_date,
     0 AS outstanding_balance
   FROM customers c
@@ -816,6 +825,9 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
     c.customer_type,
     COALESCE(c.subscription_status, '') AS subscription_status,
     c.last_payment_date,
+    COALESCE(e.notes, '') AS cancellation_detail,
+    NULL AS onu_collected_at,
+    NULL AS dstv_decoder_collected_at,
     NULL AS oldest_overdue_date,
     0 AS outstanding_balance
   FROM customer_events e
@@ -838,6 +850,9 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
     c.customer_type,
     COALESCE(c.subscription_status, '') AS subscription_status,
     c.last_payment_date,
+    '' AS cancellation_detail,
+    NULL AS onu_collected_at,
+    NULL AS dstv_decoder_collected_at,
     MIN(zi.due_date) AS oldest_overdue_date,
     ROUND(SUM(COALESCE(zi.balance_due, 0)), 2) AS outstanding_balance
   FROM customers c
@@ -869,6 +884,9 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
     c.customer_type,
     COALESCE(c.subscription_status, '') AS subscription_status,
     c.last_payment_date,
+    '' AS cancellation_detail,
+    NULL AS onu_collected_at,
+    NULL AS dstv_decoder_collected_at,
     MIN(zi.due_date) AS oldest_overdue_date,
     ROUND(SUM(COALESCE(zi.balance_due, 0)), 2) AS outstanding_balance
   FROM customers c
@@ -967,6 +985,7 @@ async function monthlyPaymentChurn(month) {
   const headers = [
     { key: "month", label: "Month" },
     { key: "churn_reason", label: "Reason" },
+    { key: "cancellation_detail", label: "Cancellation notes" },
     { key: "churned_at", label: "Date" },
     { key: "customer_number", label: "Customer No." },
     { key: "full_name", label: "Name" },
@@ -974,6 +993,8 @@ async function monthlyPaymentChurn(month) {
     { key: "package", label: "Package" },
     { key: "customer_type", label: "Type" },
     { key: "subscription_status", label: "Service Status" },
+    { key: "onu_collected_at", label: "ONU Collected" },
+    { key: "dstv_decoder_collected_at", label: "DSTV Decoder Collected" },
     { key: "last_payment_date", label: "Last Payment" },
     { key: "oldest_overdue_date", label: "Oldest Overdue" },
     { key: "outstanding_balance", label: "Outstanding (KES)" },
@@ -983,6 +1004,7 @@ async function monthlyPaymentChurn(month) {
     `SELECT
        ? AS month,
        x.churn_reason,
+       x.cancellation_detail,
        x.churned_at,
        x.customer_number,
        x.full_name,
@@ -990,6 +1012,8 @@ async function monthlyPaymentChurn(month) {
        x.package,
        x.customer_type,
        x.subscription_status,
+       x.onu_collected_at,
+       x.dstv_decoder_collected_at,
        x.last_payment_date,
        x.oldest_overdue_date,
        x.outstanding_balance

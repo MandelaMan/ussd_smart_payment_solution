@@ -4,6 +4,7 @@ const {
   postSetClientDetails,
   buildTispCreateClientPayload,
   buildTispUpdateClientDetailsPayload,
+  resolveTispPackageType,
   formatTispError,
   accountExistsOnTisp,
   formatTispDueDate,
@@ -11,6 +12,7 @@ const {
   isTispAccountMissingError,
 } = require("./tisp.controller");
 const store = require("../services/customerModuleStore");
+const oltEmsService = require("../services/oltEmsService");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
 const { onboardNewCustomerBilling } = require("../services/customerBillingOnboarding");
 const { logActivity } = require("../services/activityLogStore");
@@ -935,9 +937,9 @@ async function refreshTispStatusWithCooldown(customer) {
 }
 
 async function resolveTispBuildingName(ctx) {
-  let name = String(ctx.building_name || "").trim();
-  if (!name && ctx.building_id) {
-    const building = await store.getBuildingById(ctx.building_id);
+  let name = String(ctx.building_name || ctx.buildingName || "").trim();
+  if (!name && (ctx.building_id || ctx.buildingId)) {
+    const building = await store.getBuildingById(ctx.building_id || ctx.buildingId);
     name = String(building?.name || "").trim();
   }
   if (!name) {
@@ -946,64 +948,100 @@ async function resolveTispBuildingName(ctx) {
   return name;
 }
 
+/** Resolve STATIC/PPOE from context or building — never default PackageType silently. */
+async function resolveTispBuildingIpSetup(ctx) {
+  let ipSetup = ctx.ip_setup ?? ctx.ipSetup ?? null;
+  if (!ipSetup && (ctx.building_id || ctx.buildingId)) {
+    const building = await store.getBuildingById(ctx.building_id || ctx.buildingId);
+    ipSetup = building?.ipSetup ?? building?.ip_setup ?? null;
+  }
+  // Validates / normalizes (throws if missing or unknown).
+  resolveTispPackageType(ipSetup);
+  return ipSetup;
+}
+
 function tispPayloadInput(ctx, buildingName, options = {}) {
-  const isB2B = String(ctx.customer_type || "").toUpperCase() === "B2B";
+  const isB2B = String(ctx.customer_type || ctx.customerType || "").toUpperCase() === "B2B";
+  const ipSetup = ctx.ip_setup ?? ctx.ipSetup;
+  const firstName = ctx.first_name ?? ctx.firstName;
+  const middleName = ctx.middle_name ?? ctx.middleName;
+  const lastName = ctx.last_name ?? ctx.lastName;
+  const customerNumber = ctx.customer_number ?? ctx.customerNumber;
+  const apartmentNumber = ctx.apartment_number ?? ctx.apartmentNumber;
+  const ppoeUsername =
+    ctx.ppoe_username ??
+    ctx.ppoeUsername ??
+    (String(ipSetup || "").toUpperCase() === "PPOE"
+      ? customerNumber
+      : apartmentNumber);
   return {
-    firstName: ctx.first_name,
-    middleName: ctx.middle_name,
-    lastName: ctx.last_name,
+    firstName,
+    middleName,
+    lastName,
     buildingName,
-    customerNumber: ctx.customer_number,
-    customerType: ctx.customer_type,
-    ipSetup: ctx.ip_setup,
-    planName: ctx.plan_name,
-    mbps: ctx.product_mbps,
-    categoryName: ctx.category_name,
-    productName: ctx.product_name,
-    apartmentNumber: ctx.apartment_number,
-    tispPassword: ctx.tisp_password,
-    ppoeUsername:
-      ctx.ppoe_username ||
-      (String(ctx.ip_setup || "").toUpperCase() === "PPOE"
-        ? ctx.customer_number
-        : ctx.apartment_number),
-    ipAddress: ctx.ip_address,
+    customerNumber,
+    customerType: ctx.customer_type ?? ctx.customerType,
+    ipSetup,
+    planName: ctx.plan_name ?? ctx.planName,
+    mbps: ctx.product_mbps ?? ctx.productMbps,
+    categoryName: ctx.category_name ?? ctx.categoryName,
+    productName: ctx.product_name ?? ctx.productName,
+    apartmentNumber,
+    tispPassword: ctx.tisp_password ?? ctx.tispPassword,
+    ppoeUsername,
+    ipAddress: ctx.ip_address ?? ctx.ipAddress,
     email: resolveEffectiveCustomerEmail(
-      { email: ctx.email, customer_type: ctx.customer_type },
-      { email: ctx.agency_email }
+      {
+        email: ctx.email,
+        customer_type: ctx.customer_type ?? ctx.customerType,
+      },
+      { email: ctx.agency_email ?? ctx.agencyEmail }
     ),
     phone: resolveEffectiveCustomerPhone(
-      { phone: ctx.phone, customer_type: ctx.customer_type },
-      { phone: ctx.agency_phone }
+      {
+        phone: ctx.phone,
+        customer_type: ctx.customer_type ?? ctx.customerType,
+      },
+      { phone: ctx.agency_phone ?? ctx.agencyPhone }
     ),
     // Do not pass paymentFrequency — TISP BillingCycle is always Monthly.
-    isVatExempt: Boolean(ctx.is_vat_exempt),
-    agencyName: ctx.agency_name || null,
-    agencyContactPerson: ctx.agency_contact_person || null,
-    agencyPhone: ctx.agency_phone || null,
-    agencyEmail: ctx.agency_email || null,
+    isVatExempt: Boolean(ctx.is_vat_exempt ?? ctx.isVatExempt),
+    agencyName: ctx.agency_name ?? ctx.agencyName ?? null,
+    agencyContactPerson: ctx.agency_contact_person ?? ctx.agencyContactPerson ?? null,
+    agencyPhone: ctx.agency_phone ?? ctx.agencyPhone ?? null,
+    agencyEmail: ctx.agency_email ?? ctx.agencyEmail ?? null,
     contactPerson: isB2B
-      ? ctx.agency_contact_person || ctx.first_name
-      : ctx.first_name,
+      ? ctx.agency_contact_person ||
+        ctx.agencyContactPerson ||
+        firstName
+      : firstName,
     dueDate: options.dueDate || TISP_STANDARD_DUE_DATE,
   };
 }
 
 async function createCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
+  const ipSetup = await resolveTispBuildingIpSetup(ctx);
   const payload = buildTispCreateClientPayload(
-    tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate })
+    tispPayloadInput(
+      { ...ctx, ip_setup: ipSetup, ipSetup },
+      buildingName,
+      { dueDate: meta.dueDate }
+    )
   );
   const result = await postSetClientDetails(payload, {
     customerId: ctx.id,
-    customerNumber: ctx.customer_number,
+    customerNumber: ctx.customer_number ?? ctx.customerNumber,
     operation: "set_client_create",
     parentLogId: meta.parentLogId ?? null,
   });
   if (meta.skipStatusRefresh !== true) {
     try {
       await refreshTispStatus(
-        { id: ctx.id, customerNumber: ctx.customer_number },
+        {
+          id: ctx.id,
+          customerNumber: ctx.customer_number ?? ctx.customerNumber,
+        },
         { preferredDueDate: meta.dueDate }
       );
     } catch {
@@ -1015,14 +1053,19 @@ async function createCustomerOnTisp(ctx, meta = {}) {
 
 async function updateCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
+  const ipSetup = await resolveTispBuildingIpSetup(ctx);
   const accountNumber = String(
-    meta.accountNumber || ctx.customer_number || ""
+    meta.accountNumber || ctx.customer_number || ctx.customerNumber || ""
   )
     .trim()
     .toUpperCase();
 
   const input = {
-    ...tispPayloadInput(ctx, buildingName, { dueDate: meta.dueDate }),
+    ...tispPayloadInput(
+      { ...ctx, ip_setup: ipSetup, ipSetup },
+      buildingName,
+      { dueDate: meta.dueDate }
+    ),
     customerNumber: accountNumber,
   };
 
@@ -3255,41 +3298,63 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
 
 async function cancelSubscription(req, res, next) {
   try {
-    const { notes } = req.body || {};
+    const {
+      notes,
+      reason,
+      onuCollectedAt,
+      dstvDecoderCollectedAt,
+    } = req.body || {};
     const customerId = Number(req.params.id);
-    await store.cancelCustomer(customerId, notes);
+    await store.cancelCustomer(customerId, {
+      notes,
+      reason: reason || notes,
+      onuCollectedAt,
+      dstvDecoderCollectedAt,
+    });
     const cancellationDate = new Date();
-    const integrations = await syncCancellationIntegrations(
-      customerId,
-      cancellationDate
-    );
     const customer = await store.getCustomerById(customerId);
 
-    const tispOk = integrations.tisp?.ok !== false;
-    const zohoOk = integrations.zoho?.ok !== false;
-
-    await logActivity({
-      eventType: "customer_cancelled",
-      title: "Customer subscription cancelled",
-      message: [
-        customer?.customerNumber || "",
-        integrations.tisp?.dueDate
-          ? `TISP due ${integrations.tisp.dueDate}`
-          : null,
-        integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
-      ]
-        .filter(Boolean)
-        .join(" · "),
-      source: "admin",
-      status: tispOk && zohoOk ? "success" : "failed",
-      customerRef: customer?.customerNumber,
+    // TISP + Zoho after response — local cancel is already committed.
+    setImmediate(() => {
+      syncCancellationIntegrations(customerId, cancellationDate)
+        .then(async (integrations) => {
+          const tispOk = integrations.tisp?.ok !== false;
+          const zohoOk = integrations.zoho?.ok !== false;
+          try {
+            await logActivity({
+              eventType: "customer_cancelled",
+              title: "Customer subscription cancelled",
+              message: [
+                customer?.customerNumber || "",
+                customer?.cancellationReason || null,
+                integrations.tisp?.dueDate
+                  ? `TISP due ${integrations.tisp.dueDate}`
+                  : null,
+                integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+              source: "admin",
+              status: tispOk && zohoOk ? "success" : "failed",
+              customerRef: customer?.customerNumber,
+            });
+          } catch (logErr) {
+            console.error("activity log (cancel) failed:", logErr.message);
+          }
+        })
+        .catch((err) => {
+          console.error(
+            `[cancelSubscription] background sync failed for ${customerId}:`,
+            err?.message || err
+          );
+        });
     });
 
     return res.json({
       ok: true,
       customer,
-      tisp: integrations.tisp,
-      zoho: integrations.zoho,
+      tisp: { ok: true, pending: true },
+      zoho: { ok: true, pending: true },
     });
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });
@@ -3349,6 +3414,11 @@ async function disconnectCustomer(req, res, next) {
 
     const tisp = await stopTispServiceToday(ctx);
 
+    const olt = await oltEmsService.deactivateOnuForCustomer(ctx, {
+      customerId: ctx.id,
+      customerNumber: ctx.customer_number,
+    });
+
     await store.disconnectCustomer(customerId, notes);
 
     try {
@@ -3382,11 +3452,13 @@ async function disconnectCustomer(req, res, next) {
         tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
         tisp.skipped ? "not on TISP" : null,
         tisp.error || null,
+        olt.skipped ? null : olt.ok ? "OLT ONU deactivated" : olt.error,
+        olt.skipped ? `OLT skipped (${olt.reason})` : null,
       ]
         .filter(Boolean)
         .join(" · "),
       source: "admin",
-      status: tisp.ok ? "success" : "failed",
+      status: tisp.ok && (olt.ok || olt.skipped) ? "success" : "failed",
       customerRef: customer?.customerNumber,
     });
 
@@ -3394,6 +3466,7 @@ async function disconnectCustomer(req, res, next) {
       ok: true,
       customer,
       tisp,
+      olt,
     });
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });
@@ -3421,6 +3494,11 @@ async function pauseCustomer(req, res, next) {
     }
 
     const tisp = await stopTispServiceToday(ctx);
+
+    const olt = await oltEmsService.deactivateOnuForCustomer(ctx, {
+      customerId: ctx.id,
+      customerNumber: ctx.customer_number,
+    });
 
     await store.pauseCustomer(customerId, notes);
 
@@ -3455,11 +3533,13 @@ async function pauseCustomer(req, res, next) {
         tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
         tisp.skipped ? "not on TISP" : null,
         tisp.error || null,
+        olt.skipped ? null : olt.ok ? "OLT ONU deactivated" : olt.error,
+        olt.skipped ? `OLT skipped (${olt.reason})` : null,
       ]
         .filter(Boolean)
         .join(" · "),
       source: "admin",
-      status: tisp.ok ? "success" : "failed",
+      status: tisp.ok && (olt.ok || olt.skipped) ? "success" : "failed",
       customerRef: customer?.customerNumber,
     });
 
@@ -3467,7 +3547,26 @@ async function pauseCustomer(req, res, next) {
       ok: true,
       customer,
       tisp,
+      olt,
     });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
+async function linkCustomerOlt(req, res, next) {
+  try {
+    const customerId = Number(req.params.id);
+    const { oltMac, onuIndexStr, onuSn } = req.body || {};
+
+    const customer = await store.updateCustomerOltMapping(customerId, {
+      oltMac,
+      onuIndexStr,
+      onuSn,
+    });
+
+    return res.json({ ok: true, customer });
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });
     return next(err);
@@ -3509,7 +3608,7 @@ async function deleteCustomerPermanently(req, res, next) {
 
 async function bulkCancelSubscriptions(req, res, next) {
   try {
-    const { ids, notes } = req.body || {};
+    const { ids, notes, reason, onuCollectedAt, dstvDecoderCollectedAt } = req.body || {};
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: "ids array is required" });
     }
@@ -3523,42 +3622,27 @@ async function bulkCancelSubscriptions(req, res, next) {
       return res.status(400).json({ error: "No valid customer ids provided" });
     }
 
+    const cancelPayload = {
+      notes,
+      reason: reason || notes,
+      onuCollectedAt,
+      dstvDecoderCollectedAt,
+    };
+
     const results = [];
+    const cancelledIds = [];
     for (const id of uniqueIds) {
       try {
-        await store.cancelCustomer(id, notes);
-        const integrations = await syncCancellationIntegrations(id, new Date());
+        await store.cancelCustomer(id, cancelPayload);
         const customer = await store.getCustomerById(id);
+        cancelledIds.push(id);
         results.push({
           id,
           ok: true,
           customerNumber: customer?.customerNumber || null,
-          tisp: integrations.tisp,
-          zoho: integrations.zoho,
+          tisp: { ok: true, pending: true },
+          zoho: { ok: true, pending: true },
         });
-        try {
-          await logActivity({
-            eventType: "customer_cancelled",
-            title: "Customer subscription cancelled",
-            message: [
-              customer?.customerNumber || "",
-              integrations.tisp?.dueDate
-                ? `TISP due ${integrations.tisp.dueDate}`
-                : null,
-              integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
-            ]
-              .filter(Boolean)
-              .join(" · "),
-            source: "admin",
-            status:
-              integrations.tisp?.ok !== false && integrations.zoho?.ok !== false
-                ? "success"
-                : "failed",
-            customerRef: customer?.customerNumber,
-          });
-        } catch (logErr) {
-          console.error("activity log (bulk cancel) failed:", logErr.message);
-        }
       } catch (e) {
         results.push({
           id,
@@ -3566,6 +3650,49 @@ async function bulkCancelSubscriptions(req, res, next) {
           error: e.message,
         });
       }
+    }
+
+    if (cancelledIds.length) {
+      const cancellationDate = new Date();
+      setImmediate(() => {
+        void (async () => {
+          for (const id of cancelledIds) {
+            try {
+              const integrations = await syncCancellationIntegrations(
+                id,
+                cancellationDate
+              );
+              const customer = await store.getCustomerById(id);
+              await logActivity({
+                eventType: "customer_cancelled",
+                title: "Customer subscription cancelled",
+                message: [
+                  customer?.customerNumber || "",
+                  customer?.cancellationReason || null,
+                  integrations.tisp?.dueDate
+                    ? `TISP due ${integrations.tisp.dueDate}`
+                    : null,
+                  integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
+                source: "admin",
+                status:
+                  integrations.tisp?.ok !== false &&
+                  integrations.zoho?.ok !== false
+                    ? "success"
+                    : "failed",
+                customerRef: customer?.customerNumber,
+              });
+            } catch (err) {
+              console.error(
+                `[bulkCancel] background sync failed for ${id}:`,
+                err?.message || err
+              );
+            }
+          }
+        })();
+      });
     }
 
     const succeeded = results.filter((r) => r.ok).length;
@@ -4502,6 +4629,7 @@ module.exports = {
   cancelSubscription,
   disconnectCustomer,
   pauseCustomer,
+  linkCustomerOlt,
   deleteCustomerPermanently,
   bulkCancelSubscriptions,
   apartmentHistory,

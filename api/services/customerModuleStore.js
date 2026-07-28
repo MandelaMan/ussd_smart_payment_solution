@@ -222,6 +222,9 @@ function mapCustomerRow(row) {
     customerNumber: row.customer_number,
     ipSetup: row.ip_setup || row.building_ip_setup || null,
     ppoeUsername: row.ppoe_username || null,
+    oltMac: row.olt_mac || null,
+    onuIndexStr: row.onu_index_str || null,
+    onuSn: row.onu_sn || null,
     tispPassword: row.tisp_password || null,
     packagePrice: Number(row.package_price),
     decoderFeeAmount:
@@ -246,6 +249,13 @@ function mapCustomerRow(row) {
       : null,
     tispDueDate: row.tisp_due_date ? String(row.tisp_due_date) : null,
     status: row.status,
+    cancellationReason: row.cancellation_reason || null,
+    onuCollectedAt: row.onu_collected_at
+      ? String(row.onu_collected_at).slice(0, 10)
+      : null,
+    dstvDecoderCollectedAt: row.dstv_decoder_collected_at
+      ? String(row.dstv_decoder_collected_at).slice(0, 10)
+      : null,
     upgradePaymentStatus: row.upgrade_payment_status || "none",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -662,22 +672,31 @@ async function updateProduct(id, data) {
   const fields = [];
   const params = [];
 
+  let nextBuildingId = Number(existing.building_id);
+  if (data.buildingId != null || data.building_id != null) {
+    nextBuildingId = Number(data.buildingId ?? data.building_id);
+    const building = await getBuildingById(nextBuildingId);
+    if (!building) throw new Error("Building not found");
+    fields.push("building_id = ?");
+    params.push(nextBuildingId);
+  }
+
+  let nextMbps = Number(existing.mbps);
   if (data.planVariantId != null) {
     const variant = await catalogStore.getPlanVariantDetails(
       Number(data.planVariantId)
     );
     if (!variant) throw new Error("Invalid plan variant");
+    nextMbps = Number(variant.defaultMbps);
     fields.push(
       "plan_variant_id = ?",
       "name = ?",
-      "mbps = ?",
       "payment_frequency = ?",
       "has_dstv = ?"
     );
     params.push(
       variant.id,
       variant.displayName,
-      variant.defaultMbps,
       variant.paymentFrequency,
       variant.hasDstv ? 1 : 0
     );
@@ -704,19 +723,78 @@ async function updateProduct(id, data) {
     const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
     const src = data[camel] ?? data[key];
     if (src !== undefined) {
+      const value = transform(src);
+      if (key === "mbps") nextMbps = value;
       fields.push(`${key} = ?`);
-      params.push(transform(src));
+      params.push(value);
     }
+  }
+
+  // Apply resolved Mbps once after plan-variant defaults so custom speed wins.
+  if (data.planVariantId != null && data.mbps === undefined) {
+    fields.push("mbps = ?");
+    params.push(nextMbps);
   }
 
   const nextPrice =
     data.price !== undefined ? Number(data.price) : Number(existing.price);
-  await assertUniquePriceInBuilding(existing.building_id, nextPrice, id);
+  await assertUniquePriceInBuilding(nextBuildingId, nextPrice, id);
 
   if (!fields.length) throw new Error("No changes to save");
   params.push(id);
   await query(`UPDATE products SET ${fields.join(", ")} WHERE id = ?`, params);
   return getProductListRow(id);
+}
+
+async function deleteProduct(id) {
+  const existing = await getProductById(id);
+  if (!existing) throw new Error("Product not found");
+
+  const [customerCount] = await query(
+    `SELECT COUNT(*) AS total FROM customers WHERE product_id = ?`,
+    [id]
+  );
+  const linkedCustomers = Number(customerCount?.total || 0);
+  if (linkedCustomers > 0) {
+    throw new Error(
+      `Cannot delete package — ${linkedCustomers} customer${
+        linkedCustomers === 1 ? " is" : "s are"
+      } still assigned to it. Reassign or deactivate them first, or mark the package inactive.`
+    );
+  }
+
+  const [pendingCount] = await query(
+    `SELECT COUNT(*) AS total FROM pending_upgrades
+     WHERE target_product_id = ? AND status = 'payment_pending'`,
+    [id]
+  );
+  const linkedPending = Number(pendingCount?.total || 0);
+  if (linkedPending > 0) {
+    throw new Error(
+      `Cannot delete package — ${linkedPending} pending upgrade${
+        linkedPending === 1 ? " is" : "s are"
+      } targeting it`
+    );
+  }
+
+  // Clear completed/failed upgrade rows that would block the FK.
+  await query(`DELETE FROM pending_upgrades WHERE target_product_id = ?`, [id]);
+  await query(
+    `UPDATE customer_events
+     SET old_product_id = NULL
+     WHERE old_product_id = ?`,
+    [id]
+  );
+  await query(
+    `UPDATE customer_events
+     SET new_product_id = NULL
+     WHERE new_product_id = ?`,
+    [id]
+  );
+
+  const result = await query(`DELETE FROM products WHERE id = ?`, [id]);
+  if (!result.affectedRows) throw new Error("Product not found");
+  return { id: Number(id) };
 }
 
 async function listAgencies(filters = {}) {
@@ -1963,37 +2041,105 @@ async function switchCustomerApartment(
   };
 }
 
-async function cancelCustomer(customerId, notes) {
+async function cancelCustomer(customerId, payload = {}) {
+  const normalized =
+    typeof payload === "string" ? { notes: payload, reason: payload } : payload || {};
+  const reason = String(normalized.reason || normalized.notes || "").trim();
+  if (!reason) {
+    throw new Error("Cancellation reason is required");
+  }
+
   const customer = await getCustomerContext(customerId);
   if (!customer) throw new Error("Customer not found");
   if (customer.status === "cancelled") {
     throw new Error("Customer is already cancelled");
   }
 
+  const onuCollectedAt = parseCancellationDate(
+    normalized.onuCollectedAt,
+    "ONU collected date"
+  );
+  if (!onuCollectedAt) {
+    throw new Error("ONU collected date is required");
+  }
+
+  const needsDstvDecoder =
+    Boolean(customer.product_has_dstv) &&
+    String(customer.dstv_setup || "decoder") === "decoder";
+  let dstvDecoderCollectedAt = null;
+  if (needsDstvDecoder) {
+    dstvDecoderCollectedAt = parseCancellationDate(
+      normalized.dstvDecoderCollectedAt,
+      "DSTV decoder collected date"
+    );
+    if (!dstvDecoderCollectedAt) {
+      throw new Error(
+        "DSTV decoder collected date is required for DSTV decoder packages"
+      );
+    }
+  }
+
   await query(
     `UPDATE customers
      SET status = 'cancelled',
-         subscription_status = 'Cancelled'
+         subscription_status = 'Cancelled',
+         cancellation_reason = ?,
+         onu_collected_at = ?,
+         dstv_decoder_collected_at = ?
      WHERE id = ?`,
-    [customerId]
+    [reason, onuCollectedAt, dstvDecoderCollectedAt, customerId]
   );
 
   await query(
     `UPDATE apartment_history
      SET moved_out_at = NOW(),
          reason = 'cancel',
-         ip_address = COALESCE(NULLIF(TRIM(ip_address), ''), ?)
+         ip_address = COALESCE(NULLIF(TRIM(ip_address), ''), ?),
+         onu_collected_at = ?,
+         dstv_decoder_collected_at = ?
      WHERE customer_id = ? AND moved_out_at IS NULL`,
-    [customer.ip_address || null, customerId]
+    [
+      customer.ip_address || null,
+      onuCollectedAt,
+      dstvDecoderCollectedAt,
+      customerId,
+    ]
   );
+
+  const eventNotes = buildCancellationEventNotes({
+    reason,
+    onuCollectedAt,
+    dstvDecoderCollectedAt,
+  });
 
   await query(
     `INSERT INTO customer_events (customer_id, event_type, old_apartment, notes)
      VALUES (?, 'cancel', ?, ?)`,
-    [customerId, customer.apartment_number, notes || "Subscription cancelled"]
+    [customerId, customer.apartment_number, eventNotes]
   );
 
   return customer;
+}
+
+function parseCancellationDate(value, label) {
+  if (value == null || value === "") return null;
+  const raw = String(value).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new Error(`${label} must be a valid date (YYYY-MM-DD)`);
+  }
+  return raw;
+}
+
+function buildCancellationEventNotes({
+  reason,
+  onuCollectedAt,
+  dstvDecoderCollectedAt,
+}) {
+  const parts = [`Reason: ${reason}`, `ONU collected: ${onuCollectedAt}`];
+  if (dstvDecoderCollectedAt) {
+    parts.push(`DSTV decoder collected: ${dstvDecoderCollectedAt}`);
+  }
+  return parts.join(" · ");
 }
 
 /**
@@ -2293,6 +2439,32 @@ async function updateCustomerDetails(id, data, options = {}) {
   };
 }
 
+async function updateCustomerOltMapping(id, { oltMac, onuIndexStr, onuSn }) {
+  const customer = await getCustomerById(id);
+  if (!customer) throw new Error("Customer not found");
+
+  const indexStr = String(onuIndexStr || "").trim();
+  if (!indexStr) {
+    throw new Error("ONU index is required");
+  }
+
+  const mac = String(oltMac || process.env.OLT_EMS_DEFAULT_MAC || "").trim();
+  if (!mac) {
+    throw new Error("OLT MAC is required");
+  }
+
+  const sn = onuSn ? String(onuSn).trim() : null;
+
+  await query(
+    `UPDATE customers
+     SET olt_mac = ?, onu_index_str = ?, onu_sn = ?
+     WHERE id = ?`,
+    [mac, indexStr, sn, id]
+  );
+
+  return getCustomerById(id);
+}
+
 async function convertCustomerType(customerId, targetType, agencyId = null) {
   const customer = await getCustomerContext(customerId);
   if (!customer) throw new Error("Customer not found");
@@ -2389,7 +2561,10 @@ async function getApartmentHistory(buildingId, apartmentNumber) {
             COALESCE(
               NULLIF(TRIM(h.ip_address), ''),
               CASE WHEN h.moved_out_at IS NULL THEN NULLIF(TRIM(c.ip_address), '') ELSE NULL END
-            ) AS ipAddress
+            ) AS ipAddress,
+            h.onu_collected_at AS onuCollectedAt,
+            h.dstv_decoder_collected_at AS dstvDecoderCollectedAt,
+            c.cancellation_reason AS cancellationReason
      FROM apartment_history h
      JOIN buildings b ON b.id = h.building_id
      JOIN customers c ON c.id = h.customer_id
@@ -2426,6 +2601,13 @@ function mapApartmentHistoryRow(row) {
     subscriptionStatus: row.subscriptionStatus,
     productName: row.productName,
     productMbps: row.productMbps != null ? Number(row.productMbps) : null,
+    onuCollectedAt: row.onuCollectedAt
+      ? String(row.onuCollectedAt).slice(0, 10)
+      : null,
+    dstvDecoderCollectedAt: row.dstvDecoderCollectedAt
+      ? String(row.dstvDecoderCollectedAt).slice(0, 10)
+      : null,
+    cancellationReason: row.cancellationReason || null,
   };
 }
 
@@ -2494,7 +2676,10 @@ async function listApartmentHistory(filters = {}) {
             COALESCE(
               NULLIF(TRIM(h.ip_address), ''),
               CASE WHEN h.moved_out_at IS NULL THEN NULLIF(TRIM(c.ip_address), '') ELSE NULL END
-            ) AS ipAddress
+            ) AS ipAddress,
+            h.onu_collected_at AS onuCollectedAt,
+            h.dstv_decoder_collected_at AS dstvDecoderCollectedAt,
+            c.cancellation_reason AS cancellationReason
      FROM apartment_history h
      JOIN buildings b ON b.id = h.building_id
      JOIN customers c ON c.id = h.customer_id
@@ -3068,6 +3253,7 @@ module.exports = {
   getProductById,
   createProduct,
   updateProduct,
+  deleteProduct,
   listAgencies,
   getAgencyById,
   createAgency,
@@ -3094,6 +3280,7 @@ module.exports = {
   cancelCustomer,
   disconnectCustomer,
   pauseCustomer,
+  updateCustomerOltMapping,
   deleteCustomerCompletely,
   updateCustomerDetails,
   convertCustomerType,

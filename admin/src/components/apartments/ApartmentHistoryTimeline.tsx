@@ -173,6 +173,24 @@ function TimelineStep({ entry, index, total, highlight }: TimelineStepProps) {
         </Text>
       ) : null}
 
+      {entry.reason === "cancel" && entry.cancellationReason ? (
+        <Text mt={1} fontSize="2xs" color="fg.muted" lineHeight="1.45" textAlign="center" px={1}>
+          Reason: {entry.cancellationReason}
+        </Text>
+      ) : null}
+
+      {entry.reason === "cancel" && entry.onuCollectedAt ? (
+        <Text mt={0.5} fontSize="2xs" color="fg.muted" lineHeight="1.45" textAlign="center" px={1}>
+          ONU collected {formatDate(entry.onuCollectedAt)}
+        </Text>
+      ) : null}
+
+      {entry.reason === "cancel" && entry.dstvDecoderCollectedAt ? (
+        <Text mt={0.5} fontSize="2xs" color="fg.muted" lineHeight="1.45" textAlign="center" px={1}>
+          DSTV decoder collected {formatDate(entry.dstvDecoderCollectedAt)}
+        </Text>
+      ) : null}
+
       <Text mt={1} fontSize="2xs" color="fg.subtle" lineHeight="1.45" textAlign="center" px={1}>
         {REASON_DESCRIPTIONS[entry.reason] || "Occupancy record for this apartment."}
       </Text>

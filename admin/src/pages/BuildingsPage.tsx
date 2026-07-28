@@ -34,9 +34,10 @@ import { AppDialog } from "../components/ui/AppDialog";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
-import { EmptyState, PAGE_STACK_GAP } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { BuildingExpandPanel } from "../components/buildings/BuildingExpandPanel";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
 import { buildingExportColumns } from "../lib/dataTableExportColumns";
@@ -57,7 +58,7 @@ import {
   dataTableExpandRowProps,
 } from "../components/ui/DataTable";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 
 type BuildingSortKey = "name" | "c2bCode" | "b2bCode" | "ipSetup" | "createdAt";
 
@@ -285,8 +286,11 @@ export function BuildingsPage() {
   }
 
   return (
-    <Stack gap={PAGE_STACK_GAP}>
-      <MobilePageChrome
+    <ListPageStack>
+      <ListPageTableSection
+        chrome={
+          <ListPageStickyChrome>
+            <MobilePageChrome
         title="Buildings"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
@@ -357,9 +361,9 @@ export function BuildingsPage() {
             ) : null}
           </Flex>
         }
-      />
+            />
 
-      <FilterToolbar>
+            <FilterToolbar embedded>
           <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
             <Input
               size="sm"
@@ -383,7 +387,10 @@ export function BuildingsPage() {
               <option value="PPOE">PPOE</option>
             </SelectField>
           </FilterField>
-      </FilterToolbar>
+            </FilterToolbar>
+          </ListPageStickyChrome>
+        }
+      >
 
       {showForm && (
         <Box bg="bg.panel" borderRadius="lg" border="1px solid" borderColor="border.muted" p={5}>
@@ -516,6 +523,7 @@ export function BuildingsPage() {
           />
         )}
       </DataTableCard>
+      </ListPageTableSection>
 
       <AppDialog open={!!editing} onOpenChange={(d) => !d.open && closeEdit()} maxW="2xl">
         <Dialog.Header pr={12}>
@@ -537,7 +545,7 @@ export function BuildingsPage() {
           />
         </Dialog.Body>
       </AppDialog>
-    </Stack>
+    </ListPageStack>
   );
 }
 

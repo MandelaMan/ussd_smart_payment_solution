@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Box, Button, Input, Stack, Table, Text } from "@chakra-ui/react";
+import { Box, Button, Input, Table, Text } from "@chakra-ui/react";
 import { FiChevronDown, FiChevronRight, FiRefreshCw } from "react-icons/fi";
 import { useSearchParams } from "react-router-dom";
 import { useDebouncedSearch } from "../../hooks/useDebouncedValue";
@@ -24,6 +24,7 @@ import { FilterField } from "../module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../ui/FilterToolbar";
 import { SelectField } from "../ui/SelectField";
 import { MobilePageChrome } from "../ui/MobilePageChrome";
+import { ListPageStickyChrome, ListPageTableSection } from "../ui/ListPageStickyChrome";
 import {
   DataTable,
   DataTableCard,
@@ -46,7 +47,7 @@ import { useAuth } from "../../lib/auth";
 import { canOperateFinance } from "../../lib/rbac";
 
 const BROWSE_PAGE_SIZE = 10;
-const SEARCH_PAGE_SIZE = 25;
+const SEARCH_PAGE_SIZE = 30;
 
 type Column =
   | "issue"
@@ -373,80 +374,85 @@ export function BillingCustomerTable({
   );
 
   return (
-    <Stack gap={3}>
-      <Box display={{ base: "block", lg: "none" }}>
-        <MobilePageChrome
-          title={module.label}
-          searchValue={searchInput}
-          onSearchChange={setSearchInput}
-          searchPlaceholder="Exact customer number, apartment, or name…"
-          chips={
-            showIssueTypeFilter
-              ? [
-                  {
-                    key: "all",
-                    label: "All",
-                    active: !issueTypeFilter,
-                    onClick: () => setIssueTypeFilter(""),
-                  },
-                  ...BILLING_GAP_STATUSES.map((status) => ({
-                    key: status,
-                    label: BILLING_GAP_ISSUE_LABELS[status],
-                    active: issueTypeFilter === status,
-                    onClick: () => setIssueTypeFilter(status),
-                  })),
-                ]
-              : undefined
-          }
-          headerActions={
-            allowSync ? (
-              <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
-                <FiRefreshCw />
-              </Button>
-            ) : undefined
-          }
-        />
-      </Box>
+    <ListPageTableSection
+      chrome={
+        <ListPageStickyChrome>
+          <Box display={{ base: "block", lg: "none" }}>
+            <MobilePageChrome
+              title={module.label}
+              searchValue={searchInput}
+              onSearchChange={setSearchInput}
+              searchPlaceholder="Exact customer number, apartment, or name…"
+              chips={
+                showIssueTypeFilter
+                  ? [
+                      {
+                        key: "all",
+                        label: "All",
+                        active: !issueTypeFilter,
+                        onClick: () => setIssueTypeFilter(""),
+                      },
+                      ...BILLING_GAP_STATUSES.map((status) => ({
+                        key: status,
+                        label: BILLING_GAP_ISSUE_LABELS[status],
+                        active: issueTypeFilter === status,
+                        onClick: () => setIssueTypeFilter(status),
+                      })),
+                    ]
+                  : undefined
+              }
+              headerActions={
+                allowSync ? (
+                  <Button size="sm" colorPalette="brand" loading={syncing} onClick={runSync}>
+                    <FiRefreshCw />
+                  </Button>
+                ) : undefined
+              }
+            />
+          </Box>
 
-      <FilterToolbar
-        actions={
-          <DataTableExportButton
-            entityLabel="billing customers"
-            viewCount={rows.length}
-            totalCount={pagination.total}
-            loading={exporting}
-            onExport={handleExport}
-          />
-        }
-      >
-        <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
-          <Input
-            size="sm"
-            placeholder="Exact customer number, apartment, or name…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-        </FilterField>
-        {showIssueTypeFilter && (
-          <FilterField label="Gap type" flex={FILTER_FLEX.standard}>
-            <SelectField
-              size="sm"
-              fieldProps={{
-                value: issueTypeFilter,
-                onChange: (e) => setIssueTypeFilter(e.target.value),
-              }}
-            >
-              <option value="">All gap types</option>
-              {BILLING_GAP_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {BILLING_GAP_ISSUE_LABELS[status]}
-                </option>
-              ))}
-            </SelectField>
-          </FilterField>
-        )}
-      </FilterToolbar>
-
+          <FilterToolbar
+            embedded
+            actions={
+              <DataTableExportButton
+                entityLabel="billing customers"
+                viewCount={rows.length}
+                totalCount={pagination.total}
+                loading={exporting}
+                onExport={handleExport}
+              />
+            }
+          >
+            <FilterField label="Search" flex={FILTER_FLEX.search} hideOnMobile>
+              <Input
+                size="sm"
+                placeholder="Exact customer number, apartment, or name…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </FilterField>
+            {showIssueTypeFilter && (
+              <FilterField label="Gap type" flex={FILTER_FLEX.standard}>
+                <SelectField
+                  size="sm"
+                  fieldProps={{
+                    value: issueTypeFilter,
+                    onChange: (e) => setIssueTypeFilter(e.target.value),
+                  }}
+                >
+                  <option value="">All gap types</option>
+                  {BILLING_GAP_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {BILLING_GAP_ISSUE_LABELS[status]}
+                    </option>
+                  ))}
+                </SelectField>
+              </FilterField>
+            )}
+          </FilterToolbar>
+        </ListPageStickyChrome>
+      }
+    >
       {error && (
         <Text color="red.600" fontSize="sm">
           {error}
@@ -559,6 +565,6 @@ export function BillingCustomerTable({
           }
         />
       )}
-    </Stack>
+    </ListPageTableSection>
   );
 }
