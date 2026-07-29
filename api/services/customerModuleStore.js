@@ -222,7 +222,20 @@ function mapCustomerRow(row) {
     customerNumber: row.customer_number,
     ipSetup: row.ip_setup || row.building_ip_setup || null,
     ppoeUsername: row.ppoe_username || null,
-    oltMac: row.olt_mac || null,
+    buildingOltId: row.building_olt_id != null ? Number(row.building_olt_id) : null,
+    buildingOltName: row.building_olt_name || null,
+    buildingOltHost: row.building_olt_host || null,
+    buildingOltPort:
+      row.building_olt_port != null ? Number(row.building_olt_port) : null,
+    buildingOltMac: row.building_olt_mac || null,
+    buildingOltUsername: row.building_olt_username || null,
+    buildingOltConfigured: Boolean(
+      row.building_olt_host &&
+        row.building_olt_mac &&
+        row.building_olt_username &&
+        row.building_olt_password
+    ),
+    oltMac: row.olt_mac || row.building_olt_mac || null,
     onuIndexStr: row.onu_index_str || null,
     onuSn: row.onu_sn || null,
     tispPassword: row.tisp_password || null,
@@ -256,6 +269,13 @@ function mapCustomerRow(row) {
     dstvDecoderCollectedAt: row.dstv_decoder_collected_at
       ? String(row.dstv_decoder_collected_at).slice(0, 10)
       : null,
+    pauseStartDate: row.pause_start_date
+      ? String(row.pause_start_date).slice(0, 10)
+      : null,
+    pauseEndDate: row.pause_end_date
+      ? String(row.pause_end_date).slice(0, 10)
+      : null,
+    pauseReason: row.pause_reason || null,
     upgradePaymentStatus: row.upgrade_payment_status || "none",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -269,6 +289,14 @@ const CUSTOMER_SELECT = `
          b.name AS building_name,
          b.ip_setup AS ip_setup,
          b.dstv_setup AS building_dstv_setup,
+         bo.id AS linked_building_olt_id,
+         bo.name AS building_olt_name,
+         bo.host AS building_olt_host,
+         bo.port AS building_olt_port,
+         bo.mac AS building_olt_mac,
+         bo.username AS building_olt_username,
+         bo.password AS building_olt_password,
+         bo.tenant_id AS building_olt_tenant_id,
          p.name AS product_name,
          p.mbps AS product_mbps,
          p.extra_bandwidth AS product_extra_bandwidth,
@@ -284,6 +312,7 @@ const CUSTOMER_SELECT = `
   FROM customers c
   JOIN buildings b ON b.id = c.building_id
   JOIN products p ON p.id = c.product_id
+  LEFT JOIN building_olts bo ON bo.id = c.building_olt_id
   LEFT JOIN agencies a ON a.id = c.agency_id
   LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
   LEFT JOIN package_plans pl ON pl.id = v.plan_id
@@ -332,7 +361,26 @@ async function listBuildings(filters = {}) {
     [...params, limit, offset]
   );
 
-  const buildings = rows.map(mapBuildingRow);
+  const buildingIds = rows.map((r) => r.id);
+  let oltsByBuilding = new Map();
+  if (buildingIds.length) {
+    const placeholders = buildingIds.map(() => "?").join(",");
+    const oltRows = await query(
+      `SELECT * FROM building_olts
+       WHERE building_id IN (${placeholders})
+       ORDER BY building_id, id`,
+      buildingIds
+    );
+    for (const row of oltRows) {
+      const list = oltsByBuilding.get(row.building_id) || [];
+      list.push(mapBuildingOltRow(row));
+      oltsByBuilding.set(row.building_id, list);
+    }
+  }
+
+  const buildings = rows.map((r) =>
+    mapBuildingRow(r, oltsByBuilding.get(r.id) || [])
+  );
   return {
     buildings,
     data: buildings,
@@ -345,7 +393,43 @@ async function listBuildings(filters = {}) {
   };
 }
 
-function mapBuildingRow(row) {
+function normalizeOltMac(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return null;
+  const hex = raw.replace(/[^0-9a-f]/g, "");
+  if (hex.length !== 12) {
+    throw new Error("OLT MAC must be 12 hex digits (e.g. 6c:68:a4:ee:93:74)");
+  }
+  return hex.match(/.{1,2}/g).join(":");
+}
+
+function normalizeOltHost(value) {
+  const host = String(value || "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/$/, "");
+  return host || null;
+}
+
+function mapBuildingOltRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    buildingId: row.building_id,
+    name: row.name || null,
+    host: row.host,
+    port: row.port != null ? Number(row.port) : 38881,
+    mac: row.mac,
+    username: row.username,
+    tenantId: row.tenant_id || "000000",
+    passwordConfigured: Boolean(String(row.password || "").trim()),
+    isActive: row.is_active == null ? true : Boolean(row.is_active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapBuildingRow(row, olts = []) {
   return {
     id: row.id,
     name: row.name,
@@ -353,6 +437,8 @@ function mapBuildingRow(row) {
     b2bCode: row.b2b_code,
     ipSetup: row.ip_setup,
     dstvSetup: row.dstv_setup || "decoder",
+    olts: Array.isArray(olts) ? olts : [],
+    oltCount: Array.isArray(olts) ? olts.length : 0,
     ipPrefixes: parseBuildingPrefixes(row.ip_prefixes),
     createdAt: row.created_at,
   };
@@ -447,7 +533,6 @@ async function updateBuilding(id, data) {
       ipPrefixes = [];
     } else {
       const normalized = normalizeIpPrefixes(data.ipPrefixes || []);
-      // Empty array on edit means "unchanged" — keep existing prefixes.
       if (normalized.length > 0) {
         ipPrefixes = normalized;
       }
@@ -457,7 +542,8 @@ async function updateBuilding(id, data) {
   }
 
   await query(
-    `UPDATE buildings SET name = ?, c2b_code = ?, b2b_code = ?, ip_setup = ?, dstv_setup = ?, ip_prefixes = ?
+    `UPDATE buildings
+     SET name = ?, c2b_code = ?, b2b_code = ?, ip_setup = ?, dstv_setup = ?, ip_prefixes = ?
      WHERE id = ?`,
     [name, c2bCode, b2bCode, ipSetup, dstvSetup, JSON.stringify(ipPrefixes), id]
   );
@@ -468,6 +554,132 @@ async function getBuildingById(id) {
     id,
   ]);
   return rows[0] || null;
+}
+
+async function listBuildingOlts(buildingId) {
+  const rows = await query(
+    `SELECT * FROM building_olts WHERE building_id = ? ORDER BY id`,
+    [buildingId]
+  );
+  return rows.map(mapBuildingOltRow);
+}
+
+async function getBuildingOltById(id) {
+  const rows = await query(`SELECT * FROM building_olts WHERE id = ? LIMIT 1`, [
+    id,
+  ]);
+  return rows[0] || null;
+}
+
+async function createBuildingOlt(buildingId, data) {
+  const building = await getBuildingById(buildingId);
+  if (!building) throw new Error("Building not found");
+
+  const host = normalizeOltHost(data.host ?? data.oltHost);
+  const mac = normalizeOltMac(data.mac ?? data.oltMac);
+  const username = String(data.username ?? data.oltUsername ?? "").trim();
+  const password = String(data.password ?? data.oltPassword ?? "");
+  const tenantId =
+    String(data.tenantId ?? data.oltTenantId ?? "000000").trim() || "000000";
+  const port =
+    data.port != null && String(data.port).trim() !== ""
+      ? Number(data.port)
+      : 38881;
+  const name = data.name != null ? String(data.name).trim() || null : null;
+
+  if (!host) throw new Error("OLT host is required");
+  if (!mac) throw new Error("OLT MAC is required");
+  if (!username) throw new Error("OLT username is required");
+  if (!password.trim()) throw new Error("OLT password is required");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("OLT port must be between 1 and 65535");
+  }
+
+  try {
+    const result = await query(
+      `INSERT INTO building_olts
+        (building_id, name, host, port, mac, username, password, tenant_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [buildingId, name, host, port, mac, username, password, tenantId]
+    );
+    return getBuildingOltById(result.insertId);
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      throw new Error("An OLT with this MAC already exists on this building");
+    }
+    throw err;
+  }
+}
+
+async function updateBuildingOlt(id, data) {
+  const existing = await getBuildingOltById(id);
+  if (!existing) throw new Error("OLT not found");
+
+  const host =
+    data.host !== undefined || data.oltHost !== undefined
+      ? normalizeOltHost(data.host ?? data.oltHost)
+      : existing.host;
+  const mac =
+    data.mac !== undefined || data.oltMac !== undefined
+      ? normalizeOltMac(data.mac ?? data.oltMac)
+      : existing.mac;
+  const username =
+    data.username !== undefined || data.oltUsername !== undefined
+      ? String(data.username ?? data.oltUsername ?? "").trim()
+      : existing.username;
+  let password = existing.password;
+  if (data.password !== undefined || data.oltPassword !== undefined) {
+    const incoming = String(data.password ?? data.oltPassword ?? "");
+    if (incoming.trim()) password = incoming;
+  }
+  const tenantId =
+    data.tenantId !== undefined || data.oltTenantId !== undefined
+      ? String(data.tenantId ?? data.oltTenantId ?? "000000").trim() || "000000"
+      : existing.tenant_id || "000000";
+  const port =
+    data.port !== undefined
+      ? Number(data.port)
+      : existing.port != null
+        ? Number(existing.port)
+        : 38881;
+  const name =
+    data.name !== undefined
+      ? String(data.name || "").trim() || null
+      : existing.name;
+  const isActive =
+    data.isActive !== undefined ? (data.isActive ? 1 : 0) : existing.is_active;
+
+  if (!host) throw new Error("OLT host is required");
+  if (!mac) throw new Error("OLT MAC is required");
+  if (!username) throw new Error("OLT username is required");
+  if (!String(password || "").trim()) throw new Error("OLT password is required");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("OLT port must be between 1 and 65535");
+  }
+
+  try {
+    await query(
+      `UPDATE building_olts
+       SET name = ?, host = ?, port = ?, mac = ?, username = ?, password = ?,
+           tenant_id = ?, is_active = ?
+       WHERE id = ?`,
+      [name, host, port, mac, username, password, tenantId, isActive, id]
+    );
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      throw new Error("An OLT with this MAC already exists on this building");
+    }
+    throw err;
+  }
+
+  return getBuildingOltById(id);
+}
+
+async function deleteBuildingOlt(id) {
+  const existing = await getBuildingOltById(id);
+  if (!existing) throw new Error("OLT not found");
+  await query(`DELETE FROM building_olts WHERE id = ?`, [id]);
+  return true;
 }
 
 async function listProducts(filters = {}) {
@@ -1036,20 +1248,30 @@ async function getCustomerById(id) {
 async function getCustomerContext(id) {
   const rows = await query(
     `SELECT c.*, b.name AS building_name, b.c2b_code, b.b2b_code, b.ip_setup, b.dstv_setup,
+            bo.id AS linked_building_olt_id,
+            bo.name AS building_olt_name,
+            bo.host AS building_olt_host, bo.port AS building_olt_port,
+            bo.mac AS building_olt_mac,
+            bo.username AS building_olt_username,
+            bo.password AS building_olt_password,
+            bo.tenant_id AS building_olt_tenant_id,
             p.name AS product_name, p.mbps AS product_mbps,
             p.extra_bandwidth AS product_extra_bandwidth,
             p.has_dstv AS product_has_dstv,
             pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order,
             cat.name AS category_name,
             a.name AS agency_name, a.email AS agency_email,
-            a.phone AS agency_phone, a.contact_person AS agency_contact_person
+            a.phone AS agency_phone, a.contact_person AS agency_contact_person,
+            ts.due_date AS tisp_due_date
      FROM customers c
      JOIN buildings b ON b.id = c.building_id
      JOIN products p ON p.id = c.product_id
+     LEFT JOIN building_olts bo ON bo.id = c.building_olt_id
      LEFT JOIN agencies a ON a.id = c.agency_id
      LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
      LEFT JOIN package_plans pl ON pl.id = v.plan_id
      LEFT JOIN package_categories cat ON cat.id = pl.category_id
+     LEFT JOIN tisp_customer_snapshots ts ON ts.customer_id = c.id
      WHERE c.id = ? LIMIT 1`,
     [id]
   );
@@ -2171,7 +2393,37 @@ async function disconnectCustomer(customerId, notes) {
  * Temporary pause: keep account active, mark Paused (customer away / not using service).
  * Caller is responsible for pushing due date = today to TISP when on network.
  */
-async function pauseCustomer(customerId, notes) {
+async function pauseCustomer(customerId, payload = {}) {
+  const notes =
+    typeof payload === "string" ? payload : payload?.notes || payload?.reason;
+  const reason = String(
+    payload?.reason ?? notes ?? ""
+  ).trim();
+  const pauseStartDate =
+    payload?.pauseStartDate ?? payload?.pause_start_date ?? null;
+  const pauseEndDate =
+    payload?.pauseEndDate ?? payload?.pause_end_date ?? null;
+
+  if (!reason) {
+    throw new Error("Pause reason is required");
+  }
+  if (!pauseEndDate) {
+    throw new Error("Pause end date is required");
+  }
+
+  const start =
+    formatDateOnly(pauseStartDate) || formatDateOnly(new Date().toISOString());
+  const end = formatDateOnly(pauseEndDate);
+  if (!end) {
+    throw new Error("Pause end date is invalid");
+  }
+  if (!start) {
+    throw new Error("Pause start date is invalid");
+  }
+  if (end < start) {
+    throw new Error("Pause end date must be on or after the start date");
+  }
+
   const customer = await getCustomerContext(customerId);
   if (!customer) throw new Error("Customer not found");
   if (customer.status === "cancelled") {
@@ -2181,15 +2433,23 @@ async function pauseCustomer(customerId, notes) {
     throw new Error("Customer is not active");
   }
 
-  await updateCustomerSubscriptionStatus(customerId, "Paused");
+  await query(
+    `UPDATE customers
+     SET subscription_status = ?,
+         pause_start_date = ?,
+         pause_end_date = ?,
+         pause_reason = ?
+     WHERE id = ?`,
+    ["Paused", start, end, reason, customerId]
+  );
 
   await query(
     `INSERT INTO customer_events (customer_id, event_type, notes)
      VALUES (?, 'pause', ?)`,
-    [customerId, notes || "Service paused at customer request (away)"]
+    [customerId, `${reason} (${start} → ${end})`]
   );
 
-  return customer;
+  return getCustomerContext(customerId);
 }
 
 async function deleteCustomerCompletely(customerId) {
@@ -2253,6 +2513,9 @@ async function updateCustomerDetails(id, data, options = {}) {
   const customerType = String(data.customerType || existing.customerType)
     .trim()
     .toUpperCase();
+  const existingType = String(existing.customerType || "")
+    .trim()
+    .toUpperCase();
   const agencyId =
     customerType === "B2B" && data.agencyId ? Number(data.agencyId) : null;
 
@@ -2261,6 +2524,12 @@ async function updateCustomerDetails(id, data, options = {}) {
   }
   if (!["C2B", "B2B"].includes(customerType)) {
     throw new Error("Customer type must be C2B or B2B");
+  }
+  // Type changes renumber the account and migrate TISP — use convert-type only.
+  if (customerType !== existingType) {
+    throw new Error(
+      "Use Convert to C2B/B2B to change billing type (updates customer number and TISP)"
+    );
   }
   if (customerType === "B2B" && !agencyId) {
     throw new Error("B2B customers must be linked to an agency");
@@ -2439,7 +2708,10 @@ async function updateCustomerDetails(id, data, options = {}) {
   };
 }
 
-async function updateCustomerOltMapping(id, { oltMac, onuIndexStr, onuSn }) {
+async function updateCustomerOltMapping(
+  id,
+  { buildingOltId, oltMac, onuIndexStr, onuSn }
+) {
   const customer = await getCustomerById(id);
   if (!customer) throw new Error("Customer not found");
 
@@ -2448,21 +2720,65 @@ async function updateCustomerOltMapping(id, { oltMac, onuIndexStr, onuSn }) {
     throw new Error("ONU index is required");
   }
 
-  const mac = String(oltMac || process.env.OLT_EMS_DEFAULT_MAC || "").trim();
+  let oltId =
+    buildingOltId != null && String(buildingOltId).trim() !== ""
+      ? Number(buildingOltId)
+      : customer.buildingOltId;
+  let mac = String(oltMac || "").trim();
+
+  if (oltId) {
+    const olt = await getBuildingOltById(oltId);
+    if (!olt) throw new Error("Building OLT not found");
+    if (Number(olt.building_id) !== Number(customer.buildingId)) {
+      throw new Error("OLT does not belong to this customer's building");
+    }
+    mac = String(olt.mac || "").trim();
+  } else {
+    mac = mac || String(customer.buildingOltMac || "").trim();
+    if (mac) {
+      const buildingOlts = await query(
+        `SELECT id FROM building_olts
+         WHERE building_id = ? AND LOWER(mac) = LOWER(?) LIMIT 1`,
+        [customer.buildingId, mac]
+      );
+      if (buildingOlts[0]) oltId = buildingOlts[0].id;
+    }
+  }
+
   if (!mac) {
-    throw new Error("OLT MAC is required");
+    throw new Error("OLT MAC is required — select a building OLT");
   }
 
   const sn = onuSn ? String(onuSn).trim() : null;
 
   await query(
     `UPDATE customers
-     SET olt_mac = ?, onu_index_str = ?, onu_sn = ?
+     SET building_olt_id = ?, olt_mac = ?, onu_index_str = ?, onu_sn = ?
      WHERE id = ?`,
-    [mac, indexStr, sn, id]
+    [oltId || null, mac, indexStr, sn, id]
   );
 
   return getCustomerById(id);
+}
+
+/** Clear ONU index/SN after apartment move so pause/disconnect cannot hit the old port. */
+async function clearCustomerOnuMapping(id) {
+  const customer = await getCustomerById(id);
+  if (!customer) return false;
+  if (!customer.onuIndexStr && !customer.onuSn) return false;
+
+  await query(
+    `UPDATE customers SET onu_index_str = NULL, onu_sn = NULL WHERE id = ?`,
+    [id]
+  );
+  return true;
+}
+
+async function getBuildingMapped(id) {
+  const row = await getBuildingById(id);
+  if (!row) return null;
+  const olts = await listBuildingOlts(id);
+  return mapBuildingRow(row, olts);
 }
 
 async function convertCustomerType(customerId, targetType, agencyId = null) {
@@ -2509,14 +2825,29 @@ async function convertCustomerType(customerId, targetType, agencyId = null) {
   }
 
   const oldNumber = customer.customer_number;
+  const previousAgencyId = customer.agency_id || null;
+  const previousPpoeUsername = String(customer.ppoe_username || "")
+    .trim()
+    .toUpperCase();
+  const isPpoe = String(building.ip_setup || "").toUpperCase() === "PPOE";
+  // Keep custom PPPoE usernames; when username tracked the account number, renumber it.
+  const nextPpoeUsername = isPpoe
+    ? !previousPpoeUsername ||
+      previousPpoeUsername === String(oldNumber || "").toUpperCase()
+      ? newCustomerNumber
+      : previousPpoeUsername
+    : null;
+
   const agencyName =
     resolvedAgencyId != null
       ? (await getAgencyById(resolvedAgencyId))?.name || null
       : null;
 
   await query(
-    `UPDATE customers SET customer_type = ?, agency_id = ?, customer_number = ? WHERE id = ?`,
-    [nextType, resolvedAgencyId, newCustomerNumber, customerId]
+    `UPDATE customers
+     SET customer_type = ?, agency_id = ?, customer_number = ?, ppoe_username = ?
+     WHERE id = ?`,
+    [nextType, resolvedAgencyId, newCustomerNumber, nextPpoeUsername, customerId]
   );
 
   await query(
@@ -2541,6 +2872,8 @@ async function convertCustomerType(customerId, targetType, agencyId = null) {
     previousType: currentType,
     newType: nextType,
     previousCustomerNumber: oldNumber,
+    previousAgencyId,
+    previousPpoeUsername: previousPpoeUsername || null,
     newCustomerNumber,
     agencyId: resolvedAgencyId,
     agencyName,
@@ -3248,7 +3581,14 @@ module.exports = {
   createBuilding,
   updateBuilding,
   mapBuildingRow,
+  mapBuildingOltRow,
   getBuildingById,
+  getBuildingMapped,
+  listBuildingOlts,
+  getBuildingOltById,
+  createBuildingOlt,
+  updateBuildingOlt,
+  deleteBuildingOlt,
   listProducts,
   getProductById,
   createProduct,
@@ -3281,6 +3621,7 @@ module.exports = {
   disconnectCustomer,
   pauseCustomer,
   updateCustomerOltMapping,
+  clearCustomerOnuMapping,
   deleteCustomerCompletely,
   updateCustomerDetails,
   convertCustomerType,

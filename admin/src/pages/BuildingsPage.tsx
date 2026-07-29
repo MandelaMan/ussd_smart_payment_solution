@@ -1,5 +1,6 @@
 import { Fragment, type FormEvent, useCallback, useEffect, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
@@ -100,10 +101,12 @@ export function BuildingsPage() {
     sortDir: "asc",
   });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;
-    if (append) setLoadingMore(true);
-    else setLoading(true);
+    if (!opts?.silent) {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+    }
     setError("");
     try {
       const params: Record<string, string> = {
@@ -116,11 +119,13 @@ export function BuildingsPage() {
       params.sortDir = sortQuery.sortDir;
       const res = await api.listBuildings(params);
       setBuildings((prev) =>
-        mergeInfinitePage(prev, res.buildings, page, isMobile, (b) => b.id)
+        mergeInfinitePage(prev, res.buildings, page, isMobile && !opts?.silent, (b) => b.id)
       );
       setPagination(res.pagination);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load buildings");
+      if (!opts?.silent) {
+        setError(e instanceof Error ? e.message : "Failed to load buildings");
+      }
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -148,6 +153,10 @@ export function BuildingsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useVisibilityRefresh(() => {
+    void load({ silent: true });
+  });
 
   function openEdit(building: Building) {
     setEditing(building);
@@ -429,7 +438,7 @@ export function BuildingsPage() {
           <ResponsiveListViews
             fill
             mobile={<MobileCardListSkeleton fill variant="card" fieldCount={3} />}
-            desktop={<DataTableLoadingSkeleton columns={6} fill />}
+            desktop={<DataTableLoadingSkeleton columns={8} fill />}
           />
         ) : buildings.length === 0 ? (
           <EmptyState>No buildings found</EmptyState>
@@ -454,12 +463,18 @@ export function BuildingsPage() {
                       { label: "C2B", value: b.c2bCode },
                       { label: "B2B", value: b.b2bCode },
                       { label: "DSTV", value: b.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder" },
+                      { label: "OLTs", value: b.oltCount ? `${b.oltCount}` : "None" },
                       { label: "Added", value: b.createdAt ? formatDate(b.createdAt) : "—" },
                     ]}
                   />
                 )}
                 renderExpanded={(b) => (
-                  <BuildingExpandPanel building={b} onEdit={openEdit} canEdit={canMutate} />
+                  <BuildingExpandPanel
+                    building={b}
+                    onEdit={openEdit}
+                    onChanged={() => void load({ silent: true })}
+                    canEdit={canMutate}
+                  />
                 )}
               />
             }
@@ -473,6 +488,7 @@ export function BuildingsPage() {
                 <DataTableSortHeader label="B2B" column="b2bCode" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataCodeColumnHeaderProps} />
                 <DataTableSortHeader label="IP setup" column="ipSetup" sorts={sorts} onSort={handleSort} />
                 <Table.ColumnHeader>DSTV setup</Table.ColumnHeader>
+                <Table.ColumnHeader>OLTs</Table.ColumnHeader>
                 <DataTableSortHeader label="Added" column="createdAt" sorts={sorts} onSort={handleSort} defaultDir="desc" />
               </Table.Row>
             </Table.Header>
@@ -503,14 +519,24 @@ export function BuildingsPage() {
                       <Table.Cell {...dataTableCellProps}>
                         {b.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder"}
                       </Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        <Badge colorPalette={(b.oltCount || 0) > 0 ? "green" : "gray"} variant="subtle">
+                          {b.oltCount || 0}
+                        </Badge>
+                      </Table.Cell>
                       <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {b.createdAt ? formatDate(b.createdAt) : "—"}
                       </Table.Cell>
                     </Table.Row>
                     {isOpen && (
                       <Table.Row {...dataTableExpandRowProps}>
-                        <Table.Cell colSpan={7} p={3} bg="surface.50" borderBottom="none">
-                          <BuildingExpandPanel building={b} onEdit={openEdit} canEdit={canMutate} />
+                        <Table.Cell colSpan={8} p={3} bg="surface.50" borderBottom="none">
+                          <BuildingExpandPanel
+                            building={b}
+                            onEdit={openEdit}
+                            onChanged={() => void load({ silent: true })}
+                            canEdit={canMutate}
+                          />
                         </Table.Cell>
                       </Table.Row>
                     )}
@@ -640,6 +666,9 @@ function BuildingForm({
           </Box>
         )}
       </Grid>
+      <Text fontSize="xs" color="fg.muted" mt={3}>
+        Add one or more OLTs from the building expand panel after saving.
+      </Text>
       <Flex gap={2} mt={4}>
         <Button type="submit" colorPalette="brand" loading={submitting}>{submitLabel}</Button>
         <Button variant="ghost" onClick={onCancel}>Cancel</Button>

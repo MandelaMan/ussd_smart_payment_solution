@@ -77,7 +77,7 @@ export function UpcomingInvoicesForecastStrip({ forecast, compact = false }: Pro
         </Text>
         {!compact && (
           <Text fontSize="2xs" color="fg.muted" mt={0.5}>
-            Based on active package prices &amp; Zoho recurring schedule
+            From package prices &amp; Zoho recurring
           </Text>
         )}
       </Box>

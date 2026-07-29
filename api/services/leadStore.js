@@ -37,9 +37,9 @@ async function listLeads(filters = {}) {
   if (filters.search) {
     const q = `%${String(filters.search).trim()}%`;
     clauses.push(
-      "(l.name LIKE ? OR l.phone LIKE ? OR l.email LIKE ? OR l.interest LIKE ? OR l.message LIKE ?)"
+      "(l.name LIKE ? OR l.phone LIKE ? OR l.email LIKE ? OR l.interest LIKE ? OR l.message LIKE ? OR l.apartment_number LIKE ? OR l.building_interest LIKE ?)"
     );
-    params.push(q, q, q, q, q);
+    params.push(q, q, q, q, q, q, q);
   }
 
   const page = Math.max(1, Number(filters.page) || 1);
@@ -64,14 +64,22 @@ async function listLeads(filters = {}) {
 
   const leads = await query(
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
-            l.building_interest AS buildingInterest, l.message, l.notes,
+            l.building_interest AS buildingInterest,
+            l.apartment_number AS apartmentNumber,
+            l.building_id AS buildingId,
+            b.name AS buildingName,
+            l.message, l.notes,
             l.whatsapp_wa_id AS whatsappWaId,
             l.conversation_state AS conversationState,
             l.metadata, l.converted_customer_id AS convertedCustomerId,
             l.assigned_to AS assignedTo,
             l.created_at AS createdAt, l.updated_at AS updatedAt,
-            (SELECT COUNT(*) FROM lead_messages m WHERE m.lead_id = l.id) AS messageCount
+            (SELECT COUNT(*) FROM lead_messages m WHERE m.lead_id = l.id) AS messageCount,
+            (SELECT m.body FROM lead_messages m WHERE m.lead_id = l.id ORDER BY m.id DESC LIMIT 1) AS lastMessage,
+            (SELECT m.created_at FROM lead_messages m WHERE m.lead_id = l.id ORDER BY m.id DESC LIMIT 1) AS lastMessageAt,
+            (SELECT m.direction FROM lead_messages m WHERE m.lead_id = l.id ORDER BY m.id DESC LIMIT 1) AS lastMessageDirection
      FROM leads l
+     LEFT JOIN buildings b ON b.id = l.building_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY ${sort.orderClause}
      LIMIT ? OFFSET ?`,
@@ -98,13 +106,18 @@ async function listLeads(filters = {}) {
 async function getLeadById(id) {
   const rows = await query(
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
-            l.building_interest AS buildingInterest, l.message, l.notes,
+            l.building_interest AS buildingInterest,
+            l.apartment_number AS apartmentNumber,
+            l.building_id AS buildingId,
+            b.name AS buildingName,
+            l.message, l.notes,
             l.whatsapp_wa_id AS whatsappWaId,
             l.conversation_state AS conversationState,
             l.metadata, l.converted_customer_id AS convertedCustomerId,
             l.assigned_to AS assignedTo,
             l.created_at AS createdAt, l.updated_at AS updatedAt
      FROM leads l
+     LEFT JOIN buildings b ON b.id = l.building_id
      WHERE l.id = ?
      LIMIT 1`,
     [id]
@@ -116,6 +129,54 @@ async function getLeadByWhatsAppWaId(waId) {
   if (!waId) return null;
   const rows = await query(
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
+            l.building_interest AS buildingInterest,
+            l.apartment_number AS apartmentNumber,
+            l.building_id AS buildingId,
+            b.name AS buildingName,
+            l.message, l.notes,
+            l.whatsapp_wa_id AS whatsappWaId,
+            l.conversation_state AS conversationState,
+            l.metadata, l.converted_customer_id AS convertedCustomerId,
+            l.assigned_to AS assignedTo,
+            l.created_at AS createdAt, l.updated_at AS updatedAt
+     FROM leads l
+     LEFT JOIN buildings b ON b.id = l.building_id
+     WHERE l.whatsapp_wa_id = ?
+     ORDER BY l.id DESC
+     LIMIT 1`,
+    [String(waId)]
+  );
+  return parseMetadata(rows[0] || null);
+}
+
+/** Normalize KE-style phones to digits for matching (07… ↔ 2547…). */
+function phoneMatchVariants(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return [];
+  const variants = new Set([digits]);
+  if (digits.startsWith("254") && digits.length >= 12) {
+    variants.add(`0${digits.slice(3)}`);
+    variants.add(digits.slice(3));
+  } else if (digits.startsWith("0") && digits.length >= 10) {
+    variants.add(`254${digits.slice(1)}`);
+    variants.add(digits.slice(1));
+  } else if (digits.length === 9) {
+    variants.add(`0${digits}`);
+    variants.add(`254${digits}`);
+  }
+  return [...variants];
+}
+
+async function getWhatsAppLeadByPhone(phone) {
+  const variants = phoneMatchVariants(phone);
+  if (!variants.length) return null;
+  const local9 = new Set(
+    variants.filter((v) => v.length >= 9).map((v) => v.slice(-9))
+  );
+
+  const placeholders = variants.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
             l.building_interest AS buildingInterest, l.message, l.notes,
             l.whatsapp_wa_id AS whatsappWaId,
             l.conversation_state AS conversationState,
@@ -123,12 +184,45 @@ async function getLeadByWhatsAppWaId(waId) {
             l.assigned_to AS assignedTo,
             l.created_at AS createdAt, l.updated_at AS updatedAt
      FROM leads l
-     WHERE l.whatsapp_wa_id = ?
-     ORDER BY l.id DESC
+     WHERE l.source = 'whatsapp'
+       AND (
+         l.phone IN (${placeholders})
+         OR l.whatsapp_wa_id IN (${placeholders})
+       )
+     ORDER BY l.updated_at DESC, l.id DESC
      LIMIT 1`,
-    [String(waId)]
+    [...variants, ...variants]
   );
-  return parseMetadata(rows[0] || null);
+  if (rows[0]) return parseMetadata(rows[0]);
+
+  const recent = await query(
+    `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
+            l.building_interest AS buildingInterest, l.message, l.notes,
+            l.whatsapp_wa_id AS whatsappWaId,
+            l.conversation_state AS conversationState,
+            l.metadata, l.converted_customer_id AS convertedCustomerId,
+            l.assigned_to AS assignedTo,
+            l.created_at AS createdAt, l.updated_at AS updatedAt
+     FROM leads l
+     WHERE l.source = 'whatsapp'
+     ORDER BY l.updated_at DESC, l.id DESC
+     LIMIT 300`
+  );
+
+  for (const row of recent) {
+    const candidate = [
+      ...phoneMatchVariants(row.phone),
+      ...phoneMatchVariants(row.whatsappWaId),
+    ];
+    if (
+      candidate.some(
+        (v) => variants.includes(v) || (v.length >= 9 && local9.has(v.slice(-9)))
+      )
+    ) {
+      return parseMetadata(row);
+    }
+  }
+  return null;
 }
 
 async function createLead(data) {
@@ -138,9 +232,10 @@ async function createLead(data) {
 
   const result = await query(
     `INSERT INTO leads
-      (source, status, name, phone, email, interest, building_interest, message,
+      (source, status, name, phone, email, interest, building_interest,
+       apartment_number, building_id, message,
        notes, whatsapp_wa_id, conversation_state, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       source,
       data.status && LEAD_STATUSES.includes(data.status) ? data.status : "new",
@@ -149,6 +244,10 @@ async function createLead(data) {
       data.email ? String(data.email).trim().toLowerCase() : null,
       data.interest ? String(data.interest).trim() : null,
       data.buildingInterest ? String(data.buildingInterest).trim() : null,
+      data.apartmentNumber ? String(data.apartmentNumber).trim() : null,
+      data.buildingId != null && data.buildingId !== ""
+        ? Number(data.buildingId)
+        : null,
       data.message ? String(data.message).trim() : null,
       data.notes ? String(data.notes).trim() : null,
       data.whatsappWaId ? String(data.whatsappWaId).trim() : null,
@@ -170,6 +269,8 @@ async function updateLead(id, patch = {}) {
     email: "email",
     interest: "interest",
     buildingInterest: "building_interest",
+    apartmentNumber: "apartment_number",
+    buildingId: "building_id",
     message: "message",
     notes: "notes",
     whatsappWaId: "whatsapp_wa_id",
@@ -247,6 +348,18 @@ async function listMessages(leadId) {
   return rows;
 }
 
+async function getLastInboundAt(leadId) {
+  const rows = await query(
+    `SELECT created_at AS createdAt
+     FROM lead_messages
+     WHERE lead_id = ? AND direction = 'inbound'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [leadId]
+  );
+  return rows[0]?.createdAt || null;
+}
+
 async function getLeadStats() {
   const rows = await query(
     `SELECT
@@ -285,9 +398,11 @@ module.exports = {
   listLeads,
   getLeadById,
   getLeadByWhatsAppWaId,
+  getWhatsAppLeadByPhone,
   createLead,
   updateLead,
   addMessage,
   listMessages,
+  getLastInboundAt,
   getLeadStats,
 };

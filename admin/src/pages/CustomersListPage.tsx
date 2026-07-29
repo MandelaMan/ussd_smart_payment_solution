@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import { Link, useSearchParams } from "react-router-dom";
@@ -191,6 +192,9 @@ export function CustomersListPage() {
   const [cancelDstvDecoderCollectedAt, setCancelDstvDecoderCollectedAt] = useState(
     todayDateInputValue
   );
+  const [pauseStartDate, setPauseStartDate] = useState(todayDateInputValue());
+  const [pauseEndDate, setPauseEndDate] = useState("");
+  const [pauseReason, setPauseReason] = useState("");
   const [actionPackages, setActionPackages] = useState<Product[]>([]);
   const [apartmentHistory, setApartmentHistory] = useState<ApartmentHistoryEntry[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
@@ -224,6 +228,14 @@ export function CustomersListPage() {
     { sortBy: "customerNumber", sortDir: "asc" },
   ]);
 
+  const loadCustomersRef = useRef<
+    (opts?: boolean | { refresh?: boolean; silent?: boolean }) => Promise<void>
+  >(async () => {});
+
+  useVisibilityRefresh(() => {
+    void loadCustomersRef.current({ silent: true });
+  });
+
   useEffect(() => {
     setLookupsLoading(true);
     Promise.all([
@@ -252,19 +264,20 @@ export function CustomersListPage() {
   );
 
   const loadCustomers = useCallback(
-    async (refresh = false) => {
-      const requestId = ++loadRequestRef.current;
-      const append = isMobile && page > 1 && !refresh;
-      if (append) setLoadingMore(true);
-      else setLoading(true);
-      setError("");
-      try {
+    async (refreshOrOpts: boolean | { refresh?: boolean; silent?: boolean } = false) => {
+      const refresh =
+        typeof refreshOrOpts === "boolean"
+          ? refreshOrOpts
+          : Boolean(refreshOrOpts.refresh);
+      const silent =
+        typeof refreshOrOpts === "object" && Boolean(refreshOrOpts.silent);
+
+      const buildParams = () => {
         const params: Record<string, string> = {
           page: String(page),
           limit: String(PAGE_SIZE),
         };
         const query = debouncedSearch.trim();
-        // Require 2+ chars so single-keystroke typing does not hit the API.
         if (query.length >= 2) params.search = query;
         if (buildingId) params.buildingId = buildingId;
         if (statusFilters.length) {
@@ -274,8 +287,33 @@ export function CustomersListPage() {
         if (customerType) params.customerType = customerType;
         params.sortBy = sortQuery.sortBy;
         params.sortDir = sortQuery.sortDir;
-        // Manual refresh only — search stays fast; live sync runs in background after.
         if (refresh) params.refresh = "true";
+        return { params, query };
+      };
+
+      // Background realtime refresh must not toggle the page spinner or cancel
+      // an in-flight initial load (that left the UI stuck on skeleton).
+      if (silent) {
+        try {
+          const { params } = buildParams();
+          const res = await api.listCustomers(params);
+          setCustomers((prev) =>
+            mergeInfinitePage(prev, res.data, page, isMobile && page > 1, (c) => c.id)
+          );
+          setPagination(res.pagination);
+        } catch {
+          /* keep current rows */
+        }
+        return;
+      }
+
+      const requestId = ++loadRequestRef.current;
+      const append = isMobile && page > 1 && !refresh;
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+      setError("");
+      try {
+        const { params, query } = buildParams();
         const res = await api.listCustomers(params);
         if (requestId !== loadRequestRef.current) return;
         setCustomers((prev) =>
@@ -329,6 +367,8 @@ export function CustomersListPage() {
     },
     [debouncedSearch, buildingId, statusFilters, categoryId, customerType, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]
   );
+
+  loadCustomersRef.current = loadCustomers;
 
   function handleSort(
     column: CustomerSortKey,
@@ -766,6 +806,9 @@ export function CustomersListPage() {
     setCancelNotes("");
     setCancelOnuCollectedAt(todayDateInputValue());
     setCancelDstvDecoderCollectedAt(todayDateInputValue());
+    setPauseStartDate(todayDateInputValue());
+    setPauseEndDate("");
+    setPauseReason("");
     setActionPackages([]);
     setApartmentHistory([]);
     setUpgradeQuote(null);
@@ -1307,20 +1350,43 @@ export function CustomersListPage() {
           });
         }
       } else if (actionType === "pause") {
-        const res = await api.pauseCustomer(actionCustomer.id);
+        const res = await api.pauseCustomer(actionCustomer.id, {
+          reason: pauseReason.trim(),
+          pauseStartDate,
+          pauseEndDate,
+        });
+        if (res.customer) {
+          setCustomers((prev) =>
+            prev.map((c) => (c.id === res.customer.id ? { ...c, ...res.customer } : c))
+          );
+        }
+        const zohoDeferred = res.zoho?.recurring?.deferred ?? 0;
         if (res.tisp && res.tisp.ok === false) {
           toaster.create({
-            title: "Paused locally with TISP issues",
+            title: "Paused with TISP issues",
             description: res.tisp.error || "TISP update failed",
+            type: "warning",
+            duration: 10000,
+          });
+        } else if (res.zoho && res.zoho.ok === false) {
+          toaster.create({
+            title: "Paused with billing sync issues",
+            description: res.zoho.error || "Zoho recurring update failed",
             type: "warning",
             duration: 10000,
           });
         } else {
           toaster.create({
             title: "Service paused",
-            description: res.tisp?.dueDate
-              ? `TISP due date set to ${res.tisp.dueDate}`
-              : undefined,
+            description: [
+              res.pause?.endDate ? `Away until ${res.pause.endDate}` : null,
+              zohoDeferred > 0
+                ? `${zohoDeferred} recurring profile${zohoDeferred === 1 ? "" : "s"} deferred`
+                : null,
+              res.tisp?.dueDate ? `TISP due ${res.tisp.dueDate}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
             type: "success",
           });
         }
@@ -2017,6 +2083,9 @@ export function CustomersListPage() {
         cancelNotes={cancelNotes}
         cancelOnuCollectedAt={cancelOnuCollectedAt}
         cancelDstvDecoderCollectedAt={cancelDstvDecoderCollectedAt}
+        pauseStartDate={pauseStartDate}
+        pauseEndDate={pauseEndDate}
+        pauseReason={pauseReason}
         actionPackages={actionPackages}
         apartmentHistory={apartmentHistory}
         upgradeQuote={upgradeQuote}
@@ -2041,6 +2110,9 @@ export function CustomersListPage() {
         onNotesChange={setCancelNotes}
         onOnuCollectedAtChange={setCancelOnuCollectedAt}
         onDstvDecoderCollectedAtChange={setCancelDstvDecoderCollectedAt}
+        onPauseStartDateChange={setPauseStartDate}
+        onPauseEndDateChange={setPauseEndDate}
+        onPauseReasonChange={setPauseReason}
       />
       <CustomerImportProgressDialog
         open={importDialogOpen}
@@ -2069,11 +2141,6 @@ export function CustomersListPage() {
               </Text>
             </Box>
             <Stack gap={4} px={5} py={4}>
-              <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                Customers will be marked as cancelled and excluded from active counts. Apartment
-                history is kept. TISP due date is set to today and Zoho contacts are marked
-                inactive.
-              </Box>
               <Field.Root required>
                 <Field.Label>Reason for cancellation</Field.Label>
                 <Textarea

@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Flex, Spinner } from "@chakra-ui/react";
+import { Box, Flex, Spinner } from "@chakra-ui/react";
 import { useAuth } from "../lib/auth";
 import {
   useCeoDashboard,
@@ -36,16 +36,25 @@ export function RoleHomePage() {
   const ceo = useCeoDashboard(user);
 
   return (
-    <Suspense fallback={<DashFallback />}>
-      {partner ? (
-        <PartnerDashboardPage />
-      ) : support ? (
-        <SupportDashboardPage />
-      ) : ceo ? (
-        <CeoDashboardPage />
-      ) : (
-        <DashboardPage />
-      )}
-    </Suspense>
+    <Box
+      flex={{ lg: 1 }}
+      minH={{ lg: 0 }}
+      minW={0}
+      w="full"
+      display={{ lg: "flex" }}
+      flexDirection="column"
+    >
+      <Suspense fallback={<DashFallback />}>
+        {partner ? (
+          <PartnerDashboardPage />
+        ) : support ? (
+          <SupportDashboardPage />
+        ) : ceo ? (
+          <CeoDashboardPage />
+        ) : (
+          <DashboardPage />
+        )}
+      </Suspense>
+    </Box>
   );
 }

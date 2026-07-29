@@ -50,7 +50,7 @@ export const BILLING_MODULES: BillingModuleDef[] = [
     id: "unallocated-mpesa",
     path: "unallocated-mpesa",
     label: "Unallocated M-Pesa",
-    description: "Paybill payments not applied to Zoho invoices",
+    description: "Paybill payments not on Zoho invoices",
     statusFilter: "unmatched_payment",
     summaryKey: "unmatchedMpesaPayments",
     mpesaTable: true,
@@ -59,8 +59,7 @@ export const BILLING_MODULES: BillingModuleDef[] = [
     id: "billing-gaps",
     path: "billing-gaps",
     label: "Billing Gaps",
-    description:
-      "TISP vs Zoho mismatches — free service while overdue, paid but disconnected, missing Zoho setup, invoices, or recurring billing",
+    description: "TISP vs Zoho mismatches needing attention",
     statusFilters: [...BILLING_GAP_STATUSES],
     summaryKeys: [
       "connectedWithoutPayment",
@@ -75,7 +74,7 @@ export const BILLING_MODULES: BillingModuleDef[] = [
     id: "manual-review",
     path: "manual-review",
     label: "Manual Review",
-    description: "Sync errors and cases needing human verification",
+    description: "Sync errors needing verification",
     statusFilter: "manual_review_required",
     summaryKey: "manualReviewsRequired",
   },
@@ -83,7 +82,7 @@ export const BILLING_MODULES: BillingModuleDef[] = [
     id: "customer-communications",
     path: "communications",
     label: "Customer Communications",
-    description: "Send Zoho Mail notices tailored to each customer's billing gap",
+    description: "Zoho Mail notices for billing gaps",
     summaryKey: "communicationsEligible",
   },
 ];

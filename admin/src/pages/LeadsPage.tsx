@@ -1,7 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
+import { useSearchParams } from "react-router-dom";
 import {
   Badge,
   Box,
@@ -14,7 +16,7 @@ import {
   Text,
   Textarea,
 } from "@chakra-ui/react";
-import { FiChevronDown, FiChevronRight, FiCopy } from "react-icons/fi";
+import { FiChevronDown, FiChevronRight } from "react-icons/fi";
 import {
   api,
   type Lead,
@@ -34,6 +36,8 @@ import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { DisplayText } from "../components/ui/DisplayText";
 import { SelectField } from "../components/ui/SelectField";
+import { TabStrip } from "../components/ui/TabStrip";
+import { ProspectWhatsAppInbox } from "../components/leads/ProspectWhatsAppInbox";
 import {
   DataTable,
   DataTableCard,
@@ -41,10 +45,16 @@ import {
   DATA_TABLE_LEADING_COL_WIDTH,
   dataTableCellProps,
   dataTableExpandRowProps,
+  dataTableTitleColumnHeaderProps,
 } from "../components/ui/DataTable";
 import { BRAND } from "../theme";
 
 const PAGE_SIZE = 30;
+const LEAD_SECTIONS = [
+  { id: "all", label: "All leads" },
+  { id: "whatsapp", label: "WhatsApp" },
+] as const;
+type LeadSection = (typeof LEAD_SECTIONS)[number]["id"];
 
 type LeadSortKey = "createdAt" | "name" | "status" | "source";
 
@@ -82,23 +92,34 @@ function formatWhen(value: string | null | undefined): string {
   });
 }
 
-function intakeUrls() {
-  const host = window.location.hostname;
-  const apiOrigin = import.meta.env.DEV
-    ? `${window.location.protocol}//${host}:4000`
-    : window.location.origin.replace(/\/admin\/?$/, "");
-  return {
-    formUrl: `${apiOrigin}/leads`,
-    embedSnippet: `<div id="starlynx-lead-form"></div>\n<script src="${apiOrigin}/leads/embed.js" async></script>`,
-    webhookUrl: `${apiOrigin}/api/public/whatsapp/webhook`,
-  };
-}
-
 export function LeadsPage() {
   const { user } = useAuth();
   const canMutate = canMutateCustomers(user);
   const isMobile = useMobileViewport();
-  const links = useMemo(() => intakeUrls(), []);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sectionParam = searchParams.get("section");
+  const section: LeadSection =
+    sectionParam === "whatsapp" ? "whatsapp" : "all";
+  const initialWhatsAppLeadId = (() => {
+    const raw = searchParams.get("lead");
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
+
+  function setSection(next: string) {
+    const id = next === "whatsapp" ? "whatsapp" : "all";
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (id === "all") p.delete("section");
+        else p.set("section", id);
+        if (id !== "whatsapp") p.delete("lead");
+        return p;
+      },
+      { replace: true }
+    );
+  }
+
   const [leads, setLeads] = useState<Lead[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({
     page: 1,
@@ -131,10 +152,12 @@ export function LeadsPage() {
     setPage(1);
   }, [debouncedSearchInput]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;
-    if (append) setLoadingMore(true);
-    else setLoading(true);
+    if (!opts?.silent) {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+    }
     setError("");
     try {
       const params: Record<string, string> = {
@@ -151,12 +174,14 @@ export function LeadsPage() {
         page === 1 && !append ? api.getLeadStats() : Promise.resolve(null),
       ]);
       setLeads((prev) =>
-        mergeInfinitePage(prev, listRes.leads, page, isMobile, (a) => a.id)
+        mergeInfinitePage(prev, listRes.leads, page, isMobile && !opts?.silent, (a) => a.id)
       );
       setPagination(listRes.pagination);
       if (statsRes) setStats(statsRes);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load leads");
+      if (!opts?.silent) {
+        setError(e instanceof Error ? e.message : "Failed to load leads");
+      }
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -164,8 +189,14 @@ export function LeadsPage() {
   }, [search, page, status, source, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   useEffect(() => {
+    if (section !== "all") return;
     void load();
-  }, [load]);
+  }, [load, section]);
+
+  useVisibilityRefresh(() => {
+    if (section !== "all") return;
+    void load({ silent: true });
+  });
 
   async function openLead(id: number) {
     if (expanded === id) {
@@ -242,15 +273,6 @@ export function LeadsPage() {
     toggleSort(column, defaultDir, additive);
     setPage(1);
     setExpanded(null);
-  }
-
-  async function copyText(label: string, value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      toaster.create({ type: "success", title: `${label} copied` });
-    } catch {
-      toaster.create({ type: "error", title: "Could not copy" });
-    }
   }
 
   const expandPanel = (lead: Lead) => (
@@ -363,18 +385,57 @@ export function LeadsPage() {
     </Box>
   );
 
+  const leadStatsActions = stats ? (
+    <Flex
+      gap={2}
+      flexWrap="wrap"
+      justify="flex-end"
+      align="stretch"
+      maxW={{ lg: "min(640px, 58vw)" }}
+    >
+      {[
+        { label: "Total", value: stats.total },
+        { label: "New", value: stats.byStatus.new },
+        { label: "WhatsApp", value: stats.bySource.whatsapp },
+        { label: "Web", value: stats.bySource.web },
+        { label: "Embed", value: stats.bySource.embed },
+      ].map((card) => (
+        <Box
+          key={card.label}
+          px={3}
+          py={1.5}
+          borderRadius="md"
+          borderWidth="1px"
+          borderColor="border"
+          bg="bg.panel"
+          minW="72px"
+          textAlign="center"
+        >
+          <Text fontSize="2xs" color="fg.muted" lineHeight="1.2">
+            {card.label}
+          </Text>
+          <Text fontWeight="700" fontSize="md" lineHeight="1.2" mt={0.5}>
+            {card.value}
+          </Text>
+        </Box>
+      ))}
+    </Flex>
+  ) : null;
+
   return (
     <ListPageStack>
       <ListPageTableSection
         chrome={
-          <ListPageStickyChrome>
+          <ListPageStickyChrome gap={{ base: 4, lg: 5 }}>
             <MobilePageChrome
         title="Leads"
-        description="WhatsApp, website, and embed enquiries"
-        searchValue={searchInput}
-        onSearchChange={setSearchInput}
+        description="Prospects who are not customers yet — WhatsApp, website, and embed"
+        desktopActions={section === "all" ? leadStatsActions : undefined}
+        searchValue={section === "all" ? searchInput : undefined}
+        onSearchChange={section === "all" ? setSearchInput : undefined}
         searchPlaceholder="Name, phone, email…"
         filterContent={
+          section === "all" ? (
           <Stack gap={3}>
             <Field.Root>
               <Field.Label>Status</Field.Label>
@@ -415,14 +476,23 @@ export function LeadsPage() {
               </SelectField>
             </Field.Root>
           </Stack>
+          ) : undefined
         }
-        activeFilterCount={(status ? 1 : 0) + (source ? 1 : 0)}
-        onClearFilters={() => {
-          setStatus("");
-          setSource("");
-          setPage(1);
-        }}
-        sortOptions={[
+        activeFilterCount={
+          section === "all" ? (status ? 1 : 0) + (source ? 1 : 0) : 0
+        }
+        onClearFilters={
+          section === "all"
+            ? () => {
+                setStatus("");
+                setSource("");
+                setPage(1);
+              }
+            : undefined
+        }
+        sortOptions={
+          section === "all"
+            ? [
           {
             key: "createdAt",
             label: "Received",
@@ -446,9 +516,19 @@ export function LeadsPage() {
               sorts[0]?.sortBy === "status" ? sorts[0].sortDir : undefined,
             onClick: () => handleSort("status", "asc"),
           },
-        ]}
+            ]
+            : undefined
+        }
             />
 
+            <TabStrip
+              tabs={[...LEAD_SECTIONS]}
+              active={section}
+              onChange={setSection}
+              fitContent
+            />
+
+            {section === "all" ? (
             <FilterToolbar embedded>
         <FilterField label="Search" flex={FILTER_FLEX.search} minW={0} hideOnMobile>
           <Input
@@ -496,96 +576,20 @@ export function LeadsPage() {
           </SelectField>
         </FilterField>
             </FilterToolbar>
+            ) : null}
           </ListPageStickyChrome>
         }
       >
 
-      {stats ? (
-        <Flex gap={3} flexWrap="wrap">
-          {[
-            { label: "Total", value: stats.total },
-            { label: "New", value: stats.byStatus.new },
-            { label: "WhatsApp", value: stats.bySource.whatsapp },
-            { label: "Web", value: stats.bySource.web },
-            { label: "Embed", value: stats.bySource.embed },
-          ].map((card) => (
-            <Box
-              key={card.label}
-              px={4}
-              py={3}
-              borderRadius="md"
-              borderWidth="1px"
-              borderColor="border"
-              bg="bg.panel"
-              minW="110px"
-            >
-              <Text fontSize="xs" color="fg.muted">
-                {card.label}
-              </Text>
-              <Text fontWeight="700" fontSize="xl">
-                {card.value}
-              </Text>
-            </Box>
-          ))}
-        </Flex>
+      {section === "whatsapp" ? (
+        <Box pt={{ base: 2, lg: 3 }}>
+          <ProspectWhatsAppInbox initialLeadId={initialWhatsAppLeadId} />
+        </Box>
+      ) : (
+        <Stack gap={{ base: 4, lg: 5 }} pt={{ base: 2, lg: 3 }}>
+      {leadStatsActions ? (
+        <Box display={{ base: "block", lg: "none" }}>{leadStatsActions}</Box>
       ) : null}
-
-      <Box
-        borderWidth="1px"
-        borderColor="border"
-        borderRadius="md"
-        bg="bg.panel"
-        px={4}
-        py={3}
-      >
-        <Text fontSize="sm" fontWeight="600" mb={2}>
-          Intake links
-        </Text>
-        <Stack gap={2}>
-          <Flex gap={2} align="center" flexWrap="wrap">
-            <Text fontSize="sm" color="fg.muted">
-              Public form:
-            </Text>
-            <Box
-              asChild
-              color="brand.600"
-              fontSize="sm"
-            >
-              <a href={links.formUrl} target="_blank" rel="noreferrer">
-                {links.formUrl}
-              </a>
-            </Box>
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => void copyText("Form link", links.formUrl)}
-            >
-              <FiCopy />
-            </Button>
-          </Flex>
-          <Flex gap={2} align="start">
-            <Text
-              fontSize="xs"
-              color="fg.muted"
-              whiteSpace="pre-wrap"
-              fontFamily="mono"
-              flex="1"
-            >
-              {links.embedSnippet}
-            </Text>
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => void copyText("Embed snippet", links.embedSnippet)}
-            >
-              <FiCopy />
-            </Button>
-          </Flex>
-          <Text fontSize="xs" color="fg.muted">
-            WhatsApp webhook: {links.webhookUrl}
-          </Text>
-        </Stack>
-      </Box>
 
       {error ? (
         <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">
@@ -640,10 +644,13 @@ export function LeadsPage() {
               />
             }
             desktop={
-              <DataTable>
+              <DataTable fixedLayout>
                 <Table.Header>
                   <Table.Row>
-                    <Table.ColumnHeader w={DATA_TABLE_LEADING_COL_WIDTH} />
+                    <Table.ColumnHeader
+                      {...dataTableTitleColumnHeaderProps}
+                      w={DATA_TABLE_LEADING_COL_WIDTH}
+                    />
                     <DataTableSortHeader
                       label="Name"
                       column="name"
@@ -651,7 +658,9 @@ export function LeadsPage() {
                       onSort={handleSort}
                       defaultDir="asc"
                     />
-                    <Table.ColumnHeader>Contact</Table.ColumnHeader>
+                    <Table.ColumnHeader {...dataTableTitleColumnHeaderProps}>
+                      Contact
+                    </Table.ColumnHeader>
                     <DataTableSortHeader
                       label="Source"
                       column="source"
@@ -676,64 +685,91 @@ export function LeadsPage() {
                   </Table.Row>
                 </Table.Header>
                 <Table.Body>
-                  {leads.map((lead) => (
-                    <Fragment key={lead.id}>
-                      <Table.Row
-                        {...dataTableExpandRowProps}
-                        cursor="pointer"
-                        onClick={() => void openLead(lead.id)}
-                      >
-                        <Table.Cell {...dataTableCellProps}>
-                          {expanded === lead.id ? <FiChevronDown /> : <FiChevronRight />}
-                        </Table.Cell>
-                        <Table.Cell {...dataTableCellProps}>
-                          <DisplayText value={lead.name || "—"} />
-                          {lead.interest ? (
-                            <Text fontSize="xs" color="fg.muted">
-                              {lead.interest}
-                            </Text>
-                          ) : null}
-                        </Table.Cell>
-                        <Table.Cell {...dataTableCellProps}>
-                          <Text fontSize="sm">{lead.phone || "—"}</Text>
-                          {lead.email ? (
-                            <Text fontSize="xs" color="fg.muted">
-                              {lead.email}
-                            </Text>
-                          ) : null}
-                        </Table.Cell>
-                        <Table.Cell {...dataTableCellProps}>
-                          {sourceLabel(lead.source)}
-                          {lead.messageCount ? (
-                            <Text fontSize="xs" color="fg.muted">
-                              {lead.messageCount} msgs
-                            </Text>
-                          ) : null}
-                        </Table.Cell>
-                        <Table.Cell {...dataTableCellProps}>
-                          <Badge colorPalette={statusColor(lead.status)}>
-                            {lead.status}
-                          </Badge>
-                        </Table.Cell>
-                        <Table.Cell {...dataTableCellProps}>
-                          {formatWhen(lead.createdAt)}
-                        </Table.Cell>
-                      </Table.Row>
-                      {expanded === lead.id ? (
-                        <Table.Row>
-                          <Table.Cell colSpan={6} p={0}>
-                            {expandPanel(lead)}
+                  {leads.map((lead) => {
+                    const isOpen = expanded === lead.id;
+                    return (
+                      <Fragment key={lead.id}>
+                        <Table.Row
+                          bg={isOpen ? "brand.50" : undefined}
+                          cursor="pointer"
+                          onClick={() => {
+                            if (lead.source === "whatsapp") {
+                              setSearchParams(
+                                { section: "whatsapp", lead: String(lead.id) },
+                                { replace: false }
+                              );
+                              return;
+                            }
+                            void openLead(lead.id);
+                          }}
+                          _hover={{ bg: isOpen ? "brand.50" : "gray.50" }}
+                        >
+                          <Table.Cell
+                            {...dataTableCellProps}
+                            w={DATA_TABLE_LEADING_COL_WIDTH}
+                          >
+                            {isOpen ? (
+                              <FiChevronDown size={16} />
+                            ) : (
+                              <FiChevronRight size={16} />
+                            )}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} fontWeight="semibold">
+                            <DisplayText value={lead.name || "—"} fontWeight="semibold" />
+                            {lead.interest ? (
+                              <Text fontSize="xs" color="fg.muted" lineClamp={1}>
+                                {lead.interest}
+                              </Text>
+                            ) : null}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps}>
+                            <Text fontSize="sm">{lead.phone || "—"}</Text>
+                            {lead.email ? (
+                              <Text fontSize="xs" color="fg.muted" lineClamp={1}>
+                                {lead.email}
+                              </Text>
+                            ) : null}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps}>
+                            {sourceLabel(lead.source)}
+                            {lead.messageCount ? (
+                              <Text fontSize="xs" color="fg.muted">
+                                {lead.messageCount} msgs
+                              </Text>
+                            ) : null}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps}>
+                            <Badge colorPalette={statusColor(lead.status)} variant="subtle">
+                              {lead.status}
+                            </Badge>
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} color="fg.muted">
+                            {formatWhen(lead.createdAt)}
                           </Table.Cell>
                         </Table.Row>
-                      ) : null}
-                    </Fragment>
-                  ))}
+                        {isOpen ? (
+                          <Table.Row {...dataTableExpandRowProps}>
+                            <Table.Cell
+                              colSpan={6}
+                              p={3}
+                              bg="surface.50"
+                              borderBottom="none"
+                            >
+                              {expandPanel(lead)}
+                            </Table.Cell>
+                          </Table.Row>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                 </Table.Body>
               </DataTable>
             }
           />
         )}
       </DataTableCard>
+        </Stack>
+      )}
       </ListPageTableSection>
     </ListPageStack>
   );

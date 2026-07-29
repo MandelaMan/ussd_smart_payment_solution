@@ -1,4 +1,5 @@
 const store = require("../services/customerModuleStore");
+const { emitAdminUpdate } = require("../lib/adminEvents");
 const {
   computeBillingPeriod,
   computeInvoiceDueDate,
@@ -303,6 +304,7 @@ async function createAgency(req, res, next) {
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho contact sync failed" };
     }
+    emitAdminUpdate("agencies", { action: "created", agencyId: id });
     return res.status(201).json({ ok: true, id, agency, zoho });
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });
@@ -540,6 +542,7 @@ async function updateAgency(req, res, next) {
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho contact sync failed" };
     }
+    emitAdminUpdate("agencies", { action: "updated", agencyId: id });
     return res.json({ ok: true, agency, zoho });
   } catch (err) {
     if (err.message) {

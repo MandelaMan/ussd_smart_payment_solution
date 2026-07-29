@@ -35,6 +35,7 @@ type Props = {
 
 export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
   const isPage = variant === "page";
+  const list = items ?? [];
 
   return (
     <Box
@@ -69,7 +70,20 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
         flex={1}
         minH={0}
         overflowY={isPage ? "visible" : "auto"}
-        css={isPage ? undefined : { "&::-webkit-scrollbar": { width: "4px" } }}
+        css={
+          isPage
+            ? undefined
+            : {
+                scrollbarWidth: "thin",
+                scrollbarColor: "var(--chakra-colors-gray-300) transparent",
+                "&::-webkit-scrollbar": { width: "4px" },
+                "&::-webkit-scrollbar-track": { background: "transparent" },
+                "&::-webkit-scrollbar-thumb": {
+                  background: "var(--chakra-colors-gray-300)",
+                  borderRadius: "999px",
+                },
+              }
+        }
       >
         {loading &&
           Array.from({ length: 5 }).map((_, i) => (
@@ -90,13 +104,13 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
             </Flex>
           ))}
 
-        {!loading && items.length === 0 && (
+        {!loading && list.length === 0 && (
           <Text fontSize="xs" color="fg.subtle" p={isPage ? 0 : { base: 2.5, xl: 3 }}>
             No activity yet.
           </Text>
         )}
 
-        {items.map((item) => {
+        {list.map((item) => {
           const Icon = EVENT_ICONS[item.eventType] || FiCheckCircle;
           const iconColor = SOURCE_COLORS[item.source] || "gray.500";
           const failed = item.status === "failed";

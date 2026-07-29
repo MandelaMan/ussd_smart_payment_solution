@@ -194,7 +194,7 @@ export function DashboardPage() {
     api
       .getActivity(40)
       .then((a) => {
-        if (!cancelled) setActivity(a.data);
+        if (!cancelled) setActivity(a.data ?? []);
       })
       .catch(() => {
         if (!cancelled) setActivity([]);

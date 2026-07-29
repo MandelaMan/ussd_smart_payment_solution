@@ -1,4 +1,5 @@
 const store = require("../services/customerModuleStore");
+const { emitAdminUpdate } = require("../lib/adminEvents");
 
 async function listProducts(req, res, next) {
   try {
@@ -55,6 +56,7 @@ async function createProduct(req, res, next) {
       extraBandwidth:
         extraBandwidth != null ? Number(extraBandwidth) : undefined,
     });
+    emitAdminUpdate("products", { action: "created", productId: id, buildingId: Number(buildingId) });
     return res.status(201).json({ ok: true, id });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -79,6 +81,11 @@ async function createProduct(req, res, next) {
 async function updateProduct(req, res, next) {
   try {
     const product = await store.updateProduct(Number(req.params.id), req.body || {});
+    emitAdminUpdate("products", {
+      action: "updated",
+      productId: product?.id ?? Number(req.params.id),
+      buildingId: product?.buildingId ?? null,
+    });
     return res.json({ ok: true, product });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -109,6 +116,10 @@ async function updateProduct(req, res, next) {
 async function deleteProduct(req, res, next) {
   try {
     const result = await store.deleteProduct(Number(req.params.id));
+    emitAdminUpdate("products", {
+      action: "deleted",
+      productId: Number(req.params.id),
+    });
     return res.json({ ok: true, ...result });
   } catch (err) {
     if (err.message === "Product not found") {

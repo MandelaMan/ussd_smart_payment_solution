@@ -6,7 +6,14 @@ import type { ReactNode } from "react";
  * column headers never slide up into the filter row.
  * Mobile: normal document flow (MobileFixedHeader handles the top chrome).
  */
-export function ListPageStickyChrome({ children }: { children: ReactNode }) {
+export function ListPageStickyChrome({
+  children,
+  gap = { base: 2, lg: 2.5 },
+}: {
+  children: ReactNode;
+  /** Vertical space between title, tabs, and filters. */
+  gap?: number | string | Record<string, number | string>;
+}) {
   return (
     <Box
       data-list-page-sticky-chrome
@@ -17,7 +24,7 @@ export function ListPageStickyChrome({ children }: { children: ReactNode }) {
       px={{ lg: 0 }}
       display="flex"
       flexDirection="column"
-      gap={{ base: 2, lg: 2.5 }}
+      gap={gap}
       minW={0}
       mb={0}
     >

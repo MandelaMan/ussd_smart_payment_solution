@@ -139,6 +139,63 @@ type CustomerIntegrationsSummary = Awaited<
   ReturnType<typeof api.getCustomerIntegrations>
 >;
 
+type CustomerOltStatus = Awaited<ReturnType<typeof api.getCustomerOltStatus>> & {
+  checkedAt?: string;
+};
+
+function formatOnuPhaseStatus(phase: string | null | undefined): string | null {
+  if (!phase) return null;
+  const key = String(phase).trim().toLowerCase();
+  const map: Record<string, string> = {
+    working: "Online",
+    offline: "Offline",
+    los: "Signal loss",
+    dyinggasp: "Power loss",
+    authfail: "Auth failed",
+    logging: "Connecting…",
+    syncmib: "Syncing…",
+  };
+  return map[key] || phase;
+}
+
+function formatOnuAdminStatus(status: string | null | undefined): string | null {
+  if (!status) return null;
+  const key = String(status).trim().toUpperCase();
+  if (key === "ENABLE") return "Active";
+  if (key === "DISABLE") return "Disabled on OLT";
+  return status;
+}
+
+function formatOnuLabel(description: string | null | undefined): string | null {
+  const raw = String(description || "").trim();
+  if (!raw) return null;
+  // Descriptions often look like "GPON0/1:2--TEJ-CAFE"
+  const parts = raw.split(/--+/);
+  const label = (parts[parts.length - 1] || raw).replace(/^[-:\s]+/, "").trim();
+  return label || raw;
+}
+
+function formatOpticalDistance(rtt: number | null | undefined): string | null {
+  if (rtt == null || Number.isNaN(Number(rtt))) return null;
+  const n = Number(rtt);
+  if (n <= 0) return null;
+  return `${n} m`;
+}
+
+function formatOltSkipReason(reason: string | null | undefined): string {
+  switch (reason) {
+    case "no_building_olt_host":
+    case "no_olts_configured":
+      return "No OLT on building";
+    case "no_olt_credentials":
+      return "OLT login not set";
+    case "no_olt_mac":
+      return "OLT not configured";
+    default:
+      return "Not linked";
+  }
+}
+
 type StatusTone = "ok" | "warn" | "bad" | "neutral";
 
 type StatusNarration = {
@@ -182,11 +239,26 @@ function buildTispNarration(
     };
   }
   if (statusLower.includes("pause")) {
+    const pauseRange =
+      customer.pauseStartDate && customer.pauseEndDate
+        ? `${customer.pauseStartDate} → ${customer.pauseEndDate}`
+        : null;
+    const pauseNote = customer.pauseReason
+      ? `Reason: ${customer.pauseReason}.`
+      : null;
     return {
       label: "Status",
-      text: dueLabel
-        ? `Paused at customer request (away). Internet stopped; due date ${dueLabel}. Still counted as a customer.`
-        : "Paused at customer request (away). Still counted as a customer; internet is stopped until they return.",
+      text: [
+        pauseRange
+          ? `Paused (away ${pauseRange}). Internet stopped; billing resumes after return.`
+          : dueLabel
+            ? `Paused at customer request (away). Internet stopped; due date ${dueLabel}.`
+            : "Paused at customer request (away). Internet stopped until they return.",
+        pauseNote,
+        "Still counted as a customer.",
+      ]
+        .filter(Boolean)
+        .join(" "),
       tone: "warn",
     };
   }
@@ -451,6 +523,9 @@ export function CustomerExpandPanel({
   const [payments, setPayments] = useState<CustomerPayment[]>([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState("");
+  const [oltStatus, setOltStatus] = useState<CustomerOltStatus | null>(null);
+  const [oltLoading, setOltLoading] = useState(false);
+  const oltLoadedRef = useRef(false);
   const {
     sorts: invoiceSorts,
     toggleSort: toggleInvoiceSort,
@@ -502,6 +577,9 @@ export function CustomerExpandPanel({
     setPaymentsError("");
     setPaymentsLoading(false);
     paymentsLoadedRef.current = false;
+    setOltStatus(null);
+    setOltLoading(false);
+    oltLoadedRef.current = false;
     hasRevealedRef.current = false;
 
     void api
@@ -588,10 +666,42 @@ export function CustomerExpandPanel({
     }
   }, [customerId]);
 
+  const loadOltStatus = useCallback(async () => {
+    setOltLoading(true);
+    try {
+      const res = await api.getCustomerOltStatus(customerId);
+      setOltStatus({ ...res, checkedAt: new Date().toISOString() });
+      oltLoadedRef.current = true;
+    } catch (e) {
+      setOltStatus({
+        ok: false,
+        error: e instanceof Error ? e.message : "Failed to load OLT status",
+        building: {
+          host: null,
+          port: null,
+          mac: null,
+          configured: false,
+        },
+        match: null,
+        onu: null,
+        linked: { buildingOltId: null, oltMac: null, onuIndexStr: null, onuSn: null },
+        checkedAt: new Date().toISOString(),
+      });
+      oltLoadedRef.current = true;
+    } finally {
+      setOltLoading(false);
+    }
+  }, [customerId]);
+
   useEffect(() => {
     if (!customer || activeTab !== "payments" || paymentsLoadedRef.current) return;
     void loadPayments();
   }, [customer, activeTab, loadPayments]);
+
+  useEffect(() => {
+    if (!customer || activeTab !== "connection" || oltLoadedRef.current) return;
+    void loadOltStatus();
+  }, [customer, activeTab, loadOltStatus]);
 
   async function handleRefresh() {
     if (inCooldown) {
@@ -987,29 +1097,89 @@ export function CustomerExpandPanel({
               label="Service status"
               value={displayCustomerStatus(customer)}
             />
-            <DetailCard label="Uptime" value={null} />
-            <DetailCard label="Last seen" value={null} />
             <DetailCard
-              label="OLT / ONU"
-              value={null}
-              span={{ base: "1 / -1", lg: "span 1" }}
+              label="Line status"
+              value={
+                oltLoading
+                  ? "Loading…"
+                  : formatOnuPhaseStatus(oltStatus?.onu?.phaseStatus) ||
+                    (oltStatus?.skipped
+                      ? formatOltSkipReason(oltStatus.reason)
+                      : oltStatus?.error
+                        ? "Unavailable"
+                        : oltStatus && !oltStatus.onu
+                          ? "Not found on OLT"
+                          : null)
+              }
+              highlight={oltStatus?.onu?.phaseStatus === "Working"}
             />
             <DetailCard
-              label="Signal / RX power"
-              value={null}
-              span={{ base: "1 / -1", sm: "span 1" }}
+              label="OLT service"
+              value={
+                oltLoading
+                  ? "Loading…"
+                  : formatOnuAdminStatus(oltStatus?.onu?.adminStatus)
+              }
+              highlight={oltStatus?.onu?.adminStatus === "ENABLE"}
             />
-            <DetailCard label="Online status" value={null} />
+            <DetailCard
+              label="ONU label"
+              value={
+                oltLoading
+                  ? "Loading…"
+                  : formatOnuLabel(oltStatus?.onu?.description) || null
+              }
+              span={{ base: "1 / -1", md: "span 1" }}
+            />
+            <DetailCard
+              label="Fiber distance"
+              value={
+                oltLoading
+                  ? "Loading…"
+                  : formatOpticalDistance(oltStatus?.onu?.onuRttDistance)
+              }
+            />
+            <DetailCard
+              label="Last checked"
+              value={
+                oltLoading
+                  ? "Loading…"
+                  : oltStatus?.checkedAt
+                    ? formatRelativeTime(oltStatus.checkedAt)
+                    : null
+              }
+            />
           </DetailGrid>
-          <Text
-            fontSize="2xs"
-            color="fg.muted"
+          <Flex
             mt={{ base: 2.5, md: 3 }}
-            lineHeight="1.4"
-            px={{ base: 0.5, md: 0 }}
+            gap={2}
+            align="center"
+            justify="space-between"
+            flexWrap="wrap"
           >
-            Live uptime and OLT metrics will load from the network NMS when connected.
-          </Text>
+            <Text
+              fontSize="2xs"
+              color="fg.muted"
+              lineHeight="1.4"
+              px={{ base: 0.5, md: 0 }}
+            >
+              {oltStatus?.onu
+                ? "Live status from the building OLT."
+                : "Live ONU status loads from OLTs configured on this building."}
+            </Text>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                oltLoadedRef.current = false;
+                void loadOltStatus();
+              }}
+              loading={oltLoading}
+            >
+              <FiRefreshCw />
+              Refresh status
+            </Button>
+          </Flex>
         </Box>
 
         <Box hidden={activeTab !== "contact"}>

@@ -192,9 +192,6 @@ export function CustomerTypeConvertDialog({
                         emptyLabel="No agencies found"
                         disabled={loadingAgencies}
                       />
-                      <Field.HelperText>
-                        B2B customers must be linked to an agency for invoicing.
-                      </Field.HelperText>
                     </Field.Root>
                   ) : (
                     <Stack gap={3}>
@@ -239,29 +236,17 @@ export function CustomerTypeConvertDialog({
             </>
           ) : (
             <Box bg="orange.50" borderRadius="md" px={3} py={3} fontSize="sm" color="orange.900">
-              Confirm conversion of <strong>{formatTitleCase(customer.fullName)}</strong> from{" "}
-              <strong>{customer.customerType}</strong> to <strong>{targetType}</strong>?
-              {toB2B && agencyMode === "select" && agencyId ? (
-                <>
-                  {" "}
-                  Agency:{" "}
-                  <strong>
-                    {formatTitleCase(
-                      agencies.find((a) => String(a.id) === agencyId)?.name || ""
-                    )}
-                  </strong>
-                </>
-              ) : null}
-              {toB2B && agencyMode === "create" ? (
-                <>
-                  {" "}
-                  New agency: <strong>{formatTitleCase(agencyName)}</strong>
-                </>
-              ) : null}
-              {!toB2B ? " The agency link will be removed." : null}{" "}
-              The customer number will change on TISP from{" "}
-              <strong>{customer.customerNumber}</strong> to the building&apos;s{" "}
-              {targetType} code (same apartment).
+              Convert <strong>{formatTitleCase(customer.fullName)}</strong>{" "}
+              {customer.customerType} → {targetType}
+              {toB2B && agencyMode === "select" && agencyId
+                ? ` · ${formatTitleCase(
+                    agencies.find((a) => String(a.id) === agencyId)?.name || ""
+                  )}`
+                : ""}
+              {toB2B && agencyMode === "create"
+                ? ` · new agency ${formatTitleCase(agencyName)}`
+                : ""}
+              . Number changes from <strong>{customer.customerNumber}</strong>.
             </Box>
           )}
 

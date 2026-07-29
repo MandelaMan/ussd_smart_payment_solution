@@ -42,6 +42,9 @@ type Props = {
   cancelNotes: string;
   cancelOnuCollectedAt: string;
   cancelDstvDecoderCollectedAt: string;
+  pauseStartDate: string;
+  pauseEndDate: string;
+  pauseReason: string;
   actionPackages: Product[];
   apartmentHistory: ApartmentHistoryEntry[];
   upgradeQuote: UpgradeQuote | null;
@@ -66,6 +69,9 @@ type Props = {
   onNotesChange: (value: string) => void;
   onOnuCollectedAtChange: (value: string) => void;
   onDstvDecoderCollectedAtChange: (value: string) => void;
+  onPauseStartDateChange: (value: string) => void;
+  onPauseEndDateChange: (value: string) => void;
+  onPauseReasonChange: (value: string) => void;
 };
 
 function ModalHeader({
@@ -199,12 +205,6 @@ function MoveApartmentForm({
 
   return (
     <Stack gap={4}>
-      <Text fontSize="sm" color="fg.muted">
-        Move within <strong>{formatTitleCase(customer.buildingName)}</strong>.
-        Customer number
-        {building?.ipSetup === "STATIC" ? ", IP," : ""} and billing details will
-        be updated for the new apartment.
-      </Text>
       <Field.Root required w="full">
         <Field.Label>New apartment number</Field.Label>
         <Input
@@ -231,18 +231,14 @@ function MoveApartmentForm({
 
       {occupancy?.available && occupancy.apartmentKnown && occupancy.lastIp ? (
         <Text fontSize="sm" color="green.700">
-          Apartment exists — reusing previous IP {occupancy.lastIp}.
-          {previewNumber ? ` New customer number: ${previewNumber}.` : null}
+          Reusing previous IP {occupancy.lastIp}
+          {previewNumber ? ` · ${previewNumber}` : ""}.
         </Text>
       ) : null}
 
       {occupancy?.available && needsIp && ipRules ? (
         <Field.Root required w="full">
           <Field.Label>IP address for new apartment</Field.Label>
-          <Text fontSize="xs" color="fg.muted" mb={2}>
-            This apartment is new (no prior occupancy). Select the static IP to
-            assign.
-          </Text>
           <Flex
             direction={{ base: "column", sm: "row" }}
             gap={3}
@@ -307,11 +303,9 @@ function MoveApartmentForm({
               />
             </Flex>
           </Flex>
-          <Field.HelperText>
-            {previewIp?.ok
-              ? `Assigned IP: ${previewIp.ip}`
-              : "Enter a host number from 1 to 254."}
-          </Field.HelperText>
+          {previewIp?.ok ? (
+            <Field.HelperText>Assigned IP: {previewIp.ip}</Field.HelperText>
+          ) : null}
         </Field.Root>
       ) : null}
 
@@ -348,6 +342,9 @@ export function CustomerActionDialog({
   cancelNotes,
   cancelOnuCollectedAt,
   cancelDstvDecoderCollectedAt,
+  pauseStartDate,
+  pauseEndDate,
+  pauseReason,
   actionPackages,
   apartmentHistory,
   upgradeQuote,
@@ -372,6 +369,9 @@ export function CustomerActionDialog({
   onNotesChange,
   onOnuCollectedAtChange,
   onDstvDecoderCollectedAtChange,
+  onPauseStartDateChange,
+  onPauseEndDateChange,
+  onPauseReasonChange,
 }: Props) {
   const needsDstvDecoder =
     Boolean(customer?.hasDstv) && Boolean(customer?.dstvSerialRequired);
@@ -379,6 +379,11 @@ export function CustomerActionDialog({
     cancelNotes.trim().length > 0 &&
     Boolean(cancelOnuCollectedAt) &&
     (!needsDstvDecoder || Boolean(cancelDstvDecoderCollectedAt));
+  const pauseFormValid =
+    pauseReason.trim().length > 0 &&
+    Boolean(pauseStartDate) &&
+    Boolean(pauseEndDate) &&
+    pauseEndDate >= pauseStartDate;
   const [cancelStep, setCancelStep] = useState<1 | 2>(1);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
 
@@ -486,18 +491,44 @@ export function CustomerActionDialog({
 
         {actionType === "pause" ? (
           <Stack gap={4}>
-            <Box bg="blue.50" borderRadius="md" px={3} py={3} fontSize="sm" color="blue.900">
-              Pause service for{" "}
-              <strong>{formatTitleCase(customer?.fullName)}</strong> (
-              {customer?.customerNumber}) while they are away. They stay an active customer on
-              billing; status becomes <strong>Paused</strong>. TISP due date is set to today so
-              internet stops until they return.
-            </Box>
+            <Text fontSize="sm" color="fg.muted">
+              Stops internet now. Billing resumes on the return date.
+            </Text>
+            <Field.Root required>
+              <Field.Label>Pause start date</Field.Label>
+              <Input
+                type="date"
+                value={pauseStartDate}
+                onChange={(e) => onPauseStartDateChange(e.target.value)}
+              />
+            </Field.Root>
+            <Field.Root required>
+              <Field.Label>Pause end date (return)</Field.Label>
+              <Input
+                type="date"
+                value={pauseEndDate}
+                min={pauseStartDate || undefined}
+                onChange={(e) => onPauseEndDateChange(e.target.value)}
+              />
+            </Field.Root>
+            <Field.Root required>
+              <Field.Label>Reason for pause</Field.Label>
+              <Input
+                value={pauseReason}
+                onChange={(e) => onPauseReasonChange(e.target.value)}
+                placeholder="e.g. Travelling abroad, renovation…"
+              />
+            </Field.Root>
             <Flex justify="flex-end" gap={2}>
               <Button variant="ghost" onClick={onClose}>
                 Keep active
               </Button>
-              <Button colorPalette="blue" loading={loading} onClick={onSubmit}>
+              <Button
+                colorPalette="blue"
+                loading={loading}
+                disabled={!pauseFormValid}
+                onClick={onSubmit}
+              >
                 Pause service
               </Button>
             </Flex>
@@ -506,13 +537,9 @@ export function CustomerActionDialog({
 
         {actionType === "disconnect" ? (
           <Stack gap={4}>
-            <Box bg="orange.50" borderRadius="md" px={3} py={3} fontSize="sm" color="orange.900">
-              Suspend{" "}
-              <strong>{formatTitleCase(customer?.fullName)}</strong> (
-              {customer?.customerNumber}) on TISP by setting the due date to today. They stay
-              active on Books with status <strong>Suspended</strong> (on billing, not live on
-              TISP). Zoho billing is not changed.
-            </Box>
+            <Text fontSize="sm" color="fg.muted">
+              Stops TISP access today. Zoho billing is unchanged.
+            </Text>
             <Flex justify="flex-end" gap={2}>
               <Button variant="ghost" onClick={onClose}>
                 Keep connected
@@ -527,11 +554,6 @@ export function CustomerActionDialog({
         {actionType === "cancel" ? (
           cancelStep === 1 ? (
             <Stack gap={4}>
-              <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                This marks the subscription as cancelled. The customer stays in apartment history
-                but is excluded from active counts. TISP due date is set to today and C2B Zoho
-                contacts are marked inactive.
-              </Box>
               <Field.Root w="full" required>
                 <Field.Label>Reason for cancellation</Field.Label>
                 <Input
@@ -573,11 +595,10 @@ export function CustomerActionDialog({
             </Stack>
           ) : (
             <Stack gap={4}>
-              <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                Are you sure you want to cancel{" "}
-                <strong>{formatTitleCase(customer?.fullName)}</strong> ({customer?.customerNumber})?
-                This cannot be undone from here.
-              </Box>
+              <Text fontSize="sm" color="fg.muted">
+                Cancel <strong>{formatTitleCase(customer?.fullName)}</strong> (
+                {customer?.customerNumber})? This cannot be undone from here.
+              </Text>
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={() => setCancelStep(1)}>
                   Go back
@@ -593,10 +614,9 @@ export function CustomerActionDialog({
         {actionType === "deletePermanent" ? (
           deleteStep === 1 ? (
             <Stack gap={4}>
-              <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                This permanently removes the customer and all related records from the admin
-                database. TISP and Zoho accounts (if any) are not deleted or changed.
-              </Box>
+              <Text fontSize="sm" color="red.700">
+                Permanently deletes local records. TISP and Zoho are not changed.
+              </Text>
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={onClose}>
                   Cancel
@@ -608,11 +628,11 @@ export function CustomerActionDialog({
             </Stack>
           ) : (
             <Stack gap={4}>
-              <Box bg="red.50" borderRadius="md" px={3} py={3} fontSize="sm" color="red.800">
-                Are you sure you want to permanently delete{" "}
-                <strong>{formatTitleCase(customer?.fullName)}</strong> ({customer?.customerNumber}
-                )? This cannot be undone.
-              </Box>
+              <Text fontSize="sm" color="red.700">
+                Permanently delete{" "}
+                <strong>{formatTitleCase(customer?.fullName)}</strong> (
+                {customer?.customerNumber})? This cannot be undone.
+              </Text>
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={() => setDeleteStep(1)}>
                   Go back
@@ -627,18 +647,6 @@ export function CustomerActionDialog({
 
         {actionType === "history" ? (
           <Stack gap={4}>
-            <Text fontSize="sm" color="fg.muted" lineHeight="1.5">
-              Occupancy timeline for apartment{" "}
-              <strong>{customer?.apartmentNumber}</strong>
-              {customer?.buildingName ? (
-                <>
-                  {" "}
-                  in <strong>{formatTitleCase(customer.buildingName)}</strong>
-                </>
-              ) : null}
-              . Oldest period on the left, most recent on the right.
-            </Text>
-
             {dataLoading ? (
               <ApartmentHistoryTimelineSkeleton steps={4} />
             ) : (

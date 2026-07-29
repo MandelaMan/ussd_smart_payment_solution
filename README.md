@@ -65,6 +65,7 @@ Compose file: [`docker-compose.yml`](docker-compose.yml).
 ## Docs
 
 - [Setup & migration guide (HTML)](docs/SETUP_AND_MIGRATION_GUIDE.html) — full install, Docker, env, deploy
+- [Customer processes](docs/CUSTOMER_PROCESSES.md) — admin customer actions and effects on Zoho, TISP, OLT
 - [Sync architecture](docs/SYNC_ARCHITECTURE.md) — BullMQ workers, Redis, Zoho budget
 - [Zoho sync setup](docs/ZOHO_SYNC_SETUP.md) — webhooks, incremental sync, rate limits
 - [Admin UI](admin/README.md) — Vite React dashboard

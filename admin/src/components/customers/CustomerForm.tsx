@@ -1043,14 +1043,7 @@ export function CustomerForm({
           </Field.Root>
         </FormSection>
 
-        <FormSection
-          title="Package & billing"
-          description={
-            isEdit && canEditPackage
-              ? "Admins can correct package and frequency in the database only — this does not create a Zoho upgrade or downgrade invoice."
-              : undefined
-          }
-        >
+        <FormSection title="Package & billing">
           {isEdit && customer && !showPackageEditor ? (
             <>
               <Field.Root opacity={0.92}>
@@ -1071,13 +1064,6 @@ export function CustomerForm({
                 <Field.Label color="fg.muted">Payment frequency</Field.Label>
                 <Input {...lockedPackageFieldProps} value={editFrequencyLabel} />
               </Field.Root>
-              {customer.hasDstv && (
-                <Box gridColumn={{ md: "span 2" }} bg="blue.50" borderRadius="md" px={3} py={2}>
-                  <Text fontSize="sm" color="blue.800">
-                    TV package included — use Upgrade or Downgrade to change the internet/TV plan.
-                  </Text>
-                </Box>
-              )}
               {showDstvSerialField && (
                 <Field.Root required={requiresDstvSerial} gridColumn={{ md: "span 2" }}>
                   <Field.Label>DSTV decoder IUC/Serial number</Field.Label>
@@ -1090,10 +1076,6 @@ export function CustomerForm({
                     disabled={fieldsDisabled}
                     bg={!isActive ? "gray.50" : undefined}
                   />
-                  <Field.HelperText>
-                    Required for DSTV packages in decoder-based buildings. Must be unique across
-                    all customers. Changing the TV package requires Upgrade or Downgrade.
-                  </Field.HelperText>
                 </Field.Root>
               )}
             </>
@@ -1192,8 +1174,7 @@ export function CustomerForm({
           {!isEdit && packageHasDstv && selectedCategory?.requiresDecoderFee && (
             <Box gridColumn={{ md: "span 2" }} bg="orange.50" borderRadius="md" px={3} py={2}>
               <Text fontSize="sm" color="orange.800">
-                A one-off decoder payment of {formatCurrency(decoderFee)} applies for this
-                category.
+                One-off decoder fee: {formatCurrency(decoderFee)}.
               </Text>
             </Box>
           )}
@@ -1209,10 +1190,6 @@ export function CustomerForm({
                 disabled={fieldsDisabled}
                 bg={!isActive ? "gray.50" : undefined}
               />
-              <Field.HelperText>
-                Required for DSTV packages in decoder-based buildings. Must be unique across all
-                customers. Found on the decoder label or activation card.
-              </Field.HelperText>
             </Field.Root>
           )}
           {paymentFrequency === "custom" && (
@@ -1228,9 +1205,6 @@ export function CustomerForm({
                 disabled={fieldsDisabled}
                 bg={!isActive ? "gray.50" : undefined}
               />
-              <Field.HelperText>
-                Package price is calculated from the monthly base (monthly price × days ÷ 30).
-              </Field.HelperText>
             </Field.Root>
           )}
           <Field.Root gridColumn={{ md: "span 2" }}>
@@ -1245,25 +1219,13 @@ export function CustomerForm({
               <option value="no">No — issue signup invoice immediately</option>
               <option value="yes">Yes — 30-day free trial, bill after trial</option>
             </SelectField>
-            <Field.HelperText>
-              {isEdit
-                ? "Trial applies on create only."
-                : "When enabled, no signup invoice is sent. A recurring invoice is scheduled to start 30 days after creation."}
-            </Field.HelperText>
           </Field.Root>
             </>
           )}
         </FormSection>
 
         {isEdit && isActive ? (
-          <FormSection
-            title="TISP"
-            description={
-              onTisp
-                ? "Saving updates this customer on TISP (plan package and due date)."
-                : "This customer is missing on TISP. Set a due date below — saving will create them."
-            }
-          >
+          <FormSection title="TISP">
             <Box gridColumn={{ md: "span 2" }}>
               <Flex align="center" gap={2}>
                 <Text fontSize="sm" color="fg.muted">
@@ -1294,11 +1256,11 @@ export function CustomerForm({
                 disabled={fieldsDisabled || integrationsLoading}
                 placeholder="Select due date"
               />
-              <Field.HelperText>
-                {onTisp
-                  ? "Shows the current TISP due date. Change it and save to update TISP."
-                  : `Required to create this customer on TISP. Default: ${TISP_STANDARD_DUE_DATE} (2 Aug 2026).`}
-              </Field.HelperText>
+              {!onTisp ? (
+                <Field.HelperText>
+                  Required to create on TISP (default {TISP_STANDARD_DUE_DATE}).
+                </Field.HelperText>
+              ) : null}
             </Field.Root>
           </FormSection>
         ) : null}
@@ -1308,8 +1270,7 @@ export function CustomerForm({
             <Box gridColumn={{ md: "span 2" }}>
               {customerType === "B2B" ? (
                 <Text fontSize="sm" color="fg.muted">
-                  B2B customers are billed through the agency Zoho contact — no individual
-                  invoices or recurring profiles.
+                  Billed via agency Zoho contact.
                 </Text>
               ) : (
                 <Stack gap={2}>
@@ -1475,10 +1436,6 @@ export function CustomerForm({
                   <option value="no">No — contact only</option>
                   <option value="yes">Yes — create signup invoice</option>
                 </SelectField>
-                <Field.HelperText>
-                  Contact is linked but no invoices were found. Enable to create the
-                  first invoice on save.
-                </Field.HelperText>
               </Field.Root>
             ) : null}
 
@@ -1496,10 +1453,6 @@ export function CustomerForm({
                   <option value="yes">Yes — create recurring profile on save</option>
                   <option value="no">No — leave without recurring</option>
                 </SelectField>
-                <Field.HelperText>
-                  No active recurring profile was found for this customer. Contact details
-                  are still refreshed on save.
-                </Field.HelperText>
               </Field.Root>
             ) : null}
 
@@ -1517,10 +1470,6 @@ export function CustomerForm({
                   <option value="no">No — leave recurring as-is</option>
                   <option value="yes">Yes — sync to current package and frequency</option>
                 </SelectField>
-                <Field.HelperText>
-                  Contact details are always refreshed. Enable this only if the package or
-                  billing frequency changed.
-                </Field.HelperText>
               </Field.Root>
             ) : null}
           </FormSection>
@@ -1580,7 +1529,7 @@ export function CustomerForm({
           <Field.Root required>
             <Field.Label>Customer type</Field.Label>
             <SelectField
-              disabled={fieldsDisabled}
+              disabled={fieldsDisabled || isEdit}
               fieldProps={{
                 value: customerType,
                 onChange: (e) => setCustomerType(e.target.value as "C2B" | "B2B"),
@@ -1589,6 +1538,11 @@ export function CustomerForm({
               <option value="C2B">C2B — invoice to customer</option>
               <option value="B2B">B2B — invoice to agency</option>
             </SelectField>
+            {isEdit ? (
+              <Field.HelperText>
+                Use Convert to C2B/B2B from the customer menu.
+              </Field.HelperText>
+            ) : null}
           </Field.Root>
           <Field.Root required>
             <Field.Label>VAT exempt</Field.Label>
@@ -1623,14 +1577,7 @@ export function CustomerForm({
         </FormSection>
 
         {selectedBuilding && (
-          <FormSection
-            title="Network"
-            description={
-              needsIp
-                ? "Pick the subnet, then enter the last number of the IP address."
-                : `${selectedBuilding.name} uses PPOE — set the PPPoE username and password for TISP.`
-            }
-          >
+          <FormSection title="Network">
             {needsIp && ipRules ? (
               <Box gridColumn={{ md: "span 2" }}>
                 <Field.Root required>
@@ -1701,11 +1648,9 @@ export function CustomerForm({
                       />
                     </Flex>
                   </Flex>
-                  <Field.HelperText>
-                    {previewIp
-                      ? `Assigned IP: ${previewIp}`
-                      : "Enter a host number from 1 to 254."}
-                  </Field.HelperText>
+                  {previewIp ? (
+                    <Field.HelperText>Assigned IP: {previewIp}</Field.HelperText>
+                  ) : null}
                 </Field.Root>
               </Box>
             ) : null}
@@ -1725,7 +1670,7 @@ export function CustomerForm({
                   bg={!isActive ? "gray.50" : undefined}
                 />
                 <Field.HelperText>
-                  Defaults to the customer number. Sent to TISP as PppoeUsername.
+                  Defaults to the customer number.
                 </Field.HelperText>
               </Field.Root>
             ) : null}
@@ -1755,10 +1700,6 @@ export function CustomerForm({
                     </Button>
                   ) : null}
                 </Flex>
-                  <Field.HelperText>
-                    Letters, numbers, and special characters allowed (no spaces). Default is a
-                    random 7-character password.
-                  </Field.HelperText>
               </Field.Root>
             ) : null}
           </FormSection>
@@ -1805,10 +1746,10 @@ export function CustomerForm({
         <FormSubmitSummary
           description={
             isEdit
-              ? "These details will be saved. Missing Zoho/TISP links are created; optional invoice and recurring settings apply as selected."
+              ? undefined
               : trialPeriod
-                ? "A customer record will be created with a 30-day trial. No signup invoice — billing starts after the trial via a recurring profile."
-                : "A customer record will be created and synced to TISP and Zoho."
+                ? "Creates with a 30-day trial — no signup invoice."
+                : undefined
           }
           items={summaryItems}
         />

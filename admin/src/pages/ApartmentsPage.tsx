@@ -171,7 +171,7 @@ export function ApartmentsPage() {
           <ListPageStickyChrome>
             <MobilePageChrome
         title="Apartments"
-        description="Unit inventory by building — occupancy and network details."
+        description="Occupancy by building"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Unit, building, IP…"

@@ -1,6 +1,7 @@
 const leadStore = require("../services/leadStore");
 const whatsappLeadBot = require("../services/whatsappLeadBot");
 const { emitSyncEvent } = require("../socket");
+const { emitAdminUpdate } = require("../lib/adminEvents");
 const { verifyWhatsAppSignature } = require("../middleware/webhookVerify");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -101,6 +102,7 @@ async function submitLead(req, res, next) {
     }
 
     emitSyncEvent("leads:created", { leadId: id, source });
+    emitAdminUpdate("leads", { action: "created", leadId: id, source });
     res.status(201).json({
       ok: true,
       id,

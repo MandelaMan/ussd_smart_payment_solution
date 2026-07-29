@@ -140,6 +140,12 @@ async function handleInbound(update) {
     externalMessageId: externalId,
   });
 
+  // Agent-managed thread: store inbound only — no auto-bot replies.
+  if (lead.conversationState === "agent") {
+    emitLeadEvent("leads:updated", { leadId: lead.id, source: "whatsapp" });
+    return;
+  }
+
   const state = lead.conversationState || "welcome";
   let outbound = null;
   let nextState = state;
@@ -308,11 +314,202 @@ function getStatus() {
   };
 }
 
+/**
+ * Normalize a phone to WhatsApp Cloud API digits (e.g. 2547…).
+ */
+function toWhatsAppId(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.startsWith("254") && digits.length >= 12) return digits;
+  if (digits.startsWith("0") && digits.length >= 10) return `254${digits.slice(1)}`;
+  if (digits.length === 9) return `254${digits}`;
+  if (digits.startsWith("1") && digits.length === 11) return digits; // US
+  return digits;
+}
+
+function withinCustomerServiceWindow(lastInboundAt) {
+  if (!lastInboundAt) return false;
+  const t = new Date(lastInboundAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < 24 * 60 * 60 * 1000;
+}
+
+function extractWhatsAppApiError(err) {
+  const data = err?.response?.data || err?.data || null;
+  const msg =
+    data?.error?.message ||
+    data?.error?.error_user_msg ||
+    err?.message ||
+    String(err);
+  return msg;
+}
+
+async function sendWhatsAppPayload(wa, waId, body, { preferTemplate = false } = {}) {
+  const templateName = String(process.env.WHATSAPP_OUTBOUND_TEMPLATE || "").trim();
+  const templateLang = String(
+    process.env.WHATSAPP_OUTBOUND_TEMPLATE_LANG || "en"
+  ).trim();
+
+  if (preferTemplate && templateName && typeof wa.sendTemplateMessage === "function") {
+    const components = [
+      {
+        type: "body",
+        parameters: [{ type: "text", text: body.slice(0, 1024) }],
+      },
+    ];
+    await wa.sendTemplateMessage(waId, templateName, components, templateLang);
+    return { mode: "template", templateName };
+  }
+
+  try {
+    await wa.sendTextMessage(String(waId), body);
+    return { mode: "text" };
+  } catch (err) {
+    const apiMsg = extractWhatsAppApiError(err);
+    const needsTemplate =
+      /template|24.?hour|outside|session|re-?engage|not in/i.test(apiMsg) ||
+      err?.response?.data?.error?.code === 131047 ||
+      err?.response?.data?.error?.code === 131026;
+
+    if (needsTemplate && templateName && typeof wa.sendTemplateMessage === "function") {
+      const components = [
+        {
+          type: "body",
+          parameters: [{ type: "text", text: body.slice(0, 1024) }],
+        },
+      ];
+      await wa.sendTemplateMessage(waId, templateName, components, templateLang);
+      return { mode: "template", templateName, fallbackFrom: apiMsg };
+    }
+
+    const wrapped = new Error(
+      needsTemplate && !templateName
+        ? "Cannot message this customer yet: WhatsApp only allows free-form replies within 24 hours of their last message. Set WHATSAPP_OUTBOUND_TEMPLATE to an approved Meta template to start conversations."
+        : apiMsg
+    );
+    wrapped.status = needsTemplate ? 409 : 502;
+    wrapped.cause = err;
+    throw wrapped;
+  }
+}
+
+/**
+ * Send a free-form WhatsApp reply to an existing lead (within 24h customer window),
+ * or a template when initiating / outside the window.
+ */
+async function sendLeadReply(leadId, text, { userId = null } = {}) {
+  const body = String(text || "").trim();
+  if (!body) {
+    const err = new Error("Message text is required");
+    err.status = 400;
+    throw err;
+  }
+
+  const lead = await leadStore.getLeadById(leadId);
+  if (!lead) {
+    const err = new Error("Lead not found");
+    err.status = 404;
+    throw err;
+  }
+  const waId = toWhatsAppId(lead.whatsappWaId || lead.phone);
+  if (!waId) {
+    const err = new Error("Lead has no WhatsApp phone number");
+    err.status = 400;
+    throw err;
+  }
+
+  const wa = await ensureClient();
+  if (!wa) {
+    const err = new Error(initError || "WhatsApp is not configured");
+    err.status = 503;
+    throw err;
+  }
+
+  const lastInboundAt = await leadStore.getLastInboundAt(lead.id);
+  const inSession = withinCustomerServiceWindow(lastInboundAt);
+  const sent = await sendWhatsAppPayload(wa, waId, body, {
+    preferTemplate: !inSession,
+  });
+
+  if (!lead.whatsappWaId || lead.whatsappWaId !== waId) {
+    await leadStore.updateLead(lead.id, { whatsappWaId: waId });
+  }
+
+  await leadStore.addMessage({
+    leadId: lead.id,
+    direction: "outbound",
+    channel: "whatsapp",
+    body,
+    payload: { type: "agent_reply", userId, sendMode: sent.mode },
+  });
+
+  await leadStore.updateLead(lead.id, {
+    conversationState: "agent",
+    status: lead.status === "new" ? "contacted" : lead.status,
+  });
+
+  const messages = await leadStore.listMessages(lead.id);
+  const updated = await leadStore.getLeadById(lead.id);
+  emitLeadEvent("leads:updated", { leadId: lead.id, source: "whatsapp" });
+  return { lead: updated, messages, sendMode: sent.mode };
+}
+
+/**
+ * Start or continue a WhatsApp thread for a customer (or raw phone).
+ * Creates a lead if needed so agents can message first.
+ */
+async function sendCustomerMessage(
+  {
+    phone,
+    name = null,
+    customerId = null,
+    text,
+  },
+  { userId = null } = {}
+) {
+  const body = String(text || "").trim();
+  if (!body) {
+    const err = new Error("Message text is required");
+    err.status = 400;
+    throw err;
+  }
+
+  const waId = toWhatsAppId(phone);
+  if (!waId) {
+    const err = new Error("A valid phone number is required");
+    err.status = 400;
+    throw err;
+  }
+
+  let lead = await leadStore.getWhatsAppLeadByPhone(phone);
+  if (!lead) {
+    const id = await leadStore.createLead({
+      source: "whatsapp",
+      status: "contacted",
+      name: name ? String(name).trim().slice(0, 200) : null,
+      phone: String(phone).trim().slice(0, 32),
+      whatsappWaId: waId,
+      conversationState: "agent",
+      metadata: customerId ? { customerId } : null,
+    });
+    if (customerId) {
+      await leadStore.updateLead(id, { convertedCustomerId: customerId });
+    }
+    lead = await leadStore.getLeadById(id);
+    emitLeadEvent("leads:created", { leadId: id, source: "whatsapp" });
+  }
+
+  return sendLeadReply(lead.id, body, { userId });
+}
+
 module.exports = {
   isConfigured,
   ensureClient,
   verifyWebhookQuery,
   processWebhook,
   getStatus,
+  sendLeadReply,
+  sendCustomerMessage,
+  toWhatsAppId,
   INTEREST_OPTIONS,
 };

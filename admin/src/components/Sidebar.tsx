@@ -21,6 +21,7 @@ import {
   FiPieChart,
   FiSettings,
   FiMessageSquare,
+  FiSend,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/auth";
@@ -60,6 +61,12 @@ export function Sidebar({ open, onClose }: Props) {
       to: "/leads",
       label: "Leads",
       icon: FiMessageSquare,
+      visible: true,
+    },
+    {
+      to: "/communication",
+      label: "Communication",
+      icon: FiSend,
       visible: true,
     },
     {

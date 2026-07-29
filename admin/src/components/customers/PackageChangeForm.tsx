@@ -405,7 +405,7 @@ export function PackageChangeForm({
             {pendingUpgrade?.targetProductMbps
               ? ` (${pendingUpgrade.targetProductMbps} Mbps)`
               : ""}
-            . Cancel it to start a new upgrade or wait for payment to complete.
+            .
           </Text>
           {onCancelPendingUpgrade ? (
             <Button

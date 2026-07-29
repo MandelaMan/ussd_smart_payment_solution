@@ -85,7 +85,22 @@ function SupportActivityPanel({
           Account and sync events
         </Text>
       </Box>
-      <Stack gap={0} flex={1} minH={0} overflowY="auto">
+      <Stack
+        gap={0}
+        flex={1}
+        minH={0}
+        overflowY="auto"
+        css={{
+          scrollbarWidth: "thin",
+          scrollbarColor: "var(--chakra-colors-gray-300) transparent",
+          "&::-webkit-scrollbar": { width: "4px" },
+          "&::-webkit-scrollbar-track": { background: "transparent" },
+          "&::-webkit-scrollbar-thumb": {
+            background: "var(--chakra-colors-gray-300)",
+            borderRadius: "999px",
+          },
+        }}
+      >
         {loading && (
           <Text px={3} py={4} fontSize="sm" color="fg.muted">
             Loading…
@@ -190,7 +205,7 @@ export function SupportDashboardPage() {
     subscribers: p.subscribers,
   }));
 
-  const subscriptionChartData = stats.subscriptionStatus.map((row) => ({
+  const subscriptionChartData = (stats.subscriptionStatus ?? []).map((row) => ({
     name: formatTitleCase(row.status),
     value: row.count,
     key: row.status,
@@ -200,6 +215,8 @@ export function SupportDashboardPage() {
     name: formatTitleCase(b.building),
     subscribers: b.subscribers,
   }));
+
+  const activity = stats.activity ?? [];
 
   return (
     <Flex
@@ -400,8 +417,8 @@ export function SupportDashboardPage() {
         minH={0}
       >
         <SupportActivityPanel
-          items={stats.activity}
-          loading={loading && stats.activity.length === 0}
+          items={activity}
+          loading={loading && activity.length === 0}
         />
       </Box>
     </Flex>

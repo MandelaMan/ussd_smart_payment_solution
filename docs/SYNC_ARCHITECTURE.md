@@ -158,3 +158,8 @@ workers/index.js
 ## Fallback
 
 If Redis is unavailable at startup, the API falls back to the legacy in-process `setInterval` reconciliation scheduler so existing functionality is preserved.
+
+## Related
+
+- [Customer processes](./CUSTOMER_PROCESSES.md) — admin customer actions (upgrade, convert, pause, cancel, …) and effects on Zoho, TISP, and OLT
+- [Zoho sync setup](./ZOHO_SYNC_SETUP.md)

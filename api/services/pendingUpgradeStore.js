@@ -165,6 +165,15 @@ async function completePendingUpgrade(pendingId) {
   }
 
   const currentMbps = customer.product_mbps;
+  const quote = pending.quote || {};
+  if (quote.paymentFrequency) {
+    await store.updateCustomerBillingCycle(
+      pending.customerId,
+      quote.paymentFrequency,
+      quote.customPeriodDays
+    );
+  }
+
   await store.changeCustomerProduct(
     pending.customerId,
     pending.targetProductId,
@@ -173,9 +182,27 @@ async function completePendingUpgrade(pendingId) {
 
   const ctx = await store.getCustomerContext(pending.customerId);
   let tispError = null;
+  let zohoError = null;
   try {
-    const { pushCustomerToTisp } = require("../controllers/customers.controller");
-    await pushCustomerToTisp(ctx, { skipCooldown: true });
+    const {
+      pushCustomerToTisp,
+      runZohoSyncForCustomer,
+    } = require("../controllers/customers.controller");
+    try {
+      await pushCustomerToTisp(ctx, { skipCooldown: true });
+    } catch (e) {
+      tispError = e.message;
+    }
+    try {
+      const zoho = await runZohoSyncForCustomer(pending.customerId, {
+        syncRecurring: true,
+      });
+      if (zoho && zoho.ok === false) {
+        zohoError = zoho.error || "Zoho sync failed";
+      }
+    } catch (e) {
+      zohoError = e.message;
+    }
   } catch (e) {
     tispError = e.message;
   }
@@ -192,9 +219,11 @@ async function completePendingUpgrade(pendingId) {
     await logActivity({
       eventType: "upgrade_payment_completed",
       title: "Upgrade completed after payment",
-      message: `${customerRow?.customerNumber}: ${currentMbps} → ${pending.targetProductMbps} Mbps`,
+      message: `${customerRow?.customerNumber}: ${currentMbps} → ${pending.targetProductMbps} Mbps${
+        zohoError ? ` · Zoho: ${zohoError}` : ""
+      }`,
       source: "tisp",
-      status: tispError ? "failed" : "success",
+      status: tispError || zohoError ? "failed" : "success",
       customerRef: customerRow?.customerNumber,
       amount: pending.topUpAmount,
       referenceId: pending.zohoInvoiceId || pending.mpesaCheckoutRequestId,
@@ -220,6 +249,7 @@ async function completePendingUpgrade(pendingId) {
     ok: true,
     customer: customerRow,
     tispError,
+    zohoError,
     pendingUpgradeId: pendingId,
   };
 }

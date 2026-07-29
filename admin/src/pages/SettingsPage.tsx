@@ -105,7 +105,7 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
           M-Pesa callbacks
         </Heading>
         <Text fontSize="sm" color="fg.muted" mb={3}>
-          Register these URLs in the Safaricom Daraja portal for STK push and C2B notifications.
+          Register in Safaricom Daraja for STK and C2B.
         </Text>
         <Stack gap={2}>
           <ConfigRow label="STK callback" value={webhooks.mpesa.callback} />
@@ -126,13 +126,13 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
           />
         </Flex>
         <Text fontSize="sm" color="fg.muted" mb={3}>
-          Point Zoho invoice-paid notifications here. Set{" "}
-          <Text as="span" fontFamily="mono" fontSize="xs">
-            ZOHO_WEBHOOK_SECRET
-          </Text>{" "}
-          in server environment and send it as{" "}
+          Zoho invoice-paid endpoint. Send{" "}
           <Text as="span" fontFamily="mono" fontSize="xs">
             x-zoho-webhook-secret
+          </Text>{" "}
+          matching{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            ZOHO_WEBHOOK_SECRET
           </Text>
           .
         </Text>
@@ -140,11 +140,48 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
       </Box>
 
       <Box>
+        <Flex align="center" gap={2} mb={1} flexWrap="wrap">
+          <Heading size="sm">Lead generation</Heading>
+          <StatusBadge
+            ok={webhooks.leads.whatsappConfigured}
+            okLabel="WhatsApp API configured"
+            failLabel="WhatsApp API not set"
+          />
+          <StatusBadge
+            ok={webhooks.leads.whatsappVerifyTokenConfigured}
+            okLabel="Verify token set"
+            failLabel="Verify token missing"
+          />
+        </Flex>
+        <Text fontSize="sm" color="fg.muted" mb={3}>
+          Public intake form, embeddable widget, and Meta WhatsApp Cloud API webhook for prospects (non-customers). Existing-customer messaging is under Communication.
+          Register the webhook URL in Meta Developer Console with{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            WHATSAPP_WEBHOOK_VERIFY_TOKEN
+          </Text>
+          .
+        </Text>
+        <Stack gap={2}>
+          <ConfigRow label="Public form" value={webhooks.leads.publicForm} />
+          <ConfigRow
+            label="Embed script"
+            value={webhooks.leads.embedScript}
+            hint="Place a #starlynx-lead-form div, then load this script on partner sites."
+          />
+          <ConfigRow label="Embed snippet" value={webhooks.leads.embedSnippet} />
+          <ConfigRow
+            label="WhatsApp webhook"
+            value={webhooks.leads.whatsappWebhook}
+          />
+        </Stack>
+      </Box>
+
+      <Box>
         <Heading size="sm" mb={1}>
           Integration flags
         </Heading>
         <Text fontSize="sm" color="fg.muted" mb={3}>
-          Read-only view of server environment toggles. Change these in deployment configuration.
+          Server environment toggles (read-only here).
         </Text>
         <Stack gap={2}>
           <Flex
@@ -208,7 +245,7 @@ function RolesPanel({ settings }: { settings: AppSettings }) {
         Role definitions
       </Heading>
       <Text fontSize="sm" color="fg.muted" mb={3}>
-        Assign roles when creating or editing users below.
+        Assign when creating or editing users.
       </Text>
       <Stack gap={2}>
         {settings.roles.map((role) => (

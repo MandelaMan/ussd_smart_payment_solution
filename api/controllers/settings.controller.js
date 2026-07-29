@@ -40,6 +40,19 @@ async function getSettings(req, res, next) {
           setupHint:
             "In Zoho Books → Settings → Automation → Workflow Rules, trigger on Invoice Paid and POST the invoice JSON to invoicePaid with header x-zoho-webhook-secret (zero outbound API calls).",
         },
+        leads: {
+          publicForm: `${base}/leads`,
+          embedScript: `${base}/leads/embed.js`,
+          embedSnippet: `<div id="starlynx-lead-form"></div>\n<script src="${base}/leads/embed.js" async></script>`,
+          whatsappWebhook: `${base}/api/public/whatsapp/webhook`,
+          whatsappVerifyTokenConfigured: Boolean(
+            String(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || "").trim()
+          ),
+          whatsappConfigured: Boolean(
+            String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim() &&
+              String(process.env.WHATSAPP_ACCESS_TOKEN || "").trim()
+          ),
+        },
       },
       integrations: {
         xtreamSyncEnabled: process.env.XTREAM_SYNC_ENABLED !== "false",

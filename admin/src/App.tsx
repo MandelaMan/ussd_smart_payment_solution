@@ -33,6 +33,10 @@ function lazyPage<T extends Record<string, unknown>>(
 const RoleHomePage = lazyPage(() => import("./pages/RoleHomePage"), "RoleHomePage");
 const ActivityPage = lazyPage(() => import("./pages/ActivityPage"), "ActivityPage");
 const LeadsPage = lazyPage(() => import("./pages/LeadsPage"), "LeadsPage");
+const CommunicationPage = lazyPage(
+  () => import("./pages/CommunicationPage"),
+  "CommunicationPage"
+);
 const TransactionsPage = lazyPage(() => import("./pages/TransactionsPage"), "TransactionsPage");
 const BusinessIntelligencePage = lazyPage(
   () => import("./pages/BusinessIntelligencePage"),
@@ -262,6 +266,14 @@ export default function App() {
                     element={
                       <LazyRoute>
                         <LeadsPage />
+                      </LazyRoute>
+                    }
+                  />
+                  <Route
+                    path="communication"
+                    element={
+                      <LazyRoute>
+                        <CommunicationPage />
                       </LazyRoute>
                     }
                   />

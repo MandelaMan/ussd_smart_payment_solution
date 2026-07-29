@@ -1,5 +1,6 @@
 import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
 import {
@@ -135,10 +136,12 @@ export function ProductsPage() {
     }
   }, [selectedVariant, mbps]);
 
-  const load = useCallback(async (options?: { bustCache?: boolean }) => {
+  const load = useCallback(async (options?: { bustCache?: boolean; silent?: boolean }) => {
     const append = isMobile && page > 1 && !options?.bustCache;
-    if (append) setLoadingMore(true);
-    else setLoading(true);
+    if (!options?.silent) {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+    }
     setError("");
     try {
       const params: Record<string, string> = {
@@ -154,11 +157,19 @@ export function ProductsPage() {
       if (options?.bustCache) params._ts = String(Date.now());
       const res = await api.listProducts(params);
       setProducts((prev) =>
-        mergeInfinitePage(prev, res.products, page, isMobile && !options?.bustCache, (p) => p.id)
+        mergeInfinitePage(
+          prev,
+          res.products,
+          page,
+          isMobile && !options?.bustCache && !options?.silent,
+          (p) => p.id
+        )
       );
       setPagination(res.pagination);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load packages");
+      if (!options?.silent) {
+        setError(e instanceof Error ? e.message : "Failed to load packages");
+      }
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -200,6 +211,10 @@ export function ProductsPage() {
       .catch(() => {})
       .finally(() => setLookupsLoading(false));
   }, []);
+
+  useVisibilityRefresh(() => {
+    void load({ silent: true });
+  });
 
   const buildingFilterOptions = useMemo(
     () => [
@@ -381,7 +396,7 @@ export function ProductsPage() {
           <ListPageStickyChrome>
             <MobilePageChrome
         title="Packages"
-        description="Set and manage building-specific package prices. Edit or delete unused packages as needed."
+        description="Building package prices"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Package name…"
@@ -872,8 +887,7 @@ function ProductForm({
         {selectedCategory?.requiresDecoderFee && (
           <Box gridColumn={{ md: "1 / -1" }} bg="orange.50" borderRadius="md" px={3} py={2}>
             <Text fontSize="sm" color="orange.800">
-              Customers on this category require a one-off decoder payment of{" "}
-              {formatCurrency(selectedCategory.decoderFeeAmount || 2900)} at signup.
+              One-off decoder fee: {formatCurrency(selectedCategory.decoderFeeAmount || 2900)}.
             </Text>
           </Box>
         )}

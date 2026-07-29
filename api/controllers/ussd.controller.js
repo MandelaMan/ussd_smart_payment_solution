@@ -14,7 +14,9 @@ const packageList = [
   { name: "Basic Plus", bandwidth: "50MBPS", price: 3 },
   { name: "Basic Plus + DSTV", bandwidth: "50MBPS", price: 4 },
   { name: "Premium", bandwidth: "100MBPS", price: 5 },
+  { name: "Premium Plus", bandwidth: "150MBPS", price: 7 },
   { name: "Premium + DSTV", bandwidth: "100MBPS", price: 6 },
+  { name: "Premium Plus + DSTV", bandwidth: "150MBPS", price: 8 },
 ];
 
 const USSD_ACCOUNT_NOT_FOUND = "Account not found. Kindly contact support";

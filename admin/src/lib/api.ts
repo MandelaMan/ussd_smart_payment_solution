@@ -65,6 +65,21 @@ export type AdminUser = User & {
   created_at: string;
 };
 
+export type BuildingOlt = {
+  id: number;
+  buildingId: number;
+  name: string | null;
+  host: string;
+  port: number;
+  mac: string;
+  username: string;
+  tenantId: string;
+  passwordConfigured: boolean;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type Building = {
   id: number;
   name: string;
@@ -72,6 +87,8 @@ export type Building = {
   b2bCode: string;
   ipSetup: "STATIC" | "PPOE";
   dstvSetup: "headend_coax" | "decoder";
+  olts?: BuildingOlt[];
+  oltCount?: number;
   ipPrefixes: string[];
   createdAt?: string;
 };
@@ -159,6 +176,9 @@ export type Lead = {
   email: string | null;
   interest: string | null;
   buildingInterest: string | null;
+  apartmentNumber?: string | null;
+  buildingId?: number | null;
+  buildingName?: string | null;
   message: string | null;
   notes: string | null;
   whatsappWaId: string | null;
@@ -169,6 +189,9 @@ export type Lead = {
   createdAt: string;
   updatedAt: string;
   messageCount?: number;
+  lastMessage?: string | null;
+  lastMessageAt?: string | null;
+  lastMessageDirection?: "inbound" | "outbound" | null;
 };
 
 export type LeadMessage = {
@@ -252,6 +275,14 @@ export type AppSettings = {
       invoicePaid: string;
       secretConfigured: boolean;
     };
+    leads: {
+      publicForm: string;
+      embedScript: string;
+      embedSnippet: string;
+      whatsappWebhook: string;
+      whatsappVerifyTokenConfigured: boolean;
+      whatsappConfigured: boolean;
+    };
   };
   integrations: {
     xtreamSyncEnabled: boolean;
@@ -294,6 +325,15 @@ export type Customer = {
   customerNumber: string;
   ipSetup?: string | null;
   ppoeUsername?: string | null;
+  buildingOltId?: number | null;
+  buildingOltName?: string | null;
+  buildingOltHost?: string | null;
+  buildingOltPort?: number | null;
+  buildingOltMac?: string | null;
+  buildingOltConfigured?: boolean;
+  oltMac?: string | null;
+  onuIndexStr?: string | null;
+  onuSn?: string | null;
   tispPassword?: string | null;
   packagePrice: number;
   decoderFeeAmount: number | null;
@@ -318,6 +358,9 @@ export type Customer = {
   cancellationReason?: string | null;
   onuCollectedAt?: string | null;
   dstvDecoderCollectedAt?: string | null;
+  pauseStartDate?: string | null;
+  pauseEndDate?: string | null;
+  pauseReason?: string | null;
   upgradePaymentStatus?: "none" | "payment_pending";
   createdAt: string;
   updatedAt: string;
@@ -1561,6 +1604,58 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  listBuildingOlts: (buildingId: number) =>
+    request<{ ok: boolean; olts: BuildingOlt[] }>(
+      `/admin/buildings/${buildingId}/olts`
+    ),
+
+  createBuildingOlt: (
+    buildingId: number,
+    data: {
+      name?: string | null;
+      host: string;
+      port?: number;
+      mac: string;
+      username: string;
+      password: string;
+      tenantId?: string;
+    }
+  ) =>
+    request<{ ok: boolean; olt: BuildingOlt }>(
+      `/admin/buildings/${buildingId}/olts`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    ),
+
+  updateBuildingOlt: (
+    buildingId: number,
+    oltId: number,
+    data: Partial<{
+      name: string | null;
+      host: string;
+      port: number;
+      mac: string;
+      username: string;
+      password: string;
+      tenantId: string;
+      isActive: boolean;
+    }>
+  ) =>
+    request<{ ok: boolean; olt: BuildingOlt }>(
+      `/admin/buildings/${buildingId}/olts/${oltId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }
+    ),
+
+  deleteBuildingOlt: (buildingId: number, oltId: number) =>
+    request<{ ok: boolean }>(`/admin/buildings/${buildingId}/olts/${oltId}`, {
+      method: "DELETE",
+    }),
+
   listProducts: (params: Record<string, string | undefined> = {}) => {
     return request<{
       products: Product[];
@@ -1629,6 +1724,11 @@ export const api = {
   getLead: (id: number) =>
     request<{ lead: Lead; messages: LeadMessage[] }>(`/admin/leads/${id}`),
 
+  getWhatsAppLeadByPhone: (phone: string) =>
+    request<{ lead: Lead | null; messages: LeadMessage[] }>(
+      `/admin/leads/whatsapp-by-phone${buildQueryString({ phone })}`
+    ),
+
   updateLead: (
     id: number,
     data: Partial<{
@@ -1655,6 +1755,66 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify({ body }),
+      }
+    ),
+
+  sendLeadWhatsAppReply: (id: number, body: string) =>
+    request<{
+      ok: boolean;
+      lead: Lead;
+      messages: LeadMessage[];
+      sendMode?: string;
+    }>(`/admin/leads/${id}/whatsapp-reply`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+
+  createProspect: (data: {
+    name: string;
+    phone: string;
+    email?: string;
+    apartmentNumber?: string;
+    buildingId?: number | null;
+    buildingInterest?: string;
+  }) =>
+    request<{ ok: boolean; lead: Lead; created: boolean }>("/admin/leads/prospects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  sendCustomerWhatsAppMessage: (data: {
+    phone: string;
+    body: string;
+    name?: string;
+    customerId?: number;
+  }) =>
+    request<{
+      ok: boolean;
+      lead: Lead;
+      messages: LeadMessage[];
+      sendMode?: string;
+    }>("/admin/leads/whatsapp-send", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getCommunicationStatus: () =>
+    request<{
+      email: { configured: boolean; fromAddress: string | null; fromName: string };
+      whatsapp: { configured: boolean; ready: boolean; error: string | null };
+    }>("/admin/communication/status"),
+
+  sendCustomerEmail: (data: {
+    customerId: number;
+    subject: string;
+    body: string;
+    to?: string;
+  }) =>
+    request<{ ok: boolean; to: string; subject: string; customerId: number }>(
+      "/admin/communication/email",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
       }
     ),
 
@@ -2024,6 +2184,43 @@ export const api = {
       nextRecurringDate: string | null;
     }>(`/admin/customers/${id}/integrations`),
 
+  getCustomerOltStatus: (id: number) =>
+    request<{
+      ok: boolean;
+      skipped?: boolean;
+      reason?: string | null;
+      error?: string | null;
+      building: {
+        host: string | null;
+        port: number | null;
+        mac: string | null;
+        configured: boolean;
+      };
+      buildingOltId?: number | null;
+      buildingOltName?: string | null;
+      match: string | null;
+      onu: {
+        authOnu: number;
+        authPon: number;
+        authSlot: number;
+        adminStatus: string;
+        phaseStatus: string;
+        authInfo: string;
+        description: string;
+        onuModel: string;
+        onuType: string;
+        onuRttDistance: number;
+        indexStr: string;
+      } | null;
+      onuCount?: number | null;
+      linked: {
+        buildingOltId?: number | null;
+        oltMac: string | null;
+        onuIndexStr: string | null;
+        onuSn: string | null;
+      };
+    }>(`/admin/customers/${id}/olt-status`),
+
   convertCustomerType: (
     id: number,
     data: {
@@ -2223,14 +2420,33 @@ export const api = {
       body: JSON.stringify({ notes }),
     }),
 
-  pauseCustomer: (id: number, notes?: string) =>
+  pauseCustomer: (
+    id: number,
+    payload: {
+      reason: string;
+      pauseStartDate: string;
+      pauseEndDate: string;
+      notes?: string;
+    }
+  ) =>
     request<{
       ok: boolean;
       customer: Customer;
+      pause?: { startDate: string; endDate: string; reason: string };
       tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+      zoho?: {
+        ok: boolean;
+        skipped?: boolean;
+        error?: string;
+        recurring?: {
+          deferred: number;
+          matched: number;
+          resumeDate?: string;
+        };
+      };
     }>(`/admin/customers/${id}/pause`, {
       method: "POST",
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify(payload),
     }),
 
   deleteCustomerPermanently: (id: number) =>

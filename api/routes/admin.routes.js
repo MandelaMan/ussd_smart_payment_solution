@@ -15,7 +15,7 @@ const {
   getIntegrationEvent,
 } = require("../controllers/admin.controller");
 const { listUsers, createUser, updateUser, resetUserPassword } = require("../controllers/auth.controller");
-const { listBuildings, createBuilding, updateBuilding } = require("../controllers/buildings.controller");
+const { listBuildings, createBuilding, updateBuilding, listBuildingOlts, createBuildingOlt, updateBuildingOlt, deleteBuildingOlt } = require("../controllers/buildings.controller");
 const {
   listProducts,
   createProduct,
@@ -31,7 +31,7 @@ const {
   createAgencyInvoice,
   updateAgency,
 } = require("../controllers/agencies.controller");
-const { listOnus, getOnuAbility } = require("../controllers/olt.controller");
+const { listOnus, getOnuAbility, getCustomerOltStatus } = require("../controllers/olt.controller");
 const {
   listCustomers,
   exportCustomers,
@@ -102,9 +102,17 @@ const {
   listLeads,
   getLeadStats,
   getLead,
+  createProspect,
+  getWhatsAppLeadByPhone,
   updateLead,
   addLeadNote,
+  sendWhatsAppReply,
+  sendWhatsAppToCustomer,
 } = require("../controllers/leads.controller");
+const {
+  getChannelStatus,
+  sendCustomerEmail,
+} = require("../controllers/communication.controller");
 
 const { authenticate } = require("../middleware/auth");
 const {
@@ -193,6 +201,10 @@ router.post("/users/:id/reset-password", requireAdmin, resetUserPassword);
 router.get("/buildings", requireConfigRead, listBuildings);
 router.post("/buildings", requireConfigWrite, createBuilding);
 router.patch("/buildings/:id", requireConfigWrite, updateBuilding);
+router.get("/buildings/:id/olts", requireConfigRead, listBuildingOlts);
+router.post("/buildings/:id/olts", requireConfigWrite, createBuildingOlt);
+router.patch("/buildings/:id/olts/:oltId", requireConfigWrite, updateBuildingOlt);
+router.delete("/buildings/:id/olts/:oltId", requireConfigWrite, deleteBuildingOlt);
 
 router.get("/package-catalog", requireConfigRead, getPackageCatalog);
 router.get("/products", requireConfigRead, listProducts);
@@ -260,6 +272,7 @@ router.post("/customers/:id/switch-apartment", requireCustomerWrite, switchApart
 router.post("/customers/:id/cancel", requireCustomerWrite, cancelSubscription);
 router.get("/olt/onu-list", requireCustomerRead, listOnus);
 router.get("/olt/onu-ability", requireCustomerRead, getOnuAbility);
+router.get("/customers/:id/olt-status", requireCustomerRead, getCustomerOltStatus);
 router.post("/customers/:id/olt-link", requireCustomerWrite, linkCustomerOlt);
 router.post("/customers/:id/disconnect", requireCustomerWrite, disconnectCustomer);
 router.post("/customers/:id/pause", requireCustomerWrite, pauseCustomer);
@@ -271,9 +284,16 @@ router.get(
 );
 
 router.get("/leads/stats", requireCustomerRead, getLeadStats);
+router.get("/leads/whatsapp-by-phone", requireCustomerRead, getWhatsAppLeadByPhone);
+router.post("/leads/prospects", requireCustomerWrite, createProspect);
+router.post("/leads/whatsapp-send", requireCustomerWrite, sendWhatsAppToCustomer);
 router.get("/leads", requireCustomerRead, listLeads);
 router.get("/leads/:id", requireCustomerRead, getLead);
 router.patch("/leads/:id", requireCustomerWrite, updateLead);
 router.post("/leads/:id/notes", requireCustomerWrite, addLeadNote);
+router.post("/leads/:id/whatsapp-reply", requireCustomerWrite, sendWhatsAppReply);
+
+router.get("/communication/status", requireCustomerRead, getChannelStatus);
+router.post("/communication/email", requireCustomerWrite, sendCustomerEmail);
 
 module.exports = router;

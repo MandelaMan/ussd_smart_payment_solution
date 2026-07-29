@@ -37,7 +37,10 @@ function LayoutShell() {
           flex="1"
           minH={0}
           minW={0}
-          display="block"
+          // Mobile stays block so sticky list headers work; desktop is a flex
+          // column so Home/dashboard can fill height (activity rail + charts).
+          display={{ base: "block", lg: "flex" }}
+          flexDirection="column"
           overflow="auto"
           overflowX="auto"
           WebkitOverflowScrolling="touch"
@@ -51,9 +54,9 @@ function LayoutShell() {
           }}
         >
           <Box
+            flex={{ lg: 1 }}
             minW={0}
             w="full"
-            h={{ lg: "100%" }}
             minH={{ lg: 0 }}
             display={{ lg: "flex" }}
             flexDirection="column"
