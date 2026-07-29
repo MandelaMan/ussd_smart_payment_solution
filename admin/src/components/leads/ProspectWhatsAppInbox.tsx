@@ -297,7 +297,6 @@ export function ProspectWhatsAppInbox({ initialLeadId = null }: Props) {
                     <Flex
                       key={lead.id}
                       as="button"
-                      type="button"
                       w="full"
                       textAlign="left"
                       px={3}

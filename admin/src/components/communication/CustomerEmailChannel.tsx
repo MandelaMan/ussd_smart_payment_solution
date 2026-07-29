@@ -179,7 +179,6 @@ export function CustomerEmailChannel() {
                 <Flex
                   key={customer.id}
                   as="button"
-                  type="button"
                   w="full"
                   textAlign="left"
                   px={3}
