@@ -50,7 +50,10 @@ JOIN building_olts o ON o.building_id = b.id
 SET c.building_olt_id = o.id
 WHERE c.building_olt_id IS NULL
   AND (
-    (c.olt_mac IS NOT NULL AND LOWER(c.olt_mac) = LOWER(o.mac))
+    -- Force collations to match to avoid: Illegal mix of collations for '='
+    (c.olt_mac IS NOT NULL
+      AND LOWER(c.olt_mac) COLLATE utf8mb4_general_ci =
+          LOWER(o.mac) COLLATE utf8mb4_general_ci)
     OR c.onu_index_str IS NOT NULL
     OR c.onu_sn IS NOT NULL
   );
