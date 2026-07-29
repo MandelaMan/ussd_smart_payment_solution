@@ -34,7 +34,16 @@ FROM buildings b
 WHERE b.olt_host IS NOT NULL
   AND TRIM(b.olt_host) <> ''
   AND b.olt_mac IS NOT NULL
-  AND TRIM(b.olt_mac) <> '';
+  AND TRIM(b.olt_mac) <> ''
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  host = VALUES(host),
+  port = VALUES(port),
+  mac = VALUES(mac),
+  username = VALUES(username),
+  password = VALUES(password),
+  tenant_id = VALUES(tenant_id),
+  is_active = VALUES(is_active);
 
 -- Customer link to a specific building OLT (optional until mapped)
 ALTER TABLE customers
