@@ -248,22 +248,27 @@ export function CustomerWhatsAppChannel({ initialLeadId = null }: Props) {
     <Flex
       borderWidth="1px"
       borderColor="border"
-      borderRadius="lg"
+      borderRadius={{ base: "md", lg: "lg" }}
       bg="bg.panel"
       overflow="hidden"
-      h={{ base: "calc(100dvh - 180px)", md: "min(720px, calc(100dvh - 200px))" }}
-      minH="420px"
+      flex="1"
+      w="full"
+      h="100%"
+      minH={0}
+      direction={{ base: "column", lg: "row" }}
     >
       {showList ? (
         <Flex
           direction="column"
-          w={{ base: "full", md: "320px", lg: "360px" }}
-          borderRightWidth={{ base: 0, md: "1px" }}
+          w={{ base: "full", lg: "300px", xl: "340px" }}
+          borderRightWidth={{ base: 0, lg: "1px" }}
           borderColor="border"
           minW={0}
-          flexShrink={0}
+          minH={0}
+          flex={{ base: 1, lg: "0 0 auto" }}
+          h={{ base: "100%", lg: "100%" }}
         >
-          <Box px={3} py={3} borderBottomWidth="1px" borderColor="border">
+          <Box px={3} py={3} borderBottomWidth="1px" borderColor="border" flexShrink={0}>
             <Text fontWeight="700" fontSize="md" color="brand.800" mb={2}>
               Customers
             </Text>
@@ -277,7 +282,7 @@ export function CustomerWhatsAppChannel({ initialLeadId = null }: Props) {
               boxShadow={fieldControlStyles.boxShadow}
             />
           </Box>
-          <Box flex="1" overflowY="auto" minH={0}>
+          <Box flex="1" overflowY="auto" minH={0} WebkitOverflowScrolling="touch">
             {loading ? (
               <Flex justify="center" py={10}>
                 <Spinner color="brand.600" />
@@ -341,7 +346,7 @@ export function CustomerWhatsAppChannel({ initialLeadId = null }: Props) {
       ) : null}
 
       {showChat ? (
-        <Flex direction="column" flex="1" minW={0} bg="bg.subtle">
+        <Flex direction="column" flex="1" minW={0} minH={0} bg="bg.subtle">
           {!selectedCustomerId && !lead ? (
             <Flex flex="1" align="center" justify="center" px={6}>
               <Stack gap={2} textAlign="center" maxW="320px">
@@ -418,6 +423,7 @@ export function CustomerWhatsAppChannel({ initialLeadId = null }: Props) {
                 px={3}
                 py={4}
                 minH={0}
+                WebkitOverflowScrolling="touch"
                 bg={`linear-gradient(180deg, ${BRAND.paleAzure}14 0%, transparent 40%), var(--chakra-colors-bg-subtle)`}
               >
                 {chatLoading ? (
@@ -506,6 +512,7 @@ export function CustomerWhatsAppChannel({ initialLeadId = null }: Props) {
                   borderColor="border"
                   bg="bg.panel"
                   align="flex-end"
+                  flexShrink={0}
                 >
                   <Textarea
                     value={draft}

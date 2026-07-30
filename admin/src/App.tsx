@@ -16,6 +16,8 @@ import {
   CustomerReadRoute,
   ActivityRoute,
 } from "./components/ProtectedRoute";
+import { BootSplashGate } from "./components/BootSplashGate";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AppToaster } from "./components/ui/AppToaster";
 import { AppUpdateBanner } from "./components/ui/AppUpdateBanner";
 import { LoginPage } from "./pages/LoginPage";
@@ -96,7 +98,14 @@ const AgencyDetailPage = lazyPage(
 
 function RouteFallback() {
   return (
-    <Flex minH="40vh" align="center" justify="center" py={10}>
+    <Flex
+      minH="40vh"
+      align="center"
+      justify="center"
+      py={10}
+      opacity={0.85}
+      transition="opacity 0.2s ease"
+    >
       <Spinner color={BRAND.cerulean} size="lg" borderWidth="3px" />
     </Flex>
   );
@@ -109,10 +118,12 @@ function LazyRoute({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <ChakraProvider value={system}>
-      <BrowserRouter basename="/admin">
-        <AuthProvider>
-          <ScrollToTop />
-          <Routes>
+      <AppErrorBoundary>
+        <BrowserRouter basename="/admin">
+          <AuthProvider>
+            <BootSplashGate />
+            <ScrollToTop />
+            <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route element={<ProtectedRoute />}>
               <Route element={<Layout />}>
@@ -370,7 +381,8 @@ export default function App() {
           <AppUpdateBanner />
           <AppToaster />
         </AuthProvider>
-      </BrowserRouter>
+        </BrowserRouter>
+      </AppErrorBoundary>
     </ChakraProvider>
   );
 }

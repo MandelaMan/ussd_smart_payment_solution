@@ -1,5 +1,6 @@
 const { query } = require("../config/db");
 const { getReportAnalytics } = require("./reportAnalyticsStore");
+const { getLeadStats } = require("./leadStore");
 const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
 
 const MRR_EXPR = `
@@ -86,7 +87,7 @@ async function getKpiSnapshot(filters, range) {
   const prev = prevPeriodRange(range.from, range.to);
   const prevDateParams = [prev.from, `${prev.to} 23:59:59`];
 
-  const [[counts], [mrrRow], [revenueNow], [revenuePrev], [outstanding], [dstvRow]] =
+  const [[counts], [prevCounts], [mrrRow], [revenueNow], [revenuePrev], [outstanding], [dstvRow]] =
     await Promise.all([
       query(
         `SELECT
@@ -109,6 +110,16 @@ async function getKpiSnapshot(filters, range) {
          LEFT JOIN products p ON p.id = c.product_id
          WHERE 1=1${filterSql}`,
         [...dateParams, ...dateParams, ...filterParams]
+      ),
+      query(
+        `SELECT
+          SUM(CASE WHEN c.created_at >= ? AND c.created_at <= ? THEN 1 ELSE 0 END) AS new_customers,
+          SUM(CASE WHEN c.status = 'cancelled' AND c.updated_at >= ? AND c.updated_at <= ? THEN 1 ELSE 0 END) AS churned,
+          SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS active
+         FROM customers c
+         LEFT JOIN products p ON p.id = c.product_id
+         WHERE 1=1${filterSql}`,
+        [...prevDateParams, ...prevDateParams, ...filterParams]
       ),
       query(
         `SELECT COALESCE(SUM(${MRR_EXPR}), 0) AS mrr
@@ -154,6 +165,9 @@ async function getKpiSnapshot(filters, range) {
   const active = Number(counts?.active || 0);
   const newCustomers = Number(counts?.new_customers || 0);
   const churned = Number(counts?.churned || 0);
+  const prevNew = Number(prevCounts?.new_customers || 0);
+  const prevChurned = Number(prevCounts?.churned || 0);
+  const prevActive = Number(prevCounts?.active || 0);
   const mrr = Math.round(Number(mrrRow?.mrr || 0));
   const collected = Number(revenueNow?.revenue || 0);
   const collectedPrev = Number(revenuePrev?.revenue || 0);
@@ -163,8 +177,17 @@ async function getKpiSnapshot(filters, range) {
     expectedMonth > 0 ? Math.round((collected / expectedMonth) * 1000) / 10 : 0;
   const churnRate =
     active + churned > 0 ? Math.round((churned / (active + churned)) * 1000) / 10 : 0;
+  const prevChurnRate =
+    prevActive + prevChurned > 0
+      ? Math.round((prevChurned / (prevActive + prevChurned)) * 1000) / 10
+      : 0;
   const arpu = active > 0 ? Math.round(mrr / active) : 0;
-  const clvEstimate = arpu * 24;
+  // Lifetime value from ARPU ÷ monthly churn; fall back to 24× ARPU when churn is zero.
+  const monthlyChurnFraction = churnRate / 100;
+  const clvEstimate =
+    monthlyChurnFraction > 0
+      ? Math.round(arpu / monthlyChurnFraction)
+      : Math.round(arpu * 24);
 
   return {
     totalActiveCustomers: active,
@@ -184,9 +207,9 @@ async function getKpiSnapshot(filters, range) {
     networkUptimePct: null,
     trends: {
       revenueCollected: pctChange(collected, collectedPrev),
-      newCustomers: pctChange(newCustomers, 0),
-      mrr: 0,
-      churnRate: 0,
+      newCustomers: pctChange(newCustomers, prevNew),
+      mrr: null,
+      churnRate: pctChange(churnRate, prevChurnRate),
     },
   };
 }
@@ -208,9 +231,57 @@ async function getMonthlyRevenueSeries(filters, months = 12) {
   return rows.map((r) => ({
     month: r.month,
     totalRevenue: Number(r.total_revenue),
-    recurringRevenue: Number(r.total_revenue) * 0.85,
-    installationRevenue: Number(r.total_revenue) * 0.15,
+    // Payments are not tagged as recurring vs installation — surface total only.
+    recurringRevenue: Number(r.total_revenue),
+    installationRevenue: 0,
   }));
+}
+
+async function getCollectionPerformance(filters, months = 12) {
+  const { sql: filterSql, params: filterParams } = buildCustomerFilters(filters);
+  const rows = await query(
+    `SELECT DATE_FORMAT(zi.invoice_date, '%Y-%m') AS month,
+      COALESCE(SUM(zi.total), 0) AS invoiced,
+      COALESCE(SUM(GREATEST(COALESCE(zi.total, 0) - COALESCE(zi.balance_due, 0), 0)), 0) AS paid,
+      COALESCE(SUM(GREATEST(COALESCE(zi.balance_due, 0), 0)), 0) AS outstanding
+     FROM zoho_customer_invoices zi
+     JOIN customers c ON c.id = zi.customer_id
+     LEFT JOIN products p ON p.id = c.product_id
+     WHERE zi.invoice_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)${filterSql}
+     GROUP BY DATE_FORMAT(zi.invoice_date, '%Y-%m')
+     ORDER BY month ASC`,
+    [months, ...filterParams]
+  ).catch(() => []);
+  return rows.map((r) => ({
+    month: r.month,
+    invoiced: Math.round(Number(r.invoiced || 0)),
+    paid: Math.round(Number(r.paid || 0)),
+    outstanding: Math.round(Number(r.outstanding || 0)),
+  }));
+}
+
+function buildLeadFunnel(leadStats) {
+  const s = leadStats?.byStatus || {};
+  const contacted = Number(s.contacted || 0);
+  const qualified = Number(s.qualified || 0);
+  const converted = Number(s.converted || 0);
+  const closed = Number(s.closed || 0);
+  const total = Number(leadStats?.total || 0);
+  return [
+    { stage: "All Leads", count: total },
+    { stage: "Contacted+", count: contacted + qualified + converted + closed },
+    { stage: "Qualified+", count: qualified + converted + closed },
+    { stage: "Converted", count: converted },
+  ];
+}
+
+function buildLeadSources(leadStats) {
+  const bySource = leadStats?.bySource || {};
+  return [
+    { source: "WhatsApp", count: Number(bySource.whatsapp || 0) },
+    { source: "Website", count: Number(bySource.web || 0) },
+    { source: "Embed Form", count: Number(bySource.embed || 0) },
+  ].filter((r) => r.count > 0);
 }
 
 async function getRevenueByPackage(filters, range) {
@@ -290,7 +361,8 @@ async function getSalesLeaderboard(filters, range) {
     agent: r.agent,
     customersAcquired: Number(r.customers_acquired),
     revenue: Number(r.revenue),
-    conversionRate: r.customers_acquired > 0 ? 100 : 0,
+    // Lead→customer conversion by agency is not tracked yet.
+    conversionRate: null,
   }));
 }
 
@@ -403,20 +475,35 @@ async function getFilterOptions() {
 
 async function getBiDashboard(filters = {}) {
   const range = resolveDateRange(filters.from, filters.to);
-  const [kpis, reportData, monthlyRevenue, revenueByPackage, geographic, salesLeaderboard, paymentStatus, debtAging, tvAdoption, upgradeTrend, filterOptions] =
-    await Promise.all([
-      getKpiSnapshot(filters, range),
-      getReportAnalytics(range),
-      getMonthlyRevenueSeries(filters, 12),
-      getRevenueByPackage(filters, range),
-      getGeographicDistribution(filters),
-      getSalesLeaderboard(filters, range),
-      getPaymentStatusDistribution(filters),
-      getDebtAging(filters),
-      getTvAdoption(filters),
-      getUpgradeDowngradeTrend(range),
-      getFilterOptions(),
-    ]);
+  const [
+    kpis,
+    reportData,
+    monthlyRevenue,
+    revenueByPackage,
+    geographic,
+    salesLeaderboard,
+    paymentStatus,
+    debtAging,
+    tvAdoption,
+    upgradeTrend,
+    filterOptions,
+    collectionPerformance,
+    leadStats,
+  ] = await Promise.all([
+    getKpiSnapshot(filters, range),
+    getReportAnalytics(range),
+    getMonthlyRevenueSeries(filters, 12),
+    getRevenueByPackage(filters, range),
+    getGeographicDistribution(filters),
+    getSalesLeaderboard(filters, range),
+    getPaymentStatusDistribution(filters),
+    getDebtAging(filters),
+    getTvAdoption(filters),
+    getUpgradeDowngradeTrend(range),
+    getFilterOptions(),
+    getCollectionPerformance(filters, 12),
+    getLeadStats().catch(() => ({ total: 0, byStatus: {}, bySource: {} })),
+  ]);
 
   const churnSeries = (reportData.subscriberGrowth || []).map((row) => {
     const active = kpis.totalActiveCustomers || 1;
@@ -429,20 +516,21 @@ async function getBiDashboard(filters = {}) {
     };
   });
 
-  const revenueForecast = monthlyRevenue.map((row, i, arr) => {
-    const last3 = arr.slice(Math.max(0, i - 2), i + 1);
-    const avg =
-      last3.reduce((s, r) => s + r.totalRevenue, 0) / Math.max(last3.length, 1);
-    return {
-      ...row,
-      forecast: i >= arr.length - 3 ? Math.round(avg * 1.02) : null,
-    };
-  });
-
-  const clvByPackage = revenueByPackage.map((p) => ({
-    package: p.package,
-    clv: p.customers > 0 ? Math.round((p.monthlyRevenue / p.customers) * 24) : 0,
+  // Historical revenue only — no invented forecast overlay.
+  const monthlyTrend = monthlyRevenue.map((row) => ({
+    ...row,
+    forecast: null,
   }));
+
+  const monthlyChurnFraction = (Number(kpis.customerChurnRate) || 0) / 100;
+  const clvByPackage = revenueByPackage.map((p) => {
+    const arpu = p.customers > 0 ? p.monthlyRevenue / p.customers : 0;
+    const clv =
+      monthlyChurnFraction > 0
+        ? Math.round(arpu / monthlyChurnFraction)
+        : Math.round(arpu * 24);
+    return { package: p.package, clv };
+  });
 
   return {
     period: range,
@@ -457,7 +545,7 @@ async function getBiDashboard(filters = {}) {
     filterOptions,
     kpis,
     revenue: {
-      monthlyTrend: revenueForecast,
+      monthlyTrend,
       byPackage: revenueByPackage,
       byArea: geographic.map((g) => ({
         area: g.area,
@@ -465,7 +553,7 @@ async function getBiDashboard(filters = {}) {
         revenue: g.mrr,
         customers: g.customers,
       })),
-      forecast: revenueForecast,
+      forecast: monthlyTrend,
     },
     customers: {
       growth: reportData.subscriberGrowth || [],
@@ -477,22 +565,10 @@ async function getBiDashboard(filters = {}) {
     },
     sales: {
       leaderboard: salesLeaderboard,
-      funnel: [
-        { stage: "Lead", count: kpis.totalActiveCustomers + kpis.newCustomersThisMonth },
-        { stage: "Quote", count: Math.round((kpis.totalActiveCustomers + kpis.newCustomersThisMonth) * 0.7) },
-        { stage: "Approved", count: kpis.newCustomersThisMonth + kpis.totalActiveCustomers },
-        { stage: "Installation Scheduled", count: kpis.newCustomersThisMonth },
-        { stage: "Installed", count: kpis.newCustomersThisMonth },
-        { stage: "Active Customer", count: kpis.totalActiveCustomers },
-      ],
+      funnel: buildLeadFunnel(leadStats),
     },
     financial: {
-      collectionPerformance: monthlyRevenue.map((m) => ({
-        month: m.month,
-        invoiced: m.totalRevenue * 1.05,
-        paid: m.totalRevenue,
-        outstanding: m.totalRevenue * 0.05,
-      })),
+      collectionPerformance,
       debtAging,
       paymentStatus,
     },
@@ -505,24 +581,12 @@ async function getBiDashboard(filters = {}) {
       uptime: { today: null, monthly: null, annual: null, message: "Network monitoring not connected." },
       bandwidth: [],
       speedComplaints: [],
-      outagesByArea: geographic.map((g) => ({ area: g.area, outages: 0 })),
+      outagesByArea: [],
     },
     insights: {
       upgradeDowngrade: upgradeTrend,
-      referralSources: [
-        { source: "Sales Agent", count: salesLeaderboard.reduce((s, r) => s + r.customersAcquired, 0) },
-        { source: "Walk-In", count: Math.round(kpis.newCustomersThisMonth * 0.4) },
-        { source: "Referral", count: Math.round(kpis.newCustomersThisMonth * 0.25) },
-        { source: "Website", count: Math.round(kpis.newCustomersThisMonth * 0.2) },
-        { source: "Facebook", count: Math.round(kpis.newCustomersThisMonth * 0.15) },
-      ],
-      profitMarginByPackage: revenueByPackage.map((p) => ({
-        package: p.package,
-        revenue: p.monthlyRevenue,
-        networkCost: Math.round(p.monthlyRevenue * 0.35),
-        supportCost: Math.round(p.monthlyRevenue * 0.08),
-        margin: Math.round(p.monthlyRevenue * 0.57),
-      })),
+      referralSources: buildLeadSources(leadStats),
+      profitMarginByPackage: [],
       routerInventory: [],
       dataConsumption: [],
       peakUsageHeatmap: [],

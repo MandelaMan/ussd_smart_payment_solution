@@ -25,7 +25,91 @@
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     </noscript>
     <title>SUL Bix</title>
+    <script>
+      /* Splash + brand boot bg only when launched as installed PWA. */
+      (function () {
+        var isPwa =
+          window.matchMedia("(display-mode: standalone)").matches ||
+          window.matchMedia("(display-mode: fullscreen)").matches ||
+          window.matchMedia("(display-mode: minimal-ui)").matches ||
+          window.matchMedia("(display-mode: window-controls-overlay)").matches ||
+          window.navigator.standalone === true;
+        if (isPwa) document.documentElement.classList.add("sul-pwa");
+      })();
+    </script>
     <style>
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+      }
+      /* Brand boot background only in installed PWA. */
+      html.sul-pwa:not(.sul-booted),
+      html.sul-pwa:not(.sul-booted) body {
+        background: #166a82;
+      }
+      #sul-boot-splash {
+        display: none;
+      }
+      html.sul-pwa #sul-boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        background: #166a82;
+        color: #ffffff;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        transition: opacity 0.32s ease, visibility 0.32s ease;
+      }
+      #sul-boot-splash.sul-boot-splash--hide {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      #sul-boot-splash .sul-boot-logo {
+        width: 88px;
+        height: 88px;
+        border-radius: 22px;
+        object-fit: contain;
+        background: rgba(255, 255, 255, 0.12);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+        animation: sul-boot-pulse 1.4s ease-in-out infinite;
+      }
+      #sul-boot-splash .sul-boot-title {
+        margin: 0;
+        font-size: 1.35rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      #sul-boot-splash .sul-boot-sub {
+        margin: 0;
+        font-size: 0.8rem;
+        font-weight: 500;
+        opacity: 0.78;
+      }
+      @keyframes sul-boot-pulse {
+        0%,
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          transform: scale(1.04);
+          opacity: 0.88;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #sul-boot-splash .sul-boot-logo {
+          animation: none;
+        }
+        #sul-boot-splash {
+          transition: none;
+        }
+      }
       /* Critical mobile nav — survives a brief moment before the main CSS bundle. */
       @media (max-width: 47.99em) {
         .sul-mobile-nav-v2 {
@@ -46,6 +130,18 @@
     </style>
   </head>
   <body>
+    <div id="sul-boot-splash" role="status" aria-live="polite" aria-label="Loading SUL Bix">
+      <img
+        class="sul-boot-logo"
+        src="/admin/logo.png"
+        width="88"
+        height="88"
+        alt=""
+        decoding="async"
+      />
+      <p class="sul-boot-title">SUL Bix</p>
+      <p class="sul-boot-sub">Loading…</p>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

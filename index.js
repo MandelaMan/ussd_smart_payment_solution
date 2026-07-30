@@ -80,7 +80,7 @@ app.use(
 
 app.use(
   express.json({
-    limit: "1mb",
+    limit: "12mb",
     type: ["application/json", "text/plain"],
     verify: (req, _res, buf) => {
       const path = req.originalUrl?.split("?")[0] || "";

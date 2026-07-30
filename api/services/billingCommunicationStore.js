@@ -162,7 +162,7 @@ async function listCandidates(filters = {}) {
       total: records.length,
       pages: Math.ceil(records.length / limit) || 1,
     },
-    mailConfig: getZohoMailConfig(),
+    mailConfig: await getZohoMailConfig(),
   };
 }
 
@@ -189,7 +189,7 @@ async function previewCommunication(customerId, templateKey) {
     email,
     emailSource: source,
     canSend: Boolean(email && isZohoMailConfigured()),
-    mailConfig: getZohoMailConfig(),
+    mailConfig: await getZohoMailConfig(),
     ...emailContent,
   };
 }

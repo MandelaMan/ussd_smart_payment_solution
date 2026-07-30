@@ -37,7 +37,7 @@ async function getSummary(req, res, next) {
       };
     }
 
-    summary.mailConfig = billingCommunicationStore.getZohoMailConfig();
+    summary.mailConfig = await billingCommunicationStore.getZohoMailConfig();
     res.json(summary);
   } catch (e) {
     next(e);

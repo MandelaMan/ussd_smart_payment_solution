@@ -158,6 +158,24 @@ async function getLoginStats(_req, res, next) {
       SELECT COUNT(*) AS count FROM customers WHERE status = 'active'
     `);
 
+    const transactionTrendRows = await query(`
+      SELECT DATE_FORMAT(created_at, '%Y-%m') AS month,
+        COUNT(*) AS transactions
+      FROM payment_transactions
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH)
+      GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+      ORDER BY month ASC
+    `);
+
+    const customerTrendRows = await query(`
+      SELECT DATE_FORMAT(created_at, '%Y-%m') AS month,
+        COUNT(*) AS new_customers
+      FROM customers
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH)
+      GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+      ORDER BY month ASC
+    `);
+
     const total = Number(revenueRow.total_transactions || 0);
     const success = Number(revenueRow.success_count || 0);
 
@@ -173,6 +191,8 @@ async function getLoginStats(_req, res, next) {
       returningCustomers: Number(returningRow.count || 0),
       activeCustomers: Number(customersRow.count || 0),
       integrationsActive: 3,
+      transactionTrend: transactionTrendRows.map((r) => Number(r.transactions || 0)),
+      customerTrend: customerTrendRows.map((r) => Number(r.new_customers || 0)),
     });
   } catch (err) {
     return next(err);

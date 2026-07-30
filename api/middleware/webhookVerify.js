@@ -7,15 +7,17 @@ const TIMING_SAFE_FALLBACK = Buffer.alloc(32);
  * Verifies Meta WhatsApp Cloud API webhook signature (X-Hub-Signature-256).
  * Requires req.rawBody to be set by express.json verify callback.
  */
-function verifyWhatsAppSignature(req) {
-  const appSecret = process.env.WHATSAPP_APP_SECRET;
+async function verifyWhatsAppSignature(req) {
+  const whatsappLeadBot = require("../services/whatsappLeadBot");
+  const settings = await whatsappLeadBot.loadWhatsAppSettings();
+  const appSecret = settings.appSecret;
   const whatsappConfigured = Boolean(
-    process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID
+    settings.accessToken && settings.phoneNumberId
   );
 
   if (!appSecret) {
     if (process.env.NODE_ENV === "production" && whatsappConfigured) {
-      return { ok: false, reason: "WHATSAPP_APP_SECRET not configured" };
+      return { ok: false, reason: "WhatsApp app secret not configured" };
     }
     return { ok: true, skipped: true };
   }

@@ -205,6 +205,23 @@ export type LeadMessage = {
   createdAt: string;
 };
 
+export type CustomerEmailMessage = {
+  id: string;
+  localId?: number;
+  source: "local" | "zoho";
+  direction: "inbound" | "outbound";
+  fromAddress: string | null;
+  toAddress: string | null;
+  subject: string;
+  summary?: string;
+  bodyHtml?: string | null;
+  bodyText?: string | null;
+  attachmentNames?: string[];
+  zohoMessageId?: string | null;
+  status?: string;
+  createdAt: string | null;
+};
+
 export type LeadStats = {
   total: number;
   byStatus: Record<LeadStatus, number>;
@@ -282,6 +299,29 @@ export type AppSettings = {
       whatsappWebhook: string;
       whatsappVerifyTokenConfigured: boolean;
       whatsappConfigured: boolean;
+    };
+  };
+  communication?: {
+    email: {
+      fromAddress: string;
+      fromName: string;
+      accountId: string | null;
+      configured: boolean;
+      oauthTokenConfigured: boolean;
+      dnsHint?: string;
+    };
+    whatsapp?: {
+      phoneNumberId: string;
+      accessTokenConfigured: boolean;
+      appSecretConfigured: boolean;
+      webhookVerifyToken: string;
+      webhookVerifyTokenConfigured: boolean;
+      clickToChatUrl: string | null;
+      welcomeMessage: string;
+      completeMessage: string;
+      outboundTemplate: string | null;
+      outboundTemplateLang: string;
+      configured: boolean;
     };
   };
   integrations: {
@@ -1230,7 +1270,7 @@ export type BiDashboard = {
     trends: {
       revenueCollected: number;
       newCustomers: number;
-      mrr: number;
+      mrr: number | null;
       churnRate: number;
     };
   };
@@ -1276,7 +1316,7 @@ export type BiDashboard = {
       agent: string;
       customersAcquired: number;
       revenue: number;
-      conversionRate: number;
+      conversionRate: number | null;
     }>;
     funnel: Array<{ stage: string; count: number }>;
   };
@@ -1487,6 +1527,8 @@ export const api = {
       returningCustomers: number;
       activeCustomers: number;
       integrationsActive: number;
+      transactionTrend: number[];
+      customerTrend: number[];
     }>("/public/login-stats"),
 
   getStats: (period = "30d") =>
@@ -1567,6 +1609,44 @@ export const api = {
   listUsers: () => request<{ users: AdminUser[] }>("/admin/users"),
 
   getSettings: () => request<AppSettings>("/admin/settings"),
+
+  updateCommunicationEmailSettings: (data: {
+    fromAddress?: string;
+    fromName?: string;
+    accountId?: string | null;
+  }) =>
+    request<{
+      ok: boolean;
+      email: {
+        fromAddress: string;
+        fromName: string;
+        accountId: string | null;
+        configured: boolean;
+        oauthTokenConfigured?: boolean;
+      };
+    }>("/admin/settings/communication/email", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  updateCommunicationWhatsAppSettings: (data: {
+    phoneNumberId?: string;
+    accessToken?: string;
+    appSecret?: string;
+    webhookVerifyToken?: string;
+    clickToChatUrl?: string | null;
+    welcomeMessage?: string;
+    completeMessage?: string;
+    outboundTemplate?: string | null;
+    outboundTemplateLang?: string;
+  }) =>
+    request<{
+      ok: boolean;
+      whatsapp: NonNullable<NonNullable<AppSettings["communication"]>["whatsapp"]>;
+    }>("/admin/settings/communication/whatsapp", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   createUser: (data: {
     name: string;
@@ -1821,23 +1901,50 @@ export const api = {
 
   getCommunicationStatus: () =>
     request<{
-      email: { configured: boolean; fromAddress: string | null; fromName: string };
+      email: {
+        configured: boolean;
+        fromAddress: string | null;
+        fromName: string;
+        accountId?: string | null;
+      };
       whatsapp: { configured: boolean; ready: boolean; error: string | null };
     }>("/admin/communication/status"),
+
+  listCustomerEmailConversation: (customerId: number, email?: string) =>
+    request<{
+      customerId: number;
+      mailbox: { fromAddress: string; fromName: string };
+      email: string | null;
+      messages: CustomerEmailMessage[];
+    }>(
+      `/admin/communication/email/${customerId}${buildQueryString(
+        email ? { email } : {}
+      )}`
+    ),
 
   sendCustomerEmail: (data: {
     customerId: number;
     subject: string;
     body: string;
     to?: string;
+    attachments?: Array<{
+      fileName: string;
+      contentType: string;
+      contentBase64: string;
+    }>;
   }) =>
-    request<{ ok: boolean; to: string; subject: string; customerId: number }>(
-      "/admin/communication/email",
-      {
-        method: "POST",
-        body: JSON.stringify(data),
-      }
-    ),
+    request<{
+      ok: boolean;
+      to: string;
+      subject: string;
+      customerId: number;
+      from?: string;
+      message?: CustomerEmailMessage | null;
+      attachmentNames?: string[];
+    }>("/admin/communication/email", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   downloadCustomerImportTemplate: () =>
     downloadExport(

@@ -12,6 +12,14 @@ function envUrl(envValue, fallback) {
 async function getSettings(req, res, next) {
   try {
     const base = publicBaseUrl(req);
+    const appSettingsStore = require("../services/appSettingsStore");
+    const { getZohoMailConfig, isZohoMailConfigured } = require("../utils/zohoMail");
+    const emailSettings = await appSettingsStore.getCommunicationEmailSettings();
+    const mailStatus = await getZohoMailConfig();
+    const whatsappSettings =
+      await appSettingsStore.getCommunicationWhatsAppSettings();
+    const whatsappPublic =
+      appSettingsStore.toPublicWhatsAppSettings(whatsappSettings);
 
     res.json({
       webhooks: {
@@ -45,14 +53,22 @@ async function getSettings(req, res, next) {
           embedScript: `${base}/leads/embed.js`,
           embedSnippet: `<div id="starlynx-lead-form"></div>\n<script src="${base}/leads/embed.js" async></script>`,
           whatsappWebhook: `${base}/api/public/whatsapp/webhook`,
-          whatsappVerifyTokenConfigured: Boolean(
-            String(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || "").trim()
-          ),
-          whatsappConfigured: Boolean(
-            String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim() &&
-              String(process.env.WHATSAPP_ACCESS_TOKEN || "").trim()
-          ),
+          whatsappVerifyTokenConfigured:
+            whatsappPublic.webhookVerifyTokenConfigured,
+          whatsappConfigured: whatsappPublic.configured,
         },
+      },
+      communication: {
+        email: {
+          fromAddress: emailSettings.fromAddress,
+          fromName: emailSettings.fromName,
+          accountId: emailSettings.accountId,
+          configured: isZohoMailConfigured(),
+          oauthTokenConfigured: mailStatus.oauthTokenConfigured,
+          dnsHint:
+            "Use a single SPF TXT on @ for sulsolutions.biz (merge includes). Enable DKIM in Zoho Mail Admin, then add DMARC on _dmarc.",
+        },
+        whatsapp: whatsappPublic,
       },
       integrations: {
         xtreamSyncEnabled: process.env.XTREAM_SYNC_ENABLED !== "false",

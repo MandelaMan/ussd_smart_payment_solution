@@ -111,7 +111,10 @@ const {
 } = require("../controllers/leads.controller");
 const {
   getChannelStatus,
+  listCustomerEmailConversation,
   sendCustomerEmail,
+  updateCommunicationEmailSettings,
+  updateCommunicationWhatsAppSettings,
 } = require("../controllers/communication.controller");
 
 const { authenticate } = require("../middleware/auth");
@@ -192,6 +195,16 @@ router.get("/logs/:id", requireOps, getLog);
 router.post("/logs/:id/retry", requireOps, retryLog);
 
 router.get("/settings", requireAdmin, getSettings);
+router.put(
+  "/settings/communication/email",
+  requireAdmin,
+  updateCommunicationEmailSettings
+);
+router.put(
+  "/settings/communication/whatsapp",
+  requireAdmin,
+  updateCommunicationWhatsAppSettings
+);
 
 router.get("/users", requireAdmin, listUsers);
 router.post("/users", requireAdmin, createUser);
@@ -294,6 +307,16 @@ router.post("/leads/:id/notes", requireCustomerWrite, addLeadNote);
 router.post("/leads/:id/whatsapp-reply", requireCustomerWrite, sendWhatsAppReply);
 
 router.get("/communication/status", requireCustomerRead, getChannelStatus);
+router.get(
+  "/communication/email/:customerId",
+  requireCustomerRead,
+  listCustomerEmailConversation
+);
 router.post("/communication/email", requireCustomerWrite, sendCustomerEmail);
+router.put(
+  "/communication/email-settings",
+  requireAdmin,
+  updateCommunicationEmailSettings
+);
 
 module.exports = router;

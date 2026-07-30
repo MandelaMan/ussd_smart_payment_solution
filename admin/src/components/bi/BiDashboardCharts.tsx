@@ -36,22 +36,10 @@ export function BiRevenueCharts({ data, onExportCsv }: Props) {
       yAxis: { type: "value", axisLabel: { formatter: formatKes } },
       series: [
         {
-          name: "Total Revenue",
+          name: "Collected Revenue",
           type: "line",
           smooth: true,
           data: data.revenue.monthlyTrend.map((r) => r.totalRevenue),
-        },
-        {
-          name: "Recurring",
-          type: "line",
-          smooth: true,
-          data: data.revenue.monthlyTrend.map((r) => r.recurringRevenue),
-        },
-        {
-          name: "Installation",
-          type: "line",
-          smooth: true,
-          data: data.revenue.monthlyTrend.map((r) => r.installationRevenue),
         },
       ],
     }),
@@ -110,23 +98,18 @@ export function BiRevenueCharts({ data, onExportCsv }: Props) {
           smooth: true,
           data: data.revenue.forecast.map((r) => r.totalRevenue),
         },
-        {
-          name: "Forecast",
-          type: "line",
-          smooth: true,
-          lineStyle: { type: "dashed" },
-          data: data.revenue.forecast.map((r) => r.forecast),
-        },
       ],
     }),
     [data.revenue.forecast]
   );
 
+  const hasForecast = data.revenue.forecast.some((r) => r.forecast != null);
+
   return (
     <Grid templateColumns={{ base: "1fr", xl: "repeat(2, 1fr)" }} gap={4}>
       <BiChartCard
         title="Monthly Revenue Trend"
-        subtitle="Total, recurring, and installation revenue"
+        subtitle="Successful payment collections by month"
         exportSection="monthlyRevenue"
         onExportCsv={onExportCsv}
       >
@@ -152,7 +135,7 @@ export function BiRevenueCharts({ data, onExportCsv }: Props) {
       </BiChartCard>
       <BiChartCard
         title="Revenue by Area"
-        subtitle="Grouped by building / estate"
+        subtitle="MRR grouped by building / estate"
         exportSection="geographic"
         onExportCsv={onExportCsv}
         empty={!data.revenue.byArea.length}
@@ -168,7 +151,12 @@ export function BiRevenueCharts({ data, onExportCsv }: Props) {
           }}
         />
       </BiChartCard>
-      <BiChartCard title="Revenue Forecast" subtitle="Projected from recent trend">
+      <BiChartCard
+        title="Revenue History"
+        subtitle={hasForecast ? "Actual vs forecast" : "Collected payments over the last 12 months"}
+        empty={!data.revenue.forecast.length}
+        emptyMessage="No payment history in range."
+      >
         <LazyEChart option={forecastOption} />
       </BiChartCard>
     </Grid>
@@ -314,7 +302,7 @@ export function BiCustomerCharts({ data, onExportCsv }: Props) {
           }}
         />
       </BiChartCard>
-      <BiChartCard title="Customer Lifetime Value" subtitle="Estimated CLV by package (24-mo)">
+      <BiChartCard title="Customer Lifetime Value" subtitle="ARPU ÷ monthly churn (24× ARPU if churn is 0)">
         <LazyEChart option={clvOption} />
       </BiChartCard>
     </Grid>
@@ -352,7 +340,7 @@ export function BiSalesCharts({ data, onExportCsv }: Props) {
           type: "funnel",
           left: "10%",
           width: "80%",
-          sort: "descending",
+          sort: "none",
           label: { show: true, position: "inside", formatter: "{b}: {c}" },
           data: data.sales.funnel.map((s) => ({ name: s.stage, value: s.count })),
         },
@@ -372,7 +360,12 @@ export function BiSalesCharts({ data, onExportCsv }: Props) {
       >
         <LazyEChart option={leaderboardOption} />
       </BiChartCard>
-      <BiChartCard title="Sales Funnel" subtitle="Estimated conversion pipeline">
+      <BiChartCard
+        title="Sales Funnel"
+        subtitle="Lead pipeline by status"
+        empty={!data.sales.funnel.some((s) => s.count > 0)}
+        emptyMessage="No leads recorded yet."
+      >
         <LazyEChart option={funnelOption} height="320px" />
       </BiChartCard>
     </Grid>
@@ -441,7 +434,12 @@ export function BiFinancialCharts({ data }: Pick<Props, "data">) {
 
   return (
     <Grid templateColumns={{ base: "1fr", xl: "repeat(2, 1fr)" }} gap={4}>
-      <BiChartCard title="Invoice Collection Performance">
+      <BiChartCard
+        title="Invoice Collection Performance"
+        subtitle="Zoho invoices: invoiced, paid, and outstanding by month"
+        empty={!data.financial.collectionPerformance.length}
+        emptyMessage="No Zoho invoice history synced yet."
+      >
         <LazyEChart option={collectionOption} />
       </BiChartCard>
       <BiChartCard title="Outstanding Debt Aging">
@@ -537,28 +535,6 @@ export function BiInsightsCharts({ data }: Pick<Props, "data">) {
     [data.insights.referralSources]
   );
 
-  const marginOption = useMemo(
-    () => ({
-      color: [BI_COLORS[0], BI_COLORS[5], BI_COLORS[2], BI_COLORS[3]],
-      tooltip: axisTooltip(),
-      legend: { top: 0 },
-      grid: { ...baseGrid, left: 120 },
-      xAxis: { type: "value", axisLabel: { formatter: formatKes } },
-      yAxis: {
-        type: "category",
-        data: data.insights.profitMarginByPackage.map((p) => p.package).reverse(),
-      },
-      series: [
-        {
-          name: "Margin",
-          type: "bar",
-          data: data.insights.profitMarginByPackage.map((p) => p.margin).reverse(),
-        },
-      ],
-    }),
-    [data.insights.profitMarginByPackage]
-  );
-
   return (
     <Grid templateColumns={{ base: "1fr", xl: "repeat(2, 1fr)" }} gap={4}>
       <BiChartCard
@@ -567,12 +543,19 @@ export function BiInsightsCharts({ data }: Pick<Props, "data">) {
       >
         <LazyEChart option={upgradeOption} />
       </BiChartCard>
-      <BiChartCard title="Customer Referral Sources" subtitle="Estimated from acquisition patterns">
+      <BiChartCard
+        title="Lead Sources"
+        subtitle="Prospect acquisition channels"
+        empty={!data.insights.referralSources.length}
+        emptyMessage="No lead source data yet."
+      >
         <LazyEChart option={referralOption} height="300px" />
       </BiChartCard>
-      <BiChartCard title="Profit Margin by Package" subtitle="Revenue minus estimated network & support costs">
-        <LazyEChart option={marginOption} />
-      </BiChartCard>
+      <BiChartCard
+        title="Profit Margin by Package"
+        empty
+        emptyMessage="Cost of service is not tracked — margin charts stay hidden until network/support costs are available."
+      />
       <BiChartCard title="Peak Internet Usage" empty emptyMessage="Usage heatmap requires network telemetry." />
       <BiChartCard title="Router Inventory" empty emptyMessage="Router inventory not tracked in admin yet." />
       <BiChartCard title="Monthly Data Consumption" empty emptyMessage="Data consumption metrics not connected." />

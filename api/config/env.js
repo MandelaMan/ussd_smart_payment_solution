@@ -140,14 +140,7 @@ function validateProductionSecrets(env) {
     errors.push("USSD_API_SECRET is required in production");
   }
 
-  const whatsappConfigured = Boolean(
-    process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID
-  );
-  if (whatsappConfigured && !process.env.WHATSAPP_APP_SECRET) {
-    errors.push(
-      "WHATSAPP_APP_SECRET is required in production when WhatsApp is configured"
-    );
-  }
+  // WhatsApp credentials live in Settings → Communication (DB), with optional .env fallback.
 
   const mpesaConfigured = Boolean(
     process.env.MPESA_CONSUMER_KEY || process.env.CONSUMER_KEY

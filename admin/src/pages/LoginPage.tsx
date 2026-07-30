@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -23,6 +23,7 @@ import {
   FiTrendingUp,
   FiUsers,
 } from "react-icons/fi";
+import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { BRAND } from "../theme";
 
@@ -32,17 +33,35 @@ const HERO_HEADLINE = "A unified hub for customer management and billing";
 const HERO_SUBCOPY =
   "Manage subscribers, packages, and buildings; track collections; and keep integrations in sync — all in one place.";
 
-/** Decorative figures for the login hero — not live data */
-const DEMO_TILE_STATS = {
-  transactions: "2,847",
-  successRate: "97%",
-  returning: "412",
-  activeCustomers: "1,856",
-  returningPayers: "412",
+type LoginHeroStats = {
+  transactions: string;
+  successRate: string;
+  returning: string;
+  activeCustomers: string;
+  returningPayers: string;
+  transactionBars: number[];
+  customerBars: number[];
 };
 
-const CHART_BARS = [38, 52, 44, 68, 58, 74, 62, 80, 70, 86, 76, 64];
-const CUSTOMER_BARS = [72, 58, 84, 66, 78, 62, 88, 70, 76, 64, 82, 68];
+const EMPTY_HERO_STATS: LoginHeroStats = {
+  transactions: "—",
+  successRate: "—",
+  returning: "—",
+  activeCustomers: "—",
+  returningPayers: "—",
+  transactionBars: [],
+  customerBars: [],
+};
+
+function formatCount(n: number) {
+  return n.toLocaleString("en-KE");
+}
+
+function toBarPercents(values: number[]): number[] {
+  if (!values.length) return [];
+  const max = Math.max(...values, 1);
+  return values.map((v) => Math.max(12, Math.round((v / max) * 100)));
+}
 
 const loginInputProps = {
   // 16px on mobile prevents iOS Safari auto-zoom on focus (sm is ~14.5px).
@@ -360,7 +379,7 @@ function StatTileCard({
   );
 }
 
-function DesktopChartCard() {
+function DesktopChartCard({ bars }: { bars: number[] }) {
   return (
     <Box
       position="absolute"
@@ -426,7 +445,7 @@ function DesktopChartCard() {
         </Flex>
       </Flex>
       <Flex align="flex-end" gap={1.5} h="84px" mb={3}>
-        {CHART_BARS.map((h, i) => (
+        {(bars.length ? bars : [24, 32, 28, 40, 34, 44, 36, 48, 42, 52, 46, 40]).map((h, i) => (
           <Box
             key={i}
             flex={1}
@@ -439,14 +458,18 @@ function DesktopChartCard() {
                   ? BRAND.mindaro
                   : BRAND.sandyBrown
             }
-            opacity={0.9}
-            boxShadow={`0 0 12px ${
-              i % 3 === 0
-                ? "rgba(109,207,246,0.35)"
-                : i % 3 === 1
-                  ? "rgba(234,238,171,0.3)"
-                  : "rgba(249,164,86,0.3)"
-            }`}
+            opacity={bars.length ? 0.9 : 0.35}
+            boxShadow={
+              bars.length
+                ? `0 0 12px ${
+                    i % 3 === 0
+                      ? "rgba(109,207,246,0.35)"
+                      : i % 3 === 1
+                        ? "rgba(234,238,171,0.3)"
+                        : "rgba(249,164,86,0.3)"
+                  }`
+                : undefined
+            }
           />
         ))}
       </Flex>
@@ -466,8 +489,17 @@ function DesktopChartCard() {
   );
 }
 
-function DesktopCustomerCard() {
-  const barHeights = CUSTOMER_BARS.map((h, i) =>
+function DesktopCustomerCard({
+  bars,
+  activeCustomers,
+  returningPayers,
+}: {
+  bars: number[];
+  activeCustomers: string;
+  returningPayers: string;
+}) {
+  const source = bars.length ? bars : [40, 48, 44, 56, 50, 60, 52, 64, 58, 68, 62, 55];
+  const barHeights = source.map((h, i) =>
     Math.max(18, Math.round((h / 100) * (52 + (i % 4) * 8)))
   );
 
@@ -534,10 +566,10 @@ function DesktopCustomerCard() {
       </Flex>
       <Flex align="center" justify="space-between" position="relative">
         <Text fontSize="4xl" fontWeight="bold" color={BRAND.cerulean} lineHeight="1">
-          {DEMO_TILE_STATS.activeCustomers}
+          {activeCustomers}
         </Text>
         <Text fontSize="xs" color="#12596d" opacity={0.75} textAlign="right" maxW="120px">
-          {DEMO_TILE_STATS.returningPayers} returning payers
+          {returningPayers} returning payers
         </Text>
       </Flex>
     </Box>
@@ -557,6 +589,31 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [heroStats, setHeroStats] = useState<LoginHeroStats>(EMPTY_HERO_STATS);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getLoginStats()
+      .then((res) => {
+        if (cancelled) return;
+        setHeroStats({
+          transactions: formatCount(res.totalTransactions),
+          successRate: `${res.successRate}%`,
+          returning: formatCount(res.returningCustomers),
+          activeCustomers: formatCount(res.activeCustomers),
+          returningPayers: formatCount(res.returningCustomers),
+          transactionBars: toBarPercents(res.transactionTrend || []),
+          customerBars: toBarPercents(res.customerTrend || []),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setHeroStats(EMPTY_HERO_STATS);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (!loading && user) {
     return <Navigate to={redirectTo} replace />;
@@ -756,7 +813,7 @@ export function LoginPage() {
           <Box display="grid" gridTemplateColumns="1fr 1fr" gap={3.5} w="full">
             <StatTileCard
               label="Transactions"
-              value={DEMO_TILE_STATS.transactions}
+              value={heroStats.transactions}
               icon={<FiActivity size={15} />}
               accent={BRAND.paleAzure}
               sparkPoints={SPARK_TX}
@@ -764,7 +821,7 @@ export function LoginPage() {
             />
             <StatTileCard
               label="Success"
-              value={DEMO_TILE_STATS.successRate}
+              value={heroStats.successRate}
               icon={<FiTrendingUp size={15} />}
               accent={BRAND.mindaro}
               sparkPoints={SPARK_OK}
@@ -772,7 +829,7 @@ export function LoginPage() {
             />
             <StatTileCard
               label="Customers"
-              value={DEMO_TILE_STATS.activeCustomers}
+              value={heroStats.activeCustomers}
               icon={<FiUsers size={15} />}
               accent={BRAND.sandyBrown}
               sparkPoints={SPARK_CU}
@@ -879,11 +936,15 @@ export function LoginPage() {
           my={6}
           zIndex={1}
         >
-          <DesktopChartCard />
-          <DesktopCustomerCard />
+          <DesktopChartCard bars={heroStats.transactionBars} />
+          <DesktopCustomerCard
+            bars={heroStats.customerBars}
+            activeCustomers={heroStats.activeCustomers}
+            returningPayers={heroStats.returningPayers}
+          />
           <MiniStatTile
             label="Transactions"
-            value={DEMO_TILE_STATS.transactions}
+            value={heroStats.transactions}
             icon={<FiActivity size={16} />}
             accent={BRAND.paleAzure}
             top="2%"
@@ -892,7 +953,7 @@ export function LoginPage() {
           />
           <MiniStatTile
             label="Success Rate"
-            value={DEMO_TILE_STATS.successRate}
+            value={heroStats.successRate}
             icon={<FiTrendingUp size={16} />}
             accent={BRAND.mindaro}
             top="4%"
@@ -901,7 +962,7 @@ export function LoginPage() {
           />
           <MiniStatTile
             label="Returning"
-            value={DEMO_TILE_STATS.returning}
+            value={heroStats.returning}
             icon={<FiRepeat size={16} />}
             accent={BRAND.sandyBrown}
             top="56%"

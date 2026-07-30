@@ -16,7 +16,8 @@ function publicCors(res) {
   );
 }
 
-function leadFormConfig() {
+async function leadFormConfig() {
+  const settings = await whatsappLeadBot.loadWhatsAppSettings();
   return {
     title: process.env.LEAD_FORM_TITLE || "Get connected with Starlynx",
     subtitle:
@@ -29,7 +30,7 @@ function leadFormConfig() {
       { value: "Business", label: "Business package" },
       { value: "Other", label: "Other / talk to sales" },
     ],
-    whatsappLink: process.env.WHATSAPP_CLICK_TO_CHAT_URL || null,
+    whatsappLink: settings.clickToChatUrl || null,
     successMessage:
       process.env.LEAD_FORM_SUCCESS ||
       "Thanks! We received your request and will contact you soon.",
@@ -38,7 +39,7 @@ function leadFormConfig() {
 
 async function getLeadFormConfig(req, res) {
   publicCors(res);
-  res.json(leadFormConfig());
+  res.json(await leadFormConfig());
 }
 
 async function submitLead(req, res, next) {
@@ -103,10 +104,11 @@ async function submitLead(req, res, next) {
 
     emitSyncEvent("leads:created", { leadId: id, source });
     emitAdminUpdate("leads", { action: "created", leadId: id, source });
+    const form = await leadFormConfig();
     res.status(201).json({
       ok: true,
       id,
-      message: leadFormConfig().successMessage,
+      message: form.successMessage,
     });
   } catch (err) {
     next(err);
@@ -122,7 +124,7 @@ async function whatsappWebhookVerify(req, res) {
 }
 
 async function whatsappWebhook(req, res) {
-  const signatureCheck = verifyWhatsAppSignature(req);
+  const signatureCheck = await verifyWhatsAppSignature(req);
   if (!signatureCheck.ok) {
     console.warn("[whatsapp] webhook signature rejected:", signatureCheck.reason);
     return res.status(401).json({ error: "Unauthorized" });
@@ -142,7 +144,7 @@ async function whatsappWebhook(req, res) {
 
 async function whatsappStatus(req, res) {
   publicCors(res);
-  res.json(whatsappLeadBot.getStatus());
+  res.json(await whatsappLeadBot.getStatus());
 }
 
 module.exports = {

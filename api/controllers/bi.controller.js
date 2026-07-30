@@ -65,20 +65,20 @@ async function exportSection(req, res, next) {
         columns = ["package", "customers", "monthlyRevenue", "revenue"];
         filename = "revenue-by-package";
         break;
+      case "monthlyRevenue":
+        rows = data.revenue.monthlyTrend;
+        columns = ["month", "totalRevenue"];
+        filename = "monthly-revenue";
+        break;
       case "salesLeaderboard":
         rows = data.sales.leaderboard;
-        columns = ["agent", "customersAcquired", "revenue", "conversionRate"];
+        columns = ["agent", "customersAcquired", "revenue"];
         filename = "sales-leaderboard";
         break;
       case "geographic":
         rows = data.customers.geographic;
         columns = ["area", "customers", "mrr"];
         filename = "geographic-distribution";
-        break;
-      case "monthlyRevenue":
-        rows = data.revenue.monthlyTrend;
-        columns = ["month", "totalRevenue", "recurringRevenue", "installationRevenue"];
-        filename = "monthly-revenue";
         break;
       default:
         return res.status(400).json({ error: "Unknown export section" });

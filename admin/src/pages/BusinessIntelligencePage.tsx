@@ -160,7 +160,7 @@ export function BusinessIntelligencePage() {
 
       {data && (
         <>
-          <BiSection title="Revenue" subtitle="Trends, package mix, and forecast">
+          <BiSection title="Revenue" subtitle="Collections, package mix, and area MRR">
             <BiRevenueCharts data={data} onExportCsv={handleExportCsv} />
           </BiSection>
 

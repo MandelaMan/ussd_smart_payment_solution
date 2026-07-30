@@ -7,18 +7,36 @@ const ZOHO_MAIL_REFRESH_TOKEN =
 const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
 const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
 const ZOHO_MAIL_API_BASE = process.env.ZOHO_MAIL_API_BASE || "https://mail.zoho.com/api";
-const ZOHO_MAIL_ACCOUNT_ID = process.env.ZOHO_MAIL_ACCOUNT_ID;
-const ZOHO_MAIL_FROM_ADDRESS = process.env.ZOHO_MAIL_FROM_ADDRESS;
-const ZOHO_MAIL_FROM_NAME = process.env.ZOHO_MAIL_FROM_NAME || "Starlynx Billing";
 
 let cachedToken = null;
 let tokenExpiresAt = 0;
 let refreshingPromise = null;
+let resolvedAccountId = null;
+let resolvingAccountPromise = null;
+
+async function loadMailIdentity() {
+  try {
+    const appSettingsStore = require("../services/appSettingsStore");
+    return await appSettingsStore.getCommunicationEmailSettings();
+  } catch {
+    return {
+      fromAddress:
+        process.env.ZOHO_MAIL_FROM_ADDRESS || "customersupport@sulsolutions.biz",
+      fromName: process.env.ZOHO_MAIL_FROM_NAME || "Customer Support",
+      accountId: process.env.ZOHO_MAIL_ACCOUNT_ID || null,
+    };
+  }
+}
+
+function clearMailAccountCache() {
+  resolvedAccountId = null;
+  resolvingAccountPromise = null;
+}
 
 async function refreshAccessToken() {
   if (!ZOHO_MAIL_REFRESH_TOKEN || !ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET) {
     throw new Error(
-      "Zoho Mail OAuth not configured — set ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, and a refresh token with ZohoMail.messages.CREATE scope"
+      "Zoho Mail OAuth not configured — set ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, and ZOHO_MAIL_REFRESH_TOKEN with ZohoMail.messages scopes"
     );
   }
 
@@ -50,39 +68,214 @@ async function getAccessToken() {
 }
 
 function isZohoMailConfigured() {
-  return Boolean(ZOHO_MAIL_ACCOUNT_ID && ZOHO_MAIL_FROM_ADDRESS && ZOHO_MAIL_REFRESH_TOKEN);
+  return Boolean(ZOHO_MAIL_REFRESH_TOKEN && ZOHO_CLIENT_ID && ZOHO_CLIENT_SECRET);
 }
 
-function getZohoMailConfig() {
+async function getZohoMailConfig() {
+  const identity = await loadMailIdentity();
   return {
     configured: isZohoMailConfigured(),
-    fromAddress: ZOHO_MAIL_FROM_ADDRESS || null,
-    fromName: ZOHO_MAIL_FROM_NAME,
-    accountId: ZOHO_MAIL_ACCOUNT_ID ? "***" : null,
+    fromAddress: identity.fromAddress || null,
+    fromName: identity.fromName,
+    accountId: identity.accountId
+      ? /^\d+$/.test(String(identity.accountId))
+        ? String(identity.accountId)
+        : identity.accountId
+      : null,
+    oauthTokenConfigured: Boolean(ZOHO_MAIL_REFRESH_TOKEN),
+  };
+}
+
+function accountEmails(account) {
+  const emails = new Set();
+  const push = (v) => {
+    const s = String(v || "")
+      .trim()
+      .toLowerCase();
+    if (s.includes("@")) emails.add(s);
+  };
+  push(account?.mailboxAddress);
+  push(account?.emailAddress);
+  push(account?.primaryEmailAddress);
+  push(account?.accountName);
+  for (const detail of account?.sendMailDetails || []) {
+    push(detail?.fromAddress);
+    push(detail?.displayName);
+  }
+  return emails;
+}
+
+/**
+ * Zoho Mail APIs need a numeric accountId. Settings/env may hold email —
+ * resolve via GET /accounts when needed.
+ */
+async function getMailAccountId() {
+  if (resolvedAccountId) return resolvedAccountId;
+
+  const identity = await loadMailIdentity();
+  const configuredId = identity.accountId;
+  if (/^\d+$/.test(String(configuredId || ""))) {
+    resolvedAccountId = String(configuredId);
+    return resolvedAccountId;
+  }
+
+  if (!resolvingAccountPromise) {
+    resolvingAccountPromise = (async () => {
+      const token = await getAccessToken();
+      const url = `${ZOHO_MAIL_API_BASE}/accounts`;
+      const response = await axios.get(url, {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${token}`,
+          Accept: "application/json",
+        },
+        timeout: 15000,
+        validateStatus: () => true,
+      });
+
+      const errorCode = response.data?.data?.errorCode || response.data?.errorCode;
+      if (response.status >= 400 || errorCode) {
+        if (String(errorCode).includes("INVALID_OAUTH") || response.status === 401) {
+          throw new Error(
+            "Zoho Mail OAuth scope missing — set ZOHO_MAIL_REFRESH_TOKEN with ZohoMail.messages.ALL,ZohoMail.accounts.READ"
+          );
+        }
+        throw new Error(
+          `Zoho Mail accounts lookup failed (${response.status}): ${
+            response.data?.status?.description || errorCode || "unknown error"
+          }`
+        );
+      }
+
+      const accounts = Array.isArray(response.data?.data)
+        ? response.data.data
+        : [];
+      const target = String(identity.fromAddress || configuredId || "")
+        .trim()
+        .toLowerCase();
+
+      const match =
+        accounts.find((a) => accountEmails(a).has(target)) ||
+        accounts.find((a) =>
+          [...accountEmails(a)].some(
+            (e) =>
+              e.includes("customersupport@sulsolutions.biz") ||
+              e.includes("director@sulsolutions.biz")
+          )
+        ) ||
+        accounts[0];
+
+      const id = match?.accountId ?? match?.account_id;
+      if (!id) {
+        throw new Error(
+          "Could not resolve Zoho Mail account ID — set it under Settings → Communication"
+        );
+      }
+      resolvedAccountId = String(id);
+      return resolvedAccountId;
+    })().finally(() => {
+      resolvingAccountPromise = null;
+    });
+  }
+  return resolvingAccountPromise;
+}
+
+async function mailRequest(method, path, options = {}) {
+  const token = await getAccessToken();
+  const accountId = await getMailAccountId();
+  const url = `${ZOHO_MAIL_API_BASE}/accounts/${accountId}${path}`;
+  const response = await axios({
+    method,
+    url,
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      Accept: "application/json",
+      ...(options.headers || {}),
+    },
+    timeout: options.timeout || 30000,
+    validateStatus: () => true,
+    ...options,
+    url,
+  });
+  return { ...response, url, accountId };
+}
+
+/**
+ * Upload a file to Zoho Mail file store before attaching to a message.
+ * @see https://www.zoho.com/mail/help/api/post-upload-attachments.html
+ */
+async function uploadZohoAttachment({ fileName, buffer, contentType }) {
+  const name = String(fileName || "attachment").slice(0, 200);
+  const response = await mailRequest("POST", "/messages/attachments", {
+    params: { fileName: name },
+    data: buffer,
+    headers: {
+      "Content-Type": contentType || "application/octet-stream",
+    },
+    maxBodyLength: 15 * 1024 * 1024,
+    maxContentLength: 15 * 1024 * 1024,
+    timeout: 60000,
+  });
+
+  const data = response.data;
+  const code = data?.status?.code ?? data?.code;
+  const success = !code || Number(code) === 200;
+  if (!success) {
+    const msg = data?.status?.description || data?.message || JSON.stringify(data);
+    throw new Error(`Zoho Mail attachment upload failed: ${msg}`);
+  }
+
+  const payload = data?.data || data;
+  return {
+    storeName: payload.storeName,
+    attachmentPath: payload.attachmentPath,
+    attachmentName: payload.attachmentName || name,
   };
 }
 
 /**
- * Send email via Zoho Mail API.
+ * Send email via Zoho Mail API (optional attachments).
  * @see https://www.zoho.com/mail/help/api/post-send-an-email.html
+ * @see https://www.zoho.com/mail/help/api/post-send-email-attachment.html
  */
-async function sendZohoMail({ toAddress, subject, content, ccAddress, bccAddress, mailFormat = "html" }) {
+async function sendZohoMail({
+  toAddress,
+  subject,
+  content,
+  ccAddress,
+  bccAddress,
+  mailFormat = "html",
+  attachments = [],
+}) {
   if (!isZohoMailConfigured()) {
     throw new Error(
-      "Zoho Mail is not configured — set ZOHO_MAIL_ACCOUNT_ID and ZOHO_MAIL_FROM_ADDRESS in .env"
+      "Zoho Mail is not configured — set ZOHO_MAIL_REFRESH_TOKEN in .env (OAuth). From address is managed in Settings → Communication."
     );
   }
 
+  const identity = await loadMailIdentity();
   const to = String(toAddress || "").trim();
   if (!to || !to.includes("@")) {
     throw new Error("Valid recipient email is required");
   }
 
+  const uploaded = [];
+  for (const file of attachments || []) {
+    if (!file?.buffer || !file?.fileName) continue;
+    uploaded.push(
+      await uploadZohoAttachment({
+        fileName: file.fileName,
+        buffer: file.buffer,
+        contentType: file.contentType,
+      })
+    );
+  }
+
+  const accountId = await getMailAccountId();
   const token = await getAccessToken();
-  const url = `${ZOHO_MAIL_API_BASE}/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages`;
+  const url = `${ZOHO_MAIL_API_BASE}/accounts/${accountId}/messages`;
 
   const payload = {
-    fromAddress: ZOHO_MAIL_FROM_ADDRESS,
+    fromAddress: identity.fromAddress,
     toAddress: to,
     subject: String(subject || "").trim(),
     content,
@@ -90,6 +283,7 @@ async function sendZohoMail({ toAddress, subject, content, ccAddress, bccAddress
   };
   if (ccAddress) payload.ccAddress = ccAddress;
   if (bccAddress) payload.bccAddress = bccAddress;
+  if (uploaded.length) payload.attachments = uploaded;
 
   let data;
   let httpStatus = null;
@@ -100,7 +294,7 @@ async function sendZohoMail({ toAddress, subject, content, ccAddress, bccAddress
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      timeout: 20000,
+      timeout: 30000,
       validateStatus: () => true,
     });
     data = response.data;
@@ -118,6 +312,7 @@ async function sendZohoMail({ toAddress, subject, content, ccAddress, bccAddress
         subject: payload.subject,
         mailFormat,
         hasCc: Boolean(ccAddress),
+        attachmentCount: uploaded.length,
       },
       responsePayload: error.response?.data ?? null,
       errorMessage: error.message,
@@ -141,6 +336,7 @@ async function sendZohoMail({ toAddress, subject, content, ccAddress, bccAddress
       subject: payload.subject,
       mailFormat,
       hasCc: Boolean(ccAddress),
+      attachmentCount: uploaded.length,
     },
     responsePayload: data,
     errorMessage: success
@@ -160,11 +356,77 @@ async function sendZohoMail({ toAddress, subject, content, ccAddress, bccAddress
     messageId: data?.data?.messageId || data?.data?.mailId || null,
     toAddress: to,
     subject: payload.subject,
+    fromAddress: identity.fromAddress,
+    fromName: identity.fromName,
+    attachmentNames: uploaded.map((a) => a.attachmentName),
   };
+}
+
+/**
+ * Search mailbox for messages involving an address (sent or received).
+ * Requires ZohoMail.messages.READ (or ALL). Failures return [].
+ */
+async function searchZohoMailConversation(email, { limit = 40 } = {}) {
+  const address = String(email || "")
+    .trim()
+    .toLowerCase();
+  if (!address.includes("@") || !isZohoMailConfigured()) return [];
+
+  try {
+    const identity = await loadMailIdentity();
+    const searchKey = `sender:${address}::or:to:${address}`;
+    const response = await mailRequest("GET", "/messages/search", {
+      params: {
+        searchKey,
+        start: 1,
+        limit: Math.min(100, Math.max(1, limit)),
+        includeto: true,
+      },
+      timeout: 20000,
+    });
+
+    const code = response.data?.status?.code ?? response.data?.code;
+    if (code && Number(code) !== 200) return [];
+
+    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+    const fromMailbox = String(identity.fromAddress || "").toLowerCase();
+
+    return rows.map((row) => {
+      const from = String(row.fromAddress || "").toLowerCase();
+      const inbound = from === address || (from && from !== fromMailbox);
+      return {
+        id: `zoho-${row.messageId || row.messageid}`,
+        source: "zoho",
+        direction: inbound ? "inbound" : "outbound",
+        fromAddress: row.fromAddress || null,
+        toAddress: Array.isArray(row.toAddress)
+          ? row.toAddress.join(", ")
+          : row.toAddress || null,
+        subject: row.subject || "(no subject)",
+        summary: row.summary || "",
+        bodyHtml: null,
+        bodyText: row.summary || "",
+        attachmentNames: Number(row.hasAttachment) > 0 ? ["(attachment)"] : [],
+        zohoMessageId: row.messageId != null ? String(row.messageId) : null,
+        createdAt: row.receivedtime
+          ? new Date(Number(row.receivedtime)).toISOString()
+          : row.sentDateInGMT
+            ? new Date(Number(row.sentDateInGMT)).toISOString()
+            : null,
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 module.exports = {
   sendZohoMail,
   isZohoMailConfigured,
   getZohoMailConfig,
+  getMailAccountId,
+  uploadZohoAttachment,
+  searchZohoMailConversation,
+  loadMailIdentity,
+  clearMailAccountCache,
 };

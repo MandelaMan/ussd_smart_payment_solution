@@ -20,7 +20,7 @@ export default defineConfig({
         scope: "/admin/",
         display: "standalone",
         orientation: "portrait-primary",
-        background_color: "#ffffff",
+        background_color: "#166a82",
         theme_color: "#166a82",
         icons: [
           {

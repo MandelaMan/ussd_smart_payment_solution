@@ -275,7 +275,6 @@ export function CeoDashboardPage() {
       month: row.month,
       label: row.month.length >= 7 ? row.month.slice(5) : row.month,
       revenue: row.totalRevenue,
-      recurring: row.recurringRevenue,
     }));
   }, [data]);
 

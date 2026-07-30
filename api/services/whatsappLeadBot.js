@@ -5,11 +5,16 @@
  */
 
 const leadStore = require("./leadStore");
+const appSettingsStore = require("./appSettingsStore");
 const { emitSyncEvent } = require("../socket");
 
 let client = null;
 let initPromise = null;
 let initError = null;
+let settingsCache = null;
+let settingsCacheAt = 0;
+let settingsCacheKey = "";
+const SETTINGS_CACHE_MS = 15_000;
 
 const INTEREST_OPTIONS = [
   { id: "internet", title: "Home Internet" },
@@ -18,14 +23,43 @@ const INTEREST_OPTIONS = [
   { id: "other", title: "Other / Sales" },
 ];
 
-function isConfigured() {
-  return Boolean(
-    process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_ACCESS_TOKEN
-  );
+async function loadWhatsAppSettings({ force = false } = {}) {
+  if (
+    !force &&
+    settingsCache &&
+    Date.now() - settingsCacheAt < SETTINGS_CACHE_MS
+  ) {
+    return settingsCache;
+  }
+  const next = await appSettingsStore.getCommunicationWhatsAppSettings();
+  const key = `${next.phoneNumberId}|${next.accessToken}`;
+  if (settingsCacheKey && key !== settingsCacheKey) {
+    client = null;
+    initPromise = null;
+  }
+  settingsCache = next;
+  settingsCacheAt = Date.now();
+  settingsCacheKey = key;
+  return next;
 }
 
-function getVerifyToken() {
-  return process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || "";
+function clearWhatsAppClient() {
+  client = null;
+  initPromise = null;
+  initError = null;
+  settingsCache = null;
+  settingsCacheAt = 0;
+  settingsCacheKey = "";
+}
+
+async function isConfigured() {
+  const s = await loadWhatsAppSettings();
+  return Boolean(s.phoneNumberId && s.accessToken);
+}
+
+async function getVerifyToken() {
+  const s = await loadWhatsAppSettings();
+  return s.webhookVerifyToken || "";
 }
 
 function emitLeadEvent(event, payload) {
@@ -80,9 +114,10 @@ async function findOrCreateWhatsAppLead(waId, displayName) {
 }
 
 async function sendWelcome(update) {
+  const settings = await loadWhatsAppSettings();
   const body =
-    process.env.WHATSAPP_WELCOME_MESSAGE ||
-    "Welcome to Starlynx! What are you interested in?";
+    settings.welcomeMessage ||
+    appSettingsStore.DEFAULT_WHATSAPP_WELCOME;
 
   if (typeof update.replyWithButton === "function") {
     // Library accepts string titles or InlineButton; titles are enough for lead capture.
@@ -193,9 +228,10 @@ async function handleInbound(update) {
       patch.buildingInterest = text.slice(0, 200);
     }
     nextState = "complete";
+    const settings = await loadWhatsAppSettings();
     outbound =
-      process.env.WHATSAPP_COMPLETE_MESSAGE ||
-      "Thanks! Our sales team will contact you shortly. You can also visit our website for packages.";
+      settings.completeMessage ||
+      appSettingsStore.DEFAULT_WHATSAPP_COMPLETE;
     await replyText(update, outbound);
   } else if (/^(hi|hello|start|menu)$/i.test(text)) {
     nextState = "awaiting_interest";
@@ -252,7 +288,8 @@ async function ensureClient() {
   if (client) return client;
   if (initPromise) return initPromise;
 
-  if (!isConfigured()) {
+  const settings = await loadWhatsAppSettings();
+  if (!settings.phoneNumberId || !settings.accessToken) {
     initError = "WhatsApp credentials not configured";
     return null;
   }
@@ -261,8 +298,8 @@ async function ensureClient() {
     try {
       const WhatsApp = await loadWhatsAppClass();
       client = new WhatsApp({
-        numberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
-        token: process.env.WHATSAPP_ACCESS_TOKEN,
+        numberId: settings.phoneNumberId,
+        token: settings.accessToken,
       });
       registerHandlers(client);
       initError = null;
@@ -284,7 +321,7 @@ async function verifyWebhookQuery(query) {
   const mode = query["hub.mode"];
   const token = query["hub.verify_token"];
   const challenge = query["hub.challenge"];
-  const expected = getVerifyToken();
+  const expected = await getVerifyToken();
 
   if (mode === "subscribe" && expected && token === expected) {
     return { ok: true, challenge: String(challenge || "") };
@@ -306,9 +343,9 @@ async function processWebhook(body) {
   return { ok: true };
 }
 
-function getStatus() {
+async function getStatus() {
   return {
-    configured: isConfigured(),
+    configured: await isConfigured(),
     ready: Boolean(client),
     error: initError,
   };
@@ -345,10 +382,9 @@ function extractWhatsAppApiError(err) {
 }
 
 async function sendWhatsAppPayload(wa, waId, body, { preferTemplate = false } = {}) {
-  const templateName = String(process.env.WHATSAPP_OUTBOUND_TEMPLATE || "").trim();
-  const templateLang = String(
-    process.env.WHATSAPP_OUTBOUND_TEMPLATE_LANG || "en"
-  ).trim();
+  const settings = await loadWhatsAppSettings();
+  const templateName = String(settings.outboundTemplate || "").trim();
+  const templateLang = String(settings.outboundTemplateLang || "en").trim();
 
   if (preferTemplate && templateName && typeof wa.sendTemplateMessage === "function") {
     const components = [
@@ -384,7 +420,7 @@ async function sendWhatsAppPayload(wa, waId, body, { preferTemplate = false } = 
 
     const wrapped = new Error(
       needsTemplate && !templateName
-        ? "Cannot message this customer yet: WhatsApp only allows free-form replies within 24 hours of their last message. Set WHATSAPP_OUTBOUND_TEMPLATE to an approved Meta template to start conversations."
+        ? "Cannot message this customer yet: WhatsApp only allows free-form replies within 24 hours of their last message. Set an approved outbound template under Settings → Communication."
         : apiMsg
     );
     wrapped.status = needsTemplate ? 409 : 502;
@@ -512,4 +548,6 @@ module.exports = {
   sendCustomerMessage,
   toWhatsAppId,
   INTEREST_OPTIONS,
+  loadWhatsAppSettings,
+  clearWhatsAppClient,
 };
