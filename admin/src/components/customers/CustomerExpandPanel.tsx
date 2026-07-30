@@ -925,8 +925,7 @@ export function CustomerExpandPanel({
             customer.agencyId &&
             customer.agencyName ? (
               <Box
-                as={RouterLink}
-                to={`/agencies/${customer.agencyId}`}
+                asChild
                 fontSize="sm"
                 color="blue.600"
                 fontWeight="medium"
@@ -938,7 +937,9 @@ export function CustomerExpandPanel({
                 textOverflow="ellipsis"
                 title={formatTitleCase(customer.agencyName)}
               >
-                {formatTitleCase(customer.agencyName)}
+                <RouterLink to={`/agencies/${customer.agencyId}`}>
+                  {formatTitleCase(customer.agencyName)}
+                </RouterLink>
               </Box>
             ) : null}
             <Text fontWeight="bold" fontSize={{ base: "md", sm: "lg" }} color="fg" whiteSpace="nowrap">
@@ -1071,15 +1072,16 @@ export function CustomerExpandPanel({
                 customer.customerType === "B2B" ? (
                   customer.agencyId && customer.agencyName ? (
                     <Box
-                      as={RouterLink}
-                      to={`/agencies/${customer.agencyId}`}
+                      asChild
                       color="brand.600"
                       fontWeight="semibold"
                       textDecoration="underline"
                       _hover={{ color: "brand.700" }}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {formatTitleCase(customer.agencyName)}
+                      <RouterLink to={`/agencies/${customer.agencyId}`}>
+                        {formatTitleCase(customer.agencyName)}
+                      </RouterLink>
                     </Box>
                   ) : (
                     customer.agencyName || "—"
