@@ -367,7 +367,7 @@ async function postSetClientDetails(payload, meta = {}) {
   if (!isValidTispPackageLabel(packageLabel)) {
     const errorMessage = packageLabel
       ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")`
-      : 'TISP Package Missing (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")';
+      : 'Customer package is not on the catalog package list. Relink the customer to a current plan (Basic / Basic Plus / Premium / Premium Plus) before syncing to TISP.';
     await logApiCall({
       service: "tisp",
       operation: meta.operation || "set_client_details",
@@ -618,11 +618,16 @@ function buildTispPackageLabel({ planName, categoryName, productName }) {
   return "";
 }
 
-/** True when Package matches `{PLAN} - {PART}[+ {PART}...]` (all uppercase). */
+/** True when Package matches catalog `{PLAN} - {CATEGORY}` format. */
 function isValidTispPackageLabel(label) {
   return /^[A-Z0-9]+(?: [A-Z0-9]+)* - [A-Z0-9]+(?: [A-Z0-9]+)*(?: \+ [A-Z0-9]+(?: [A-Z0-9]+)*)*$/.test(
     String(label || "").trim()
   );
+}
+
+/** Always build from the admin package catalog — never legacy TISP names. */
+function resolveTispPackageForWrite(input) {
+  return buildTispPackageLabel(input);
 }
 
 function collectTispClientInput({
@@ -779,6 +784,7 @@ module.exports = {
   buildSetClientDetailsPayload,
   buildTispPackageLabel,
   resolveTispPackageType,
+  resolveTispPackageForWrite,
   isValidTispPackageLabel,
   stringifyTispPayload,
   stringifyTispCreatePayload,

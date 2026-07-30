@@ -10,6 +10,7 @@ import {
   Text,
 } from "@chakra-ui/react";
 import { FiRefreshCw, FiX } from "react-icons/fi";
+import { Link as RouterLink } from "react-router-dom";
 import {
   api,
   formatCurrency,
@@ -37,6 +38,7 @@ import { DataTable, DataTableSortHeader, dataTableCellProps, DataTableColumnHead
 import { TextStatus } from "../ui/TextStatus";
 import { DetailCard, DetailGrid } from "../module/EntityExpandShell";
 import { DstvSerialMissingBadge } from "./DstvSerialMissingBadge";
+import { CatalogPackageMissingBadge } from "./CatalogPackageMissingBadge";
 
 type Props = {
   customerId: number;
@@ -919,6 +921,26 @@ export function CustomerExpandPanel({
             >
               {customer.customerType}
             </Badge>
+            {customer.customerType === "B2B" &&
+            customer.agencyId &&
+            customer.agencyName ? (
+              <Box
+                as={RouterLink}
+                to={`/agencies/${customer.agencyId}`}
+                fontSize="sm"
+                color="blue.600"
+                fontWeight="medium"
+                textDecoration="underline"
+                _hover={{ color: "blue.700" }}
+                whiteSpace="nowrap"
+                maxW={{ base: "140px", sm: "220px" }}
+                overflow="hidden"
+                textOverflow="ellipsis"
+                title={formatTitleCase(customer.agencyName)}
+              >
+                {formatTitleCase(customer.agencyName)}
+              </Box>
+            ) : null}
             <Text fontWeight="bold" fontSize={{ base: "md", sm: "lg" }} color="fg" whiteSpace="nowrap">
               {hidePricing ? `${customer.productMbps} Mbps` : formatCurrency(customer.packagePrice)}
             </Text>
@@ -964,6 +986,21 @@ export function CustomerExpandPanel({
           </Flex>
         </Flex>
       </Flex>
+
+      {customer.catalogPackageMissing ? (
+        <Box
+          mx={{ base: 2.5, sm: 4 }}
+          mb={2}
+          px={2.5}
+          py={2}
+          bg="orange.50"
+          border="1px solid"
+          borderColor="orange.200"
+          borderRadius="md"
+        >
+          <CatalogPackageMissingBadge />
+        </Box>
+      ) : null}
 
       {customer.dstvSerialMissing && (
         <Box
@@ -1031,9 +1068,25 @@ export function CustomerExpandPanel({
             <DetailCard
               label="Agency"
               value={
-                customer.customerType === "B2B"
-                  ? customer.agencyName
-                  : "— (C2B — billed to customer)"
+                customer.customerType === "B2B" ? (
+                  customer.agencyId && customer.agencyName ? (
+                    <Box
+                      as={RouterLink}
+                      to={`/agencies/${customer.agencyId}`}
+                      color="brand.600"
+                      fontWeight="semibold"
+                      textDecoration="underline"
+                      _hover={{ color: "brand.700" }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {formatTitleCase(customer.agencyName)}
+                    </Box>
+                  ) : (
+                    customer.agencyName || "—"
+                  )
+                ) : (
+                  "— (C2B — billed to customer)"
+                )
               }
               span={{ base: "1 / -1", md: "span 1" }}
             />

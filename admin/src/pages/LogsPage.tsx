@@ -170,10 +170,15 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
     try {
+      const filterTags: string[] = [];
+      if (service) filterTags.push(service);
+      if (status) filterTags.push(status);
+      if (search) filterTags.push(search);
       await exportTableData({
         scope,
         format,
         filenameBase: "api-logs",
+        filterTags,
         columns: logExportColumns,
         viewRows: rows,
         fetchAllRows: () =>

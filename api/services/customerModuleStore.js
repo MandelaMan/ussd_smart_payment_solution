@@ -215,6 +215,17 @@ function mapCustomerRow(row) {
     planId: row.plan_id != null ? Number(row.plan_id) : null,
     planName: row.plan_name || null,
     planSortOrder: row.plan_sort_order != null ? Number(row.plan_sort_order) : null,
+    planVariantId: row.plan_variant_id != null ? Number(row.plan_variant_id) : null,
+    categoryId: row.category_id != null ? Number(row.category_id) : null,
+    categoryName: row.category_name || null,
+    /** Product is not linked to the current package catalog (plan + category). */
+    catalogPackageMissing: !(
+      row.plan_variant_id != null &&
+      row.plan_id != null &&
+      row.category_id != null &&
+      String(row.plan_name || "").trim() &&
+      String(row.category_name || "").trim()
+    ),
     agencyId: row.agency_id,
     agencyName: row.agency_name,
     agencyEmail: row.agency_email || null,
@@ -301,9 +312,12 @@ const CUSTOMER_SELECT = `
          p.mbps AS product_mbps,
          p.extra_bandwidth AS product_extra_bandwidth,
          p.has_dstv AS product_has_dstv,
+         p.plan_variant_id AS plan_variant_id,
          pl.id AS plan_id,
          pl.name AS plan_name,
          pl.sort_order AS plan_sort_order,
+         cat.id AS category_id,
+         cat.name AS category_name,
          a.name AS agency_name,
          a.email AS agency_email,
          a.phone AS agency_phone,
@@ -1258,7 +1272,9 @@ async function getCustomerContext(id) {
             p.name AS product_name, p.mbps AS product_mbps,
             p.extra_bandwidth AS product_extra_bandwidth,
             p.has_dstv AS product_has_dstv,
+            p.plan_variant_id AS plan_variant_id,
             pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order,
+            cat.id AS category_id,
             cat.name AS category_name,
             a.name AS agency_name, a.email AS agency_email,
             a.phone AS agency_phone, a.contact_person AS agency_contact_person,

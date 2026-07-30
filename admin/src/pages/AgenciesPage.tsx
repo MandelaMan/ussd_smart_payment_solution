@@ -221,10 +221,13 @@ export function AgenciesPage() {
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
     try {
+      const filterTags: string[] = [];
+      if (search.trim()) filterTags.push(search.trim());
       await exportTableData({
         scope,
         format,
         filenameBase: "agencies",
+        filterTags,
         columns: agencyExportColumns,
         viewRows: agencies,
         fetchAllRows: () =>

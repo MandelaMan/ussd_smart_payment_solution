@@ -1033,13 +1033,19 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
 async function createCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
   const ipSetup = await resolveTispBuildingIpSetup(ctx);
-  const payload = buildTispCreateClientPayload(
-    tispPayloadInput(
-      { ...ctx, ip_setup: ipSetup, ipSetup },
-      buildingName,
-      { dueDate: meta.dueDate }
-    )
+  const resolvedIp = await resolveIpForTispWrite(ctx);
+  if (!resolvedIp) {
+    throw new Error(
+      "Static IP address is required for TISP create, but none is set on the customer"
+    );
+  }
+  const input = tispPayloadInput(
+    { ...ctx, ip_setup: ipSetup, ipSetup, ip_address: resolvedIp },
+    buildingName,
+    { dueDate: meta.dueDate }
   );
+  assertCatalogPackageForTisp(input);
+  const payload = buildTispCreateClientPayload(input);
   const result = await postSetClientDetails(payload, {
     customerId: ctx.id,
     customerNumber: ctx.customer_number ?? ctx.customerNumber,
@@ -1062,6 +1068,72 @@ async function createCustomerOnTisp(ctx, meta = {}) {
   return result;
 }
 
+/** Pull a usable IPv4 from a TISP Client Status payload. */
+function extractTispStaticIp(tispCustomer) {
+  if (!tispCustomer || typeof tispCustomer !== "object") return null;
+  const candidates = [
+    tispCustomer.StaticIPAddress,
+    tispCustomer.staticIPAddress,
+    tispCustomer.staticIpAddress,
+    tispCustomer.PppoeRemoteAddress,
+    tispCustomer.pppoeRemoteAddress,
+    tispCustomer.IPAddress,
+    tispCustomer.ipAddress,
+    tispCustomer.IP,
+    tispCustomer.ip,
+  ];
+  for (const raw of candidates) {
+    const ip = String(raw || "").trim();
+    if (ip && ip !== "0.0.0.0") return ip;
+  }
+  return null;
+}
+
+function assertCatalogPackageForTisp(input) {
+  const { buildTispPackageLabel, isValidTispPackageLabel } = require("./tisp.controller");
+  const label = buildTispPackageLabel(input);
+  if (!isValidTispPackageLabel(label)) {
+    throw new Error(
+      "Customer package is not on the catalog package list. Relink the customer to a current plan (Basic / Basic Plus / Premium / Premium Plus) before syncing to TISP."
+    );
+  }
+  return label;
+}
+
+/**
+ * TISP rejects blank StaticIPAddress ("StaticIPAddress Missing.").
+ * When freeing an old account before INSERT, park it on this placeholder so the
+ * real IP can be claimed by the new AccountNumber.
+ */
+const TISP_RELEASE_PLACEHOLDER_IP = "0.0.0.0";
+
+async function resolveIpForTispWrite(ctx, accountNumberHint = null) {
+  const local = String(ctx.ip_address || ctx.ipAddress || "").trim();
+  if (local) return local;
+
+  const candidates = [
+    accountNumberHint,
+    ctx.customer_number || ctx.customerNumber,
+    alternateTypeAccountNumber(ctx),
+  ]
+    .map((n) => String(n || "").trim().toUpperCase())
+    .filter(Boolean);
+
+  const seen = new Set();
+  for (const num of candidates) {
+    if (seen.has(num)) continue;
+    seen.add(num);
+    try {
+      const live = await getTISPCustomer(num);
+      const ip = extractTispStaticIp(live);
+      if (ip) return ip;
+    } catch {
+      /* try next */
+    }
+  }
+  return "";
+}
+
 async function updateCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
   const ipSetup = await resolveTispBuildingIpSetup(ctx);
@@ -1071,28 +1143,41 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     .trim()
     .toUpperCase();
 
+  const resolvedIp = meta.releaseNetwork
+    ? TISP_RELEASE_PLACEHOLDER_IP
+    : await resolveIpForTispWrite(ctx, accountNumber);
+
   const input = {
     ...tispPayloadInput(
-      { ...ctx, ip_setup: ipSetup, ipSetup },
+      { ...ctx, ip_setup: ipSetup, ipSetup, ip_address: resolvedIp || ctx.ip_address },
       buildingName,
       { dueDate: meta.dueDate }
     ),
     customerNumber: accountNumber,
+    ipAddress: resolvedIp,
   };
 
   // When releasing an old account before renumbering, free IP / PPPoE so the
   // new AccountNumber can claim them. Do not apply the new apartment/IP here.
+  // TISP rejects blank StaticIPAddress — use a placeholder instead of "".
   if (meta.releaseNetwork) {
     const releaseApt = String(
       meta.previousApartmentNumber || ctx.apartment_number || accountNumber
     )
       .trim()
       .toUpperCase();
-    input.ipAddress = "";
+    input.ipAddress = TISP_RELEASE_PLACEHOLDER_IP;
     input.apartmentNumber = `${releaseApt}-X`;
     input.ppoeUsername = `${releaseApt}-X`;
     input.tispPassword = `x${String(Date.now()).slice(-6)}`;
+  } else if (!String(input.ipAddress || "").trim()) {
+    throw new Error(
+      "Static IP address is required for TISP update, but none is set on the customer"
+    );
   }
+
+  // Always send catalog package names (never legacy "BASIC PACKAGE 30MBPS").
+  assertCatalogPackageForTisp(input);
 
   const payload = buildTispUpdateClientDetailsPayload(input);
   const result = await postSetClientDetails(payload, {
@@ -1145,10 +1230,14 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
   // PPOE username) so we actually free the credential before INSERT.
   let previousApartment =
     meta.previousApartmentNumber || previousNumber || null;
+  let liveIpForCreate = String(ctx.ip_address || ctx.ipAddress || "").trim() || null;
   try {
     const live = await getTISPCustomer(previousNumber);
     preservedDueDate =
       integrationSnapshot.extractTispDueDate(live) || preservedDueDate;
+    if (!liveIpForCreate) {
+      liveIpForCreate = extractTispStaticIp(live);
+    }
     const livePppoe =
       live?.PppoeUsername ||
       live?.pppoeUsername ||
@@ -1178,28 +1267,34 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
     parentLogId: meta.parentLogId ?? null,
   });
 
+  const createCtx =
+    liveIpForCreate && !String(ctx.ip_address || "").trim()
+      ? { ...ctx, ip_address: liveIpForCreate }
+      : ctx;
+  const createMeta = {
+    ...meta,
+    dueDate: dueForCreate,
+    skipStatusRefresh: meta.skipStatusRefresh,
+  };
+
   try {
-    return await createCustomerOnTisp(ctx, {
-      ...meta,
-      dueDate: dueForCreate,
-      skipStatusRefresh: meta.skipStatusRefresh,
-    });
+    return await createCustomerOnTisp(createCtx, createMeta);
   } catch (createErr) {
     if (isTispDuplicateAccountError(createErr)) {
-      return await updateCustomerOnTisp(ctx, {
-        ...meta,
-        dueDate: dueForCreate,
-      });
+      return await updateCustomerOnTisp(createCtx, createMeta);
     }
     // Best-effort rollback so the customer is not left disconnected.
     if (preservedDueDate) {
       try {
-        await updateCustomerOnTisp(ctx, {
-          accountNumber: previousNumber,
-          dueDate: preservedDueDate,
-          skipStatusRefresh: true,
-          parentLogId: meta.parentLogId ?? null,
-        });
+        await updateCustomerOnTisp(
+          liveIpForCreate ? { ...ctx, ip_address: liveIpForCreate } : ctx,
+          {
+            accountNumber: previousNumber,
+            dueDate: preservedDueDate,
+            skipStatusRefresh: true,
+            parentLogId: meta.parentLogId ?? null,
+          }
+        );
       } catch {
         /* ignore rollback failure */
       }

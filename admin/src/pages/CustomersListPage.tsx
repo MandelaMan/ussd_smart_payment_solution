@@ -37,6 +37,7 @@ import {
 import { toaster } from "../components/ui/toaster";
 import { CustomerEditDialog } from "../components/customers/CustomerEditDialog";
 import { DstvSerialMissingBadge } from "../components/customers/DstvSerialMissingBadge";
+import { CatalogPackageMissingBadge } from "../components/customers/CatalogPackageMissingBadge";
 import {
   CustomerActionDialog,
 } from "../components/customers/CustomerActionDialog";
@@ -646,7 +647,15 @@ export function CustomersListPage() {
       if (options?.columns && options.columns !== "all") {
         params.columns = options.columns.join(",");
       }
-      await api.exportCustomers(params, format);
+      const filterTags: string[] = [];
+      const bldg = buildings.find((b) => String(b.id) === buildingId);
+      if (bldg) filterTags.push(bldg.name);
+      if (statusFilters.length) filterTags.push(...statusFilters);
+      const cat = categories.find((c) => String(c.id) === categoryId);
+      if (cat) filterTags.push(cat.name);
+      if (customerType) filterTags.push(customerType);
+      if (debouncedSearch.trim().length >= 2) filterTags.push(debouncedSearch.trim());
+      await api.exportCustomers(params, format, filterTags);
     } catch (e) {
       toaster.create({
         title: e instanceof Error ? e.message : "Export failed",
@@ -1855,7 +1864,18 @@ export function CustomersListPage() {
                       dimmed={isDimmed}
                       opacity={c.status === "cancelled" ? 0.75 : undefined}
                       onClick={() => toggleRow(c.id)}
-                      footer={c.dstvSerialMissing ? <DstvSerialMissingBadge compact /> : undefined}
+                      footer={
+                        c.catalogPackageMissing || c.dstvSerialMissing ? (
+                          <Stack gap={1}>
+                            {c.catalogPackageMissing ? (
+                              <CatalogPackageMissingBadge compact />
+                            ) : null}
+                            {c.dstvSerialMissing ? (
+                              <DstvSerialMissingBadge compact />
+                            ) : null}
+                          </Stack>
+                        ) : undefined
+                      }
                     />
                   );
                 }}
@@ -1980,10 +2000,15 @@ export function CustomersListPage() {
                         >
                           {formatDisplayText(c.buildingName)} · {c.apartmentNumber}
                         </Text>
-                        {c.dstvSerialMissing && (
-                          <Box mt={1.5}>
-                            <DstvSerialMissingBadge compact />
-                          </Box>
+                        {(c.catalogPackageMissing || c.dstvSerialMissing) && (
+                          <Stack gap={1} mt={1.5}>
+                            {c.catalogPackageMissing ? (
+                              <CatalogPackageMissingBadge compact />
+                            ) : null}
+                            {c.dstvSerialMissing ? (
+                              <DstvSerialMissingBadge compact />
+                            ) : null}
+                          </Stack>
                         )}
                       </Table.Cell>
                       <Table.Cell

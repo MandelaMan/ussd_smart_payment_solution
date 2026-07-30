@@ -263,10 +263,14 @@ export function BuildingsPage() {
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
     try {
+      const filterTags: string[] = [];
+      if (ipSetup) filterTags.push(ipSetup);
+      if (search.trim()) filterTags.push(search.trim());
       await exportTableData({
         scope,
         format,
         filenameBase: "buildings",
+        filterTags,
         columns: buildingExportColumns,
         viewRows: buildings,
         fetchAllRows: () =>

@@ -318,6 +318,11 @@ export type Customer = {
   planId?: number | null;
   planName?: string | null;
   planSortOrder?: number | null;
+  planVariantId?: number | null;
+  categoryId?: number | null;
+  categoryName?: string | null;
+  /** True when the customer's product is not linked to the current package catalog. */
+  catalogPackageMissing?: boolean;
   agencyId: number | null;
   agencyName: string | null;
   agencyEmail?: string | null;
@@ -1399,10 +1404,26 @@ function downloadBlobFile(filename: string, blob: Blob) {
   URL.revokeObjectURL(url);
 }
 
-function exportFilename(base: string, scope: string, format: "csv" | "xls" | "pdf") {
+function slugifyTag(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function exportFilename(
+  base: string,
+  scope: string,
+  format: "csv" | "xls" | "pdf",
+  filterTags: string[] = []
+) {
   const suffix = scope === "all" ? "all-records" : "current-view";
   const ext = format === "xls" ? "xlsx" : format === "pdf" ? "pdf" : "csv";
-  return `${base}-${suffix}.${ext}`;
+  const tags = filterTags
+    .map(slugifyTag)
+    .filter((t) => t.length > 0 && t.length <= 40);
+  const parts = [base, ...tags, suffix].join("-");
+  return `${parts}.${ext}`;
 }
 
 async function downloadReportFile(
@@ -1966,12 +1987,13 @@ export const api = {
     request<Paginated<Customer>>(`/admin/customers${buildQueryString(params)}`),
   exportCustomers: (
     params: Record<string, string | undefined> = {},
-    format: "csv" | "xls" | "pdf" = "csv"
+    format: "csv" | "xls" | "pdf" = "csv",
+    filterTags: string[] = []
   ) => {
     const scope = params.scope || "view";
     return downloadExport(
       `/admin/customers/export${buildQueryString({ ...params, format, scope })}`,
-      exportFilename("customers", scope, format)
+      exportFilename("customers", scope, format, filterTags)
     );
   },
 

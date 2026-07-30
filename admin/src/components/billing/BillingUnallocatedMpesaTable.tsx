@@ -116,10 +116,13 @@ export function BillingUnallocatedMpesaTable({ reloadKey = 0, onReload }: Props)
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
     try {
+      const filterTags: string[] = [];
+      if (search) filterTags.push(search);
       await exportTableData({
         scope,
         format,
         filenameBase: "unallocated-mpesa",
+        filterTags,
         title: "Unallocated M-Pesa Payments",
         columns: unmatchedMpesaExportColumns,
         viewRows: rows,

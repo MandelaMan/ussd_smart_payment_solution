@@ -133,10 +133,14 @@ export function BillingCommunicationsTable({
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
     try {
+      const filterTags: string[] = [];
+      if (statusFilter) filterTags.push(statusFilter);
+      if (search) filterTags.push(search);
       await exportTableData({
         scope,
         format,
         filenameBase: "billing-communications",
+        filterTags,
         columns: billingCommunicationExportColumns,
         viewRows: rows,
         fetchAllRows: () =>

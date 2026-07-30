@@ -310,10 +310,17 @@ export function ApartmentHistoryPage() {
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
     try {
+      const filterTags: string[] = [];
+      const bldg = buildings.find((b) => String(b.id) === buildingId);
+      if (bldg) filterTags.push(bldg.name);
+      if (apartmentNumber.trim()) filterTags.push(apartmentNumber.trim());
+      if (currentOnly) filterTags.push("current");
+      if (search.trim()) filterTags.push(search.trim());
       await exportTableData({
         scope,
         format,
         filenameBase: "apartment-history",
+        filterTags,
         columns: apartmentHistoryExportColumns,
         viewRows: rows,
         fetchAllRows: () =>

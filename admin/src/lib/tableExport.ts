@@ -104,14 +104,36 @@ export function downloadCsvExport<T>(
   downloadTextFile(filename, rowsToCsv(columns, rows));
 }
 
+/**
+ * Slugify a label into a filename-safe token.
+ * "Internet + Apartonet Channels" → "internet-apartonet-channels"
+ */
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Build a descriptive export filename from the base name, active filters,
+ * scope, and format.
+ *
+ * Example: `customers-enaki-active-c2b-all-records.csv`
+ */
 export function buildExportFilename(
   base: string,
   scope: ExportScope,
-  format: ExportFormat
+  format: ExportFormat,
+  filterTags: string[] = []
 ) {
   const ext = format === "xls" ? "xlsx" : format === "pdf" ? "pdf" : "csv";
   const suffix = scope === "view" ? "current-view" : "all-records";
-  return `${base}-${suffix}.${ext}`;
+  const tags = filterTags
+    .map(slugify)
+    .filter((t) => t.length > 0 && t.length <= 40);
+  const parts = [base, ...tags, suffix].join("-");
+  return `${parts}.${ext}`;
 }
 
 export function titleFromFilenameBase(base: string) {
@@ -171,6 +193,7 @@ export async function exportTableData<T>({
   scope,
   format,
   filenameBase,
+  filterTags,
   title,
   columns,
   columnKeys,
@@ -180,6 +203,7 @@ export async function exportTableData<T>({
   scope: ExportScope;
   format: ExportFormat;
   filenameBase: string;
+  filterTags?: string[];
   title?: string;
   columns: ExportColumn<T>[];
   columnKeys?: "all" | string[];
@@ -187,7 +211,7 @@ export async function exportTableData<T>({
   fetchAllRows: () => Promise<T[]>;
 }) {
   const rows = scope === "view" ? viewRows : await fetchAllRows();
-  const filename = buildExportFilename(filenameBase, scope, format);
+  const filename = buildExportFilename(filenameBase, scope, format, filterTags);
   const exportColumns =
     columnKeys && columnKeys !== "all"
       ? filterExportColumnsByKeys(columns, columnKeys)

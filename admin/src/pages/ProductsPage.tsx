@@ -354,10 +354,16 @@ export function ProductsPage() {
   async function handleExport(scope: ExportScope, format: ExportFormat) {
     setExporting(true);
     try {
+      const filterTags: string[] = [];
+      const bldg = buildings.find((b) => String(b.id) === filterBuildingId);
+      if (bldg) filterTags.push(bldg.name);
+      if (filterPaymentFrequency) filterTags.push(filterPaymentFrequency);
+      if (search.trim()) filterTags.push(search.trim());
       await exportTableData({
         scope,
         format,
         filenameBase: "packages",
+        filterTags,
         columns: productExportColumns,
         viewRows: products,
         fetchAllRows: () =>
