@@ -1,5 +1,6 @@
 const store = require("../services/customerModuleStore");
 const { emitAdminUpdate } = require("../lib/adminEvents");
+const { logActivitySafe } = require("../services/activityLogStore");
 
 async function listBuildings(req, res, next) {
   try {
@@ -32,6 +33,14 @@ async function createBuilding(req, res, next) {
     });
     const building = await store.getBuildingMapped(id);
     emitAdminUpdate("buildings", { action: "created", buildingId: id });
+    await logActivitySafe({
+      eventType: "building_created",
+      title: "Building created",
+      message: building?.name || `Building #${id}`,
+      source: "admin",
+      referenceId: String(id),
+      metadata: { buildingId: id },
+    });
     return res.status(201).json({ ok: true, id, building });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -69,6 +78,14 @@ async function updateBuilding(req, res, next) {
     });
     const building = await store.getBuildingMapped(id);
     emitAdminUpdate("buildings", { action: "updated", buildingId: id });
+    await logActivitySafe({
+      eventType: "building_updated",
+      title: "Building updated",
+      message: building?.name || `Building #${id}`,
+      source: "admin",
+      referenceId: String(id),
+      metadata: { buildingId: id },
+    });
     return res.json({ ok: true, building });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {

@@ -35,6 +35,7 @@ import {
   type PendingUpgrade,
 } from "../lib/api";
 import { toaster } from "../components/ui/toaster";
+import { startSyncCooldown } from "../hooks/useSyncCooldown";
 import { CustomerEditDialog } from "../components/customers/CustomerEditDialog";
 import { DstvSerialMissingBadge } from "../components/customers/DstvSerialMissingBadge";
 import { CatalogPackageMissingBadge } from "../components/customers/CatalogPackageMissingBadge";
@@ -1165,6 +1166,8 @@ export function CustomersListPage() {
     setCustomers((prev) =>
       prev.map((row) => (row.id === updated.id ? { ...row, ...updated } : row))
     );
+    // Mirror server sync cooldown from the update so Refresh is not pressed early.
+    startSyncCooldown(updated.id);
     if (expanded === updated.id) {
       setPanelRefreshKey((k) => k + 1);
     }

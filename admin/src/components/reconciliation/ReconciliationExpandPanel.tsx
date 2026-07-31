@@ -459,7 +459,11 @@ export function ReconciliationExpandPanel({
                   <Text color="fg" flex={1} minW={0} lineHeight="1.4">
                     {"actionType" in entry
                       ? `${entry.actionType}${entry.userEmail ? ` · ${entry.userEmail}` : ""}`
-                      : entry.title}
+                      : `${entry.title}${
+                          "actorName" in entry && entry.actorName
+                            ? ` · ${entry.actorName}`
+                            : ""
+                        }`}
                   </Text>
                 </Flex>
               ))}

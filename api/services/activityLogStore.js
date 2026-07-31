@@ -1,8 +1,28 @@
 const { query } = require("../config/db");
 const { findPaymentTransactionId } = require("./transactionStore");
+const { getActivityActor } = require("../lib/activityActorContext");
+
+function resolveActor({ actor, actorUserId, actorName } = {}) {
+  const fromCtx = getActivityActor();
+  const id =
+    actor?.id != null
+      ? Number(actor.id)
+      : actorUserId != null
+        ? Number(actorUserId)
+        : fromCtx?.id != null
+          ? Number(fromCtx.id)
+          : null;
+  const nameRaw =
+    actor?.name ?? actorName ?? fromCtx?.name ?? null;
+  const name = nameRaw ? String(nameRaw).trim().slice(0, 191) : null;
+  return {
+    actorUserId: Number.isFinite(id) && id > 0 ? id : null,
+    actorName: name || null,
+  };
+}
 
 /**
- * Persist a dashboard activity entry (production payment & integration actions).
+ * Persist a dashboard activity entry and broadcast it to connected admin clients.
  */
 async function logActivity({
   eventType,
@@ -15,7 +35,10 @@ async function logActivity({
   referenceId = null,
   checkoutRequestId = null,
   metadata = {},
-}) {
+  actor = null,
+  actorUserId = null,
+  actorName = null,
+} = {}) {
   let paymentTransactionId = null;
   if (checkoutRequestId) {
     paymentTransactionId = await findPaymentTransactionId(checkoutRequestId);
@@ -23,31 +46,77 @@ async function logActivity({
 
   const normalizedStatus =
     status === "failure" ? "failed" : String(status || "success");
+  const normalizedEventType = String(eventType || "unknown").slice(0, 64);
+  const normalizedSource = String(source || "admin").slice(0, 32);
+  const normalizedAmount = amount != null ? Number(amount) : null;
+  const { actorUserId: resolvedActorId, actorName: resolvedActorName } =
+    resolveActor({ actor, actorUserId, actorName });
 
-  await query(
+  const result = await query(
     `INSERT INTO activity_logs
       (event_type, title, message, source, status, customer_ref, amount,
-       reference_id, payment_transaction_id, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       reference_id, payment_transaction_id, metadata, actor_user_id, actor_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      String(eventType || "unknown").slice(0, 64),
+      normalizedEventType,
       title,
       message,
-      String(source || "admin").slice(0, 32),
+      normalizedSource,
       normalizedStatus.slice(0, 16),
       customerRef,
-      amount != null ? Number(amount) : null,
+      normalizedAmount,
       referenceId,
       paymentTransactionId,
       JSON.stringify(metadata),
+      resolvedActorId,
+      resolvedActorName,
     ]
   );
+
+  const item = formatActivity({
+    id: Number(result.insertId),
+    event_type: normalizedEventType,
+    title,
+    message,
+    source: normalizedSource,
+    status: normalizedStatus.slice(0, 16),
+    customer_ref: customerRef,
+    amount: normalizedAmount,
+    reference_id: referenceId,
+    actor_user_id: resolvedActorId,
+    actor_name: resolvedActorName,
+    created_at: new Date().toISOString(),
+  });
+
+  try {
+    const { emitSyncEvent } = require("../socket");
+    emitSyncEvent("activity:created", item);
+  } catch {
+    /* socket optional during scripts / early boot */
+  }
+
+  return item;
+}
+
+/**
+ * Best-effort activity write — never throws to callers.
+ */
+async function logActivitySafe(payload) {
+  try {
+    return await logActivity(payload);
+  } catch (e) {
+    console.error(
+      `activity log (${payload?.eventType || "unknown"}) failed:`,
+      e.message
+    );
+    return null;
+  }
 }
 
 async function listActivity({ limit = 40 } = {}) {
   const rows = await query(
     `SELECT id, event_type, title, message, source, status, customer_ref,
-            amount, reference_id, created_at
+            amount, reference_id, actor_user_id, actor_name, created_at
      FROM activity_logs
      ORDER BY created_at DESC
      LIMIT ?`,
@@ -68,8 +137,11 @@ function formatActivity(row) {
     customerRef: row.customer_ref,
     amount: row.amount != null ? Number(row.amount) : null,
     referenceId: row.reference_id,
+    actorUserId:
+      row.actor_user_id != null ? Number(row.actor_user_id) : null,
+    actorName: row.actor_name || null,
     createdAt: row.created_at,
   };
 }
 
-module.exports = { logActivity, listActivity, formatActivity };
+module.exports = { logActivity, logActivitySafe, listActivity, formatActivity };

@@ -168,6 +168,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  // During Vite HMR, AuthProvider can briefly disappear while consumers stay mounted.
+  // Returning a safe loading stub avoids a blank / thrown "must be used within" crash.
+  if (!ctx) {
+    return {
+      user: null,
+      loading: true,
+      login: async () => {
+        throw new Error("Auth is still loading — refresh the page and try again");
+      },
+      logout: async () => {},
+      refresh: async () => {},
+    };
+  }
   return ctx;
 }

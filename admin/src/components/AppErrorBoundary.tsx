@@ -22,17 +22,27 @@ export class AppErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
 
     return (
-      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" p={6}>
+      <Box
+        minH="100vh"
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        p={6}
+        bg="white"
+      >
         <Stack gap={3} maxW="28rem" textAlign="center">
           <Heading size="md">Something went wrong</Heading>
           <Text fontSize="sm" color="fg.muted">
             {this.state.error.message || "The admin UI hit an unexpected error."}
           </Text>
+          <Text fontSize="xs" color="fg.subtle">
+            If this followed a live reload, a full page refresh usually clears it.
+          </Text>
           <Button
             colorPalette="brand"
             onClick={() => {
               this.setState({ error: null });
-              window.location.assign(`${import.meta.env.BASE_URL}`);
+              window.location.reload();
             }}
           >
             Reload admin

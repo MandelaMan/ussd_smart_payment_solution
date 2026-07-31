@@ -41,6 +41,16 @@ async function boot() {
       <App />
     </StrictMode>
   );
+
+  // Belt-and-suspenders: never leave the HTML splash covering a mounted app
+  // after HMR / auth remounts (BootSplashGate also dismisses).
+  try {
+    const { dismissBootSplash } = await import("./lib/bootSplash");
+    // Delay slightly so AuthProvider can start; max-wait still applies for PWA.
+    window.setTimeout(() => dismissBootSplash(), 0);
+  } catch {
+    document.getElementById("sul-boot-splash")?.remove();
+  }
 }
 
 void boot();

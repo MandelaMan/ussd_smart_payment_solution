@@ -2,9 +2,18 @@ import { Box, Flex, Stack, Text } from "@chakra-ui/react";
 import { SkeletonBlock } from "./ui/SkeletonBlock";
 import {
   FiAlertCircle,
+  FiBriefcase,
   FiCheckCircle,
   FiCreditCard,
+  FiEdit3,
   FiFileText,
+  FiHome,
+  FiMail,
+  FiMessageSquare,
+  FiPackage,
+  FiPlus,
+  FiUser,
+  FiUsers,
   FiWifi,
 } from "react-icons/fi";
 import type { ActivityItem } from "../lib/api";
@@ -13,17 +22,50 @@ import { formatCurrency, timeAgo } from "../lib/api";
 const EVENT_ICONS: Record<string, typeof FiCreditCard> = {
   payment_received: FiCreditCard,
   payment_failed: FiAlertCircle,
+  payment_allocated: FiCreditCard,
   zoho_invoice_created: FiFileText,
   zoho_invoice_updated: FiFileText,
   zoho_invoice_failed: FiAlertCircle,
+  zoho_credit_note_created: FiFileText,
+  zoho_customer_linked: FiFileText,
+  zoho_trial_started: FiFileText,
   tisp_reconnected: FiWifi,
   tisp_reconnect_failed: FiAlertCircle,
+  customer_created: FiPlus,
+  customer_created_tisp_failed: FiAlertCircle,
+  customer_created_zoho_failed: FiAlertCircle,
+  customer_updated: FiEdit3,
+  customer_upgraded: FiPackage,
+  customer_downgraded: FiPackage,
+  customer_cancelled: FiAlertCircle,
+  customer_disconnected: FiWifi,
+  customer_paused: FiUser,
+  customer_deleted: FiAlertCircle,
+  customer_apartment_switched: FiHome,
+  customer_type_changed: FiUser,
+  customer_imported: FiPlus,
+  building_created: FiHome,
+  building_updated: FiHome,
+  product_created: FiPackage,
+  product_updated: FiPackage,
+  product_deleted: FiPackage,
+  agency_created: FiBriefcase,
+  agency_updated: FiBriefcase,
+  lead_created: FiMessageSquare,
+  lead_updated: FiMessageSquare,
+  lead_email: FiMail,
+  communication_email: FiMail,
+  billing_email_sent: FiMail,
+  user_created: FiUsers,
+  user_updated: FiUsers,
 };
 
 const SOURCE_COLORS: Record<string, string> = {
   mpesa: "brand.600",
   zoho: "blue.500",
   tisp: "teal.500",
+  admin: "purple.500",
+  reconciliation: "orange.500",
 };
 
 type Props = {
@@ -31,9 +73,15 @@ type Props = {
   loading?: boolean;
   /** `rail` = dashboard side panel; `page` = mobile full-page (borderless). */
   variant?: "rail" | "page";
+  live?: boolean;
 };
 
-export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
+export function ActivityPanel({
+  items,
+  loading,
+  variant = "rail",
+  live = false,
+}: Props) {
   const isPage = variant === "page";
   const list = items ?? [];
 
@@ -60,7 +108,7 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
             Activity
           </Text>
           <Text fontSize="2xs" color="fg.muted">
-            Payments and integrations
+            {live ? "Live · creates and updates" : "Creates, updates, and payments"}
           </Text>
         </Box>
       ) : null}
@@ -158,6 +206,11 @@ export function ActivityPanel({ items, loading, variant = "rail" }: Props) {
                       {item.customerRef}
                     </Text>
                   )}
+                  {item.actorName ? (
+                    <Text fontSize="2xs" fontWeight="medium" color="fg.muted">
+                      by {item.actorName}
+                    </Text>
+                  ) : null}
                   <Text fontSize="2xs" color="fg.subtle" ml="auto">
                     {timeAgo(item.createdAt)}
                   </Text>

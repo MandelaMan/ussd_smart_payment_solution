@@ -1112,14 +1112,23 @@ const updateContact_JS = async (contactId, payload) => {
       Number(zohoCode) === 3043 ||
       /recurring invoice/i.test(zohoMsg) ||
       /delete only the contacts/i.test(zohoMsg);
+    const looksLikePrimaryContactInvalid =
+      Number(zohoCode) === 2 &&
+      /is_primary_contact/i.test(zohoMsg);
 
     // Zoho sometimes rejects PUTs that include contact_persons when the contact
     // has recurring invoices (treats omitted persons as deletes). Retry without.
-    if (looksLikePersonDelete && payload?.contact_persons) {
+    // Also retry when Zoho rejects is_primary_contact on preserved persons.
+    if (
+      (looksLikePersonDelete || looksLikePrimaryContactInvalid) &&
+      payload?.contact_persons
+    ) {
       try {
         const { contact_persons, ...withoutPersons } = payload;
         console.warn(
-          "updateContact_JS: retrying without contact_persons after Zoho 3043"
+          looksLikePrimaryContactInvalid
+            ? "updateContact_JS: retrying without contact_persons after is_primary_contact error"
+            : "updateContact_JS: retrying without contact_persons after Zoho 3043"
         );
         return await putOnce(withoutPersons);
       } catch (retryError) {

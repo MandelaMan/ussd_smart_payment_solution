@@ -1,5 +1,9 @@
 const jwt = require("jsonwebtoken");
 const { query } = require("../config/db");
+const {
+  runWithActivityActor,
+  actorFromUser,
+} = require("../lib/activityActorContext");
 
 const COOKIE_NAME = "admin_token";
 const JWT_ALGORITHM = "HS256";
@@ -93,10 +97,11 @@ async function authenticate(req, res, next) {
       return res.status(401).json({ error: "Invalid or expired session" });
     }
     req.user = user;
-    return next();
+    // Bind actor for activity logging across the request (including awaits).
+    return runWithActivityActor(actorFromUser(user), () => next());
   } catch {
     clearAuthCookie(res);
-    return res.status(401).json({ error: "Invalid or expired session" });
+    return res.status(401).json({ error: "Authentication required" });
   }
 }
 

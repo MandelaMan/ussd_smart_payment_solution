@@ -689,11 +689,13 @@ export type ActivityItem = {
   eventType: string;
   title: string;
   message: string | null;
-  source: "mpesa" | "zoho" | "tisp";
-  status: "success" | "failed" | "pending";
+  source: string;
+  status: "success" | "failed" | "pending" | "partial" | string;
   customerRef: string | null;
   amount: number | null;
   referenceId: string | null;
+  actorUserId?: number | null;
+  actorName?: string | null;
   createdAt: string;
 };
 
@@ -1051,6 +1053,8 @@ export type ReconciliationCustomerDetail = ReconciliationCustomerRow & {
     status: string;
     amount: number | null;
     referenceId: string | null;
+    actorUserId?: number | null;
+    actorName?: string | null;
     createdAt: string;
   }>;
   zohoError: string | null;
@@ -1660,7 +1664,10 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  updateUser: (id: number, data: { role?: string; is_active?: boolean }) =>
+  updateUser: (
+    id: number,
+    data: { role?: string; is_active?: boolean; name?: string }
+  ) =>
     request<{ ok: boolean }>(`/admin/users/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

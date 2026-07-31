@@ -1466,7 +1466,8 @@ async function getCustomerDetail(customerId, options = {}) {
   ).catch(() => []);
 
   const activityRows = await query(
-    `SELECT id, event_type, title, message, source, status, amount, reference_id, created_at
+    `SELECT id, event_type, title, message, source, status, amount, reference_id,
+            actor_user_id, actor_name, created_at
      FROM activity_logs
      WHERE customer_ref = ?
      ORDER BY created_at DESC
@@ -1496,6 +1497,9 @@ async function getCustomerDetail(customerId, options = {}) {
       status: row.status,
       amount: row.amount != null ? Number(row.amount) : null,
       referenceId: row.reference_id,
+      actorUserId:
+        row.actor_user_id != null ? Number(row.actor_user_id) : null,
+      actorName: row.actor_name || null,
       createdAt: row.created_at,
     })),
   };

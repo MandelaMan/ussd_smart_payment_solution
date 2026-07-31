@@ -26,6 +26,7 @@ import {
 import { toaster } from "../ui/toaster";
 import { SelectField } from "../ui/SelectField";
 import { SearchableSelect } from "../ui/SearchableSelect";
+import { startSyncCooldown } from "../../hooks/useSyncCooldown";
 import {
   getBuildingIpRules,
   validateIpForBuilding,
@@ -906,6 +907,9 @@ export function CustomerForm({
           setOnZoho(true);
           setZohoInactive(false);
         }
+        // Update syncs TISP/Zoho on the server and starts a cooldown — keep the
+        // refresh button in sync so the first press is not a silent 429 miss.
+        startSyncCooldown(customer.id);
         onUpdated?.(res.customer, res.tisp);
         setConfirmOpen(false);
         return;

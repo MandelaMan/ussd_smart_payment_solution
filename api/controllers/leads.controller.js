@@ -1,6 +1,7 @@
 const leadStore = require("../services/leadStore");
 const { emitSyncEvent } = require("../socket");
 const { emitAdminUpdate } = require("../lib/adminEvents");
+const { logActivitySafe } = require("../services/activityLogStore");
 
 async function listLeads(req, res, next) {
   try {
@@ -109,6 +110,15 @@ async function createProspect(req, res, next) {
     const lead = await leadStore.getLeadById(id);
     emitSyncEvent("leads:created", { leadId: id, source: "whatsapp" });
     emitAdminUpdate("leads", { action: "created", leadId: id });
+    await logActivitySafe({
+      eventType: "lead_created",
+      title: "New lead captured",
+      message: [lead?.name, lead?.phone, "whatsapp"].filter(Boolean).join(" · "),
+      source: "admin",
+      customerRef: lead?.phone || null,
+      referenceId: String(id),
+      metadata: { leadId: id, source: "whatsapp" },
+    });
     res.status(201).json({ ok: true, lead, created: true });
   } catch (err) {
     next(err);
@@ -159,6 +169,15 @@ async function updateLead(req, res, next) {
     const lead = await leadStore.updateLead(existing.id, patch);
     emitSyncEvent("leads:updated", { leadId: lead.id });
     emitAdminUpdate("leads", { action: "updated", leadId: lead.id });
+    await logActivitySafe({
+      eventType: "lead_updated",
+      title: "Lead updated",
+      message: [lead?.name, lead?.status, lead?.phone].filter(Boolean).join(" · "),
+      source: "admin",
+      customerRef: lead?.phone || null,
+      referenceId: String(lead.id),
+      metadata: { leadId: lead.id, status: lead?.status },
+    });
     res.json({ ok: true, lead });
   } catch (err) {
     next(err);
@@ -394,6 +413,15 @@ async function createEmailProspect(req, res, next) {
     const lead = await leadStore.getLeadById(id);
     emitSyncEvent("leads:created", { leadId: id, source: "email" });
     emitAdminUpdate("leads", { action: "created", leadId: id, source: "email" });
+    await logActivitySafe({
+      eventType: "lead_created",
+      title: "New lead captured",
+      message: [lead?.name, lead?.email, "email"].filter(Boolean).join(" · "),
+      source: "admin",
+      customerRef: lead?.phone || lead?.email || null,
+      referenceId: String(id),
+      metadata: { leadId: id, source: "email" },
+    });
     res.status(201).json({ ok: true, lead, created: true });
   } catch (err) {
     next(err);

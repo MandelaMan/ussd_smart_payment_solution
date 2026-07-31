@@ -792,11 +792,15 @@ async function getIntegrationEvent(req, res, next) {
 const SUPPORT_ACTIVITY_TYPES = [
   "customer_created",
   "customer_created_tisp_failed",
+  "customer_updated",
   "customer_cancelled",
   "customer_upgraded",
   "customer_downgraded",
   "customer_apartment_switched",
   "customer_type_changed",
+  "customer_paused",
+  "customer_disconnected",
+  "customer_deleted",
   "tisp_reconnected",
   "tisp_reconnect_failed",
 ];
@@ -834,7 +838,7 @@ async function getSupportStats(req, res, next) {
     const placeholders = SUPPORT_ACTIVITY_TYPES.map(() => "?").join(", ");
     const activityRows = await query(
       `SELECT id, event_type, title, message, source, status, customer_ref,
-              reference_id, created_at
+              reference_id, actor_user_id, actor_name, created_at
        FROM activity_logs
        WHERE event_type IN (${placeholders})
        ORDER BY created_at DESC
@@ -876,6 +880,9 @@ async function getSupportStats(req, res, next) {
         status: row.status,
         customerRef: row.customer_ref,
         referenceId: row.reference_id,
+        actorUserId:
+          row.actor_user_id != null ? Number(row.actor_user_id) : null,
+        actorName: row.actor_name || null,
         createdAt: row.created_at,
       })),
     });

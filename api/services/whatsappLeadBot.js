@@ -68,6 +68,27 @@ function emitLeadEvent(event, payload) {
   } catch {
     /* socket optional */
   }
+  if (event === "leads:created" && payload?.leadId) {
+    const { logActivitySafe } = require("./activityLogStore");
+    setImmediate(async () => {
+      try {
+        const lead = await leadStore.getLeadById(payload.leadId);
+        await logActivitySafe({
+          eventType: "lead_created",
+          title: "New lead captured",
+          message: [lead?.name, lead?.phone, payload.source || "whatsapp"]
+            .filter(Boolean)
+            .join(" · "),
+          source: "admin",
+          customerRef: lead?.phone || null,
+          referenceId: String(payload.leadId),
+          metadata: { leadId: payload.leadId, source: payload.source || "whatsapp" },
+        });
+      } catch (e) {
+        console.error("activity log (whatsapp lead) failed:", e.message);
+      }
+    });
+  }
 }
 
 async function loadWhatsAppClass() {

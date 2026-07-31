@@ -305,6 +305,14 @@ async function createAgency(req, res, next) {
       zoho = { ok: false, error: e.message || "Zoho contact sync failed" };
     }
     emitAdminUpdate("agencies", { action: "created", agencyId: id });
+    await logActivity({
+      eventType: "agency_created",
+      title: "Agency created",
+      message: agency?.name || `Agency #${id}`,
+      source: "admin",
+      referenceId: String(id),
+      metadata: { agencyId: id },
+    }).catch((e) => console.error("activity log (agency create) failed:", e.message));
     return res.status(201).json({ ok: true, id, agency, zoho });
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });
@@ -543,6 +551,14 @@ async function updateAgency(req, res, next) {
       zoho = { ok: false, error: e.message || "Zoho contact sync failed" };
     }
     emitAdminUpdate("agencies", { action: "updated", agencyId: id });
+    await logActivity({
+      eventType: "agency_updated",
+      title: "Agency updated",
+      message: agency?.name || `Agency #${id}`,
+      source: "admin",
+      referenceId: String(id),
+      metadata: { agencyId: id },
+    }).catch((e) => console.error("activity log (agency update) failed:", e.message));
     return res.json({ ok: true, agency, zoho });
   } catch (err) {
     if (err.message) {

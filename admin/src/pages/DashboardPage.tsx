@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Box,
   Button,
@@ -38,6 +38,8 @@ import {
 import { BRAND } from "../theme";
 import { SelectField } from "../components/ui/SelectField";
 import { useMobileViewport } from "../hooks/useMobileViewport";
+import { useActivitySocket } from "../hooks/useActivitySocket";
+import { prependActivityItem } from "../lib/activityFeed";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { toaster } from "../components/ui/toaster";
 
@@ -204,6 +206,12 @@ export function DashboardPage() {
       cancelled = true;
     };
   }, [isMobile]);
+
+  const onLiveActivity = useCallback((item: ActivityItem) => {
+    setActivity((prev) => prependActivityItem(prev, item, 40));
+  }, []);
+
+  useActivitySocket(onLiveActivity, !isMobile);
 
   useEffect(() => {
     let cancelled = false;
@@ -983,7 +991,11 @@ export function DashboardPage() {
         h="100%"
         minH={0}
       >
-        <ActivityPanel items={activity} loading={loading && activity.length === 0} />
+        <ActivityPanel
+          items={activity}
+          loading={loading && activity.length === 0}
+          live
+        />
       </Box>
     </Flex>
   );

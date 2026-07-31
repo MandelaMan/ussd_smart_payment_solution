@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Box, useBreakpointValue } from "@chakra-ui/react";
 import { Navigate } from "react-router-dom";
 import { ActivityPanel } from "../components/ActivityPanel";
@@ -7,6 +7,13 @@ import { PageErrorBanner } from "../components/ui/pageLayout";
 import { api, type ActivityItem } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { canAccessFinance, normalizeRole } from "../lib/rbac";
+import { useActivitySocket } from "../hooks/useActivitySocket";
+import {
+  SUPPORT_ACTIVITY_EVENT_TYPES,
+  prependActivityItem,
+} from "../lib/activityFeed";
+
+const ACTIVITY_LIMIT = 80;
 
 export function ActivityPage() {
   const { user } = useAuth();
@@ -15,14 +22,17 @@ export function ActivityPage() {
   const [error, setError] = useState("");
   // Activity is a mobile module only — desktop keeps it on the homepage rail.
   const isDesktop = useBreakpointValue({ base: false, lg: true }, { ssr: false });
+  const finance = canAccessFinance(user);
+  const role = normalizeRole(user?.role);
+  const liveEnabled = !isDesktop && role !== "partner";
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
 
-    const load = canAccessFinance(user)
-      ? api.getActivity(80).then((res) => res.data)
+    const load = finance
+      ? api.getActivity(ACTIVITY_LIMIT).then((res) => res.data)
       : api.getSupportStats("30d").then((res) => res.activity || []);
 
     load
@@ -42,13 +52,22 @@ export function ActivityPage() {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, finance]);
+
+  const onLiveActivity = useCallback(
+    (item: ActivityItem) => {
+      if (!finance && !SUPPORT_ACTIVITY_EVENT_TYPES.has(item.eventType)) return;
+      setItems((prev) => prependActivityItem(prev, item, ACTIVITY_LIMIT));
+    },
+    [finance]
+  );
+
+  useActivitySocket(onLiveActivity, liveEnabled);
 
   if (isDesktop) {
     return <Navigate to="/" replace />;
   }
 
-  const role = normalizeRole(user?.role);
   if (role === "partner") {
     return (
       <Box>
@@ -60,11 +79,9 @@ export function ActivityPage() {
 
   return (
     <Box display="flex" flexDirection="column" gap={2} minW={0}>
-      <MobilePageChrome
-        title="Activity"
-      />
+      <MobilePageChrome title="Activity" />
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
-      <ActivityPanel items={items} loading={loading} variant="page" />
+      <ActivityPanel items={items} loading={loading} variant="page" live />
     </Box>
   );
 }

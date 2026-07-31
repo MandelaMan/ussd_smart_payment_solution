@@ -13,6 +13,7 @@ import { FiRefreshCw, FiX } from "react-icons/fi";
 import { Link as RouterLink } from "react-router-dom";
 import {
   api,
+  ApiError,
   formatCurrency,
   formatDate,
   formatDateOnly,
@@ -24,7 +25,11 @@ import {
 import { summarizeOverdueZohoInvoices } from "../../lib/zohoInvoiceStatus";
 import { formatCustomerPackageLabel, formatTitleCase } from "../../lib/formatText";
 import { displayCustomerStatus, normalizeSubscriptionStatus } from "../../lib/customerStatus";
-import { useSyncCooldown } from "../../hooks/useSyncCooldown";
+import {
+  parseRetryAfterSeconds,
+  SYNC_COOLDOWN_MS,
+  useSyncCooldown,
+} from "../../hooks/useSyncCooldown";
 import { useTableSort } from "../../hooks/useTableSort";
 import { sortRows } from "../../lib/tableSort";
 import { DataTableLoadingSkeleton, TransactionExpandSkeleton } from "../PageSkeletons";
@@ -511,6 +516,8 @@ export function CustomerExpandPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const hasRevealedRef = useRef(false);
   const paymentsLoadedRef = useRef(false);
+  /** Bumps on refresh so in-flight mount fetches cannot overwrite fresh data. */
+  const dataGenRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [zohoLoading, setZohoLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -568,6 +575,7 @@ export function CustomerExpandPanel({
 
   useEffect(() => {
     let cancelled = false;
+    const gen = dataGenRef.current;
     setLoading(true);
     setZohoLoading(true);
     setError("");
@@ -584,24 +592,26 @@ export function CustomerExpandPanel({
     oltLoadedRef.current = false;
     hasRevealedRef.current = false;
 
+    const isStale = () => cancelled || dataGenRef.current !== gen;
+
     void api
       .getCustomer(customerId)
       .then((res) => {
-        if (cancelled) return;
+        if (isStale()) return;
         setCustomer(res.customer);
       })
       .catch((e) => {
-        if (cancelled) return;
+        if (isStale()) return;
         setError(e instanceof Error ? e.message : "Failed to load");
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!isStale()) setLoading(false);
       });
 
     void api
       .getCustomerInvoices(customerId)
       .then((invoiceRes) => {
-        if (cancelled) return;
+        if (isStale()) return;
         setZohoStatus(
           buildZohoStatusFromInvoices(
             invoiceRes.invoices,
@@ -620,7 +630,7 @@ export function CustomerExpandPanel({
         );
       })
       .catch(() => {
-        if (cancelled) return;
+        if (isStale()) return;
         setZohoStatus({
           linked: false,
           zohoContactId: null,
@@ -631,21 +641,21 @@ export function CustomerExpandPanel({
         });
       })
       .finally(() => {
-        if (!cancelled) setZohoLoading(false);
+        if (!isStale()) setZohoLoading(false);
       });
 
     void api
       .getCustomerIntegrations(customerId)
       .then((res) => {
-        if (cancelled) return;
+        if (isStale()) return;
         setIntegrations(res);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (isStale()) return;
         setIntegrations(null);
       })
       .finally(() => {
-        if (!cancelled) setIntegrationsLoading(false);
+        if (!isStale()) setIntegrationsLoading(false);
       });
 
     return () => {
@@ -716,18 +726,26 @@ export function CustomerExpandPanel({
     }
 
     setRefreshing(true);
+    const gen = ++dataGenRef.current;
     try {
       const res = await api.refreshCustomer(customerId);
+      if (dataGenRef.current !== gen) return;
+
       setCustomer(res.customer);
       setZohoStatus(res.zoho);
       onCustomerUpdated?.(res.customer);
 
       try {
         const integ = await api.getCustomerIntegrations(customerId);
-        setIntegrations(integ);
+        if (dataGenRef.current === gen) {
+          setIntegrations(integ);
+          setIntegrationsLoading(false);
+        }
       } catch {
         /* keep previous integrations summary */
       }
+
+      if (dataGenRef.current !== gen) return;
 
       paymentsLoadedRef.current = false;
       if (activeTab === "payments") {
@@ -748,14 +766,33 @@ export function CustomerExpandPanel({
         description: `TISP: ${tispStatus} · Zoho: ${zohoSummary}`,
         type: "success",
       });
-    } catch (e) {
-      toaster.create({
-        title: "Refresh failed",
-        description: e instanceof Error ? e.message : "Please try again",
-        type: "error",
-      });
-    } finally {
       startCooldown();
+    } catch (e) {
+      if (dataGenRef.current !== gen) return;
+
+      const message = e instanceof Error ? e.message : "Please try again";
+      const isCooldown =
+        (e instanceof ApiError && e.status === 429) ||
+        /sync cooldown/i.test(message);
+      const retryAfter = parseRetryAfterSeconds(message);
+
+      if (isCooldown) {
+        startCooldown(
+          retryAfter != null ? retryAfter * 1000 : SYNC_COOLDOWN_MS
+        );
+        toaster.create({
+          title: "Sync cooldown",
+          description: message,
+          type: "info",
+        });
+      } else {
+        toaster.create({
+          title: "Refresh failed",
+          description: message,
+          type: "error",
+        });
+      }
+    } finally {
       setRefreshing(false);
     }
   }
@@ -807,14 +844,24 @@ export function CustomerExpandPanel({
         description: parts.length > 0 ? parts.join(" · ") : "Zoho billing updated",
         type: "success",
       });
+      startCooldown();
     } catch (e) {
+      const message = e instanceof Error ? e.message : "Please try again";
+      const isCooldown =
+        (e instanceof ApiError && e.status === 429) ||
+        /sync cooldown/i.test(message);
+      const retryAfter = parseRetryAfterSeconds(message);
+      if (isCooldown) {
+        startCooldown(
+          retryAfter != null ? retryAfter * 1000 : SYNC_COOLDOWN_MS
+        );
+      }
       toaster.create({
-        title: "Billing onboarding failed",
-        description: e instanceof Error ? e.message : "Please try again",
-        type: "error",
+        title: isCooldown ? "Sync cooldown" : "Billing onboarding failed",
+        description: message,
+        type: isCooldown ? "info" : "error",
       });
     } finally {
-      startCooldown();
       setRetryingBilling(false);
     }
   }

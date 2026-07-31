@@ -199,14 +199,26 @@ function resolveZohoPersonNames(customer) {
   };
 }
 
+function isZohoPrimaryContactPerson(value) {
+  // Zoho may return boolean, 0/1, or the strings "true"/"false".
+  // Never use Boolean(value) — Boolean("false") === true.
+  if (value === true || value === 1 || value === "1") return true;
+  if (typeof value === "string" && value.trim().toLowerCase() === "true") {
+    return true;
+  }
+  return false;
+}
+
 function pickPrimaryZohoContactPerson(contact) {
   const persons = contact?.contact_persons || [];
   if (!Array.isArray(persons) || persons.length === 0) return null;
-  return persons.find((p) => p.is_primary_contact) || persons[0];
+  return persons.find((p) => isZohoPrimaryContactPerson(p.is_primary_contact)) || persons[0];
 }
 
 function buildZohoContactPersonPayload(existingContact, personFields) {
   const existingPerson = pickPrimaryZohoContactPerson(existingContact);
+  // Zoho rejects is_primary_contact:false on contact PUT for many orgs —
+  // only send true on the designated primary person.
   const person = { ...personFields, is_primary_contact: true };
   if (existingPerson?.contact_person_id) {
     person.contact_person_id = existingPerson.contact_person_id;
@@ -217,6 +229,10 @@ function buildZohoContactPersonPayload(existingContact, personFields) {
 /**
  * Zoho deletes omitted contact_persons on PUT. Preserve non-primary persons
  * so updates do not look like deletes (error 3043 on contacts with recurring invoices).
+ *
+ * Do not send is_primary_contact:false — Zoho returns code 2
+ * "Invalid value passed for is_primary_contact" for that on contact updates
+ * (seen on apartment moves when billing CC persons are preserved).
  */
 function buildZohoContactPersonsPayload(existingContact, primaryFields) {
   const persons = Array.isArray(existingContact?.contact_persons)
@@ -230,21 +246,22 @@ function buildZohoContactPersonsPayload(existingContact, primaryFields) {
     : null;
   return persons.map((p) => {
     const id = p?.contact_person_id ? String(p.contact_person_id) : null;
-    if (
+    const isPrimaryRow =
       (primaryId && id === primaryId) ||
-      (!primaryId && p.is_primary_contact)
-    ) {
+      (!primaryId && isZohoPrimaryContactPerson(p.is_primary_contact));
+    if (isPrimaryRow) {
       return primary;
     }
-    return {
+    const secondary = {
       contact_person_id: p.contact_person_id,
       first_name: p.first_name || "",
       last_name: p.last_name || "",
-      email: p.email || undefined,
-      phone: p.phone || undefined,
-      mobile: p.mobile || p.phone || undefined,
-      is_primary_contact: Boolean(p.is_primary_contact),
     };
+    if (p.email) secondary.email = p.email;
+    if (p.phone) secondary.phone = p.phone;
+    if (p.mobile || p.phone) secondary.mobile = p.mobile || p.phone;
+    // Intentionally omit is_primary_contact on secondaries.
+    return secondary;
   });
 }
 
@@ -1214,9 +1231,10 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
  *
  * TISP keys accounts by AccountNumber and does NOT rename it on UPDATE.
  * IP/PPPoE held by the old number also block INSERT of the new number, so we:
- * 1) read due date from the old account
+ * 1) read due date from the old account (must be preserved on the new account)
  * 2) release network resources on the old account (DueDate = today, clear IP/PPPoE)
  * 3) INSERT the new account with the new AccountNumber and preserved due date
+ * 4) re-assert DueDate on the new account (TISP INSERT can ignore DueDate)
  */
 async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
   const previousNumber = String(previousAccountNumber || "")
@@ -1231,10 +1249,11 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
 
   // Never fall back to "today" for the new account — that suspends service.
   const snapshotDue =
-    ctx.tisp_due_date ||
-    ctx.tispDueDate ||
-    null;
-  let preservedDueDate = meta.dueDate || snapshotDue || null;
+    integrationSnapshot.normalizeTispDueDateValue(
+      ctx.tisp_due_date || ctx.tispDueDate || null
+    ) || null;
+  const metaDue = integrationSnapshot.normalizeTispDueDateValue(meta.dueDate) || null;
+  let preservedDueDate = metaDue || snapshotDue || null;
   // Prefer live PPPoE username for release; else old account number (usual
   // PPOE username) so we actually free the credential before INSERT.
   let previousApartment =
@@ -1263,10 +1282,12 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
     /* keep meta / snapshot due date / previousNumber release base */
   }
 
+  // Last resort: cycle default — never Date.now()/today.
   const dueForCreate =
-    preservedDueDate || meta.dueDate || snapshotDue || TISP_STANDARD_DUE_DATE;
+    preservedDueDate || metaDue || snapshotDue || TISP_STANDARD_DUE_DATE;
 
   // Free IP / PPPoE on the old AccountNumber so INSERT can claim them.
+  // DueDate=today here is intentional for the OLD account only.
   await updateCustomerOnTisp(ctx, {
     accountNumber: previousNumber,
     dueDate: new Date(),
@@ -1283,33 +1304,64 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
   const createMeta = {
     ...meta,
     dueDate: dueForCreate,
-    skipStatusRefresh: meta.skipStatusRefresh,
+    skipStatusRefresh: true,
   };
 
+  let result;
   try {
-    return await createCustomerOnTisp(createCtx, createMeta);
+    result = await createCustomerOnTisp(createCtx, createMeta);
   } catch (createErr) {
     if (isTispDuplicateAccountError(createErr)) {
-      return await updateCustomerOnTisp(createCtx, createMeta);
+      result = await updateCustomerOnTisp(createCtx, createMeta);
+    } else {
+      // Best-effort rollback so the customer is not left disconnected.
+      if (preservedDueDate) {
+        try {
+          await updateCustomerOnTisp(
+            liveIpForCreate ? { ...ctx, ip_address: liveIpForCreate } : ctx,
+            {
+              accountNumber: previousNumber,
+              dueDate: preservedDueDate,
+              skipStatusRefresh: true,
+              parentLogId: meta.parentLogId ?? null,
+            }
+          );
+        } catch {
+          /* ignore rollback failure */
+        }
+      }
+      throw createErr;
     }
-    // Best-effort rollback so the customer is not left disconnected.
-    if (preservedDueDate) {
+  }
+
+  // TISP INSERT sometimes ignores DueDate — force it on the new AccountNumber.
+  try {
+    await updateCustomerOnTisp(createCtx, {
+      ...createMeta,
+      dueDate: dueForCreate,
+      skipStatusRefresh: meta.skipStatusRefresh === true,
+    });
+  } catch (reassertErr) {
+    console.warn(
+      "TISP due-date reassert after apartment migrate failed:",
+      reassertErr.message || reassertErr
+    );
+    if (meta.skipStatusRefresh !== true) {
       try {
-        await updateCustomerOnTisp(
-          liveIpForCreate ? { ...ctx, ip_address: liveIpForCreate } : ctx,
+        await refreshTispStatus(
           {
-            accountNumber: previousNumber,
-            dueDate: preservedDueDate,
-            skipStatusRefresh: true,
-            parentLogId: meta.parentLogId ?? null,
-          }
+            id: ctx.id,
+            customerNumber: currentNumber,
+          },
+          { preferredDueDate: dueForCreate }
         );
       } catch {
-        /* ignore rollback failure */
+        /* best-effort */
       }
     }
-    throw createErr;
   }
+
+  return result;
 }
 
 /** Alternate C2B/B2B account number for the same apartment (CL-A10 ↔ CLB-A10). */
@@ -1633,12 +1685,14 @@ async function getCustomerIntegrations(req, res, next) {
           effectiveLastPaymentDate = zohoLastPaymentDate;
         }
 
-        if (!effectiveLastPaymentDate && !zohoLastPaymentDate) {
+        // After a successful write, effective matches Zoho — clear the "aligning"
+        // warning on this same response (no second refresh required).
+        if (!zohoLastPaymentDate) {
           paymentsInSync = true;
-        } else if (zohoLastPaymentDate) {
-          paymentsInSync = effectiveLastPaymentDate === zohoLastPaymentDate;
         } else {
-          paymentsInSync = true;
+          paymentsInSync =
+            formatDateOnly(effectiveLastPaymentDate) ===
+            formatDateOnly(zohoLastPaymentDate);
         }
 
         const { isActiveRecurring } = require("../services/customerZohoSync");
@@ -1717,10 +1771,23 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   try {
     // Always update-first on edit. Never INSERT just because Client Status
     // reported onTisp=false (that caused "Duplicate Account Exists" on phone edits).
-    const dueForSync =
+    // Apartment / account renumber: keep the existing TISP due date — never default
+    // to today (that disconnects the customer after migrate release).
+    let dueForSync =
       tispDueDate ||
       presence?.tispDueDate ||
-      TISP_STANDARD_DUE_DATE;
+      null;
+    if (!dueForSync && previousCustomerNumber) {
+      try {
+        const liveOld = await getTISPCustomer(previousCustomerNumber);
+        dueForSync = integrationSnapshot.extractTispDueDate(liveOld);
+      } catch {
+        /* fall through */
+      }
+    }
+    if (!dueForSync) {
+      dueForSync = ctx.tisp_due_date || TISP_STANDARD_DUE_DATE;
+    }
     await pushCustomerToTisp(ctx, {
       previousCustomerNumber: previousCustomerNumber || undefined,
       previousApartmentNumber: options.previousApartmentNumber,
@@ -3258,10 +3325,25 @@ async function switchApartment(req, res, next) {
 
     let tispError = null;
     try {
+      // Capture due date from the OLD TISP account before migrate releases it
+      // (release sets DueDate=today on the old number only).
+      let preservedDueDate =
+        integrationSnapshot.normalizeTispDueDateValue(
+          result.customer?.tisp_due_date || result.customer?.tispDueDate
+        ) || null;
+      try {
+        const liveOld = await getTISPCustomer(result.previousCustomerNumber);
+        preservedDueDate =
+          integrationSnapshot.extractTispDueDate(liveOld) || preservedDueDate;
+      } catch {
+        /* snapshot / standard fallback inside migrate */
+      }
+
       await pushCustomerToTisp(result.customer, {
         previousCustomerNumber: result.previousCustomerNumber,
         // Prefer old account number for PPPoE release; live TISP read still wins.
         previousApartmentNumber: result.previousCustomerNumber || result.oldApartment,
+        dueDate: preservedDueDate || undefined,
       });
       await store.updateCustomerTispSync(Number(req.params.id), "synced", null);
     } catch (e) {
@@ -4501,6 +4583,29 @@ async function updateCustomer(req, res, next) {
     const customer = await attachTispDueDate(await store.getCustomerById(id));
 
     notifyCustomersChanged(id, "updated");
+    try {
+      const parts = [];
+      if (packageChanged) parts.push("package changed");
+      if (apartmentChanged) parts.push("apartment moved");
+      const detail = parts.length ? ` · ${parts.join(", ")}` : "";
+      await logActivity({
+        eventType: "customer_updated",
+        title: "Customer updated",
+        message: `${customer?.firstName || ""} ${customer?.lastName || ""} (${
+          customer?.customerNumber || id
+        })${detail}`.trim(),
+        source: "admin",
+        status: "success",
+        customerRef: customer?.customerNumber || null,
+        referenceId: String(id),
+        metadata: {
+          packageChanged: Boolean(packageChanged),
+          apartmentChanged: Boolean(apartmentChanged),
+        },
+      });
+    } catch (logErr) {
+      console.error("activity log (customer update) failed:", logErr.message);
+    }
     return res.json({
       ok: true,
       customer,

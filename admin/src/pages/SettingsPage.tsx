@@ -734,7 +734,7 @@ function RolesPanel({ settings }: { settings: AppSettings }) {
         Assign when creating or editing users.
       </Text>
       <Stack gap={2}>
-        {settings.roles.map((role) => (
+        {settings.roles?.map((role) => (
           <Box
             key={role.id}
             border="1px solid"

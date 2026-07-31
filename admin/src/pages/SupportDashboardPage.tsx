@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Box,
   Flex,
@@ -30,9 +30,15 @@ import {
 import { BRAND } from "../theme";
 import { timeAgo } from "../lib/api";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { useActivitySocket } from "../hooks/useActivitySocket";
+import {
+  SUPPORT_ACTIVITY_EVENT_TYPES,
+  prependActivityItem,
+} from "../lib/activityFeed";
 import {
   FiAlertCircle,
   FiCheckCircle,
+  FiEdit3,
   FiUser,
   FiWifi,
 } from "react-icons/fi";
@@ -45,11 +51,15 @@ const SUBSCRIPTION_COLORS: Record<string, string> = {
 
 const EVENT_ICONS: Record<string, typeof FiUser> = {
   customer_created: FiUser,
+  customer_updated: FiEdit3,
   customer_cancelled: FiAlertCircle,
   customer_upgraded: FiCheckCircle,
   customer_downgraded: FiAlertCircle,
   customer_apartment_switched: FiUser,
   customer_type_changed: FiUser,
+  customer_paused: FiUser,
+  customer_disconnected: FiWifi,
+  customer_deleted: FiAlertCircle,
   tisp_reconnected: FiWifi,
   tisp_reconnect_failed: FiAlertCircle,
 };
@@ -82,7 +92,7 @@ function SupportActivityPanel({
           Customer activity
         </Text>
         <Text fontSize="2xs" color="fg.muted">
-          Account and sync events
+          Live · account and sync events
         </Text>
       </Box>
       <Stack
@@ -145,6 +155,7 @@ function SupportActivityPanel({
                 ) : null}
                 <Text fontSize="xs" color="fg.subtle" mt={1}>
                   {timeAgo(item.createdAt)}
+                  {item.actorName ? ` · ${item.actorName}` : ""}
                   {item.customerRef ? ` · ${item.customerRef}` : ""}
                 </Text>
               </Box>
@@ -158,6 +169,7 @@ function SupportActivityPanel({
 
 export function SupportDashboardPage() {
   const [stats, setStats] = useState<SupportStats | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -169,7 +181,10 @@ export function SupportDashboardPage() {
     api
       .getSupportStats("30d")
       .then((data) => {
-        if (!cancelled) setStats(data);
+        if (!cancelled) {
+          setStats(data);
+          setActivity(data.activity ?? []);
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
@@ -182,6 +197,13 @@ export function SupportDashboardPage() {
       cancelled = true;
     };
   }, []);
+
+  const onLiveActivity = useCallback((item: ActivityItem) => {
+    if (!SUPPORT_ACTIVITY_EVENT_TYPES.has(item.eventType)) return;
+    setActivity((prev) => prependActivityItem(prev, item, 40));
+  }, []);
+
+  useActivitySocket(onLiveActivity, true);
 
   if (loading && !stats) {
     return <DashboardSkeleton />;
@@ -215,8 +237,6 @@ export function SupportDashboardPage() {
     name: formatTitleCase(b.building),
     subscribers: b.subscribers,
   }));
-
-  const activity = stats.activity ?? [];
 
   return (
     <Flex

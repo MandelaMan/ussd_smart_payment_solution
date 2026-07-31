@@ -522,14 +522,42 @@ function formatTispDueDate(date = new Date()) {
     "D-MMM-YYYY",
     moment.ISO_8601,
   ];
-  const parsed =
-    date instanceof Date
-      ? moment.tz(date, DEFAULT_TZ)
-      : moment.tz(String(date).trim(), formats, true, DEFAULT_TZ);
-  const m = parsed.isValid()
-    ? parsed
-    : moment.tz(date, DEFAULT_TZ);
-  return m.startOf("day").format("DD MMM YYYY hh:mm A");
+  if (date instanceof Date) {
+    if (Number.isNaN(date.getTime())) {
+      return moment
+        .tz(TISP_STANDARD_DUE_DATE, DEFAULT_TZ)
+        .startOf("day")
+        .format("DD MMM YYYY hh:mm A");
+    }
+    return moment.tz(date, DEFAULT_TZ).startOf("day").format("DD MMM YYYY hh:mm A");
+  }
+
+  const raw = String(date ?? "").trim();
+  if (!raw) {
+    return moment
+      .tz(TISP_STANDARD_DUE_DATE, DEFAULT_TZ)
+      .startOf("day")
+      .format("DD MMM YYYY hh:mm A");
+  }
+
+  const parsed = moment.tz(raw, formats, true, DEFAULT_TZ);
+  if (parsed.isValid()) {
+    return parsed.startOf("day").format("DD MMM YYYY hh:mm A");
+  }
+
+  // Never silently fall back to "now" — that suspends customers on apartment moves.
+  const loose = moment.tz(raw, DEFAULT_TZ);
+  if (loose.isValid() && raw.length >= 8) {
+    return loose.startOf("day").format("DD MMM YYYY hh:mm A");
+  }
+
+  console.warn(
+    `[tisp] Unparseable DueDate "${raw}" — using TISP_STANDARD_DUE_DATE`
+  );
+  return moment
+    .tz(TISP_STANDARD_DUE_DATE, DEFAULT_TZ)
+    .startOf("day")
+    .format("DD MMM YYYY hh:mm A");
 }
 
 function formatTispTelephone(phone) {

@@ -1,5 +1,6 @@
 const store = require("../services/customerModuleStore");
 const { emitAdminUpdate } = require("../lib/adminEvents");
+const { logActivitySafe } = require("../services/activityLogStore");
 
 async function listProducts(req, res, next) {
   try {
@@ -57,6 +58,17 @@ async function createProduct(req, res, next) {
         extraBandwidth != null ? Number(extraBandwidth) : undefined,
     });
     emitAdminUpdate("products", { action: "created", productId: id, buildingId: Number(buildingId) });
+    await logActivitySafe({
+      eventType: "product_created",
+      title: "Package created",
+      message: `Package #${id} · building ${buildingId}${
+        mbps != null ? ` · ${mbps} Mbps` : ""
+      }`,
+      source: "admin",
+      referenceId: String(id),
+      amount: price != null ? Number(price) : null,
+      metadata: { productId: id, buildingId: Number(buildingId) },
+    });
     return res.status(201).json({ ok: true, id });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -85,6 +97,18 @@ async function updateProduct(req, res, next) {
       action: "updated",
       productId: product?.id ?? Number(req.params.id),
       buildingId: product?.buildingId ?? null,
+    });
+    const productId = product?.id ?? Number(req.params.id);
+    await logActivitySafe({
+      eventType: "product_updated",
+      title: "Package updated",
+      message: product?.name
+        ? String(product.name)
+        : `Package #${productId}`,
+      source: "admin",
+      referenceId: String(productId),
+      amount: product?.price != null ? Number(product.price) : null,
+      metadata: { productId, buildingId: product?.buildingId ?? null },
     });
     return res.json({ ok: true, product });
   } catch (err) {
@@ -119,6 +143,14 @@ async function deleteProduct(req, res, next) {
     emitAdminUpdate("products", {
       action: "deleted",
       productId: Number(req.params.id),
+    });
+    await logActivitySafe({
+      eventType: "product_deleted",
+      title: "Package deleted",
+      message: `Package #${req.params.id}`,
+      source: "admin",
+      referenceId: String(req.params.id),
+      metadata: { productId: Number(req.params.id) },
     });
     return res.json({ ok: true, ...result });
   } catch (err) {

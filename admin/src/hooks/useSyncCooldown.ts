@@ -10,11 +10,20 @@ export function getSyncCooldownRemainingMs(customerId: number): number {
   return Math.max(0, until - Date.now());
 }
 
-export function startSyncCooldown(customerId: number) {
-  sessionStorage.setItem(
-    storageKey(customerId),
-    String(Date.now() + SYNC_COOLDOWN_MS)
-  );
+export function startSyncCooldown(
+  customerId: number,
+  durationMs: number = SYNC_COOLDOWN_MS
+) {
+  const ms = Math.max(0, Number(durationMs) || SYNC_COOLDOWN_MS);
+  sessionStorage.setItem(storageKey(customerId), String(Date.now() + ms));
+}
+
+/** Parse "Try again in N seconds" (and similar) from API cooldown errors. */
+export function parseRetryAfterSeconds(message: string): number | null {
+  const match = String(message || "").match(/(\d+)\s*seconds?/i);
+  if (!match) return null;
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
 
 export function useSyncCooldown(customerId: number) {
@@ -30,10 +39,13 @@ export function useSyncCooldown(customerId: number) {
     return () => window.clearInterval(interval);
   }, [customerId]);
 
-  const startCooldown = useCallback(() => {
-    startSyncCooldown(customerId);
-    setRemainingMs(SYNC_COOLDOWN_MS);
-  }, [customerId]);
+  const startCooldown = useCallback(
+    (durationMs: number = SYNC_COOLDOWN_MS) => {
+      startSyncCooldown(customerId, durationMs);
+      setRemainingMs(Math.max(0, Number(durationMs) || SYNC_COOLDOWN_MS));
+    },
+    [customerId]
+  );
 
   const inCooldown = remainingMs > 0;
   const remainingSeconds = Math.ceil(remainingMs / 1000);

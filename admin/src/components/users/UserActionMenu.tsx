@@ -1,6 +1,7 @@
 import { Box, IconButton, Menu, Portal } from "@chakra-ui/react";
 import {
   FiCheck,
+  FiEdit3,
   FiKey,
   FiMoreVertical,
   FiSlash,
@@ -17,6 +18,7 @@ export const USER_ROLE_OPTIONS = [
 ] as const;
 
 export type UserAction =
+  | { type: "editName" }
   | { type: "role"; role: string }
   | { type: "resetPassword" }
   | { type: "toggleActive" };
@@ -36,6 +38,10 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
       onSelect={(details) => {
         const value = details.value;
         window.setTimeout(() => {
+          if (value === "editName") {
+            onAction({ type: "editName" });
+            return;
+          }
           if (value.startsWith("role:")) {
             const role = value.slice(5);
             if (role !== currentRole) onAction({ type: "role", role });
@@ -72,6 +78,11 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
+            <Menu.Item value="editName">
+              <FiEdit3 />
+              Edit name
+            </Menu.Item>
+            <Menu.Separator />
             <Menu.ItemGroup>
               <Menu.ItemGroupLabel fontSize="xs" color="fg.muted" px={3} py={1}>
                 Role

@@ -17,6 +17,7 @@ const {
   isAccountLocked,
   lockoutMessage,
 } = require("../utils/accountLockout");
+const { logActivitySafe } = require("../services/activityLogStore");
 
 const VALID_ROLES = ["admin", "support", "cfo", "partner", "ceo"];
 
@@ -200,10 +201,18 @@ async function createUser(req, res, next) {
     }
 
     const hash = await bcrypt.hash(String(password), 12);
-    await query(
+    const result = await query(
       `INSERT INTO admin_users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
       [String(name).trim(), normalizeEmail(email), hash, role]
     );
+    await logActivitySafe({
+      eventType: "user_created",
+      title: "Admin user created",
+      message: `${String(name).trim()} · ${normalizeEmail(email)} · ${role}`,
+      source: "admin",
+      referenceId: result.insertId != null ? String(result.insertId) : null,
+      metadata: { role },
+    });
     return res.status(201).json({ ok: true });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -225,15 +234,24 @@ async function createUser(req, res, next) {
 
 async function updateUser(req, res, next) {
   try {
-    const { role, is_active } = req.body || {};
+    const { role, is_active, name } = req.body || {};
     const id = req.params.id;
 
     if (role && !isValidRole(role)) {
       return res.status(400).json({ error: "Role must be admin, support, cfo, partner, or ceo" });
     }
 
+    const trimmedName =
+      name !== undefined && name !== null ? String(name).trim() : undefined;
+    if (trimmedName !== undefined && !trimmedName) {
+      return res.status(400).json({ error: "Name cannot be empty" });
+    }
+    if (trimmedName !== undefined && trimmedName.length > 191) {
+      return res.status(400).json({ error: "Name must be at most 191 characters" });
+    }
+
     const rows = await query(
-      `SELECT id, role, is_active FROM admin_users WHERE id = ? LIMIT 1`,
+      `SELECT id, name, role, is_active FROM admin_users WHERE id = ? LIMIT 1`,
       [id]
     );
     const target = rows[0];
@@ -251,6 +269,10 @@ async function updateUser(req, res, next) {
     const params = [];
     let shouldInvalidate = false;
 
+    if (trimmedName !== undefined && trimmedName !== String(target.name || "").trim()) {
+      updates.push("name = ?");
+      params.push(trimmedName);
+    }
     if (role) {
       updates.push("role = ?");
       params.push(role);
@@ -274,6 +296,26 @@ async function updateUser(req, res, next) {
     if (shouldInvalidate) {
       await invalidateUserTokens(id);
     }
+
+    const parts = [];
+    if (trimmedName !== undefined && trimmedName !== String(target.name || "").trim()) {
+      parts.push(`name → ${trimmedName}`);
+    }
+    if (role) parts.push(`role → ${role}`);
+    if (is_active !== undefined) parts.push(is_active ? "activated" : "deactivated");
+    await logActivitySafe({
+      eventType: "user_updated",
+      title: "Admin user updated",
+      message: parts.length ? `User #${id} · ${parts.join(", ")}` : `User #${id}`,
+      source: "admin",
+      referenceId: String(id),
+      metadata: {
+        role: role || null,
+        isActive: is_active,
+        name: trimmedName || null,
+        previousName: target.name || null,
+      },
+    });
 
     return res.json({ ok: true });
   } catch (err) {

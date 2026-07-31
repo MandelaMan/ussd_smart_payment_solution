@@ -80,6 +80,9 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [renameUser, setRenameUser] = useState<AdminUser | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { sorts, toggleSort } = useTableSort<UserSortKey>({
     sortBy: "name",
@@ -194,7 +197,50 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
     setResetPassword("");
   }
 
+  function openRename(user: AdminUser) {
+    setRenameUser(user);
+    setRenameValue(user.name || "");
+  }
+
+  function closeRename() {
+    if (renaming) return;
+    setRenameUser(null);
+    setRenameValue("");
+  }
+
+  async function handleRename() {
+    if (!renameUser) return;
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      toaster.create({ title: "Name cannot be empty", type: "error" });
+      return;
+    }
+    if (nextName === String(renameUser.name || "").trim()) {
+      closeRename();
+      return;
+    }
+    setRenaming(true);
+    try {
+      await api.updateUser(renameUser.id, { name: nextName });
+      toaster.create({ title: "Name updated", type: "success" });
+      setRenameUser(null);
+      setRenameValue("");
+      load();
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Failed to update name",
+        type: "error",
+      });
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   function handleUserAction(user: AdminUser, action: UserAction) {
+    if (action.type === "editName") {
+      openRename(user);
+      return;
+    }
     if (action.type === "role") {
       void handleRoleChange(user.id, action.role);
       return;
@@ -485,6 +531,59 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         )}
       </DataTableCard>
       </ListPageTableSection>
+
+      <AppDialog
+        open={Boolean(renameUser)}
+        onOpenChange={(details) => {
+          if (!details.open) closeRename();
+        }}
+        maxW="md"
+      >
+        <Box px={5} py={4} borderBottomWidth="1px" borderColor="border.muted">
+          <Heading size="sm">Edit name</Heading>
+          {renameUser ? (
+            <Box fontSize="sm" color="fg.muted" mt={1}>
+              Update display name for {renameUser.email}
+            </Box>
+          ) : null}
+        </Box>
+        <Box px={5} py={4}>
+          <Field.Root required>
+            <Field.Label>Name</Field.Label>
+            <Input
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder="Full name"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleRename();
+                }
+              }}
+            />
+          </Field.Root>
+        </Box>
+        <Flex
+          px={5}
+          py={4}
+          gap={2}
+          justify="flex-end"
+          borderTopWidth="1px"
+          borderColor="border.muted"
+        >
+          <Button variant="ghost" disabled={renaming} onClick={closeRename}>
+            Cancel
+          </Button>
+          <Button
+            colorPalette="brand"
+            loading={renaming}
+            onClick={() => void handleRename()}
+          >
+            Save name
+          </Button>
+        </Flex>
+      </AppDialog>
 
       <AppDialog
         open={Boolean(resetUser)}

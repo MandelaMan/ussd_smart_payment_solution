@@ -3,6 +3,7 @@ const whatsappLeadBot = require("../services/whatsappLeadBot");
 const { emitSyncEvent } = require("../socket");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 const { verifyWhatsAppSignature } = require("../middleware/webhookVerify");
+const { logActivitySafe } = require("../services/activityLogStore");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[+\d][\d\s()-]{6,20}$/;
@@ -104,6 +105,17 @@ async function submitLead(req, res, next) {
 
     emitSyncEvent("leads:created", { leadId: id, source });
     emitAdminUpdate("leads", { action: "created", leadId: id, source });
+    await logActivitySafe({
+      eventType: "lead_created",
+      title: "New lead captured",
+      message: [req.body?.name, req.body?.phone || req.body?.email, source]
+        .filter(Boolean)
+        .join(" · "),
+      source: "admin",
+      customerRef: req.body?.phone || req.body?.email || null,
+      referenceId: String(id),
+      metadata: { leadId: id, source },
+    });
     const form = await leadFormConfig();
     res.status(201).json({
       ok: true,
