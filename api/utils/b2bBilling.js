@@ -27,9 +27,22 @@ function getZohoContactLookupKeys(customer) {
     keys.push(key);
   };
 
-  // Prefer customer number (company_name), then email, then full name.
+  // Prefer customer number (company_name), then email, phone, then full name.
   push(customer?.customerNumber || customer?.customer_number);
   push(customer?.email);
+  const phone = String(
+    customer?.phone || customer?.mobile || customer?.phoneNumber || ""
+  ).trim();
+  if (phone) {
+    push(phone);
+    const digits = phone.replace(/\D/g, "");
+    if (digits && digits !== phone) push(digits);
+    if (digits.startsWith("254") && digits.length === 12) {
+      push(`0${digits.slice(3)}`);
+    } else if (digits.startsWith("0") && digits.length === 10) {
+      push(`254${digits.slice(1)}`);
+    }
+  }
   const displayName = [
     customer?.firstName || customer?.first_name,
     customer?.middleName || customer?.middle_name,

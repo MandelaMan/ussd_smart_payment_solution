@@ -8,7 +8,7 @@ const LEAD_STATUSES = [
   "converted",
   "closed",
 ];
-const LEAD_SOURCES = ["whatsapp", "web", "embed"];
+const LEAD_SOURCES = ["whatsapp", "web", "embed", "email"];
 
 function parseMetadata(row) {
   if (!row) return row;
@@ -33,6 +33,9 @@ async function listLeads(filters = {}) {
   if (filters.source && LEAD_SOURCES.includes(String(filters.source))) {
     clauses.push("l.source = ?");
     params.push(filters.source);
+  }
+  if (filters.hasEmail === true || filters.hasEmail === "1" || filters.hasEmail === "true") {
+    clauses.push("l.email IS NOT NULL AND TRIM(l.email) <> ''");
   }
   if (filters.search) {
     const q = `%${String(filters.search).trim()}%`;
@@ -145,6 +148,33 @@ async function getLeadByWhatsAppWaId(waId) {
      ORDER BY l.id DESC
      LIMIT 1`,
     [String(waId)]
+  );
+  return parseMetadata(rows[0] || null);
+}
+
+async function getLeadByEmail(email) {
+  const address = String(email || "")
+    .trim()
+    .toLowerCase();
+  if (!address.includes("@")) return null;
+  const rows = await query(
+    `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
+            l.building_interest AS buildingInterest,
+            l.apartment_number AS apartmentNumber,
+            l.building_id AS buildingId,
+            b.name AS buildingName,
+            l.message, l.notes,
+            l.whatsapp_wa_id AS whatsappWaId,
+            l.conversation_state AS conversationState,
+            l.metadata, l.converted_customer_id AS convertedCustomerId,
+            l.assigned_to AS assignedTo,
+            l.created_at AS createdAt, l.updated_at AS updatedAt
+     FROM leads l
+     LEFT JOIN buildings b ON b.id = l.building_id
+     WHERE LOWER(TRIM(l.email)) = ?
+     ORDER BY l.id DESC
+     LIMIT 1`,
+    [address]
   );
   return parseMetadata(rows[0] || null);
 }
@@ -371,7 +401,9 @@ async function getLeadStats() {
        SUM(status = 'closed') AS closedCount,
        SUM(source = 'whatsapp') AS whatsappCount,
        SUM(source = 'web') AS webCount,
-       SUM(source = 'embed') AS embedCount
+       SUM(source = 'embed') AS embedCount,
+       SUM(source = 'email') AS emailCount,
+       SUM(email IS NOT NULL AND TRIM(email) <> '') AS withEmailCount
      FROM leads`
   );
   const r = rows[0] || {};
@@ -388,7 +420,9 @@ async function getLeadStats() {
       whatsapp: Number(r.whatsappCount || 0),
       web: Number(r.webCount || 0),
       embed: Number(r.embedCount || 0),
+      email: Number(r.emailCount || 0),
     },
+    withEmail: Number(r.withEmailCount || 0),
   };
 }
 
@@ -399,6 +433,7 @@ module.exports = {
   getLeadById,
   getLeadByWhatsAppWaId,
   getWhatsAppLeadByPhone,
+  getLeadByEmail,
   createLead,
   updateLead,
   addMessage,

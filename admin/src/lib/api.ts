@@ -165,7 +165,7 @@ export type LeadStatus =
   | "converted"
   | "closed";
 
-export type LeadSource = "whatsapp" | "web" | "embed";
+export type LeadSource = "whatsapp" | "web" | "embed" | "email";
 
 export type Lead = {
   id: number;
@@ -226,6 +226,7 @@ export type LeadStats = {
   total: number;
   byStatus: Record<LeadStatus, number>;
   bySource: Record<LeadSource, number>;
+  withEmail?: number;
 };
 
 export type AgencyBilling = {
@@ -1883,6 +1884,57 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  createEmailProspect: (data: {
+    name: string;
+    email: string;
+    phone?: string;
+    apartmentNumber?: string;
+    buildingId?: number | null;
+    buildingInterest?: string;
+  }) =>
+    request<{ ok: boolean; lead: Lead; created: boolean }>(
+      "/admin/leads/email-prospects",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    ),
+
+  listLeadEmailConversation: (leadId: number, email?: string) =>
+    request<{
+      leadId: number;
+      mailbox: { fromAddress: string; fromName: string };
+      email: string | null;
+      lead: Lead;
+      messages: CustomerEmailMessage[];
+    }>(
+      `/admin/leads/${leadId}/email${buildQueryString(email ? { email } : {})}`
+    ),
+
+  sendLeadEmail: (data: {
+    leadId: number;
+    subject: string;
+    body: string;
+    to?: string;
+    attachments?: Array<{
+      fileName: string;
+      contentType: string;
+      contentBase64: string;
+    }>;
+  }) =>
+    request<{
+      ok: boolean;
+      to: string;
+      subject: string;
+      leadId: number;
+      from?: string;
+      message?: CustomerEmailMessage | null;
+      attachmentNames?: string[];
+    }>("/admin/leads/email-send", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   sendCustomerWhatsAppMessage: (data: {
     phone: string;
     body: string;
@@ -2225,7 +2277,34 @@ export const api = {
   },
 
   createCustomer: (data: Record<string, unknown>) =>
-    request<{ ok: boolean; customer: Customer; tisp: { ok: boolean; error?: string } }>(
+    request<{
+      ok: boolean;
+      customer: Customer;
+      tisp: { ok: boolean; error?: string };
+      zoho?: {
+        ok: boolean;
+        error?: string;
+        zohoContactId?: string | null;
+        contactCreated?: boolean;
+        contactUpdated?: boolean;
+        billingSkipped?: boolean;
+        invoice?: {
+          created?: boolean;
+          skipped?: boolean;
+          reason?: string;
+          reused?: boolean;
+          emailed?: boolean;
+          invoiceNumber?: string | null;
+        } | null;
+        recurring?: {
+          created?: boolean;
+          skipped?: boolean;
+          reason?: string;
+          updated?: boolean;
+        } | null;
+        trial?: { enabled?: boolean; endsAt?: string } | null;
+      };
+    }>(
       "/admin/customers",
       { method: "POST", body: JSON.stringify(data) }
     ),

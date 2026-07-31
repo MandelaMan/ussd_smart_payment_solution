@@ -230,8 +230,12 @@ zoho.interceptors.response.use(
 
 const {
   looksLikeCustomerNumber,
+  looksLikePhoneKey,
+  phonesMatch,
+  normalizePhoneDigits,
   normalizeCustomerRef,
   zohoContactMatchesDashboardCustomer,
+  zohoContactMatchesCustomerIdentity,
   filterZohoInvoicesForContact,
   filterZohoPaymentsForContact,
 } = require("../utils/zohoCustomerScope");
@@ -804,12 +808,88 @@ const getCustomerByCompanyName_JS = async (rawName) => {
 };
 
 /**
+ * Find a Zoho contact by phone / mobile (includes inactive).
+ */
+const findContactByPhone_JS = async (rawPhone) => {
+  const digits = normalizePhoneDigits(rawPhone);
+  if (digits.length < 9) return null;
+
+  const variants = new Set([String(rawPhone || "").trim(), digits]);
+  if (digits.startsWith("254") && digits.length === 12) {
+    variants.add(`0${digits.slice(3)}`);
+    variants.add(`+${digits}`);
+  } else if (digits.startsWith("0") && digits.length === 10) {
+    variants.add(`254${digits.slice(1)}`);
+    variants.add(`+254${digits.slice(1)}`);
+  } else if (digits.length === 9) {
+    variants.add(`0${digits}`);
+    variants.add(`254${digits}`);
+    variants.add(`+254${digits}`);
+  }
+
+  for (const phone of variants) {
+    if (!phone) continue;
+    try {
+      const result = await withTimeout(
+        callZoho("contacts", "GET", null, {
+          phone,
+          per_page: 10,
+          ...ZOHO_CONTACT_LIST_FILTER,
+        }),
+        8000,
+        "get-by-phone",
+      );
+      const list = result.contacts || [];
+      const hit = list.find(
+        (c) => phonesMatch(digits, c.phone) || phonesMatch(digits, c.mobile)
+      );
+      if (hit) return pickLean(hit);
+    } catch {
+      /* try next variant */
+    }
+  }
+
+  // Fallback: search_text with local 0-prefixed form.
+  const searchKey =
+    digits.startsWith("254") && digits.length === 12
+      ? `0${digits.slice(3)}`
+      : digits;
+  try {
+    const result = await withTimeout(
+      callZoho("contacts", "GET", null, {
+        search_text: searchKey,
+        per_page: 10,
+        page: 1,
+        ...ZOHO_CONTACT_LIST_FILTER,
+      }),
+      9000,
+      "search_phone_text",
+    );
+    const list = result.contacts || [];
+    const hit = list.find(
+      (c) => phonesMatch(digits, c.phone) || phonesMatch(digits, c.mobile)
+    );
+    if (hit) return pickLean(hit);
+  } catch {
+    /* ignore */
+  }
+
+  return null;
+};
+
+/**
  * Resolve a Zoho contact from ordered lookup keys.
- * Email keys use the email filter; others use company/name search_text.
+ * Email keys use the email filter; phone keys use phone search; others use
+ * company/name search_text.
  * When customer is provided, reject contacts that do not match that customer.
+ *
+ * options.identityFallback — continue past a failed customer-number lookup and
+ * accept email/phone identity matches even when company_name is not yet our
+ * customer number (pre-existing Zoho contacts during onboarding).
  */
 const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
   const customer = options.customer || null;
+  const identityFallback = options.identityFallback === true;
   const customerNumber = String(
     customer?.customerNumber || customer?.customer_number || ""
   ).trim();
@@ -820,14 +900,28 @@ const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
     const key = String(raw || "").trim();
     if (!key) continue;
 
-    // Do not fall back to email/name when a customer number exists but did not match.
-    if (hasCustomerNumber && i > 0 && looksLikeCustomerNumber(customerNumber)) {
+    // Do not fall back to email/name when a customer number exists but did not
+    // match — unless identityFallback (onboarding / duplicate prevention).
+    if (
+      hasCustomerNumber &&
+      i > 0 &&
+      looksLikeCustomerNumber(customerNumber) &&
+      !identityFallback
+    ) {
       break;
     }
 
-    const result = key.includes("@")
-      ? await getSpecificCustomer_JS(key)
-      : await getCustomerByCompanyName_JS(key);
+    const isEmailKey = key.includes("@");
+    const isPhoneKey = looksLikePhoneKey(key);
+
+    let result;
+    if (isEmailKey) {
+      result = await getSpecificCustomer_JS(key);
+    } else if (isPhoneKey) {
+      result = await findContactByPhone_JS(key);
+    } else {
+      result = await getCustomerByCompanyName_JS(key);
+    }
 
     if (
       result &&
@@ -835,10 +929,39 @@ const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
       !Array.isArray(result) &&
       result.contact_id
     ) {
-      if (customer && !zohoContactMatchesDashboardCustomer(result, customer)) {
-        continue;
+      if (!customer) return result;
+
+      if (zohoContactMatchesDashboardCustomer(result, customer)) {
+        return result;
       }
-      return result;
+
+      if (
+        identityFallback &&
+        (isEmailKey || isPhoneKey) &&
+        zohoContactMatchesCustomerIdentity(result, customer)
+      ) {
+        return result;
+      }
+
+      // Name-only under identityFallback: exact contact name + no foreign customer number.
+      if (identityFallback && !isEmailKey && !isPhoneKey) {
+        const company = String(result.company_name || "").trim();
+        const nameFields = [result.contact_name, result.customer_name]
+          .filter(Boolean)
+          .map((v) => normalizeCustomerRef(v));
+        const queryNorm = normalizeCustomerRef(key);
+        const nameHit =
+          queryNorm && nameFields.some((f) => f === queryNorm);
+        const foreignNumber =
+          looksLikeCustomerNumber(company) &&
+          customerNumber &&
+          normalizeCustomerRef(company) !== normalizeCustomerRef(customerNumber);
+        if (nameHit && !foreignNumber && (!company || !looksLikeCustomerNumber(company))) {
+          return result;
+        }
+      }
+
+      continue;
     }
   }
   return null;
@@ -1506,6 +1629,7 @@ module.exports = {
   getContactFull_JS,
   getCustomerByCompanyName_JS,
   findContactByLookupKeys_JS,
+  findContactByPhone_JS,
   getItems_JS,
   getItemsByAllowedSkuPrefixes_JS,
   getInvoiceTemplates_JS,

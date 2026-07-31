@@ -54,6 +54,12 @@ function parseAttachments(raw) {
   });
 }
 
+function longerText(a, b) {
+  const left = a == null ? "" : String(a);
+  const right = b == null ? "" : String(b);
+  return right.length > left.length ? right : left || null;
+}
+
 function mergeConversations(localMessages, zohoMessages) {
   const byKey = new Map();
 
@@ -71,13 +77,15 @@ function mergeConversations(localMessages, zohoMessages) {
       byKey.set(key, {
         ...msg,
         ...existing,
-        summary: existing.summary || msg.summary,
-        bodyHtml: existing.bodyHtml || msg.bodyHtml,
-        bodyText: existing.bodyText || msg.bodyText,
+        summary: longerText(existing.summary, msg.summary) || existing.summary,
+        bodyHtml: longerText(existing.bodyHtml, msg.bodyHtml),
+        bodyText: longerText(existing.bodyText, msg.bodyText),
         attachmentNames:
-          existing.attachmentNames?.length > 0
-            ? existing.attachmentNames
-            : msg.attachmentNames,
+          (msg.attachmentNames?.length || 0) > (existing.attachmentNames?.length || 0)
+            ? msg.attachmentNames
+            : existing.attachmentNames?.length
+              ? existing.attachmentNames
+              : msg.attachmentNames,
       });
     } else {
       byKey.set(key, msg);

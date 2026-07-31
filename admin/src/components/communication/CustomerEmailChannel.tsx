@@ -172,7 +172,8 @@ export function CustomerEmailChannel() {
       };
       if (search.trim()) params.search = search.trim();
       const res = await api.listCustomers(params);
-      let sorted = [...res.data].sort((a, b) =>
+      const rows = Array.isArray(res.data) ? res.data : [];
+      let sorted = [...rows].sort((a, b) =>
         customerName(a).localeCompare(customerName(b), undefined, {
           sensitivity: "base",
         })
@@ -628,7 +629,7 @@ export function CustomerEmailChannel() {
                           justify={outbound ? "flex-end" : "flex-start"}
                         >
                           <Box
-                            maxW={{ base: "92%", md: "75%" }}
+                            maxW={{ base: "96%", md: "85%" }}
                             bg={outbound ? "brand.600" : "bg.panel"}
                             color={outbound ? "white" : "fg"}
                             borderWidth={outbound ? 0 : "1px"}
@@ -639,12 +640,15 @@ export function CustomerEmailChannel() {
                             px={3}
                             py={2}
                             boxShadow="sm"
+                            overflow="visible"
                           >
                             <Text fontSize="xs" fontWeight="700" opacity={0.9} mb={1}>
                               {msg.subject}
                             </Text>
                             <Box
                               fontSize="sm"
+                              whiteSpace="normal"
+                              overflowWrap="anywhere"
                               css={{
                                 "& a": {
                                   color: outbound
@@ -654,6 +658,16 @@ export function CustomerEmailChannel() {
                                 },
                                 "& p": { margin: "0 0 0.35em" },
                                 "& p:last-child": { marginBottom: 0 },
+                                "& blockquote": {
+                                  margin: "0.5em 0",
+                                  paddingLeft: "0.75em",
+                                  borderLeft: outbound
+                                    ? "3px solid rgba(255,255,255,0.45)"
+                                    : "3px solid var(--chakra-colors-border)",
+                                  opacity: 0.92,
+                                },
+                                "& img": { maxWidth: "100%", height: "auto" },
+                                "& table": { maxWidth: "100%", display: "block", overflowX: "auto" },
                               }}
                               dangerouslySetInnerHTML={{
                                 __html: messageBody(msg),
@@ -923,7 +937,7 @@ export function CustomerEmailChannel() {
                       justify={outbound ? "flex-end" : "flex-start"}
                     >
                       <Box
-                        maxW={{ base: "95%", md: "70%" }}
+                        maxW={{ base: "96%", md: "85%" }}
                         bg={outbound ? "brand.600" : "bg.panel"}
                         color={outbound ? "white" : "fg"}
                         borderWidth={outbound ? 0 : "1px"}
@@ -932,12 +946,39 @@ export function CustomerEmailChannel() {
                         px={3}
                         py={2}
                         boxShadow="sm"
+                        overflow="visible"
                       >
                         <Text fontSize="xs" fontWeight="700" mb={1}>
                           {msg.subject}
                         </Text>
                         <Box
                           fontSize="sm"
+                          whiteSpace="normal"
+                          overflowWrap="anywhere"
+                          css={{
+                            "& a": {
+                              color: outbound
+                                ? "white"
+                                : "var(--chakra-colors-brand-600)",
+                              textDecoration: "underline",
+                            },
+                            "& p": { margin: "0 0 0.35em" },
+                            "& p:last-child": { marginBottom: 0 },
+                            "& blockquote": {
+                              margin: "0.5em 0",
+                              paddingLeft: "0.75em",
+                              borderLeft: outbound
+                                ? "3px solid rgba(255,255,255,0.45)"
+                                : "3px solid var(--chakra-colors-border)",
+                              opacity: 0.92,
+                            },
+                            "& img": { maxWidth: "100%", height: "auto" },
+                            "& table": {
+                              maxWidth: "100%",
+                              display: "block",
+                              overflowX: "auto",
+                            },
+                          }}
                           dangerouslySetInnerHTML={{ __html: messageBody(msg) }}
                         />
                         <Text fontSize="2xs" opacity={0.75} mt={1.5}>

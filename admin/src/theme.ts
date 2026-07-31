@@ -156,6 +156,8 @@ const config = defineConfig({
         base: {
           fontWeight: "semibold",
           borderRadius: "sm",
+          cursor: "pointer",
+          _disabled: { cursor: "not-allowed" },
         },
         defaultVariants: {
           variant: "solid",
@@ -211,6 +213,8 @@ const config = defineConfig({
       iconButton: {
         base: {
           borderRadius: "sm",
+          cursor: "pointer",
+          _disabled: { cursor: "not-allowed" },
         },
       },
       badge: {
@@ -280,12 +284,14 @@ const config = defineConfig({
       fontSize: "sm",
       fontWeight: "medium",
       lineHeight: "1.45",
+      cursor: "pointer",
     },
     "[data-sidebar] [data-nav-sublink]": {
       fontFamily: "body",
       fontSize: "xs",
       fontWeight: "medium",
       lineHeight: "1.45",
+      cursor: "pointer",
     },
   },
 });

@@ -268,9 +268,13 @@ async function createSignupInvoice(customer, zohoContact) {
 
 /**
  * Link customer in Zoho Books and issue the first subscription invoice.
+ * When the Zoho contact already exists (matched by customer number / email /
+ * phone / name), only link+update — do not auto-create signup or recurring
+ * invoices. Use edit-customer options (or retry with forceBilling) for those.
  * ~3 Zoho API calls: contact lookup/create, invoice create, optional email.
  */
-async function onboardNewCustomerBilling(customerId) {
+async function onboardNewCustomerBilling(customerId, options = {}) {
+  const forceBilling = options.forceBilling === true;
   const ctx = await customerStore.getCustomerContext(customerId);
   if (!ctx) {
     return { ok: false, error: "Customer not found" };
@@ -325,7 +329,22 @@ async function onboardNewCustomerBilling(customerId) {
     let invoice;
     let recurring = null;
 
-    if (hasTrial) {
+    // Pre-existing Zoho contact: link only. Signup / recurring are opt-in on edit.
+    if (!contactCreated && !forceBilling) {
+      invoice = {
+        created: false,
+        skipped: true,
+        reason: "existing_zoho_contact",
+        invoiceId: null,
+        invoiceNumber: null,
+        emailed: false,
+      };
+      recurring = {
+        created: false,
+        skipped: true,
+        reason: "existing_zoho_contact",
+      };
+    } else if (hasTrial) {
       invoice = {
         created: false,
         skipped: true,
@@ -378,29 +397,38 @@ async function onboardNewCustomerBilling(customerId) {
       console.warn("billing onboarding snapshot failed:", e.message);
     }
 
+    const linkedExisting =
+      !contactCreated && invoice?.reason === "existing_zoho_contact";
+
     try {
       await logActivity({
-        eventType: hasTrial
-          ? "zoho_trial_started"
-          : invoice.created
-            ? "zoho_invoice_created"
-            : "zoho_customer_linked",
-        title: hasTrial
-          ? "Trial period started"
-          : invoice.created
-            ? "Signup invoice created"
-            : invoice.reused
-              ? "Signup invoice already open"
-              : "Customer linked in Zoho",
-        message: hasTrial
-          ? `${customer.customerNumber}: 30-day trial — first invoice scheduled ${trialEndsAt}${
-              recurring?.recurringInvoiceId ? "" : ""
-            }`
-          : invoice.invoiceNumber
-            ? `${customer.customerNumber}: ${invoice.invoiceNumber}${
-                invoice.emailed ? " — emailed to customer" : ""
+        eventType: linkedExisting
+          ? "zoho_customer_linked"
+          : hasTrial
+            ? "zoho_trial_started"
+            : invoice.created
+              ? "zoho_invoice_created"
+              : "zoho_customer_linked",
+        title: linkedExisting
+          ? "Existing Zoho contact linked"
+          : hasTrial
+            ? "Trial period started"
+            : invoice.created
+              ? "Signup invoice created"
+              : invoice.reused
+                ? "Signup invoice already open"
+                : "Customer linked in Zoho",
+        message: linkedExisting
+          ? `${customer.customerNumber}: linked existing Zoho contact — signup/recurring skipped (use edit to bill)`
+          : hasTrial
+            ? `${customer.customerNumber}: 30-day trial — first invoice scheduled ${trialEndsAt}${
+                recurring?.recurringInvoiceId ? "" : ""
               }`
-            : `${customer.customerNumber} linked in Zoho Books`,
+            : invoice.invoiceNumber
+              ? `${customer.customerNumber}: ${invoice.invoiceNumber}${
+                  invoice.emailed ? " — emailed to customer" : ""
+                }`
+              : `${customer.customerNumber} linked in Zoho Books`,
         source: "zoho",
         status: invoice.emailed ? "pending" : "success",
         customerRef: customer.customerNumber,
@@ -427,9 +455,10 @@ async function onboardNewCustomerBilling(customerId) {
       zohoContactId: zohoContact.contact_id,
       contactCreated,
       contactUpdated: !contactCreated,
+      billingSkipped: linkedExisting,
       invoice,
       recurring,
-      trial: hasTrial ? { enabled: true, endsAt: trialEndsAt } : null,
+      trial: hasTrial && !linkedExisting ? { enabled: true, endsAt: trialEndsAt } : null,
     };
   } catch (e) {
     const message = e.message || "Billing onboarding failed";

@@ -92,14 +92,3 @@ export function MobileFilterSheet({
     </ModalShell>
   );
 }
-
-/** Count how many filter values differ from their defaults. */
-export function countActiveFilters(
-  entries: Array<{ value: string | undefined | null; defaultValue?: string }>
-) {
-  return entries.filter(({ value, defaultValue = "" }) => {
-    const v = (value ?? "").trim();
-    const d = (defaultValue ?? "").trim();
-    return v !== "" && v !== d;
-  }).length;
-}

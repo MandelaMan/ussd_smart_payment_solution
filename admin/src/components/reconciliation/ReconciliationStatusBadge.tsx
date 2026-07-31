@@ -43,15 +43,3 @@ export function ReconciliationStatusBadge({ status }: { status: string }) {
     </Badge>
   );
 }
-
-export function ReconciliationStatusBadges({ statuses }: { statuses: string[] }) {
-  const unique = [...new Set(statuses.filter(Boolean))];
-  if (!unique.length) return null;
-  return (
-    <>
-      {unique.map((s) => (
-        <ReconciliationStatusBadge key={s} status={s} />
-      ))}
-    </>
-  );
-}

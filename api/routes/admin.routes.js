@@ -103,11 +103,14 @@ const {
   getLeadStats,
   getLead,
   createProspect,
+  createEmailProspect,
   getWhatsAppLeadByPhone,
   updateLead,
   addLeadNote,
   sendWhatsAppReply,
   sendWhatsAppToCustomer,
+  listLeadEmailConversation,
+  sendLeadEmail,
 } = require("../controllers/leads.controller");
 const {
   getChannelStatus,
@@ -299,12 +302,16 @@ router.get(
 router.get("/leads/stats", requireCustomerRead, getLeadStats);
 router.get("/leads/whatsapp-by-phone", requireCustomerRead, getWhatsAppLeadByPhone);
 router.post("/leads/prospects", requireCustomerWrite, createProspect);
+router.post("/leads/email-prospects", requireCustomerWrite, createEmailProspect);
 router.post("/leads/whatsapp-send", requireCustomerWrite, sendWhatsAppToCustomer);
+router.post("/leads/email-send", requireCustomerWrite, sendLeadEmail);
 router.get("/leads", requireCustomerRead, listLeads);
 router.get("/leads/:id", requireCustomerRead, getLead);
 router.patch("/leads/:id", requireCustomerWrite, updateLead);
 router.post("/leads/:id/notes", requireCustomerWrite, addLeadNote);
 router.post("/leads/:id/whatsapp-reply", requireCustomerWrite, sendWhatsAppReply);
+router.get("/leads/:id/email", requireCustomerRead, listLeadEmailConversation);
+router.post("/leads/:id/email", requireCustomerWrite, sendLeadEmail);
 
 router.get("/communication/status", requireCustomerRead, getChannelStatus);
 router.get(

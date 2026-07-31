@@ -32,7 +32,7 @@ export type MobileNavTab = {
 export const MOBILE_BOTTOM_NAV_H = "56px";
 
 /**
- * Gap under the floating pill (transparent padding on `.sul-mobile-nav-v2`).
+ * Gap under the floating pill (transparent padding on `.sul-mobile-nav-v3`).
  * Kept off safe-area so we do not paint an opaque dead strip under the pill.
  */
 export const MOBILE_BOTTOM_NAV_SAFE_PB = "8px";

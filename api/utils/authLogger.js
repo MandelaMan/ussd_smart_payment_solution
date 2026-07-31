@@ -1,11 +1,19 @@
 const { query } = require("../config/db");
 
+/**
+ * Client IP for rate limits / audit logs.
+ * Prefer Express `req.ip` when `trust proxy` is set so the reverse proxy's
+ * resolved address is used instead of a spoofable leftmost X-Forwarded-For hop.
+ */
 function clientIp(req) {
-  return (
-    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    null
-  );
+  if (req?.ip) return req.ip;
+  const forwarded = req?.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    // Rightmost hop is typically the proxy-adjacent client when the edge strips spoofed values.
+    const parts = forwarded.split(",").map((p) => p.trim()).filter(Boolean);
+    return parts[parts.length - 1] || null;
+  }
+  return req?.socket?.remoteAddress || null;
 }
 
 /**

@@ -93,9 +93,10 @@ const ZOHO_INVOICE_TAX_INCLUSIVE =
   "false";
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 
-async function findZohoContactForCustomer(customer) {
+async function findZohoContactForCustomer(customer, options = {}) {
   return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer), {
     customer,
+    identityFallback: options.identityFallback === true,
   });
 }
 
@@ -470,8 +471,12 @@ async function ensureZohoContactForCustomer(customer) {
     }
   }
 
-  // Live lookup by customer number / email / name — update if found, never duplicate.
-  const existing = await findZohoContactForCustomer(customer);
+  // Live lookup by customer number / email / phone / name — update if found,
+  // never duplicate. Identity fallback finds pre-existing Zoho contacts whose
+  // company_name is not yet our customer number.
+  const existing = await findZohoContactForCustomer(customer, {
+    identityFallback: true,
+  });
   if (existing?.contact_id) {
     return refreshExisting(existing);
   }
@@ -482,7 +487,9 @@ async function ensureZohoContactForCustomer(customer) {
     created = await createContact_JS(payload);
   } catch (e) {
     // Duplicate / race: resolve the existing contact and update it instead.
-    const retry = await findZohoContactForCustomer(customer);
+    const retry = await findZohoContactForCustomer(customer, {
+      identityFallback: true,
+    });
     if (retry?.contact_id) {
       return refreshExisting(retry);
     }
@@ -521,7 +528,9 @@ async function ensureZohoContactForCustomer(customer) {
   }
 
   // Final safety: another create may have won the race.
-  const retry = await findZohoContactForCustomer(customer);
+  const retry = await findZohoContactForCustomer(customer, {
+    identityFallback: true,
+  });
   if (retry?.contact_id) {
     return refreshExisting(retry);
   }
@@ -2335,6 +2344,7 @@ async function createCustomer(req, res, next) {
             zohoContactId: zoho.zohoContactId,
             contactCreated: zoho.contactCreated === true,
             contactUpdated: zoho.contactUpdated === true,
+            billingSkipped: zoho.billingSkipped === true,
             invoice: zoho.invoice,
             recurring: zoho.recurring,
             trial: zoho.trial || null,
@@ -4793,7 +4803,7 @@ async function retryBillingOnboarding(req, res, next) {
     invalidateCustomerZoho(id);
 
     try {
-      const billing = await onboardNewCustomerBilling(id);
+      const billing = await onboardNewCustomerBilling(id, { forceBilling: true });
       if (!billing.ok) {
         return res.status(502).json({
           ok: false,

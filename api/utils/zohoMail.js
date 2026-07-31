@@ -365,6 +365,7 @@ async function sendZohoMail({
 /**
  * Search mailbox for messages involving an address (sent or received).
  * Requires ZohoMail.messages.READ (or ALL). Failures return [].
+ * Hydrates each hit with full HTML body (search only returns a short summary).
  */
 async function searchZohoMailConversation(email, { limit = 40 } = {}) {
   const address = String(email || "")
@@ -391,11 +392,13 @@ async function searchZohoMailConversation(email, { limit = 40 } = {}) {
     const rows = Array.isArray(response.data?.data) ? response.data.data : [];
     const fromMailbox = String(identity.fromAddress || "").toLowerCase();
 
-    return rows.map((row) => {
+    const mapped = rows.map((row) => {
       const from = String(row.fromAddress || "").toLowerCase();
       const inbound = from === address || (from && from !== fromMailbox);
+      const messageId = row.messageId ?? row.messageid;
+      const folderId = row.folderId ?? row.folderid;
       return {
-        id: `zoho-${row.messageId || row.messageid}`,
+        id: `zoho-${messageId}`,
         source: "zoho",
         direction: inbound ? "inbound" : "outbound",
         fromAddress: row.fromAddress || null,
@@ -407,7 +410,8 @@ async function searchZohoMailConversation(email, { limit = 40 } = {}) {
         bodyHtml: null,
         bodyText: row.summary || "",
         attachmentNames: Number(row.hasAttachment) > 0 ? ["(attachment)"] : [],
-        zohoMessageId: row.messageId != null ? String(row.messageId) : null,
+        zohoMessageId: messageId != null ? String(messageId) : null,
+        zohoFolderId: folderId != null ? String(folderId) : null,
         createdAt: row.receivedtime
           ? new Date(Number(row.receivedtime)).toISOString()
           : row.sentDateInGMT
@@ -415,9 +419,108 @@ async function searchZohoMailConversation(email, { limit = 40 } = {}) {
             : null,
       };
     });
+
+    return hydrateZohoMessageBodies(mapped);
   } catch {
     return [];
   }
+}
+
+/**
+ * Fetch full HTML for a single Zoho message.
+ * includeBlockContent=true keeps quoted reply history that Zoho otherwise omits.
+ */
+async function fetchZohoMailContent(folderId, messageId) {
+  if (!folderId || !messageId) return null;
+  try {
+    const response = await mailRequest(
+      "GET",
+      `/folders/${folderId}/messages/${messageId}/content`,
+      {
+        params: { includeBlockContent: true },
+        timeout: 20000,
+      }
+    );
+    const code = response.data?.status?.code ?? response.data?.code;
+    if (code && Number(code) !== 200) return null;
+    const content = response.data?.data?.content;
+    return content != null ? String(content) : null;
+  } catch {
+    return null;
+  }
+}
+
+function stripTagsForPreview(html) {
+  return String(html || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function mapPool(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, Math.max(1, items.length)) },
+    async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await mapper(items[i], i);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+async function hydrateZohoMessageBodies(messages) {
+  if (!messages.length) return messages;
+  const { getCache, setCache } = require("../lib/cache");
+
+  return mapPool(messages, 4, async (msg) => {
+    if (!msg.zohoMessageId || !msg.zohoFolderId) return msg;
+
+    const cacheKey = `${msg.zohoFolderId}:${msg.zohoMessageId}`;
+    try {
+      const cached = await getCache("zoho-mail-body", cacheKey);
+      if (cached?.bodyHtml) {
+        return {
+          ...msg,
+          bodyHtml: cached.bodyHtml,
+          bodyText: cached.bodyText || msg.bodyText || msg.summary || "",
+          summary: msg.summary || cached.summary || "",
+        };
+      }
+    } catch {
+      /* cache miss / redis down — fetch live */
+    }
+
+    const html = await fetchZohoMailContent(msg.zohoFolderId, msg.zohoMessageId);
+    if (!html) return msg;
+    const text = stripTagsForPreview(html);
+    const next = {
+      ...msg,
+      bodyHtml: html,
+      bodyText: text || msg.bodyText || msg.summary || "",
+      summary: msg.summary || text.slice(0, 240),
+    };
+
+    void setCache(
+      "zoho-mail-body",
+      cacheKey,
+      {
+        bodyHtml: next.bodyHtml,
+        bodyText: next.bodyText,
+        summary: next.summary,
+      },
+      1800
+    ).catch(() => {});
+
+    return next;
+  });
 }
 
 module.exports = {

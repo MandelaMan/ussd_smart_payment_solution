@@ -1,7 +1,6 @@
 const crypto = require("crypto");
 const { clientIp } = require("../utils/authLogger");
-
-const TIMING_SAFE_FALLBACK = Buffer.alloc(32);
+const { timingSafeEqualString } = require("../utils/timingSafeEqual");
 
 /**
  * Verifies Meta WhatsApp Cloud API webhook signature (X-Hub-Signature-256).
@@ -16,10 +15,14 @@ async function verifyWhatsAppSignature(req) {
   );
 
   if (!appSecret) {
-    if (process.env.NODE_ENV === "production" && whatsappConfigured) {
+    // Never skip signature checks in production — misconfiguration must fail closed.
+    if (process.env.NODE_ENV === "production") {
       return { ok: false, reason: "WhatsApp app secret not configured" };
     }
-    return { ok: true, skipped: true };
+    if (!whatsappConfigured) {
+      return { ok: true, skipped: true };
+    }
+    return { ok: false, reason: "WhatsApp app secret not configured" };
   }
 
   const signature = req.headers["x-hub-signature-256"];
@@ -96,18 +99,7 @@ function verifyMpesaCallbackSecret(req) {
 
   if (!provided) return { ok: false, reason: "missing callback secret" };
 
-  const providedBuf = Buffer.from(String(provided));
-  const configuredBuf = Buffer.from(String(configured));
-  const a =
-    providedBuf.length === configuredBuf.length
-      ? providedBuf
-      : TIMING_SAFE_FALLBACK;
-  const b =
-    configuredBuf.length === providedBuf.length
-      ? configuredBuf
-      : TIMING_SAFE_FALLBACK;
-
-  if (!crypto.timingSafeEqual(a, b)) {
+  if (!timingSafeEqualString(provided, configured)) {
     return { ok: false, reason: "invalid callback secret" };
   }
   return { ok: true };

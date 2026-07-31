@@ -8,6 +8,7 @@ const {
 } = require("../services/paymentReceivedHandler");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
 const { processZohoWebhookPayload } = require("../services/zohoWebhook.service");
+const { timingSafeEqualString } = require("../utils/timingSafeEqual");
 
 function extractPaidInvoice(body) {
   if (!body || typeof body !== "object") return null;
@@ -45,7 +46,7 @@ async function zohoWebhook(req, res, next) {
       console.error("[zoho] ZOHO_WEBHOOK_SECRET is not configured in production");
       return res.status(503).json({ error: "Webhook not configured" });
     }
-    if (configuredSecret && providedSecret !== configuredSecret) {
+    if (configuredSecret && !timingSafeEqualString(providedSecret, configuredSecret)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 

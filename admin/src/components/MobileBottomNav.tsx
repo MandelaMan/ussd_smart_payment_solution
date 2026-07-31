@@ -68,6 +68,8 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
       as="nav"
       mx={0}
       mb={0}
+      // Floating pill only — no safe-area padding (that painted the white bottom strip).
+      pb={0}
       bg="whiteAlpha.900"
       border="1px solid"
       borderColor="border"

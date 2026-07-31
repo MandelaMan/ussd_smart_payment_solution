@@ -14,12 +14,79 @@ function looksLikeCustomerNumber(value) {
   return /^[A-Z]{2,4}-[\w\d]+$/i.test(s);
 }
 
+function normalizePhoneDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+/** True when two phone strings share the same significant digits (last 9+). */
+function phonesMatch(a, b) {
+  const left = normalizePhoneDigits(a);
+  const right = normalizePhoneDigits(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const tail = (d) => (d.length >= 9 ? d.slice(-9) : d);
+  return tail(left) === tail(right) && Math.min(left.length, right.length) >= 9;
+}
+
+function looksLikePhoneKey(value) {
+  const s = String(value || "").trim();
+  if (!s || s.includes("@")) return false;
+  const digits = normalizePhoneDigits(s);
+  return (
+    digits.length >= 9 &&
+    digits.length <= 15 &&
+    /^[\d\s+\-().]+$/.test(s)
+  );
+}
+
 function contactRefFields(contact) {
   return [
     contact?.company_name,
     contact?.contact_name,
     contact?.customer_name,
   ].filter(Boolean);
+}
+
+/**
+ * Soft identity match for onboarding: email or phone, even when company_name
+ * does not yet equal our customer number (pre-existing Zoho contacts).
+ * Rejects contacts whose company_name is a different customer number.
+ */
+function zohoContactMatchesCustomerIdentity(contact, customer) {
+  if (!contact?.contact_id || !customer) return false;
+
+  const company = String(contact.company_name || "").trim();
+  const ourNumber = String(
+    customer.customerNumber || customer.customer_number || ""
+  ).trim();
+  if (
+    looksLikeCustomerNumber(company) &&
+    ourNumber &&
+    normalizeCustomerRef(company) !== normalizeCustomerRef(ourNumber)
+  ) {
+    return false;
+  }
+
+  const custEmail = String(customer.email || "")
+    .trim()
+    .toLowerCase();
+  const contactEmail = String(contact.email || "")
+    .trim()
+    .toLowerCase();
+  if (custEmail && contactEmail && custEmail === contactEmail) {
+    return true;
+  }
+
+  const custPhone =
+    customer.phone || customer.mobile || customer.phoneNumber || null;
+  if (
+    phonesMatch(custPhone, contact.phone) ||
+    phonesMatch(custPhone, contact.mobile)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -122,7 +189,11 @@ function filterZohoPaymentsForContact(payments, contactId) {
 module.exports = {
   normalizeCustomerRef,
   looksLikeCustomerNumber,
+  looksLikePhoneKey,
+  phonesMatch,
+  normalizePhoneDigits,
   zohoContactMatchesDashboardCustomer,
+  zohoContactMatchesCustomerIdentity,
   filterZohoInvoicesForContact,
   filterZohoPaymentsForContact,
   zohoRecordContactId,

@@ -646,9 +646,7 @@ export function CustomerForm({
             label: "Zoho Books",
             value: [
               zohoInactive ? "Reactivate inactive contact" : "Update contact",
-              zohoInvoiceCount === 0 && createInitialInvoice
-                ? "initial invoice"
-                : null,
+              createInitialInvoice ? "signup invoice" : null,
               hasActiveRecurring
                 ? updateZohoRecurring
                   ? "refresh recurring"
@@ -946,6 +944,20 @@ export function CustomerForm({
           title: `Customer ${res.customer.customerNumber} saved locally`,
           description: `TISP registration failed: ${res.tisp.error}`,
           type: "warning",
+          duration: 12000,
+        });
+      } else if (res.zoho && res.zoho.ok === false) {
+        toaster.create({
+          title: `Customer ${res.customer.customerNumber} created`,
+          description: `Zoho billing setup failed: ${res.zoho.error}`,
+          type: "warning",
+          duration: 12000,
+        });
+      } else if (res.zoho?.billingSkipped) {
+        toaster.create({
+          title: "Customer created",
+          description: `${res.customer.customerNumber} — linked existing Zoho contact. Signup invoice and recurring were skipped; enable them when editing the customer if needed.`,
+          type: "success",
           duration: 12000,
         });
       } else {
@@ -1422,9 +1434,9 @@ export function CustomerForm({
               </>
             ) : null}
 
-            {customerType === "C2B" && onZoho && zohoInvoiceCount === 0 ? (
+            {customerType === "C2B" && onZoho ? (
               <Field.Root gridColumn={{ md: "span 2" }}>
-                <Field.Label>Initial invoice</Field.Label>
+                <Field.Label>Create signup invoice</Field.Label>
                 <SelectField
                   disabled={fieldsDisabled || integrationsLoading}
                   fieldProps={{
@@ -1433,9 +1445,16 @@ export function CustomerForm({
                       setCreateInitialInvoice(e.target.value === "yes"),
                   }}
                 >
-                  <option value="no">No — contact only</option>
-                  <option value="yes">Yes — create signup invoice</option>
+                  <option value="no">No — leave billing as-is</option>
+                  <option value="yes">Yes — create signup invoice on save</option>
                 </SelectField>
+                <Field.HelperText>
+                  Use when this customer was already in Zoho at signup and the
+                  initial invoice was skipped.
+                  {zohoInvoiceCount > 0
+                    ? ` (${zohoInvoiceCount} invoice${zohoInvoiceCount === 1 ? "" : "s"} already on Zoho)`
+                    : null}
+                </Field.HelperText>
               </Field.Root>
             ) : null}
 
@@ -1450,9 +1469,13 @@ export function CustomerForm({
                       setUpdateZohoRecurring(e.target.value === "yes"),
                   }}
                 >
-                  <option value="yes">Yes — create recurring profile on save</option>
                   <option value="no">No — leave without recurring</option>
+                  <option value="yes">Yes — create recurring profile on save</option>
                 </SelectField>
+                <Field.HelperText>
+                  Use when this customer was already in Zoho at signup and
+                  recurring billing was skipped.
+                </Field.HelperText>
               </Field.Root>
             ) : null}
 

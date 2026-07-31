@@ -38,6 +38,7 @@ import { DisplayText } from "../components/ui/DisplayText";
 import { SelectField } from "../components/ui/SelectField";
 import { TabStrip } from "../components/ui/TabStrip";
 import { ProspectWhatsAppInbox } from "../components/leads/ProspectWhatsAppInbox";
+import { ProspectEmailInbox } from "../components/leads/ProspectEmailInbox";
 import {
   DataTable,
   DataTableCard,
@@ -53,6 +54,7 @@ const PAGE_SIZE = 30;
 const LEAD_SECTIONS = [
   { id: "all", label: "All leads" },
   { id: "whatsapp", label: "WhatsApp" },
+  { id: "email", label: "Email" },
 ] as const;
 type LeadSection = (typeof LEAD_SECTIONS)[number]["id"];
 
@@ -76,6 +78,7 @@ function statusColor(status: string): string {
 function sourceLabel(source: string): string {
   if (source === "whatsapp") return "WhatsApp";
   if (source === "embed") return "Embed";
+  if (source === "email") return "Email";
   return "Website";
 }
 
@@ -99,21 +102,26 @@ export function LeadsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const sectionParam = searchParams.get("section");
   const section: LeadSection =
-    sectionParam === "whatsapp" ? "whatsapp" : "all";
-  const initialWhatsAppLeadId = (() => {
+    sectionParam === "whatsapp"
+      ? "whatsapp"
+      : sectionParam === "email"
+        ? "email"
+        : "all";
+  const initialChannelLeadId = (() => {
     const raw = searchParams.get("lead");
     const n = raw ? Number(raw) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;
   })();
 
   function setSection(next: string) {
-    const id = next === "whatsapp" ? "whatsapp" : "all";
+    const id =
+      next === "whatsapp" ? "whatsapp" : next === "email" ? "email" : "all";
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
         if (id === "all") p.delete("section");
         else p.set("section", id);
-        if (id !== "whatsapp") p.delete("lead");
+        if (id !== "whatsapp" && id !== "email") p.delete("lead");
         return p;
       },
       { replace: true }
@@ -397,6 +405,7 @@ export function LeadsPage() {
         { label: "Total", value: stats.total },
         { label: "New", value: stats.byStatus.new },
         { label: "WhatsApp", value: stats.bySource.whatsapp },
+        { label: "Email", value: stats.bySource.email ?? 0 },
         { label: "Web", value: stats.bySource.web },
         { label: "Embed", value: stats.bySource.embed },
       ].map((card) => (
@@ -473,6 +482,7 @@ export function LeadsPage() {
                 <option value="whatsapp">WhatsApp</option>
                 <option value="web">Website</option>
                 <option value="embed">Embed</option>
+                <option value="email">Email</option>
               </SelectField>
             </Field.Root>
           </Stack>
@@ -573,6 +583,7 @@ export function LeadsPage() {
             <option value="whatsapp">WhatsApp</option>
             <option value="web">Website</option>
             <option value="embed">Embed</option>
+            <option value="email">Email</option>
           </SelectField>
         </FilterField>
             </FilterToolbar>
@@ -583,7 +594,11 @@ export function LeadsPage() {
 
       {section === "whatsapp" ? (
         <Box pt={{ base: 2, lg: 3 }}>
-          <ProspectWhatsAppInbox initialLeadId={initialWhatsAppLeadId} />
+          <ProspectWhatsAppInbox initialLeadId={initialChannelLeadId} />
+        </Box>
+      ) : section === "email" ? (
+        <Box pt={{ base: 2, lg: 3 }}>
+          <ProspectEmailInbox initialLeadId={initialChannelLeadId} />
         </Box>
       ) : (
         <Stack gap={{ base: 4, lg: 5 }} pt={{ base: 2, lg: 3 }}>
@@ -636,7 +651,23 @@ export function LeadsPage() {
                       </Badge>
                     }
                     isOpen={isOpen}
-                    onClick={() => void openLead(lead.id)}
+                    onClick={() => {
+                      if (lead.source === "whatsapp") {
+                        setSearchParams(
+                          { section: "whatsapp", lead: String(lead.id) },
+                          { replace: false }
+                        );
+                        return;
+                      }
+                      if (lead.source === "email" || lead.email) {
+                        setSearchParams(
+                          { section: "email", lead: String(lead.id) },
+                          { replace: false }
+                        );
+                        return;
+                      }
+                      void openLead(lead.id);
+                    }}
                     variant="card"
                   />
                 )}
@@ -696,6 +727,13 @@ export function LeadsPage() {
                             if (lead.source === "whatsapp") {
                               setSearchParams(
                                 { section: "whatsapp", lead: String(lead.id) },
+                                { replace: false }
+                              );
+                              return;
+                            }
+                            if (lead.source === "email" || lead.email) {
+                              setSearchParams(
+                                { section: "email", lead: String(lead.id) },
                                 { replace: false }
                               );
                               return;

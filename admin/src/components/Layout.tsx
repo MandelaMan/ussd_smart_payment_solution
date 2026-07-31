@@ -70,7 +70,8 @@ function LayoutShell() {
       {typeof document !== "undefined" && !open && !hideBottomNav
         ? createPortal(
             <Box
-              className="sul-mobile-nav-v2"
+              // v3 busts stale SW CSS that painted an opaque white band under the pill.
+              className="sul-mobile-nav-v3"
               display={{ base: "block", lg: "none" }}
               position="fixed"
               left={0}
@@ -80,17 +81,29 @@ function LayoutShell() {
               bg="transparent"
               pointerEvents="none"
               p={0}
+              m={0}
+              // Transparent 8px gap only — never safe-area (that created the white strip).
               pb="8px"
+              minH={0}
+              h="auto"
+              maxH="none"
               style={{
                 position: "fixed",
                 left: 0,
                 right: 0,
                 bottom: 0,
                 zIndex: 1000,
+                margin: 0,
+                padding: "0 0 8px 0",
                 background: "transparent",
+                backgroundColor: "transparent",
                 pointerEvents: "none",
-                paddingBottom: 8,
+                height: "auto",
+                minHeight: 0,
+                maxHeight: "none",
                 transform: "none",
+                boxShadow: "none",
+                border: "none",
               }}
             >
               <MobileBottomNav onOpenMenu={() => setOpen(true)} />

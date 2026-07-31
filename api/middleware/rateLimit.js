@@ -63,9 +63,17 @@ const authMeLimiter = createRateLimiter({
   message: { error: "Too many requests. Please slow down." },
 });
 
+/** Soft limit for USSD gateway POSTs (abuse / STK spam protection). */
+const ussdLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: "Too many USSD requests. Please slow down." },
+});
+
 module.exports = {
   createRateLimiter,
   loginLimiter,
   authApiLimiter,
   authMeLimiter,
+  ussdLimiter,
 };

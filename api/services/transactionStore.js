@@ -88,7 +88,7 @@ async function findPaymentTransactionId(checkoutId) {
 
 async function appendTransaction(txn) {
   const row = legacyToRow(txn);
-  const result = await query(
+  await query(
     `INSERT INTO payment_transactions
       (checkout_request_id, merchant_request_id, mpesa_receipt, phone, amount,
        account_reference, status, result_code, result_desc, transaction_date,
@@ -109,11 +109,12 @@ async function appendTransaction(txn) {
       row.raw_payload,
     ]
   );
-  return readTransactions();
+  // Callers discard the return value; avoid SELECT * of the full table after every write.
+  return findByCheckoutId(row.checkout_request_id);
 }
 
 async function upsertByCheckoutId(checkoutId, patch) {
-  if (!checkoutId) return readTransactions();
+  if (!checkoutId) return null;
 
   const existing = await findByCheckoutId(checkoutId);
   const merged = { ...(existing || {}), ...patch, CheckoutRequestID: checkoutId };
@@ -173,7 +174,7 @@ async function upsertByCheckoutId(checkoutId, patch) {
     );
   }
 
-  return readTransactions();
+  return findByCheckoutId(checkoutId);
 }
 
 const normalizePhone = (phone = "") => phone.replace(/^(\+|0)+/, "");
