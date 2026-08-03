@@ -730,7 +730,7 @@ export function ReportsPage() {
         }
       />
 
-      {error ? <PageErrorBanner message={error} /> : null}
+      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       <FilterToolbar>
         <FilterField label="Search" flex={FILTER_FLEX.search}>

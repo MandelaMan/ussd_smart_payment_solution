@@ -1277,6 +1277,15 @@ export type InvoicesVsPaymentsSummary = {
   source?: string;
 };
 
+export type ReportFamily =
+  | "Executive"
+  | "Financial"
+  | "Billing"
+  | "Forecasting"
+  | "Customer"
+  | "Network"
+  | "Audit";
+
 export type ReportDefinition = {
   id: string;
   title: string;

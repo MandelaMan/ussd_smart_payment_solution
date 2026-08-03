@@ -5,7 +5,6 @@ import {
   Button,
   Flex,
   Grid,
-  Input,
   Stack,
   Text,
 } from "@chakra-ui/react";
@@ -42,7 +41,6 @@ import { useMobileViewport } from "../hooks/useMobileViewport";
 import { useActivitySocket } from "../hooks/useActivitySocket";
 import { prependActivityItem } from "../lib/activityFeed";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
-import { toaster } from "../components/ui/toaster";
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: BRAND.cerulean,
