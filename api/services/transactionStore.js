@@ -236,6 +236,20 @@ async function recordC2BConfirmation({
   return result.insertId;
 }
 
+async function findByMpesaReceipt(mpesaReceipt) {
+  const receipt = String(mpesaReceipt || "").trim();
+  if (!receipt) return null;
+  const rows = await query(
+    `SELECT id, amount, mpesa_receipt, phone, account_reference, status,
+            transaction_date, channel, created_at
+     FROM payment_transactions
+     WHERE mpesa_receipt = ?
+     LIMIT 1`,
+    [receipt]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   readTransactions,
   appendTransaction,
@@ -248,4 +262,5 @@ module.exports = {
   rowToLegacyTxn,
   materializeTransactionsFromTrail,
   recordC2BConfirmation,
+  findByMpesaReceipt,
 };

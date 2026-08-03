@@ -184,6 +184,8 @@ export function CustomerForm({
   const [ppoePassword, setPpoePassword] = useState("");
   const [ppoeUsernameTouched, setPpoeUsernameTouched] = useState(false);
   const [trialPeriod, setTrialPeriod] = useState(false);
+  const [paymentAlreadyMade, setPaymentAlreadyMade] = useState(false);
+  const [mpesaCode, setMpesaCode] = useState("");
   const [createInitialInvoice, setCreateInitialInvoice] = useState(false);
   const [createRecurringInvoice, setCreateRecurringInvoice] = useState(false);
   const [updateZohoRecurring, setUpdateZohoRecurring] = useState(false);
@@ -597,6 +599,14 @@ export function CustomerForm({
         value: "30 days — first invoice after trial",
       });
     }
+    if (!isEdit && customerType === "C2B" && !trialPeriod) {
+      items.push({
+        label: "Advance payment",
+        value: paymentAlreadyMade
+          ? `Paid · M-Pesa ${mpesaCode.trim().toUpperCase() || "—"}`
+          : "No — create invoice and send",
+      });
+    }
     items.push({
       label: "Customer type",
       value:
@@ -700,6 +710,8 @@ export function CustomerForm({
     selectedBuilding?.name,
     selectedPackage,
     trialPeriod,
+    paymentAlreadyMade,
+    mpesaCode,
     isActive,
     onTisp,
     onZoho,
@@ -789,6 +801,26 @@ export function CustomerForm({
       toaster.create({
         title: "TISP due date required",
         description: "Enter the customer due date to create them on TISP.",
+        type: "error",
+      });
+      return false;
+    }
+    if (
+      !isEdit &&
+      customerType === "C2B" &&
+      paymentAlreadyMade &&
+      !/^[A-Z0-9]{8,15}$/i.test(mpesaCode.trim())
+    ) {
+      toaster.create({
+        title: "M-Pesa receipt code required",
+        description: "Enter the M-Pesa confirmation code (8–15 letters/numbers).",
+        type: "error",
+      });
+      return false;
+    }
+    if (!isEdit && trialPeriod && paymentAlreadyMade) {
+      toaster.create({
+        title: "Cannot combine trial and advance payment",
         type: "error",
       });
       return false;
@@ -941,6 +973,12 @@ export function CustomerForm({
             }
           : {}),
         trialPeriod: trialPeriod || undefined,
+        paymentAlreadyMade:
+          customerType === "C2B" && paymentAlreadyMade ? true : undefined,
+        mpesaCode:
+          customerType === "C2B" && paymentAlreadyMade
+            ? mpesaCode.trim().toUpperCase()
+            : undefined,
       });
 
       if (!res.tisp.ok) {
@@ -964,13 +1002,49 @@ export function CustomerForm({
           type: "success",
           duration: 12000,
         });
+      } else if (res.zoho?.invoice?.paid) {
+        toaster.create({
+          title: "Customer created",
+          description: `${res.customer.customerNumber} — signup invoice ${
+            res.zoho.invoice.invoiceNumber || ""
+          } marked paid (M-Pesa ${res.zoho.invoice.mpesaCode || mpesaCode.trim().toUpperCase()})${
+            res.zoho.invoice.receiptEmailed || res.zoho.invoice.emailed
+              ? " · receipt emailed"
+              : ""
+          }`.trim(),
+          type: "success",
+          duration: 12000,
+        });
+      } else if (res.zoho?.invoice?.paymentError) {
+        toaster.create({
+          title: `Customer ${res.customer.customerNumber} created`,
+          description: `Signup invoice created but M-Pesa payment failed: ${res.zoho.invoice.paymentError}. Mark the invoice paid from Billing if needed.`,
+          type: "warning",
+          duration: 14000,
+        });
       } else {
+        const invoiceBits = [];
+        if (res.zoho?.invoice?.invoiceNumber) {
+          invoiceBits.push(`invoice ${res.zoho.invoice.invoiceNumber}`);
+        }
+        if (res.zoho?.invoice?.emailed) {
+          invoiceBits.push("emailed to customer");
+        } else if (
+          !trialPeriod &&
+          customerType === "C2B" &&
+          res.zoho?.invoice?.created
+        ) {
+          invoiceBits.push("invoice created");
+        }
         toaster.create({
           title: "Customer created",
           description: trialPeriod
             ? `${res.customer.customerNumber} — 30-day trial, billing starts after trial`
-            : res.customer.customerNumber,
+            : invoiceBits.length
+              ? `${res.customer.customerNumber} — ${invoiceBits.join(" · ")}`
+              : res.customer.customerNumber,
           type: "success",
+          duration: 10000,
         });
       }
       onCreated?.(res.customer);
@@ -1223,19 +1297,76 @@ export function CustomerForm({
               />
             </Field.Root>
           )}
-          <Field.Root gridColumn={{ md: "span 2" }}>
+          <Field.Root
+            gridColumn={
+              !isEdit && customerType === "C2B" ? undefined : { md: "span 2" }
+            }
+          >
             <Field.Label>Trial period</Field.Label>
             <SelectField
-              disabled={fieldsDisabled || !isActive || isEdit}
+              disabled={fieldsDisabled || !isActive || isEdit || paymentAlreadyMade}
               fieldProps={{
                 value: trialPeriod ? "yes" : "no",
-                onChange: (e) => setTrialPeriod(e.target.value === "yes"),
+                onChange: (e) => {
+                  const on = e.target.value === "yes";
+                  setTrialPeriod(on);
+                  if (on) {
+                    setPaymentAlreadyMade(false);
+                    setMpesaCode("");
+                  }
+                },
               }}
             >
               <option value="no">No — issue signup invoice immediately</option>
               <option value="yes">Yes — 30-day free trial, bill after trial</option>
             </SelectField>
           </Field.Root>
+          {!isEdit && customerType === "C2B" ? (
+            <>
+              <Field.Root>
+                <Field.Label>Has the customer already paid?</Field.Label>
+                <SelectField
+                  disabled={fieldsDisabled || !isActive || trialPeriod}
+                  fieldProps={{
+                    value: paymentAlreadyMade ? "yes" : "no",
+                    onChange: (e) => {
+                      const paid = e.target.value === "yes";
+                      setPaymentAlreadyMade(paid);
+                      if (!paid) setMpesaCode("");
+                      if (paid) setTrialPeriod(false);
+                    },
+                  }}
+                >
+                  <option value="no">
+                    No — create invoice and send it to the customer
+                  </option>
+                  <option value="yes">Yes — paid via M-Pesa (enter receipt)</option>
+                </SelectField>
+                <Field.HelperText>
+                  {trialPeriod
+                    ? "Advance payment is unavailable during a free trial."
+                    : paymentAlreadyMade
+                      ? "We will create the Zoho signup invoice, mark it paid with this M-Pesa code, and email the payment receipt to the customer."
+                      : "We will create the Zoho signup invoice and email it to the customer."}
+                </Field.HelperText>
+              </Field.Root>
+              {paymentAlreadyMade && !trialPeriod ? (
+                <Field.Root required gridColumn={{ md: "span 2" }}>
+                  <Field.Label>M-Pesa receipt code</Field.Label>
+                  <Input
+                    value={mpesaCode}
+                    onChange={(e) =>
+                      setMpesaCode(e.target.value.toUpperCase().replace(/\s+/g, ""))
+                    }
+                    placeholder="e.g. QJH7K2M9PL"
+                    fontFamily="mono"
+                    autoComplete="off"
+                    disabled={fieldsDisabled}
+                  />
+                </Field.Root>
+              ) : null}
+            </>
+          ) : null}
             </>
           )}
         </FormSection>
@@ -1559,7 +1690,14 @@ export function CustomerForm({
               disabled={fieldsDisabled || isEdit}
               fieldProps={{
                 value: customerType,
-                onChange: (e) => setCustomerType(e.target.value as "C2B" | "B2B"),
+                onChange: (e) => {
+                  const next = e.target.value as "C2B" | "B2B";
+                  setCustomerType(next);
+                  if (next === "B2B") {
+                    setPaymentAlreadyMade(false);
+                    setMpesaCode("");
+                  }
+                },
               }}
             >
               <option value="C2B">C2B — invoice to customer</option>
@@ -1776,7 +1914,11 @@ export function CustomerForm({
               ? undefined
               : trialPeriod
                 ? "Creates with a 30-day trial — no signup invoice."
-                : undefined
+                : paymentAlreadyMade
+                  ? "Creates the customer, issues a signup invoice in Zoho Books, marks it paid with the M-Pesa code, and emails the payment receipt."
+                  : customerType === "C2B"
+                    ? "Creates the customer, issues a signup invoice in Zoho Books, and emails it to the customer."
+                    : undefined
           }
           items={summaryItems}
         />
@@ -1812,7 +1954,7 @@ export function CustomerForm({
 
   return (
     <>
-    <Stack gap={4}>
+    <Stack gap={4} pb={{ base: 10, md: 12 }}>
       <Flex justify="space-between" align="start" gap={4} wrap="wrap">
         <Box>
           <Button asChild variant="ghost" size="sm" mb={2} px={0}>
@@ -1858,9 +2000,7 @@ export function CustomerForm({
         )}
       </Flex>
 
-      <Box bg="bg.panel" borderRadius="xl" border="1px solid" borderColor="border.muted" p={5}>
-        {formBody}
-      </Box>
+      {formBody}
     </Stack>
     {confirmDialog}
     </>

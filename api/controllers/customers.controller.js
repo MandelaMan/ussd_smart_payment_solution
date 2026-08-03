@@ -2385,6 +2385,28 @@ async function createCustomer(req, res, next) {
         .json({ error: "Custom period days is required for custom billing" });
     }
 
+    const paymentAlreadyMade = body.paymentAlreadyMade === true;
+    const mpesaCode = String(body.mpesaCode || body.mpesaReceipt || "")
+      .trim()
+      .toUpperCase();
+    if (paymentAlreadyMade) {
+      if (String(body.customerType).toUpperCase() !== "C2B") {
+        return res.status(400).json({
+          error: "Advance M-Pesa payment applies to C2B customers only",
+        });
+      }
+      if (body.trialPeriod === true) {
+        return res.status(400).json({
+          error: "Trial period cannot be combined with advance payment",
+        });
+      }
+      if (!/^[A-Z0-9]{8,15}$/.test(mpesaCode)) {
+        return res.status(400).json({
+          error: "Enter a valid M-Pesa receipt code (8–15 letters/numbers)",
+        });
+      }
+    }
+
     const created = await store.createCustomer(body);
 
     const tispError = await syncNewCustomerToTisp(
@@ -2394,7 +2416,16 @@ async function createCustomer(req, res, next) {
 
     let zoho = { ok: false, error: null, invoice: null };
     try {
-      zoho = await onboardNewCustomerBilling(created.customerId);
+      const wantsSignupInvoice =
+        String(body.customerType).toUpperCase() === "C2B" &&
+        body.trialPeriod !== true;
+      zoho = await onboardNewCustomerBilling(created.customerId, {
+        forceBilling: wantsSignupInvoice,
+        forceEmail: wantsSignupInvoice && !paymentAlreadyMade,
+        skipEmail: paymentAlreadyMade,
+        paymentAlreadyMade,
+        mpesaCode: paymentAlreadyMade ? mpesaCode : undefined,
+      });
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho billing setup failed" };
     }

@@ -190,7 +190,7 @@ export function Sidebar({ open, onClose }: Props) {
           </Flex>
         </NavLink>
 
-        <Box flex={1} minH={0} overflowY="auto" bg="sidebar.nav" px={2} py={2}>
+        <Box flex={1} minH={0} overflowY="auto" bg="sidebar.nav" px={2} py={1.5}>
           <VStack align="stretch" gap={0.5}>
           {links
             .filter((l) => l.visible !== false)
@@ -209,8 +209,8 @@ export function Sidebar({ open, onClose }: Props) {
                       align="center"
                       gap={2}
                       px={2}
-                      py={3}
-                      minH="44px"
+                      py={{ base: 2.5, lg: 2 }}
+                      minH={{ base: "42px", lg: "36px" }}
                       borderRadius="md"
                       color={isActive ? "white" : "sidebar.fg"}
                       bg={isActive ? "brand.600" : "transparent"}

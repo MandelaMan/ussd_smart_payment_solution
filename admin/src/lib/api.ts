@@ -2515,7 +2515,12 @@ export const api = {
           reason?: string;
           reused?: boolean;
           emailed?: boolean;
+          paid?: boolean;
+          paymentError?: string;
+          mpesaCode?: string;
+          receiptEmailed?: boolean;
           invoiceNumber?: string | null;
+          invoiceId?: string | null;
         } | null;
         recurring?: {
           created?: boolean;

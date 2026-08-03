@@ -1733,6 +1733,7 @@ module.exports = {
   setUnmatchedMpesaCache,
   getUnmatchedMpesaDetail,
   allocateUnmatchedMpesa,
+  isMpesaPaymentAllocated,
   getRecords,
   buildCustomerRecord,
 };

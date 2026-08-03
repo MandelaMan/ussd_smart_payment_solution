@@ -1337,6 +1337,44 @@ const emailInvoice_JS = async ({ invoice_id, to_mail_ids, cc_mail_ids, subject, 
   }
 };
 
+/**
+ * Email a customer payment / receipt from Zoho Books (when the org supports it).
+ * Falls back gracefully — callers should also email the paid invoice.
+ */
+const emailCustomerPayment_JS = async ({
+  payment_id,
+  to_mail_ids,
+  cc_mail_ids,
+  subject,
+  body,
+}) => {
+  try {
+    if (!payment_id) return false;
+    const recipients = (Array.isArray(to_mail_ids) ? to_mail_ids : [to_mail_ids])
+      .map((e) => String(e || "").trim())
+      .filter(Boolean);
+    if (!recipients.length) return false;
+
+    const payload = { to_mail_ids: recipients };
+    if (cc_mail_ids?.length) payload.cc_mail_ids = cc_mail_ids;
+    if (subject) payload.subject = subject;
+    if (body) payload.body = body;
+
+    await withTimeout(
+      callZoho(`customerpayments/${payment_id}/email`, "POST", payload),
+      12_000,
+      "email-customer-payment",
+    );
+    return true;
+  } catch (error) {
+    console.warn(
+      "emailCustomerPayment_JS unavailable or failed:",
+      error.response?.data?.message || error.message
+    );
+    return false;
+  }
+};
+
 // Mark invoice as paid (object or null). `amount` = total received; `amount_applied` = applied to invoice (excess becomes customer credit in Zoho).
 const markInvoiceAsPaid_JS = async ({
   invoice_id,
@@ -1662,6 +1700,7 @@ module.exports = {
   createInvoice_JS,
   createCreditNote_JS,
   emailInvoice_JS,
+  emailCustomerPayment_JS,
   createContact_JS,
   updateContact_JS,
   markContactInactive_JS,

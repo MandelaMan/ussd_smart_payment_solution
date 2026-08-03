@@ -56,7 +56,7 @@ export function BillingNavGroup({ onNavigate }: Props) {
           style={{ textDecoration: "none", flex: 1, minWidth: 0, overflow: "hidden" }}
         >
           {() => (
-            <Flex align="center" gap={2} px={2} py={3} minH="44px" color="inherit" minW={0}>
+            <Flex align="center" gap={2} px={2} py={{ base: 2.5, lg: 2 }} minH={{ base: "42px", lg: "36px" }} color="inherit" minW={0}>
               <Box flexShrink={0} lineHeight={0}>
                 <FiGitMerge size={16} />
               </Box>

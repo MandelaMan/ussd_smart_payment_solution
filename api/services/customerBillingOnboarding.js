@@ -133,8 +133,11 @@ async function findSignupInvoiceForCustomer(contactId, customer) {
   })[0];
 }
 
-async function emailSignupInvoiceOnce(invoice, customer, tracking = null) {
-  if (!SIGNUP_INVOICE_EMAIL_ENABLED) {
+async function emailSignupInvoiceOnce(invoice, customer, tracking = null, options = {}) {
+  if (options.skipEmail === true) {
+    return { emailed: false, reason: "skipped" };
+  }
+  if (!SIGNUP_INVOICE_EMAIL_ENABLED && options.forceEmail !== true) {
     return { emailed: false, reason: "disabled" };
   }
 
@@ -184,8 +187,11 @@ function buildSignupLineItems(customer, period) {
 /**
  * Create (or reuse) the first subscription invoice and email it once to the customer.
  * C2B: invoice on customer contact. B2B: invoice on agency contact with customer line.
+ *
+ * options.forceEmail — email even when ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED is off
+ * options.skipEmail — create/reuse invoice but do not email (e.g. already paid)
  */
-async function createSignupInvoice(customer, zohoContact) {
+async function createSignupInvoice(customer, zohoContact, options = {}) {
   const amount = Number(customer.packagePrice || 0);
   if (amount <= 0) {
     return {
@@ -211,7 +217,8 @@ async function createSignupInvoice(customer, zohoContact) {
     const emailResult = await emailSignupInvoiceOnce(
       existing,
       customer,
-      tracking
+      tracking,
+      options
     );
     await customerStore.recordSignupInvoiceDelivery(
       customer.id,
@@ -226,6 +233,7 @@ async function createSignupInvoice(customer, zohoContact) {
       total: Number(existing.total || amount),
       period,
       emailed: emailResult.emailed,
+      emailReason: emailResult.reason,
     };
   }
 
@@ -249,7 +257,12 @@ async function createSignupInvoice(customer, zohoContact) {
     throw new Error("Zoho signup invoice creation failed");
   }
 
-  const emailResult = await emailSignupInvoiceOnce(invoice, customer, tracking);
+  const emailResult = await emailSignupInvoiceOnce(
+    invoice,
+    customer,
+    tracking,
+    options
+  );
   await customerStore.recordSignupInvoiceDelivery(
     customer.id,
     invoice.invoice_id,
@@ -263,6 +276,7 @@ async function createSignupInvoice(customer, zohoContact) {
     total: Number(invoice.total || amount),
     period,
     emailed: emailResult.emailed,
+    emailReason: emailResult.reason,
   };
 }
 
@@ -270,11 +284,22 @@ async function createSignupInvoice(customer, zohoContact) {
  * Link customer in Zoho Books and issue the first subscription invoice.
  * When the Zoho contact already exists (matched by customer number / email /
  * phone / name), only link+update — do not auto-create signup or recurring
- * invoices. Use edit-customer options (or retry with forceBilling) for those.
- * ~3 Zoho API calls: contact lookup/create, invoice create, optional email.
+ * invoices (unless forceBilling). Use edit-customer options (or retry with
+ * forceBilling) for those.
+ *
+ * options.paymentAlreadyMade + options.mpesaCode — create signup invoice and
+ * mark it paid with the M-Pesa receipt (no email).
+ * options.forceEmail — email the signup invoice to the customer.
  */
 async function onboardNewCustomerBilling(customerId, options = {}) {
   const forceBilling = options.forceBilling === true;
+  const paymentAlreadyMade = options.paymentAlreadyMade === true;
+  const mpesaCode = options.mpesaCode
+    ? String(options.mpesaCode).trim().toUpperCase()
+    : "";
+  const forceEmail = options.forceEmail === true && !paymentAlreadyMade;
+  const skipEmail = options.skipEmail === true || paymentAlreadyMade;
+
   const ctx = await customerStore.getCustomerContext(customerId);
   if (!ctx) {
     return { ok: false, error: "Customer not found" };
@@ -304,7 +329,7 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
   }
 
   const customer = mapContextToCustomer(ctx, null);
-  const hasTrial = Boolean(ctx.trial_period_enabled);
+  const hasTrial = Boolean(ctx.trial_period_enabled) && !paymentAlreadyMade;
   const trialEndsAt =
     ctx.trial_ends_at ||
     (hasTrial ? computeTrialEndDate() : null);
@@ -329,8 +354,12 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     let invoice;
     let recurring = null;
 
+    // Advance payment / forced billing override the "existing contact → skip" rule.
+    const shouldBill =
+      contactCreated || forceBilling || paymentAlreadyMade;
+
     // Pre-existing Zoho contact: link only. Signup / recurring are opt-in on edit.
-    if (!contactCreated && !forceBilling) {
+    if (!shouldBill) {
       invoice = {
         created: false,
         skipped: true,
@@ -364,7 +393,19 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         throw e;
       }
     } else {
-      invoice = await createSignupInvoice(customer, zohoContact);
+      invoice = await createSignupInvoice(customer, zohoContact, {
+        forceEmail,
+        skipEmail,
+      });
+
+      if (paymentAlreadyMade && mpesaCode && invoice.invoiceId) {
+        invoice = await applyAdvanceMpesaToSignupInvoice({
+          customer,
+          invoice,
+          mpesaCode,
+        });
+      }
+
       if (RECURRING_ON_SIGNUP) {
         try {
           recurring = await ensureRecurringSubscription(customer, zohoContact, {
@@ -406,34 +447,50 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
           ? "zoho_customer_linked"
           : hasTrial
             ? "zoho_trial_started"
-            : invoice.created
-              ? "zoho_invoice_created"
-              : "zoho_customer_linked",
+            : invoice.paid
+              ? "zoho_invoice_updated"
+              : invoice.created
+                ? "zoho_invoice_created"
+                : "zoho_customer_linked",
         title: linkedExisting
           ? "Existing Zoho contact linked"
           : hasTrial
             ? "Trial period started"
-            : invoice.created
-              ? "Signup invoice created"
-              : invoice.reused
-                ? "Signup invoice already open"
-                : "Customer linked in Zoho",
+            : invoice.paid
+              ? "Signup invoice marked paid"
+              : invoice.created
+                ? "Signup invoice created"
+                : invoice.reused
+                  ? "Signup invoice already open"
+                  : "Customer linked in Zoho",
         message: linkedExisting
           ? `${customer.customerNumber}: linked existing Zoho contact — signup/recurring skipped (use edit to bill)`
           : hasTrial
-            ? `${customer.customerNumber}: 30-day trial — first invoice scheduled ${trialEndsAt}${
-                recurring?.recurringInvoiceId ? "" : ""
-              }`
-            : invoice.invoiceNumber
-              ? `${customer.customerNumber}: ${invoice.invoiceNumber}${
-                  invoice.emailed ? " — emailed to customer" : ""
+            ? `${customer.customerNumber}: 30-day trial — first invoice scheduled ${trialEndsAt}`
+            : invoice.paid
+              ? `${customer.customerNumber}: ${invoice.invoiceNumber || invoice.invoiceId} paid (M-Pesa ${mpesaCode})${
+                  invoice.receiptEmailed || invoice.emailed
+                    ? " — receipt emailed"
+                    : ""
                 }`
-              : `${customer.customerNumber} linked in Zoho Books`,
+              : invoice.invoiceNumber
+                ? `${customer.customerNumber}: ${invoice.invoiceNumber}${
+                    invoice.emailed ? " — emailed to customer" : ""
+                  }`
+                : `${customer.customerNumber} linked in Zoho Books`,
         source: "zoho",
-        status: invoice.emailed ? "pending" : "success",
+        status: invoice.paymentError
+          ? "failed"
+          : invoice.emailed || invoice.receiptEmailed
+            ? "pending"
+            : "success",
         customerRef: customer.customerNumber,
         amount: invoice.total ?? null,
-        referenceId: invoice.invoiceId || recurring?.recurringInvoiceId || null,
+        referenceId:
+          mpesaCode ||
+          invoice.invoiceId ||
+          recurring?.recurringInvoiceId ||
+          null,
       });
     } catch (e) {
       console.error("billing onboarding activity log failed:", e.message);
@@ -479,6 +536,170 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
       error: message,
     };
   }
+}
+
+async function applyAdvanceMpesaToSignupInvoice({
+  customer,
+  invoice,
+  mpesaCode,
+}) {
+  const { applyZohoPaymentForMpesa } = require("../controllers/mpesa.controller");
+  const { isMpesaPaymentAllocated } = require("./reconciliationStore");
+  const transactionStore = require("./transactionStore");
+
+  if (await isMpesaPaymentAllocated(mpesaCode)) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "mpesa_already_allocated",
+      mpesaCode,
+    };
+  }
+
+  let payAmount = Number(invoice.total || customer.packagePrice || 0);
+  try {
+    const existingTxn = await transactionStore.findByMpesaReceipt(mpesaCode);
+    if (existingTxn?.amount != null && Number(existingTxn.amount) > 0) {
+      payAmount = Number(existingTxn.amount);
+    }
+  } catch {
+    /* use invoice total */
+  }
+
+  if (!(payAmount > 0)) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "invalid_payment_amount",
+      mpesaCode,
+    };
+  }
+
+  const payResult = await applyZohoPaymentForMpesa({
+    customerNumber: customer.customerNumber,
+    amount: payAmount,
+    transactionId: mpesaCode,
+    source: "admin_signup",
+    forceInvoiceId: invoice.invoiceId,
+  });
+
+  if (!payResult?.paid) {
+    console.error(
+      "signup advance M-Pesa apply failed:",
+      payResult?.reason || payResult
+    );
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: payResult?.reason || "payment_failed",
+      payment: payResult || null,
+      mpesaCode,
+    };
+  }
+
+  const receiptEmail = await emailAdvancePaymentReceipt({
+    customer,
+    invoice,
+    payResult,
+    mpesaCode,
+    payAmount,
+  });
+
+  return {
+    ...invoice,
+    paid: true,
+    payment: payResult,
+    mpesaCode,
+    emailed: receiptEmail.emailed,
+    emailReason: receiptEmail.reason,
+    receiptEmailed: receiptEmail.emailed,
+  };
+}
+
+/**
+ * Email payment receipt after advance M-Pesa is applied:
+ * 1) Paid invoice PDF via Zoho invoice email (primary receipt)
+ * 2) Customer payment email when Zoho supports it for the payment id
+ */
+async function emailAdvancePaymentReceipt({
+  customer,
+  invoice,
+  payResult,
+  mpesaCode,
+  payAmount,
+}) {
+  const { emailCustomerPayment_JS } = require("../controllers/zoho.controller");
+  const toEmail = resolveEffectiveCustomerEmail(customer) || null;
+  if (!toEmail) {
+    return { emailed: false, reason: "no_email" };
+  }
+
+  const invoiceId = String(
+    invoice.invoiceId || payResult.invoice_id || ""
+  ).trim();
+  const invoiceNumber =
+    invoice.invoiceNumber || payResult.invoice_number || null;
+  const amountLabel = Number(
+    payResult.payment_amount || payAmount || invoice.total || 0
+  ).toLocaleString("en-KE", {
+    style: "currency",
+    currency: "KES",
+    maximumFractionDigits: 0,
+  });
+  const subject = `Payment receipt — ${
+    invoiceNumber || customer.customerNumber
+  }`;
+  const body = [
+    `<p>Dear ${[customer.firstName, customer.lastName].filter(Boolean).join(" ") || "Customer"},</p>`,
+    `<p>Thank you. We have received your M-Pesa payment <strong>${mpesaCode}</strong> for account <strong>${customer.customerNumber}</strong>.</p>`,
+    `<p>Amount: <strong>${amountLabel}</strong>${
+      invoiceNumber ? `<br/>Invoice: <strong>${invoiceNumber}</strong>` : ""
+    }</p>`,
+    `<p>Please find your payment receipt attached.</p>`,
+    `<p>Regards,<br/>Starlynx Billing</p>`,
+  ].join("");
+
+  let emailed = false;
+
+  if (invoiceId) {
+    try {
+      emailed = await emailInvoice_JS({
+        invoice_id: invoiceId,
+        to_mail_ids: [toEmail],
+        subject,
+        body,
+      });
+      if (emailed) {
+        await customerStore.recordSignupInvoiceDelivery(customer.id, invoiceId, {
+          emailed: true,
+        });
+      }
+    } catch (e) {
+      console.error("advance payment invoice receipt email failed:", e.message);
+    }
+  }
+
+  const paymentId = payResult.zoho_payment_id
+    ? String(payResult.zoho_payment_id)
+    : "";
+  if (paymentId) {
+    try {
+      const paymentEmailed = await emailCustomerPayment_JS({
+        payment_id: paymentId,
+        to_mail_ids: [toEmail],
+        subject,
+        body,
+      });
+      if (paymentEmailed) emailed = true;
+    } catch (e) {
+      console.warn("advance payment Zoho payment email failed:", e.message);
+    }
+  }
+
+  return {
+    emailed,
+    reason: emailed ? "receipt_sent" : "email_failed",
+  };
 }
 
 module.exports = {
