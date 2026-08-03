@@ -1005,9 +1005,11 @@ export function CustomerForm({
       } else if (res.zoho?.invoice?.paid) {
         toaster.create({
           title: "Customer created",
-          description: `${res.customer.customerNumber} — signup invoice ${
-            res.zoho.invoice.invoiceNumber || ""
-          } marked paid (M-Pesa ${res.zoho.invoice.mpesaCode || mpesaCode.trim().toUpperCase()})${
+          description: `${res.customer.customerNumber} — ${
+            res.zoho.invoice.paymentAttached
+              ? "Zoho payment attached"
+              : "signup invoice marked paid"
+          } (ref ${res.zoho.invoice.mpesaCode || mpesaCode.trim().toUpperCase()})${
             res.zoho.invoice.receiptEmailed || res.zoho.invoice.emailed
               ? " · receipt emailed"
               : ""
@@ -1346,19 +1348,19 @@ export function CustomerForm({
                   {trialPeriod
                     ? "Advance payment is unavailable during a free trial."
                     : paymentAlreadyMade
-                      ? "We will create the Zoho signup invoice, mark it paid with this M-Pesa code, and email the payment receipt to the customer."
+                      ? "Enter the Zoho Received Payments REFERENCE# (M-Pesa code). We will find that payment, attach it to this customer’s signup invoice, and email the receipt."
                       : "We will create the Zoho signup invoice and email it to the customer."}
                 </Field.HelperText>
               </Field.Root>
               {paymentAlreadyMade && !trialPeriod ? (
                 <Field.Root required gridColumn={{ md: "span 2" }}>
-                  <Field.Label>M-Pesa receipt code</Field.Label>
+                  <Field.Label>Payment REFERENCE# (M-Pesa code)</Field.Label>
                   <Input
                     value={mpesaCode}
                     onChange={(e) =>
                       setMpesaCode(e.target.value.toUpperCase().replace(/\s+/g, ""))
                     }
-                    placeholder="e.g. QJH7K2M9PL"
+                    placeholder="e.g. UH39A1LI2Y"
                     fontFamily="mono"
                     autoComplete="off"
                     disabled={fieldsDisabled}
@@ -1915,7 +1917,7 @@ export function CustomerForm({
               : trialPeriod
                 ? "Creates with a 30-day trial — no signup invoice."
                 : paymentAlreadyMade
-                  ? "Creates the customer, issues a signup invoice in Zoho Books, marks it paid with the M-Pesa code, and emails the payment receipt."
+                  ? "Creates the customer, finds the Zoho payment by REFERENCE#, attaches it to the signup invoice, and emails the receipt."
                   : customerType === "C2B"
                     ? "Creates the customer, issues a signup invoice in Zoho Books, and emails it to the customer."
                     : undefined

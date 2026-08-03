@@ -2517,6 +2517,7 @@ export const api = {
           emailed?: boolean;
           paid?: boolean;
           paymentError?: string;
+          paymentAttached?: boolean;
           mpesaCode?: string;
           receiptEmailed?: boolean;
           invoiceNumber?: string | null;

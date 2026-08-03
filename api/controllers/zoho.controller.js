@@ -571,6 +571,97 @@ const getCustomerPayments_JS = async (params = {}) => {
   }
 };
 
+/**
+ * Find a Zoho customer payment by REFERENCE# (Received Payments → Reference).
+ * Searches org-wide (not limited to one contact).
+ */
+const findCustomerPaymentByReference_JS = async (reference) => {
+  const ref = String(reference || "").trim();
+  if (!ref) return null;
+  const target = ref.toUpperCase();
+
+  const pickMatch = (list) =>
+    (list || []).find(
+      (p) =>
+        String(p?.reference_number || "")
+          .trim()
+          .toUpperCase() === target
+    ) || null;
+
+  try {
+    const exact = await withTimeout(
+      callZoho("customerpayments", "GET", null, {
+        reference_number: ref,
+        per_page: 50,
+        page: 1,
+      }),
+      12_000,
+      "find-payment-by-reference",
+    );
+    const exactHit = pickMatch(exact.customerpayments || exact.payments || []);
+    if (exactHit) return exactHit;
+
+    if (ref !== target) {
+      const upper = await withTimeout(
+        callZoho("customerpayments", "GET", null, {
+          reference_number: target,
+          per_page: 50,
+          page: 1,
+        }),
+        12_000,
+        "find-payment-by-reference-upper",
+      );
+      const upperHit = pickMatch(upper.customerpayments || upper.payments || []);
+      if (upperHit) return upperHit;
+    }
+
+    const searched = await withTimeout(
+      callZoho("customerpayments", "GET", null, {
+        search_text: ref,
+        per_page: 50,
+        page: 1,
+      }),
+      12_000,
+      "find-payment-by-search-text",
+    );
+    return pickMatch(searched.customerpayments || searched.payments || []);
+  } catch (error) {
+    console.error(
+      "findCustomerPaymentByReference_JS error:",
+      error.response?.data || error.message
+    );
+    return null;
+  }
+};
+
+const getCustomerPayment_JS = async (paymentId) => {
+  try {
+    if (!paymentId) return null;
+    const data = await withTimeout(
+      callZoho(`customerpayments/${paymentId}`, "GET"),
+      10_000,
+      "get-customer-payment",
+    );
+    return data.payment || data.customerpayment || data || null;
+  } catch (error) {
+    console.error(
+      "getCustomerPayment_JS error:",
+      error.response?.data || error.message
+    );
+    return null;
+  }
+};
+
+const updateCustomerPayment_JS = async (paymentId, payload = {}) => {
+  if (!paymentId) throw new Error("payment_id is required");
+  const data = await withTimeout(
+    callZoho(`customerpayments/${paymentId}`, "PUT", payload),
+    12_000,
+    "update-customer-payment",
+  );
+  return data.payment || data.customerpayment || data || null;
+};
+
 // Get customers (array, filtered by company prefixes)
 const getZohoCustomers_JS = async (params = {}) => {
   try {
@@ -1688,6 +1779,9 @@ module.exports = {
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
   getCustomerPayments_JS,
+  findCustomerPaymentByReference_JS,
+  getCustomerPayment_JS,
+  updateCustomerPayment_JS,
   getZohoCustomers_JS,
   getSpecificCustomer_JS,
   getContactFull_JS,

@@ -401,6 +401,7 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
       if (paymentAlreadyMade && mpesaCode && invoice.invoiceId) {
         invoice = await applyAdvanceMpesaToSignupInvoice({
           customer,
+          zohoContact,
           invoice,
           mpesaCode,
         });
@@ -540,18 +541,135 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
 
 async function applyAdvanceMpesaToSignupInvoice({
   customer,
+  zohoContact,
   invoice,
   mpesaCode,
 }) {
+  const {
+    findCustomerPaymentByReference_JS,
+    getCustomerPayment_JS,
+    updateCustomerPayment_JS,
+  } = require("../controllers/zoho.controller");
   const { applyZohoPaymentForMpesa } = require("../controllers/mpesa.controller");
   const { isMpesaPaymentAllocated } = require("./reconciliationStore");
   const transactionStore = require("./transactionStore");
 
+  const contactId = zohoContact?.contact_id
+    ? String(zohoContact.contact_id)
+    : null;
+  if (!contactId || !invoice.invoiceId) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "missing_zoho_contact_or_invoice",
+      mpesaCode,
+    };
+  }
+
+  // Prefer an existing Zoho Received Payment whose REFERENCE# matches the code.
+  let attached = null;
+  try {
+    const listed = await findCustomerPaymentByReference_JS(mpesaCode);
+    if (listed?.payment_id) {
+      const full =
+        (await getCustomerPayment_JS(listed.payment_id)) || listed;
+      attached = await attachZohoPaymentToSignupInvoice({
+        customer,
+        contactId,
+        invoice,
+        payment: full,
+        mpesaCode,
+        updateCustomerPayment_JS,
+      });
+    }
+  } catch (e) {
+    console.error(
+      "Zoho payment lookup/attach by reference failed:",
+      e.response?.data || e.message
+    );
+    attached = {
+      paid: false,
+      paymentError:
+        e.response?.data?.message || e.message || "attach_failed",
+    };
+  }
+
+  if (attached?.paid) {
+    const payAmount = Number(
+      attached.payment_amount || attached.payment?.amount || invoice.total || 0
+    );
+    const receiptEmail = await emailAdvancePaymentReceipt({
+      customer,
+      invoice,
+      payResult: {
+        invoice_id: invoice.invoiceId,
+        invoice_number: invoice.invoiceNumber,
+        payment_amount: payAmount,
+        zoho_payment_id: attached.zoho_payment_id,
+      },
+      mpesaCode,
+      payAmount,
+    });
+
+    try {
+      await logActivity({
+        eventType: "zoho_invoice_updated",
+        title: "Zoho payment attached",
+        message: `${customer.customerNumber}: attached Zoho payment REFERENCE# ${mpesaCode} to ${invoice.invoiceNumber || invoice.invoiceId}`,
+        source: "zoho",
+        status: "success",
+        customerRef: customer.customerNumber,
+        amount: payAmount,
+        referenceId: mpesaCode,
+      });
+    } catch {
+      /* ignore */
+    }
+
+    return {
+      ...invoice,
+      paid: true,
+      paymentAttached: true,
+      payment: attached.payment || null,
+      zohoPaymentId: attached.zoho_payment_id,
+      mpesaCode,
+      emailed: receiptEmail.emailed,
+      emailReason: receiptEmail.reason,
+      receiptEmailed: receiptEmail.emailed,
+    };
+  }
+
+  if (attached?.paymentError === "payment_already_on_invoice") {
+    const receiptEmail = await emailAdvancePaymentReceipt({
+      customer,
+      invoice,
+      payResult: {
+        invoice_id: invoice.invoiceId,
+        invoice_number: invoice.invoiceNumber,
+        payment_amount: Number(invoice.total || 0),
+        zoho_payment_id: attached.zoho_payment_id,
+      },
+      mpesaCode,
+      payAmount: Number(invoice.total || 0),
+    });
+    return {
+      ...invoice,
+      paid: true,
+      paymentAttached: true,
+      mpesaCode,
+      zohoPaymentId: attached.zoho_payment_id,
+      emailed: receiptEmail.emailed,
+      emailReason: receiptEmail.reason,
+      receiptEmailed: receiptEmail.emailed,
+    };
+  }
+
+  // No Zoho payment found (or attach failed) — create/apply payment as before.
   if (await isMpesaPaymentAllocated(mpesaCode)) {
     return {
       ...invoice,
       paid: false,
-      paymentError: "mpesa_already_allocated",
+      paymentError: attached?.paymentError || "mpesa_already_allocated",
       mpesaCode,
     };
   }
@@ -570,7 +688,7 @@ async function applyAdvanceMpesaToSignupInvoice({
     return {
       ...invoice,
       paid: false,
-      paymentError: "invalid_payment_amount",
+      paymentError: attached?.paymentError || "invalid_payment_amount",
       mpesaCode,
     };
   }
@@ -591,7 +709,10 @@ async function applyAdvanceMpesaToSignupInvoice({
     return {
       ...invoice,
       paid: false,
-      paymentError: payResult?.reason || "payment_failed",
+      paymentError:
+        attached?.paymentError ||
+        payResult?.reason ||
+        "payment_failed",
       payment: payResult || null,
       mpesaCode,
     };
@@ -613,6 +734,97 @@ async function applyAdvanceMpesaToSignupInvoice({
     emailed: receiptEmail.emailed,
     emailReason: receiptEmail.reason,
     receiptEmailed: receiptEmail.emailed,
+  };
+}
+
+async function attachZohoPaymentToSignupInvoice({
+  customer,
+  contactId,
+  invoice,
+  payment,
+  mpesaCode,
+  updateCustomerPayment_JS,
+}) {
+  const paymentId = String(payment.payment_id || "").trim();
+  if (!paymentId) {
+    return { paid: false, paymentError: "payment_not_found" };
+  }
+
+  const existingInvoices = Array.isArray(payment.invoices)
+    ? payment.invoices
+    : [];
+  const alreadyOnInvoice = existingInvoices.some(
+    (row) => String(row.invoice_id) === String(invoice.invoiceId)
+  );
+  if (alreadyOnInvoice) {
+    return {
+      paid: true,
+      paymentError: "payment_already_on_invoice",
+      zoho_payment_id: paymentId,
+      payment,
+      payment_amount: Number(payment.amount || 0),
+    };
+  }
+
+  const paymentAmount = Number(payment.amount || 0);
+  const unused = Number(
+    payment.unused_amount != null
+      ? payment.unused_amount
+      : payment.amount_refunded != null
+        ? Math.max(0, paymentAmount - Number(payment.amount_refunded || 0))
+        : paymentAmount
+  );
+  // Prefer unused credit; otherwise re-apply the full payment onto the signup invoice.
+  const invoiceTotal = Number(invoice.total || 0);
+  let amountApplied = unused > 0 ? unused : paymentAmount;
+  if (invoiceTotal > 0) {
+    amountApplied = Math.min(amountApplied, invoiceTotal);
+  }
+  if (!(amountApplied > 0)) {
+    return { paid: false, paymentError: "payment_no_usable_amount" };
+  }
+
+  const paymentMode =
+    String(payment.payment_mode || "").trim() ||
+    process.env.ZOHO_PAYMENT_MODE ||
+    "Mobile Money";
+
+  const updated = await updateCustomerPayment_JS(paymentId, {
+    customer_id: contactId,
+    payment_mode: paymentMode,
+    amount: paymentAmount > 0 ? paymentAmount : amountApplied,
+    date: payment.date || undefined,
+    reference_number: payment.reference_number || mpesaCode,
+    description:
+      payment.description ||
+      `Attached to ${customer.customerNumber} on signup (${mpesaCode})`,
+    invoices: [
+      {
+        invoice_id: invoice.invoiceId,
+        amount_applied: amountApplied,
+      },
+    ],
+  });
+
+  try {
+    const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
+    await integrationSnapshot.recordZohoPaymentSnapshot(customer.id, {
+      invoiceId: invoice.invoiceId,
+      invoiceNumber: invoice.invoiceNumber,
+      paymentId,
+      amount: amountApplied,
+      referenceId: mpesaCode,
+      remainingBalance: 0,
+    });
+  } catch (e) {
+    console.warn("Zoho payment snapshot after attach failed:", e.message);
+  }
+
+  return {
+    paid: true,
+    zoho_payment_id: paymentId,
+    payment: updated || payment,
+    payment_amount: amountApplied,
   };
 }
 
