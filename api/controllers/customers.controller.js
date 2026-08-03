@@ -27,6 +27,10 @@ const {
 } = require("../utils/upgradeQuote");
 const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
 const {
+  computeServiceDueDate,
+  computeTrialEndDate,
+} = require("../utils/billingPeriod");
+const {
   classifyPackageChangeByPrice,
   resolveBaselinePriceAtFrequency,
 } = require("../utils/packageChange");
@@ -2409,9 +2413,25 @@ async function createCustomer(req, res, next) {
 
     const created = await store.createCustomer(body);
 
+    // TISP BillingCycle stays Monthly; DueDate = payment/signup date + real frequency
+    // (quarterly → +3 months, yearly → +1 year, monthly → +1 month).
+    const paymentAnchor = new Date();
+    let serviceDueDate = body.trialPeriod
+      ? computeTrialEndDate(paymentAnchor)
+      : computeServiceDueDate({
+          anchorDate: paymentAnchor,
+          paymentFrequency: body.paymentFrequency,
+          customPeriodDays:
+            body.customPeriodDays ||
+            (body.customPeriodMonths
+              ? Number(body.customPeriodMonths) * 30
+              : null),
+        });
+
     const tispError = await syncNewCustomerToTisp(
       created.customerId,
-      created.customerNumber
+      created.customerNumber,
+      { dueDate: serviceDueDate }
     );
 
     let zoho = { ok: false, error: null, invoice: null };
@@ -2425,7 +2445,45 @@ async function createCustomer(req, res, next) {
         skipEmail: paymentAlreadyMade,
         paymentAlreadyMade,
         mpesaCode: paymentAlreadyMade ? mpesaCode : undefined,
+        serviceDueDate,
       });
+
+      // If advance payment carried a Zoho payment date, re-anchor TISP due from it.
+      const zohoPayDate =
+        zoho?.invoice?.payment?.date ||
+        zoho?.invoice?.payment?.payment_date ||
+        null;
+      if (
+        paymentAlreadyMade &&
+        zohoPayDate &&
+        !body.trialPeriod &&
+        String(body.customerType).toUpperCase() === "C2B"
+      ) {
+        const revisedDue = computeServiceDueDate({
+          anchorDate: zohoPayDate,
+          paymentFrequency: body.paymentFrequency,
+          customPeriodDays:
+            body.customPeriodDays ||
+            (body.customPeriodMonths
+              ? Number(body.customPeriodMonths) * 30
+              : null),
+        });
+        if (revisedDue && revisedDue !== serviceDueDate) {
+          serviceDueDate = revisedDue;
+          try {
+            await syncNewCustomerToTisp(
+              created.customerId,
+              created.customerNumber,
+              { dueDate: serviceDueDate }
+            );
+          } catch (e) {
+            console.warn(
+              "TISP due-date refresh after Zoho payment date failed:",
+              e.message
+            );
+          }
+        }
+      }
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho billing setup failed" };
     }
@@ -2460,7 +2518,9 @@ async function createCustomer(req, res, next) {
     return res.status(201).json({
       ok: true,
       customer,
-      tisp: tispError ? { ok: false, error: tispError } : { ok: true },
+      tisp: tispError
+        ? { ok: false, error: tispError }
+        : { ok: true, dueDate: serviceDueDate },
       zoho: zoho.ok
         ? {
             ok: true,

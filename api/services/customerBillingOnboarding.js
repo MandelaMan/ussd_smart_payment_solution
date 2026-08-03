@@ -16,6 +16,8 @@ const {
   computeBillingPeriod,
   computeInvoiceDueDate,
   computeTrialEndDate,
+  computeServiceDueDate,
+  computeRecurringStartBeforeDue,
 } = require("../utils/billingPeriod");
 const {
   buildZohoInvoiceNumber,
@@ -32,9 +34,6 @@ const ZOHO_INVOICE_TAX_INCLUSIVE =
   "false";
 const SIGNUP_INVOICE_EMAIL_ENABLED =
   String(process.env.ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED || "false").toLowerCase() ===
-  "true";
-const RECURRING_ON_SIGNUP =
-  String(process.env.ZOHO_RECURRING_ON_SIGNUP || "false").toLowerCase() ===
   "true";
 
 const EMAILED_INVOICE_STATUSES = new Set([
@@ -407,14 +406,35 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         });
       }
 
-      if (RECURRING_ON_SIGNUP) {
-        try {
-          recurring = await ensureRecurringSubscription(customer, zohoContact, {
-            startDate: invoice.period?.endDate,
-          });
-        } catch (e) {
-          console.error("recurring invoice setup failed:", e.message);
+      // Always create/ensure recurring profile after signup invoice
+      // (both advance-paid and unpaid → invoice emailed paths).
+      // Start = service/TISP due date minus 7 days (not the due date itself).
+      const serviceDue =
+        options.serviceDueDate ||
+        computeServiceDueDate({
+          paymentFrequency: customer.paymentFrequency,
+          customPeriodDays: customer.customPeriodDays,
+        });
+      const recurringStart =
+        computeRecurringStartBeforeDue(serviceDue) ||
+        invoice.period?.endDate;
+      try {
+        recurring = await ensureRecurringSubscription(customer, zohoContact, {
+          startDate: recurringStart,
+        });
+        if (recurring && typeof recurring === "object") {
+          recurring.serviceDueDate = serviceDue;
+          recurring.startDate = recurringStart;
         }
+      } catch (e) {
+        console.error("recurring invoice setup failed:", e.message);
+        recurring = {
+          created: false,
+          updated: false,
+          error: e.message || "recurring_setup_failed",
+          serviceDueDate: serviceDue,
+          startDate: recurringStart,
+        };
       }
     }
     invalidateCustomerZoho(customerId);

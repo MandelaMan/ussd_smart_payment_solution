@@ -102,14 +102,52 @@ function computeTrialEndDate(anchorDate = new Date(), timeZone = DEFAULT_TZ) {
     .format("YYYY-MM-DD");
 }
 
+/**
+ * Service / TISP due date = payment (or signup) date + billing frequency period.
+ * Quarterly → +3 months, yearly → +1 year, monthly → +1 month, custom → +N days.
+ * TISP BillingCycle stays Monthly; only DueDate reflects the real period.
+ */
+function computeServiceDueDate({
+  anchorDate = new Date(),
+  paymentFrequency = "monthly",
+  customPeriodDays = null,
+  timeZone = DEFAULT_TZ,
+} = {}) {
+  return computeBillingPeriod({
+    anchorDate,
+    paymentFrequency,
+    customPeriodDays,
+    timeZone,
+  }).endDate;
+}
+
+/** Zoho recurring profile starts this many days before the TISP/service due date. */
+const RECURRING_LEAD_DAYS_BEFORE_DUE = 7;
+
+function computeRecurringStartBeforeDue(
+  dueDate,
+  leadDays = RECURRING_LEAD_DAYS_BEFORE_DUE,
+  timeZone = DEFAULT_TZ
+) {
+  if (!dueDate) return null;
+  return moment
+    .tz(dueDate, timeZone)
+    .startOf("day")
+    .subtract(Number(leadDays) > 0 ? Number(leadDays) : RECURRING_LEAD_DAYS_BEFORE_DUE, "days")
+    .format("YYYY-MM-DD");
+}
+
 module.exports = {
   DEFAULT_TZ,
   INVOICE_DUE_DAYS,
   TRIAL_PERIOD_DAYS,
+  RECURRING_LEAD_DAYS_BEFORE_DUE,
   billingFrequencyLabel,
   computeBillingPeriod,
   computeInvoiceDueDate,
   computeTrialEndDate,
+  computeServiceDueDate,
+  computeRecurringStartBeforeDue,
   buildPackageLabel,
   buildSubscriptionInvoiceDescription,
 };

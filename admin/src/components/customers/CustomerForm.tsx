@@ -1013,6 +1013,10 @@ export function CustomerForm({
             res.zoho.invoice.receiptEmailed || res.zoho.invoice.emailed
               ? " · receipt emailed"
               : ""
+          }${
+            res.zoho.recurring?.created || res.zoho.recurring?.updated
+              ? " · recurring set up"
+              : ""
           }`.trim(),
           type: "success",
           duration: 12000,
@@ -1038,10 +1042,17 @@ export function CustomerForm({
         ) {
           invoiceBits.push("invoice created");
         }
+        if (res.zoho?.recurring?.created || res.zoho?.recurring?.updated) {
+          invoiceBits.push("recurring set up");
+        }
         toaster.create({
           title: "Customer created",
           description: trialPeriod
-            ? `${res.customer.customerNumber} — 30-day trial, billing starts after trial`
+            ? `${res.customer.customerNumber} — 30-day trial, billing starts after trial${
+                res.zoho?.recurring?.created || res.zoho?.recurring?.updated
+                  ? " · recurring set up"
+                  : ""
+              }`
             : invoiceBits.length
               ? `${res.customer.customerNumber} — ${invoiceBits.join(" · ")}`
               : res.customer.customerNumber,
