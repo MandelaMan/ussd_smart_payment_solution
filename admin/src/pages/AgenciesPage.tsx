@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { FiBriefcase, FiChevronDown, FiChevronRight } from "react-icons/fi";
 import { api, type Agency, type ListPagination } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { canMutateAgencies } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
 import { AppDialog } from "../components/ui/AppDialog";

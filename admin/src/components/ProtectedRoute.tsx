@@ -1,10 +1,21 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { AppShellSkeleton } from "./PageSkeletons";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
+import { getSessionCache } from "../lib/authSessionCache";
 import { normalizeRole, type UserRole } from "../lib/rbac";
+import type { User } from "../lib/api";
+
+function useStableAuth() {
+  const { user, loading } = useAuth();
+  const cached = getSessionCache()?.user as User | undefined;
+  // Prefer live context; fall back to HMR-stable cache so the shell never blanks.
+  const stableUser = user ?? cached ?? null;
+  const stableLoading = loading && !stableUser;
+  return { user: stableUser, loading: stableLoading };
+}
 
 export function ProtectedRoute() {
-  const { user, loading } = useAuth();
+  const { user, loading } = useStableAuth();
   const location = useLocation();
 
   if (loading) {
@@ -24,7 +35,7 @@ export function RoleRoute({
   roles: UserRole[];
   redirectTo?: string;
 }) {
-  const { user, loading } = useAuth();
+  const { user, loading } = useStableAuth();
   if (loading) return <AppShellSkeleton />;
   if (!user || !roles.includes(normalizeRole(user.role))) {
     return <Navigate to={redirectTo} replace />;

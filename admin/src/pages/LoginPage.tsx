@@ -24,7 +24,7 @@ import {
   FiUsers,
 } from "react-icons/fi";
 import { api } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { BRAND } from "../theme";
 
 const BRAND_NAME = "SUL Bix";

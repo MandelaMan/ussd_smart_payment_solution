@@ -21,7 +21,7 @@ import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useMobileViewport } from "../../hooks/useMobileViewport";
 import { api, type Customer, type CustomerEmailMessage } from "../../lib/api";
 import { canMutateCustomers } from "../../lib/rbac";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { toaster } from "../ui/toaster";
 import { ModalShell } from "../ui/ModalShell";
 import { fieldControlStyles } from "../../theme";

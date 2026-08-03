@@ -12,7 +12,7 @@ import { DataTable, dataTableCellProps, DataTableColumnHeader } from "../ui/Data
 import { SkeletonBlock } from "../ui/SkeletonBlock";
 import { TextStatus } from "../ui/TextStatus";
 import { toaster } from "../ui/toaster";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { canOperateFinance } from "../../lib/rbac";
 
 type Props = {

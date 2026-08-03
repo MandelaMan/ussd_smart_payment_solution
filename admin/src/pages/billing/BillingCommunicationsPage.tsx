@@ -1,7 +1,7 @@
 import { BillingCommunicationsTable } from "../../components/billing/BillingCommunicationsTable";
 import { BillingModuleShell } from "../../components/billing/BillingModuleShell";
 import { useBillingReconciliation } from "../../components/billing/BillingReconciliationContext";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { BILLING_COMMUNICATIONS_MODULE, moduleCount } from "../../lib/billingReconciliationNav";
 import { canOperateFinance } from "../../lib/rbac";
 

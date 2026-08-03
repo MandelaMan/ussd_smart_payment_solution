@@ -24,7 +24,7 @@ import {
   FiSend,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import {
   canAccessConfig,
   canAccessFinance,

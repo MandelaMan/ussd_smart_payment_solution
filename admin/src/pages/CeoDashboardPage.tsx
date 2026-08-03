@@ -25,7 +25,7 @@ import {
   formatMetricCurrency,
   type BiDashboard,
 } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { DashboardSkeleton } from "../components/PageSkeletons";
 import { PageErrorBanner, PAGE_STACK_GAP } from "../components/ui/pageLayout";

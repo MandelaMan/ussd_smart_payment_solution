@@ -2,217 +2,13 @@ const { query } = require("../config/db");
 const { getReportAnalytics } = require("./reportAnalyticsStore");
 const { getLeadStats } = require("./leadStore");
 const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
-
-const MRR_EXPR = `
-  CASE c.payment_frequency
-    WHEN 'monthly' THEN c.package_price
-    WHEN 'quarterly' THEN c.package_price / 3
-    WHEN 'yearly' THEN c.package_price / 12
-    WHEN 'custom' THEN (c.package_price / GREATEST(COALESCE(c.custom_period_days, 30), 1)) * 30
-    ELSE c.package_price
-  END
-`;
-
-function resolveDateRange(from, to) {
-  const now = new Date();
-  const resolvedTo = to || now.toISOString().slice(0, 10);
-  const fromDate = from
-    ? new Date(from)
-    : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const resolvedFrom = from || fromDate.toISOString().slice(0, 10);
-  return { from: resolvedFrom, to: resolvedTo };
-}
-
-function prevPeriodRange(from, to) {
-  const start = new Date(from);
-  const end = new Date(to);
-  const days = Math.max(1, Math.ceil((end - start) / (24 * 60 * 60 * 1000)) + 1);
-  const prevEnd = new Date(start.getTime() - 24 * 60 * 60 * 1000);
-  const prevStart = new Date(prevEnd.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-  return {
-    from: prevStart.toISOString().slice(0, 10),
-    to: prevEnd.toISOString().slice(0, 10),
-  };
-}
-
-function pctChange(current, previous) {
-  const c = Number(current) || 0;
-  const p = Number(previous) || 0;
-  if (p === 0) return c > 0 ? 100 : 0;
-  return Math.round(((c - p) / p) * 1000) / 10;
-}
-
-function buildCustomerFilters(filters = {}) {
-  const clauses = [];
-  const params = [];
-
-  if (filters.buildingId) {
-    clauses.push("c.building_id = ?");
-    params.push(Number(filters.buildingId));
-  }
-  if (filters.productId) {
-    clauses.push("c.product_id = ?");
-    params.push(Number(filters.productId));
-  }
-  if (filters.agencyId) {
-    clauses.push("c.agency_id = ?");
-    params.push(Number(filters.agencyId));
-  }
-  if (filters.customerStatus) {
-    clauses.push("c.status = ?");
-    params.push(String(filters.customerStatus));
-  }
-  if (filters.subscriptionStatus) {
-    clauses.push("LOWER(c.subscription_status) LIKE ?");
-    params.push(`%${String(filters.subscriptionStatus).toLowerCase()}%`);
-  }
-  if (filters.hasDstv === "true" || filters.hasDstv === true) {
-    clauses.push("p.has_dstv = 1");
-  } else if (filters.hasDstv === "false" || filters.hasDstv === false) {
-    clauses.push("(p.has_dstv = 0 OR p.has_dstv IS NULL)");
-  }
-  if (filters.internetOnly === "true") {
-    clauses.push("(p.has_dstv = 0 OR p.has_dstv IS NULL)");
-  } else if (filters.internetTv === "true") {
-    clauses.push("p.has_dstv = 1");
-  }
-
-  const sql = clauses.length ? ` AND ${clauses.join(" AND ")}` : "";
-  return { sql, params };
-}
-
-async function getKpiSnapshot(filters, range) {
-  const { sql: filterSql, params: filterParams } = buildCustomerFilters(filters);
-  const dateParams = [range.from, `${range.to} 23:59:59`];
-  const prev = prevPeriodRange(range.from, range.to);
-  const prevDateParams = [prev.from, `${prev.to} 23:59:59`];
-
-  const [[counts], [prevCounts], [mrrRow], [revenueNow], [revenuePrev], [outstanding], [dstvRow]] =
-    await Promise.all([
-      query(
-        `SELECT
-          SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS active,
-          SUM(CASE WHEN c.status = 'active' AND LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active' THEN 1 ELSE 0 END) AS tisp_active,
-          SUM(CASE
-            WHEN c.status <> 'active' THEN 0
-            WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%pause%' THEN 0
-            WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%cancel%' THEN 0
-            WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%' THEN 1
-            WHEN c.subscription_status IS NULL
-              OR TRIM(c.subscription_status) = ''
-              OR LOWER(TRIM(c.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
-              OR LOWER(TRIM(c.subscription_status)) <> 'active'
-            THEN 1 ELSE 0 END) AS suspended,
-          SUM(CASE WHEN c.status = 'active' AND (LOWER(c.subscription_status) LIKE '%disconnect%' OR LOWER(c.subscription_status) LIKE '%inactive%') THEN 1 ELSE 0 END) AS disconnected,
-          SUM(CASE WHEN c.created_at >= ? AND c.created_at <= ? THEN 1 ELSE 0 END) AS new_customers,
-          SUM(CASE WHEN c.status = 'cancelled' AND c.updated_at >= ? AND c.updated_at <= ? THEN 1 ELSE 0 END) AS churned
-         FROM customers c
-         LEFT JOIN products p ON p.id = c.product_id
-         WHERE 1=1${filterSql}`,
-        [...dateParams, ...dateParams, ...filterParams]
-      ),
-      query(
-        `SELECT
-          SUM(CASE WHEN c.created_at >= ? AND c.created_at <= ? THEN 1 ELSE 0 END) AS new_customers,
-          SUM(CASE WHEN c.status = 'cancelled' AND c.updated_at >= ? AND c.updated_at <= ? THEN 1 ELSE 0 END) AS churned,
-          SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS active
-         FROM customers c
-         LEFT JOIN products p ON p.id = c.product_id
-         WHERE 1=1${filterSql}`,
-        [...prevDateParams, ...prevDateParams, ...filterParams]
-      ),
-      query(
-        `SELECT COALESCE(SUM(${MRR_EXPR}), 0) AS mrr
-         FROM customers c
-         LEFT JOIN products p ON p.id = c.product_id
-         WHERE c.status = 'active'${filterSql}`,
-        filterParams
-      ),
-      query(
-        `SELECT COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue
-         FROM payment_transactions pt
-         JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
-         LEFT JOIN products p ON p.id = c.product_id
-         WHERE pt.created_at >= ? AND pt.created_at <= ?${filterSql}`,
-        [...dateParams, ...filterParams]
-      ),
-      query(
-        `SELECT COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue
-         FROM payment_transactions pt
-         JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
-         LEFT JOIN products p ON p.id = c.product_id
-         WHERE pt.created_at >= ? AND pt.created_at <= ?${filterSql}`,
-        [...prevDateParams, ...filterParams]
-      ),
-      query(
-        `SELECT COALESCE(SUM(zi.balance_due), 0) AS outstanding
-         FROM zoho_customer_invoices zi
-         JOIN customers c ON c.id = zi.customer_id
-         LEFT JOIN products p ON p.id = c.product_id
-         WHERE zi.balance_due > 0${filterSql}`,
-        filterParams
-      ).catch(() => [{ outstanding: 0 }]),
-      query(
-        `SELECT
-          SUM(CASE WHEN c.status = 'active' AND p.has_dstv = 1 THEN 1 ELSE 0 END) AS tv_subscribers
-         FROM customers c
-         JOIN products p ON p.id = c.product_id
-         WHERE 1=1${filterSql}`,
-        filterParams
-      ),
-    ]);
-
-  const active = Number(counts?.active || 0);
-  const newCustomers = Number(counts?.new_customers || 0);
-  const churned = Number(counts?.churned || 0);
-  const prevNew = Number(prevCounts?.new_customers || 0);
-  const prevChurned = Number(prevCounts?.churned || 0);
-  const prevActive = Number(prevCounts?.active || 0);
-  const mrr = Math.round(Number(mrrRow?.mrr || 0));
-  const collected = Number(revenueNow?.revenue || 0);
-  const collectedPrev = Number(revenuePrev?.revenue || 0);
-  const outstandingBal = Number(outstanding?.outstanding || 0);
-  const expectedMonth = mrr;
-  const collectionRate =
-    expectedMonth > 0 ? Math.round((collected / expectedMonth) * 1000) / 10 : 0;
-  const churnRate =
-    active + churned > 0 ? Math.round((churned / (active + churned)) * 1000) / 10 : 0;
-  const prevChurnRate =
-    prevActive + prevChurned > 0
-      ? Math.round((prevChurned / (prevActive + prevChurned)) * 1000) / 10
-      : 0;
-  const arpu = active > 0 ? Math.round(mrr / active) : 0;
-  // Lifetime value from ARPU ÷ monthly churn; fall back to 24× ARPU when churn is zero.
-  const monthlyChurnFraction = churnRate / 100;
-  const clvEstimate =
-    monthlyChurnFraction > 0
-      ? Math.round(arpu / monthlyChurnFraction)
-      : Math.round(arpu * 24);
-
-  return {
-    totalActiveCustomers: active,
-    totalSuspendedCustomers: Number(counts?.suspended || 0),
-    totalDisconnectedCustomers: Number(counts?.disconnected || 0),
-    mrr,
-    revenueCollectedThisMonth: Math.round(collected),
-    outstandingInvoiceBalance: Math.round(outstandingBal),
-    collectionRate,
-    newCustomersThisMonth: newCustomers,
-    customerChurnRate: churnRate,
-    activeTvSubscribers: Number(dstvRow?.tv_subscribers || 0),
-    arpu,
-    avgCustomerLifetimeValue: clvEstimate,
-    avgInstallationTimeDays: null,
-    activeSupportTickets: null,
-    networkUptimePct: null,
-    trends: {
-      revenueCollected: pctChange(collected, collectedPrev),
-      newCustomers: pctChange(newCustomers, prevNew),
-      mrr: null,
-      churnRate: pctChange(churnRate, prevChurnRate),
-    },
-  };
-}
+const {
+  MRR_EXPR,
+  resolveDateRange,
+  buildCustomerFilters,
+  getKpiSnapshot,
+  getExpectedCollections,
+} = require("./kpiEngine");
 
 async function getMonthlyRevenueSeries(filters, months = 12) {
   const { sql: filterSql, params: filterParams } = buildCustomerFilters(filters);
@@ -477,6 +273,7 @@ async function getBiDashboard(filters = {}) {
   const range = resolveDateRange(filters.from, filters.to);
   const [
     kpis,
+    expected,
     reportData,
     monthlyRevenue,
     revenueByPackage,
@@ -491,6 +288,10 @@ async function getBiDashboard(filters = {}) {
     leadStats,
   ] = await Promise.all([
     getKpiSnapshot(filters, range),
+    getExpectedCollections({ days: 30 }).catch(() => ({
+      expectedCollections: 0,
+      invoiceCount: 0,
+    })),
     getReportAnalytics(range),
     getMonthlyRevenueSeries(filters, 12),
     getRevenueByPackage(filters, range),
@@ -504,6 +305,9 @@ async function getBiDashboard(filters = {}) {
     getCollectionPerformance(filters, 12),
     getLeadStats().catch(() => ({ total: 0, byStatus: {}, bySource: {} })),
   ]);
+
+  kpis.expectedCollections = expected.expectedCollections;
+  kpis.expectedInvoiceCount = expected.invoiceCount;
 
   const churnSeries = (reportData.subscriberGrowth || []).map((row) => {
     const active = kpis.totalActiveCustomers || 1;
@@ -572,28 +376,15 @@ async function getBiDashboard(filters = {}) {
       debtAging,
       paymentStatus,
     },
-    operations: {
-      installations: { available: false, message: "Installation module not yet integrated — connect field-service data to enable." },
-      supportTickets: { available: false, message: "Support ticket system not connected — use Logs for integration errors." },
-      avgInstallTime: [],
-    },
-    network: {
-      uptime: { today: null, monthly: null, annual: null, message: "Network monitoring not connected." },
-      bandwidth: [],
-      speedComplaints: [],
-      outagesByArea: [],
-    },
+    // Operations / Network reserved for Phase 2 — omitted until data sources exist.
     insights: {
       upgradeDowngrade: upgradeTrend,
       referralSources: buildLeadSources(leadStats),
-      profitMarginByPackage: [],
-      routerInventory: [],
-      dataConsumption: [],
-      peakUsageHeatmap: [],
     },
     meta: {
       generatedAt: new Date().toISOString(),
       cached: false,
+      metricEngine: "kpiEngine",
     },
   };
 }

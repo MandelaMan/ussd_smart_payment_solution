@@ -1,12 +1,51 @@
 const { query } = require("../config/db");
 const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
+const {
+  getKpiSnapshot,
+  getExpectedCollections,
+  resolveDateRange: resolveKpiDateRange,
+} = require("./kpiEngine");
 
+/**
+ * Report catalog. `family` is the Reports IA grouping.
+ * `category` kept for backward compatibility (= family for most).
+ */
 const REPORT_DEFINITIONS = [
+  // —— Executive ——
+  {
+    id: "business-health-summary",
+    title: "Business Health Summary",
+    description: "Canonical KPIs from the shared metric engine for the selected period.",
+    category: "Executive",
+    family: "Executive",
+    dateFilter: true,
+  },
+  {
+    id: "executive-monthly",
+    title: "Executive Monthly Report",
+    description: "Board-ready monthly pack: revenue, collections, customers, churn, and packages.",
+    category: "Executive",
+    family: "Executive",
+    dateFilter: false,
+    monthFilter: true,
+  },
+  {
+    id: "executive-weekly",
+    title: "Executive Weekly Summary",
+    description: "Last-7-day KPI snapshot for leadership stand-ups.",
+    category: "Executive",
+    family: "Executive",
+    dateFilter: true,
+    available: true,
+  },
+
+  // —— Financial ——
   {
     id: "revenue-summary",
     title: "Revenue Summary",
     description: "Daily revenue, transaction counts, and success/failure breakdown.",
     category: "Financial",
+    family: "Financial",
     dateFilter: true,
   },
   {
@@ -14,13 +53,7 @@ const REPORT_DEFINITIONS = [
     title: "Payment Transactions",
     description: "All M-Pesa payment transactions in the selected period.",
     category: "Financial",
-    dateFilter: true,
-  },
-  {
-    id: "failed-payments",
-    title: "Failed Payments",
-    description: "Failed M-Pesa transactions with result codes and descriptions.",
-    category: "Financial",
+    family: "Financial",
     dateFilter: true,
   },
   {
@@ -28,91 +61,7 @@ const REPORT_DEFINITIONS = [
     title: "Channel Breakdown",
     description: "Transaction volume and revenue grouped by payment channel.",
     category: "Financial",
-    dateFilter: true,
-  },
-  {
-    id: "top-customers",
-    title: "Top Customers by Spend",
-    description: "Highest-paying customers ranked by total successful payments.",
-    category: "Customers",
-    dateFilter: true,
-  },
-  {
-    id: "subscriber-census",
-    title: "Subscriber Census",
-    description: "Active and cancelled subscribers grouped by building and type.",
-    category: "Customers",
-    dateFilter: false,
-  },
-  {
-    id: "package-distribution",
-    title: "Package Distribution",
-    description: "Subscriber counts per package, Mbps tier, and building.",
-    category: "Customers",
-    dateFilter: false,
-  },
-  {
-    id: "customers-by-pop-package",
-    title: "Customers by POP & Package",
-    description:
-      "Active customers grouped by POP (building) and package, with package amounts and totals.",
-    category: "Customers",
-    dateFilter: false,
-  },
-  {
-    id: "building-occupancy",
-    title: "Building Occupancy",
-    description: "Active customers and unique apartments per building.",
-    category: "Operations",
-    dateFilter: false,
-  },
-  {
-    id: "agency-performance",
-    title: "Agency Performance",
-    description: "Customer counts and attributed revenue per agency.",
-    category: "Operations",
-    dateFilter: true,
-  },
-  {
-    id: "tisp-sync-health",
-    title: "TISP Sync Health",
-    description: "Customer TISP provisioning status with error details.",
-    category: "Integrations",
-    dateFilter: false,
-  },
-  {
-    id: "customer-lifecycle",
-    title: "Customer Lifecycle Events",
-    description: "Upgrades, downgrades, apartment switches, and cancellations.",
-    category: "Customers",
-    dateFilter: true,
-  },
-  {
-    id: "api-errors",
-    title: "API Error Log",
-    description: "Failed API calls across TISP, Zoho, and M-Pesa services.",
-    category: "Integrations",
-    dateFilter: true,
-  },
-  {
-    id: "new-subscribers",
-    title: "New Subscribers",
-    description: "Customers created during the selected period.",
-    category: "Customers",
-    dateFilter: true,
-  },
-  {
-    id: "integration-events",
-    title: "Integration Events",
-    description: "Zoho and TISP integration events with outcomes.",
-    category: "Integrations",
-    dateFilter: true,
-  },
-  {
-    id: "collection-efficiency",
-    title: "Collection Efficiency",
-    description: "Daily payment success rates and collection performance.",
-    category: "Financial",
+    family: "Financial",
     dateFilter: true,
   },
   {
@@ -120,53 +69,497 @@ const REPORT_DEFINITIONS = [
     title: "ARPU by Building",
     description: "Average revenue per paying customer by property.",
     category: "Financial",
+    family: "Financial",
     dateFilter: true,
   },
   {
-    id: "churn-analysis",
-    title: "Churn Analysis",
-    description: "Cancelled subscribers with tenure and last package details.",
-    category: "Customers",
+    id: "outstanding-invoices",
+    title: "Outstanding Invoices",
+    description: "Zoho invoices with balance due greater than zero.",
+    category: "Financial",
+    family: "Financial",
+    dateFilter: false,
+  },
+  {
+    id: "ar-aging",
+    title: "Accounts Receivable Aging",
+    description: "Outstanding invoice balances bucketed 0–30 / 31–60 / 61–90 / 90+ days.",
+    category: "Financial",
+    family: "Financial",
+    dateFilter: false,
+  },
+  {
+    id: "collections-summary",
+    title: "Collections Summary",
+    description: "Successful collections by day with totals for the period.",
+    category: "Financial",
+    family: "Financial",
     dateFilter: true,
   },
   {
-    id: "monthly-payment-churn",
-    title: "Monthly Payment Churn",
-    description:
-      "Customers churned in a selected month from cancellations, disconnects, and unpaid/long-unpaid billing.",
-    category: "Customers",
-    dateFilter: false,
-    monthFilter: true,
+    id: "revenue-by-package",
+    title: "Revenue by Package",
+    description: "Successful payment revenue attributed by customer package.",
+    category: "Financial",
+    family: "Financial",
+    dateFilter: true,
   },
   {
-    id: "payment-frequency-mix",
-    title: "Billing Frequency Mix",
-    description: "Active subscribers grouped by monthly, quarterly, or yearly billing.",
-    category: "Customers",
-    dateFilter: false,
+    id: "revenue-by-customer",
+    title: "Revenue by Customer",
+    description: "Highest-paying customers ranked by total successful payments.",
+    category: "Financial",
+    family: "Financial",
+    dateFilter: true,
   },
   {
-    id: "dstv-iuc-roster",
-    title: "DSTV IUC / Serial Roster",
-    description:
-      "DSTV customers with IUC/serial number, customer number, building, and Active / Suspended status.",
-    category: "Customers",
-    dateFilter: false,
+    id: "revenue-by-region",
+    title: "Revenue by Region",
+    description: "Collected revenue grouped by building / POP.",
+    category: "Financial",
+    family: "Financial",
+    dateFilter: true,
+  },
+  {
+    id: "forecast-vs-actual-revenue",
+    title: "Forecast vs Actual Revenue",
+    description: "MRR obligation vs collected revenue for the selected period.",
+    category: "Financial",
+    family: "Financial",
+    dateFilter: true,
+  },
+  {
+    id: "deferred-revenue",
+    title: "Deferred Revenue",
+    description: "Requires prepaid / unearned revenue tracking — not yet wired.",
+    category: "Financial",
+    family: "Financial",
+    dateFilter: true,
+    available: false,
+  },
+
+  // —— Billing ——
+  {
+    id: "failed-payments",
+    title: "Failed Payments",
+    description: "Failed M-Pesa transactions with result codes and descriptions.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: true,
+  },
+  {
+    id: "collection-efficiency",
+    title: "Collection Efficiency",
+    description: "Daily payment success rates and collection performance.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: true,
   },
   {
     id: "billing-reconciliation",
     title: "Billing Reconciliation",
     description: "Customers with billing, payment, and service status mismatches.",
-    category: "Financial",
+    category: "Billing",
+    family: "Billing",
     dateFilter: false,
   },
   {
-    id: "upcoming-invoices",
-    title: "Upcoming Invoices",
+    id: "invoices-vs-payments",
+    title: "Invoices vs Payments",
     description:
-      "Invoices scheduled to go out in the next 7 days and anticipated collection amount.",
-    category: "Financial",
+      "Zoho Books invoices raised in a selected month versus Zoho payments received that month.",
+    category: "Billing",
+    family: "Billing",
     dateFilter: false,
+    monthFilter: true,
+  },
+  {
+    id: "customer-monthly-billing-matrix",
+    title: "Customer Monthly Billing Matrix",
+    description:
+      "Customers × selected months in a year: invoice amount/date and payment amount/date per month. Choose one month, a range, or all months.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: false,
+    yearFilter: true,
+    monthRangeFilter: true,
+  },
+  {
+    id: "payment-frequency-mix",
+    title: "Billing Frequency Mix",
+    description: "Active subscribers grouped by monthly, quarterly, or yearly billing.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: false,
+  },
+  {
+    id: "monthly-payment-churn",
+    title: "Monthly Payment Churn",
+    description:
+      "Customers churned in a selected month from cancellations, disconnects, and unpaid billing.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: false,
+    monthFilter: true,
+  },
+  {
+    id: "suspended-billing",
+    title: "Suspended Billing",
+    description: "Active accounts with suspended / non-active subscription status.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: false,
+  },
+  {
+    id: "failed-billing",
+    title: "Failed Billing",
+    description: "Alias of failed payment attempts for billing ops.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: true,
+  },
+  {
+    id: "missing-recurring-invoices",
+    title: "Missing Recurring Invoices",
+    description: "Requires Zoho recurring gap detection — Phase 1 catalog; runner pending.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: false,
+    available: false,
+  },
+  {
+    id: "credit-notes-adjustments",
+    title: "Credit Notes & Adjustments",
+    description: "Requires Zoho credit note sync — not yet available.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: true,
+    available: false,
+  },
+
+  // —— Forecasting ——
+  {
+    id: "upcoming-invoices",
+    title: "Upcoming Invoice Schedule",
+    description: "Invoices scheduled in the near term and anticipated collection amount.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+  {
+    id: "expected-collections",
+    title: "Expected Collections",
+    description: "Forward-looking expected invoice value for the next 30 days.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+  {
+    id: "renewals-due",
+    title: "Renewals Due",
+    description: "Customers with upcoming recurring invoice dates.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+  {
+    id: "mrr-arr-forecast",
+    title: "MRR / ARR Forecast",
+    description: "Current secured MRR and ARR from the metric engine.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+  {
+    id: "at-risk-revenue",
+    title: "At-Risk Revenue",
+    description: "Outstanding balances on overdue Zoho invoices.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+  {
+    id: "cash-flow-projection",
+    title: "Cash Flow Projection",
+    description: "Scenario modelling reserved for Phase 3.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "invoice-generation-forecast",
+    title: "Invoice Generation Forecast",
+    description: "Same horizon as upcoming invoices — scheduled invoice count and value.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+  {
+    id: "subscription-renewal-forecast",
+    title: "Subscription Renewal Forecast",
+    description: "Renewals due in the next 30 days.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+  {
+    id: "revenue-forecast",
+    title: "Revenue Forecast",
+    description: "Expected collections vs current MRR obligation.",
+    category: "Forecasting",
+    family: "Forecasting",
+    dateFilter: false,
+  },
+
+  // —— Customer ——
+  {
+    id: "top-customers",
+    title: "Top Customers by Spend",
+    description: "Highest-paying customers ranked by total successful payments.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
+    id: "subscriber-census",
+    title: "Subscriber Census",
+    description: "Active and cancelled subscribers grouped by building and type.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: false,
+  },
+  {
+    id: "active-customers",
+    title: "Active Customers",
+    description: "All active customers with package, building, and MRR contribution.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: false,
+  },
+  {
+    id: "package-distribution",
+    title: "Package Distribution",
+    description: "Subscriber counts per package, Mbps tier, and building.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: false,
+  },
+  {
+    id: "customer-lifecycle",
+    title: "Customer Lifecycle Events",
+    description: "Upgrades, downgrades, apartment switches, and cancellations.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
+    id: "new-subscribers",
+    title: "New Customers",
+    description: "Customers created during the selected period.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
+    id: "churn-analysis",
+    title: "Churn Report",
+    description: "Cancelled subscribers with tenure and last package details.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
+    id: "dstv-iuc-roster",
+    title: "DSTV IUC / Serial Roster",
+    description: "DSTV customers with IUC/serial, building, and status.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: false,
+  },
+  {
+    id: "agency-performance",
+    title: "Agency Performance",
+    description: "Customer counts and attributed revenue per agency.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
+    id: "high-risk-customers",
+    title: "High-Risk Customers",
+    description: "Customers with consecutive failed M-Pesa payments in the period.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
+    id: "consecutive-failed-payments",
+    title: "Customers with Consecutive Failed Payments",
+    description: "Same as high-risk — failed payment streaks.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
+    id: "reconnection-report",
+    title: "Reconnection Report",
+    description: "Requires reconnect lifecycle events — catalogued for Phase 1.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "customer-lifetime-value",
+    title: "Customer Lifetime Value",
+    description: "CLV estimate from shared metric engine (ARPU ÷ churn).",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+
+  // —— Network ——
+  {
+    id: "customers-by-pop-package",
+    title: "Customers by POP & Package",
+    description: "Active customers grouped by POP (building) and package.",
+    category: "Network",
+    family: "Network",
+    dateFilter: false,
+  },
+  {
+    id: "building-occupancy",
+    title: "Building Occupancy",
+    description: "Active customers and unique apartments per building.",
+    category: "Network",
+    family: "Network",
+    dateFilter: false,
+  },
+  {
+    id: "active-connections",
+    title: "Active Connections",
+    description: "Requires live TISP/OLT connection feed — Phase 2.",
+    category: "Network",
+    family: "Network",
+    dateFilter: false,
+    available: false,
+  },
+  {
+    id: "offline-customers",
+    title: "Offline Customers",
+    description: "Requires network monitoring — Phase 2.",
+    category: "Network",
+    family: "Network",
+    dateFilter: false,
+    available: false,
+  },
+  {
+    id: "installation-report",
+    title: "Installation Report",
+    description: "Requires field-service install events — Phase 2.",
+    category: "Network",
+    family: "Network",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "technician-performance",
+    title: "Technician Performance",
+    description: "Requires technician assignment data — Phase 2.",
+    category: "Network",
+    family: "Network",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "bandwidth-utilization",
+    title: "Bandwidth Utilization",
+    description: "Requires bandwidth telemetry — Phase 2.",
+    category: "Network",
+    family: "Network",
+    dateFilter: true,
+    available: false,
+  },
+
+  // —— Audit ——
+  {
+    id: "tisp-sync-health",
+    title: "TISP Sync Health",
+    description: "Customer TISP provisioning status with error details.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: false,
+  },
+  {
+    id: "api-errors",
+    title: "API Error Log",
+    description: "Failed API calls across TISP, Zoho, and M-Pesa services.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+  },
+  {
+    id: "integration-events",
+    title: "Integration Events",
+    description: "Zoho and TISP integration events with outcomes.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+  },
+  {
+    id: "user-activity",
+    title: "User Activity",
+    description: "Requires admin activity audit log — catalogued.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "invoice-audit-trail",
+    title: "Invoice Audit Trail",
+    description: "Requires invoice change history — catalogued.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "payment-audit-trail",
+    title: "Payment Audit Trail",
+    description: "Requires payment change history — catalogued.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "manual-adjustments",
+    title: "Manual Adjustments",
+    description: "Requires adjustment ledger — catalogued.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "deleted-records",
+    title: "Deleted Records",
+    description: "Requires soft-delete audit — catalogued.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+    available: false,
+  },
+  {
+    id: "permission-changes",
+    title: "Permission Changes",
+    description: "Requires RBAC change log — catalogued.",
+    category: "Audit",
+    family: "Audit",
+    dateFilter: true,
+    available: false,
   },
 ];
 
@@ -186,14 +579,22 @@ const PARTNER_REPORT_IDS = new Set([
   "churn-analysis",
   "monthly-payment-churn",
   "payment-frequency-mix",
+  "business-health-summary",
+  "revenue-by-package",
+  "revenue-by-region",
+  "active-customers",
 ]);
 
 function listReportDefinitions() {
-  return REPORT_DEFINITIONS;
+  return REPORT_DEFINITIONS.map((r) => ({
+    ...r,
+    available: r.available !== false,
+    family: r.family || r.category,
+  }));
 }
 
 function listPartnerReportDefinitions() {
-  return REPORT_DEFINITIONS.filter((r) => PARTNER_REPORT_IDS.has(r.id));
+  return listReportDefinitions().filter((r) => PARTNER_REPORT_IDS.has(r.id));
 }
 
 function isPartnerReport(id) {
@@ -205,13 +606,7 @@ function getReportDefinition(id) {
 }
 
 function resolveDateRange(from, to) {
-  const now = new Date();
-  const resolvedTo = to || now.toISOString().slice(0, 10);
-  const fromDate = from
-    ? new Date(from)
-    : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const resolvedFrom = from || fromDate.toISOString().slice(0, 10);
-  return { from: resolvedFrom, to: resolvedTo };
+  return resolveKpiDateRange(from, to);
 }
 
 function resolveMonthRange(month) {
@@ -225,9 +620,60 @@ function resolveMonthRange(month) {
   if (!Number.isFinite(year) || !Number.isFinite(monthNum) || monthNum < 1 || monthNum > 12) {
     throw new Error("month must be in YYYY-MM format");
   }
+  // Use local calendar day — NOT Date#toISOString() (UTC shifts the last day
+  // backward for positive-offset timezones, e.g. July → …-07-30).
+  const lastDay = new Date(year, monthNum, 0).getDate();
   const start = `${yearStr}-${monthStr}-01`;
-  const end = new Date(year, monthNum, 0).toISOString().slice(0, 10);
+  const end = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, "0")}`;
   return { month: normalized, from: start, to: end };
+}
+
+function resolveYearRange(year) {
+  const normalized = String(year || "").trim();
+  if (!/^\d{4}$/.test(normalized)) {
+    throw new Error("year must be in YYYY format");
+  }
+  const yearNum = Number(normalized);
+  if (!Number.isFinite(yearNum) || yearNum < 2000 || yearNum > 2100) {
+    throw new Error("year must be in YYYY format");
+  }
+  return {
+    year: normalized,
+    from: `${normalized}-01-01`,
+    to: `${normalized}-12-31`,
+  };
+}
+
+/** Year plus optional inclusive month span (1–12). Defaults to full year. */
+function resolveYearMonthSpan(year, monthFrom, monthTo) {
+  const base = resolveYearRange(year);
+  let fromM = Number(monthFrom);
+  let toM = Number(monthTo);
+  if (!Number.isFinite(fromM)) fromM = 1;
+  if (!Number.isFinite(toM)) toM = 12;
+  fromM = Math.min(12, Math.max(1, Math.trunc(fromM)));
+  toM = Math.min(12, Math.max(1, Math.trunc(toM)));
+  if (fromM > toM) {
+    const swap = fromM;
+    fromM = toM;
+    toM = swap;
+  }
+  const fromMm = String(fromM).padStart(2, "0");
+  const toMm = String(toM).padStart(2, "0");
+  const lastDay = new Date(Number(base.year), toM, 0).getDate();
+  return {
+    year: base.year,
+    monthFrom: fromM,
+    monthTo: toM,
+    from: `${base.year}-${fromMm}-01`,
+    to: `${base.year}-${toMm}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function formatMonthSpanLabel(monthFrom, monthTo) {
+  if (monthFrom === 1 && monthTo === 12) return "All months";
+  if (monthFrom === monthTo) return MONTH_NAMES[monthFrom - 1];
+  return `${MONTH_NAMES[monthFrom - 1]}–${MONTH_NAMES[monthTo - 1]}`;
 }
 
 function dateWhere(column, from, to) {
@@ -1196,12 +1642,984 @@ async function billingReconciliationReport() {
   };
 }
 
+/** Raised Zoho invoices only: real Zoho invoice_id, not draft/void. */
+function raisedZohoInvoiceSql(alias = "zi") {
+  const p = alias ? `${alias}.` : "";
+  return `
+  ${p}invoice_id IS NOT NULL
+  AND TRIM(${p}invoice_id) <> ''
+  AND LOWER(TRIM(COALESCE(${p}status, ''))) <> 'draft'
+  AND LOWER(TRIM(COALESCE(${p}status, ''))) NOT LIKE '%void%'
+`;
+}
+
+/**
+ * B2B agency payments/invoices are snapshotted onto every managed house.
+ * Deduplicate by Zoho id so each Books document counts once.
+ * Prefer a C2B row when both exist (correct agency attribution); otherwise MIN(id).
+ * (Avoid GROUP_CONCAT — it truncates and is slow on large B2B fan-out.)
+ */
+const DEDUPED_INVOICE_IDS_SQL = `
+  SELECT zi2.invoice_id,
+         COALESCE(
+           MIN(CASE WHEN c2.customer_type = 'C2B' THEN zi2.id END),
+           MIN(zi2.id)
+         ) AS keep_id
+  FROM zoho_customer_invoices zi2
+  JOIN customers c2 ON c2.id = zi2.customer_id
+  WHERE zi2.invoice_date >= ? AND zi2.invoice_date <= ?
+    AND ${raisedZohoInvoiceSql("zi2")}
+  GROUP BY zi2.invoice_id
+`;
+
+const DEDUPED_PAYMENT_IDS_SQL = `
+  SELECT zp2.payment_id,
+         COALESCE(
+           MIN(CASE WHEN c2.customer_type = 'C2B' THEN zp2.id END),
+           MIN(zp2.id)
+         ) AS keep_id
+  FROM zoho_customer_payments zp2
+  JOIN customers c2 ON c2.id = zp2.customer_id
+  WHERE zp2.payment_date >= ? AND zp2.payment_date <= ?
+    AND zp2.payment_id IS NOT NULL
+    AND TRIM(zp2.payment_id) <> ''
+  GROUP BY zp2.payment_id
+`;
+
+/** Totals-only: same amounts as C2B-preferring dedupe, no customers join. */
+const FAST_DEDUPED_INVOICE_IDS_SQL = `
+  SELECT invoice_id, MIN(id) AS keep_id
+  FROM zoho_customer_invoices
+  WHERE invoice_date >= ? AND invoice_date <= ?
+    AND ${raisedZohoInvoiceSql("")}
+  GROUP BY invoice_id
+`;
+
+const FAST_DEDUPED_PAYMENT_IDS_SQL = `
+  SELECT payment_id, MIN(id) AS keep_id
+  FROM zoho_customer_payments
+  WHERE payment_date >= ? AND payment_date <= ?
+    AND payment_id IS NOT NULL
+    AND TRIM(payment_id) <> ''
+  GROUP BY payment_id
+`;
+
+async function getInvoicesVsPaymentsSummary(month) {
+  const period = resolveMonthRange(month);
+
+  const [[invoiceRow], [paymentRow]] = await Promise.all([
+    query(
+      `SELECT COUNT(*) AS invoice_count,
+              COALESCE(SUM(zi.total), 0) AS invoice_total,
+              COALESCE(SUM(GREATEST(COALESCE(zi.balance_due, 0), 0)), 0) AS outstanding_total
+       FROM zoho_customer_invoices zi
+       INNER JOIN (${FAST_DEDUPED_INVOICE_IDS_SQL}) d ON d.keep_id = zi.id`,
+      [period.from, period.to]
+    ),
+    query(
+      `SELECT COUNT(*) AS payment_count,
+              COALESCE(SUM(zp.amount), 0) AS payment_total
+       FROM zoho_customer_payments zp
+       INNER JOIN (${FAST_DEDUPED_PAYMENT_IDS_SQL}) d ON d.keep_id = zp.id`,
+      [period.from, period.to]
+    ),
+  ]);
+
+  const invoiceCount = Number(invoiceRow?.invoice_count || 0);
+  const invoiceTotal = Number(invoiceRow?.invoice_total || 0);
+  const outstandingTotal = Number(invoiceRow?.outstanding_total || 0);
+  const paymentCount = Number(paymentRow?.payment_count || 0);
+  const paymentTotal = Number(paymentRow?.payment_total || 0);
+
+  return {
+    month: period.month,
+    period: { from: period.from, to: period.to },
+    invoiceCount,
+    invoiceTotal,
+    outstandingTotal,
+    paymentCount,
+    paymentTotal,
+    net: paymentTotal - invoiceTotal,
+    source: "zoho_books_synced",
+  };
+}
+
+async function loadInvoicesVsPaymentsData(month) {
+  const period = resolveMonthRange(month);
+  const summary = await getInvoicesVsPaymentsSummary(period.month);
+
+  const [invoiceRows, paymentRows] = await Promise.all([
+    query(
+      `SELECT
+         zi.invoice_date AS record_date,
+         zi.invoice_number AS document_number,
+         CASE
+           WHEN c.customer_type = 'B2B' THEN COALESCE(a.name, c.customer_number)
+           ELSE c.customer_number
+         END AS customer_number,
+         CASE
+           WHEN c.customer_type = 'B2B' THEN COALESCE(a.name, 'Agency')
+           ELSE TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name))
+         END AS full_name,
+         CASE
+           WHEN c.customer_type = 'B2B' THEN 'Agency billing'
+           ELSE b.name
+         END AS building,
+         COALESCE(zi.total, 0) AS amount,
+         zi.status AS status,
+         COALESCE(zi.balance_due, 0) AS balance_due
+       FROM zoho_customer_invoices zi
+       INNER JOIN (${DEDUPED_INVOICE_IDS_SQL}) d ON d.keep_id = zi.id
+       JOIN customers c ON c.id = zi.customer_id
+       LEFT JOIN agencies a ON a.id = c.agency_id
+       LEFT JOIN buildings b ON b.id = c.building_id
+       ORDER BY zi.invoice_date ASC, zi.invoice_number ASC
+       LIMIT 20000`,
+      [period.from, period.to]
+    ),
+    query(
+      `SELECT
+         zp.payment_date AS record_date,
+         COALESCE(zp.reference_number, zp.payment_id) AS document_number,
+         CASE
+           WHEN c.customer_type = 'B2B' THEN COALESCE(a.name, c.customer_number)
+           ELSE c.customer_number
+         END AS customer_number,
+         CASE
+           WHEN c.customer_type = 'B2B' THEN COALESCE(a.name, 'Agency')
+           ELSE TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name))
+         END AS full_name,
+         CASE
+           WHEN c.customer_type = 'B2B' THEN 'Agency billing'
+           ELSE b.name
+         END AS building,
+         COALESCE(zp.amount, 0) AS amount,
+         COALESCE(zp.invoice_number, '') AS related_invoice
+       FROM zoho_customer_payments zp
+       INNER JOIN (${DEDUPED_PAYMENT_IDS_SQL}) d ON d.keep_id = zp.id
+       JOIN customers c ON c.id = zp.customer_id
+       LEFT JOIN agencies a ON a.id = c.agency_id
+       LEFT JOIN buildings b ON b.id = c.building_id
+       ORDER BY zp.payment_date ASC, zp.reference_number ASC
+       LIMIT 20000`,
+      [period.from, period.to]
+    ),
+  ]);
+
+  return {
+    period,
+    summary,
+    invoiceRows,
+    paymentRows,
+  };
+}
+
+async function invoicesVsPayments(month) {
+  const { period, summary, invoiceRows, paymentRows } =
+    await loadInvoicesVsPaymentsData(month);
+
+  const invoiceHeaders = [
+    { key: "record_date", label: "Date" },
+    { key: "document_number", label: "Invoice No." },
+    { key: "customer_number", label: "Customer / Agency" },
+    { key: "full_name", label: "Name" },
+    { key: "building", label: "Building" },
+    { key: "amount", label: "Amount (KES)" },
+    { key: "status", label: "Status" },
+    { key: "balance_due", label: "Balance Due (KES)" },
+  ];
+
+  const paymentHeaders = [
+    { key: "record_date", label: "Date" },
+    { key: "document_number", label: "Payment Ref." },
+    { key: "customer_number", label: "Customer / Agency" },
+    { key: "full_name", label: "Name" },
+    { key: "building", label: "Building" },
+    { key: "amount", label: "Amount (KES)" },
+    { key: "related_invoice", label: "Related Invoice" },
+  ];
+
+  const netLabel =
+    summary.net >= 0 ? "Payments exceed invoices (KES)" : "Invoices exceed payments (KES)";
+
+  return {
+    title: "Invoices vs Payments (Zoho Books)",
+    headers: invoiceHeaders,
+    rows: [],
+    period: { from: period.from, to: period.to },
+    month: period.month,
+    sections: [
+      {
+        title: "1. Invoices raised",
+        headers: invoiceHeaders,
+        rows: invoiceRows.map((r) => formatRow(r, invoiceHeaders)),
+        totals: {
+          countLabel: "Invoice count",
+          count: summary.invoiceCount,
+          label: "Invoice total (KES)",
+          value: summary.invoiceTotal,
+          lines: [
+            {
+              label: "Outstanding on these invoices (KES)",
+              value: summary.outstandingTotal,
+            },
+          ],
+        },
+      },
+      {
+        title: "2. Payments received",
+        headers: paymentHeaders,
+        rows: paymentRows.map((r) => formatRow(r, paymentHeaders)),
+        totals: {
+          countLabel: "Payment count",
+          count: summary.paymentCount,
+          label: "Payment total (KES)",
+          value: summary.paymentTotal,
+        },
+      },
+    ],
+    summary: {
+      total: summary.invoiceCount + summary.paymentCount,
+      totalLabel: "Total records",
+      lines: [
+        { label: "Source", value: "Zoho Books (synced)" },
+        { label: "Invoice count", value: summary.invoiceCount },
+        { label: "Invoice total (KES)", value: summary.invoiceTotal },
+        { label: "Payment count", value: summary.paymentCount },
+        { label: "Payment total (KES)", value: summary.paymentTotal },
+        { label: netLabel, value: Math.abs(summary.net) },
+      ],
+    },
+  };
+}
+
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+function dateOnly(value) {
+  if (!value) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+function monthKeyFromDate(value) {
+  const d = dateOnly(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  return d.slice(5, 7);
+}
+
+function emptyMonthBucket() {
+  return {
+    invoiceAmount: 0,
+    invoiceDate: "",
+    paymentAmount: 0,
+    paymentDate: "",
+  };
+}
+
+/**
+ * Customer × month matrix: invoice amount/date and payment amount/date for selected months of a year.
+ */
+async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
+  const period = resolveYearMonthSpan(year, monthFrom, monthTo);
+  const selectedMonths = [];
+  for (let m = period.monthFrom; m <= period.monthTo; m += 1) {
+    selectedMonths.push(m);
+  }
+  const spanLabel = formatMonthSpanLabel(period.monthFrom, period.monthTo);
+
+  // Prefer active customers; also include inactive with activity in-year via UNION
+  // of lean id lists (avoids expensive OR + DISTINCT subqueries on large tables).
+  const [activeCustomers, invoiceActivityIds, paymentActivityIds] = await Promise.all([
+    query(
+      `SELECT c.id,
+              c.customer_number,
+              c.customer_type,
+              c.status,
+              TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
+              b.name AS building,
+              a.name AS agency_name
+       FROM customers c
+       LEFT JOIN buildings b ON b.id = c.building_id
+       LEFT JOIN agencies a ON a.id = c.agency_id
+       WHERE c.status = 'active'
+       ORDER BY c.customer_number ASC
+       LIMIT 15000`
+    ),
+    query(
+      `SELECT DISTINCT zi.customer_id AS id
+       FROM zoho_customer_invoices zi
+       WHERE zi.invoice_date >= ? AND zi.invoice_date <= ?
+         AND ${raisedZohoInvoiceSql("zi")}
+       LIMIT 20000`,
+      [period.from, period.to]
+    ),
+    query(
+      `SELECT DISTINCT zp.customer_id AS id
+       FROM zoho_customer_payments zp
+       WHERE zp.payment_date >= ? AND zp.payment_date <= ?
+         AND zp.payment_id IS NOT NULL AND TRIM(zp.payment_id) <> ''
+       LIMIT 20000`,
+      [period.from, period.to]
+    ),
+  ]);
+
+  const customerById = new Map(activeCustomers.map((c) => [Number(c.id), c]));
+  const missingIds = [
+    ...new Set([
+      ...invoiceActivityIds.map((r) => Number(r.id)),
+      ...paymentActivityIds.map((r) => Number(r.id)),
+    ]),
+  ].filter((id) => Number.isFinite(id) && id > 0 && !customerById.has(id));
+
+  if (missingIds.length) {
+    const placeholders = missingIds.map(() => "?").join(",");
+    const extras = await query(
+      `SELECT c.id,
+              c.customer_number,
+              c.customer_type,
+              c.status,
+              TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
+              b.name AS building,
+              a.name AS agency_name
+       FROM customers c
+       LEFT JOIN buildings b ON b.id = c.building_id
+       LEFT JOIN agencies a ON a.id = c.agency_id
+       WHERE c.id IN (${placeholders})
+       ORDER BY c.customer_number ASC`,
+      missingIds
+    );
+    for (const c of extras) customerById.set(Number(c.id), c);
+  }
+
+  const customers = [...customerById.values()].sort((a, b) =>
+    String(a.customer_number).localeCompare(String(b.customer_number))
+  );
+
+  // SQL-deduped documents only — avoids loading B2B fan-out copies into memory.
+  const [invoiceRows, paymentRows] = await Promise.all([
+    query(
+      `SELECT zi.id,
+              zi.customer_id,
+              zi.invoice_id,
+              zi.invoice_number,
+              zi.invoice_date,
+              COALESCE(zi.total, 0) AS amount
+       FROM zoho_customer_invoices zi
+       INNER JOIN (${DEDUPED_INVOICE_IDS_SQL}) d ON d.keep_id = zi.id`,
+      [period.from, period.to]
+    ),
+    query(
+      `SELECT zp.id,
+              zp.customer_id,
+              zp.payment_id,
+              zp.reference_number,
+              zp.invoice_number AS related_invoice,
+              zp.payment_date,
+              COALESCE(zp.amount, 0) AS amount
+       FROM zoho_customer_payments zp
+       INNER JOIN (${DEDUPED_PAYMENT_IDS_SQL}) d ON d.keep_id = zp.id`,
+      [period.from, period.to]
+    ),
+  ]);
+
+  /** @type {Map<number, Record<string, ReturnType<typeof emptyMonthBucket>>>} */
+  const byCustomer = new Map();
+  for (const c of customers) {
+    const months = {};
+    for (const m of selectedMonths) {
+      months[String(m).padStart(2, "0")] = emptyMonthBucket();
+    }
+    byCustomer.set(Number(c.id), months);
+  }
+
+  function ensureCustomerMonths(customerId) {
+    const id = Number(customerId);
+    if (byCustomer.has(id)) return byCustomer.get(id);
+    const months = {};
+    for (const m of selectedMonths) {
+      months[String(m).padStart(2, "0")] = emptyMonthBucket();
+    }
+    byCustomer.set(id, months);
+    return months;
+  }
+
+  const selectedMonthKeys = new Set(selectedMonths.map((m) => String(m).padStart(2, "0")));
+
+  for (const row of invoiceRows) {
+    const month = monthKeyFromDate(row.invoice_date);
+    if (!month || !selectedMonthKeys.has(month)) continue;
+    const bucket = ensureCustomerMonths(row.customer_id)[month];
+    bucket.invoiceAmount += Number(row.amount) || 0;
+    const d = dateOnly(row.invoice_date);
+    if (!bucket.invoiceDate || d < bucket.invoiceDate) bucket.invoiceDate = d;
+  }
+
+  for (const row of paymentRows) {
+    const month = monthKeyFromDate(row.payment_date);
+    if (!month || !selectedMonthKeys.has(month)) continue;
+    const bucket = ensureCustomerMonths(row.customer_id)[month];
+    bucket.paymentAmount += Number(row.amount) || 0;
+    const d = dateOnly(row.payment_date);
+    if (!bucket.paymentDate || d < bucket.paymentDate) bucket.paymentDate = d;
+  }
+
+  const matrixGroups = selectedMonths.map((monthNum) => {
+    const mm = String(monthNum).padStart(2, "0");
+    return {
+      label: MONTH_NAMES[monthNum - 1],
+      columns: [
+        { key: `m${mm}_invoice_amount`, label: "Invoice Amount" },
+        { key: `m${mm}_invoice_date`, label: "Invoice Date" },
+        { key: `m${mm}_payment_amount`, label: "Payment Amount" },
+        { key: `m${mm}_payment_date`, label: "Payment Date" },
+      ],
+    };
+  });
+
+  const flatHeaders = [
+    { key: "customer", label: "Customer" },
+    ...matrixGroups.flatMap((g) => g.columns),
+  ];
+
+  const matrixRows = [];
+  for (const c of customers) {
+    const months = byCustomer.get(Number(c.id)) || {};
+    const hasActivity = Object.values(months).some(
+      (m) => m.invoiceAmount > 0 || m.paymentAmount > 0
+    );
+    if (String(c.status).toLowerCase() !== "active" && !hasActivity) continue;
+
+    const row = {
+      customer: c.customer_number,
+      customer_name: c.full_name || "",
+      building: c.building || "",
+      customer_type: c.customer_type || "",
+    };
+
+    for (const m of selectedMonths) {
+      const mm = String(m).padStart(2, "0");
+      const bucket = months[mm] || emptyMonthBucket();
+      row[`m${mm}_invoice_amount`] =
+        bucket.invoiceAmount > 0 ? Math.round(bucket.invoiceAmount * 100) / 100 : "";
+      row[`m${mm}_invoice_date`] = bucket.invoiceDate || "";
+      row[`m${mm}_payment_amount`] =
+        bucket.paymentAmount > 0 ? Math.round(bucket.paymentAmount * 100) / 100 : "";
+      row[`m${mm}_payment_date`] = bucket.paymentDate || "";
+    }
+
+    matrixRows.push(row);
+  }
+
+  let yearInvoiceTotal = 0;
+  let yearPaymentTotal = 0;
+  for (const row of matrixRows) {
+    for (const m of selectedMonths) {
+      const mm = String(m).padStart(2, "0");
+      yearInvoiceTotal += Number(row[`m${mm}_invoice_amount`]) || 0;
+      yearPaymentTotal += Number(row[`m${mm}_payment_amount`]) || 0;
+    }
+  }
+
+  return {
+    title: `Customer Monthly Billing Matrix (${period.year} · ${spanLabel})`,
+    headers: flatHeaders,
+    rows: matrixRows.map((r) => formatRow(r, flatHeaders)),
+    period: { from: period.from, to: period.to },
+    year: period.year,
+    monthFrom: period.monthFrom,
+    monthTo: period.monthTo,
+    matrix: {
+      rowHeaderLabel: "Customer",
+      rowHeaderKey: "customer",
+      groups: matrixGroups,
+    },
+    summary: {
+      total: matrixRows.length,
+      totalLabel: "Customers",
+      lines: [
+        { label: "Year", value: period.year },
+        { label: "Months", value: spanLabel },
+        { label: "Invoice total (KES)", value: Math.round(yearInvoiceTotal * 100) / 100 },
+        { label: "Payment total (KES)", value: Math.round(yearPaymentTotal * 100) / 100 },
+      ],
+    },
+  };
+}
+
+async function businessHealthSummary(from, to) {
+  const kpis = await getKpiSnapshot({}, { from, to });
+  const expected = await getExpectedCollections({ days: 30 }).catch(() => ({
+    expectedCollections: 0,
+    invoiceCount: 0,
+  }));
+  const headers = [
+    { key: "metric", label: "Metric" },
+    { key: "value", label: "Value" },
+    { key: "unit", label: "Unit" },
+  ];
+  const rows = [
+    { metric: "Active customers", value: kpis.activeCustomers, unit: "count" },
+    { metric: "Suspended customers", value: kpis.suspendedCustomers, unit: "count" },
+    { metric: "MRR", value: kpis.mrr, unit: "KES" },
+    { metric: "ARR", value: kpis.arr, unit: "KES" },
+    { metric: "ARPU", value: kpis.arpu, unit: "KES" },
+    { metric: "Revenue collected", value: kpis.revenueCollected, unit: "KES" },
+    { metric: "Outstanding balance", value: kpis.outstandingBalance, unit: "KES" },
+    { metric: "Expected collections (30d)", value: expected.expectedCollections, unit: "KES" },
+    { metric: "Collection rate", value: kpis.collectionRate, unit: "%" },
+    { metric: "Payment success rate", value: kpis.paymentSuccessRate, unit: "%" },
+    { metric: "Churn rate", value: kpis.churnRate, unit: "%" },
+    { metric: "New customers", value: kpis.newCustomersThisMonth, unit: "count" },
+    { metric: "CLV", value: kpis.clv, unit: "KES" },
+    { metric: "Avg days to pay", value: kpis.avgDaysToPay ?? "—", unit: "days" },
+  ];
+  return {
+    title: "Business Health Summary",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: rows.length,
+      totalLabel: "Metrics",
+      lines: [
+        { label: "Period", value: `${from} → ${to}` },
+        { label: "Source", value: "kpiEngine" },
+      ],
+    },
+  };
+}
+
+async function executiveMonthlyReport(month) {
+  const period = resolveMonthRange(month);
+  return businessHealthSummary(period.from, period.to);
+}
+
+async function outstandingInvoicesReport() {
+  const headers = [
+    { key: "invoice_number", label: "Invoice #" },
+    { key: "customer_number", label: "Customer #" },
+    { key: "invoice_date", label: "Invoice date" },
+    { key: "due_date", label: "Due date" },
+    { key: "total", label: "Total" },
+    { key: "balance_due", label: "Balance due" },
+    { key: "status", label: "Status" },
+  ];
+  const rows = await query(
+    `SELECT zi.invoice_number, c.customer_number, zi.invoice_date, zi.due_date,
+            COALESCE(zi.total, 0) AS total, COALESCE(zi.balance_due, 0) AS balance_due, zi.status
+     FROM zoho_customer_invoices zi
+     JOIN customers c ON c.id = zi.customer_id
+     WHERE COALESCE(zi.balance_due, 0) > 0
+       AND zi.invoice_id IS NOT NULL AND TRIM(zi.invoice_id) <> ''
+       AND LOWER(TRIM(COALESCE(zi.status, ''))) <> 'draft'
+       AND LOWER(TRIM(COALESCE(zi.status, ''))) NOT LIKE '%void%'
+     ORDER BY zi.due_date ASC, zi.balance_due DESC
+     LIMIT 20000`
+  );
+  const totalOutstanding = rows.reduce((s, r) => s + Number(r.balance_due || 0), 0);
+  return {
+    title: "Outstanding Invoices",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: rows.length,
+      totalLabel: "Invoices",
+      totalOutstanding: Math.round(totalOutstanding * 100) / 100,
+    },
+  };
+}
+
+async function arAgingReport() {
+  const headers = [
+    { key: "bucket", label: "Aging bucket" },
+    { key: "invoice_count", label: "Invoices" },
+    { key: "balance", label: "Balance due (KES)" },
+  ];
+  const rows = await query(
+    `SELECT
+       CASE
+         WHEN DATEDIFF(CURDATE(), COALESCE(zi.due_date, zi.invoice_date)) <= 30 THEN '0-30'
+         WHEN DATEDIFF(CURDATE(), COALESCE(zi.due_date, zi.invoice_date)) <= 60 THEN '31-60'
+         WHEN DATEDIFF(CURDATE(), COALESCE(zi.due_date, zi.invoice_date)) <= 90 THEN '61-90'
+         ELSE '90+'
+       END AS bucket,
+       COUNT(*) AS invoice_count,
+       COALESCE(SUM(zi.balance_due), 0) AS balance
+     FROM zoho_customer_invoices zi
+     WHERE COALESCE(zi.balance_due, 0) > 0
+       AND zi.invoice_id IS NOT NULL AND TRIM(zi.invoice_id) <> ''
+     GROUP BY bucket
+     ORDER BY FIELD(bucket, '0-30', '31-60', '61-90', '90+')`
+  ).catch(() => []);
+  return {
+    title: "Accounts Receivable Aging",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: rows.reduce((s, r) => s + Number(r.invoice_count || 0), 0),
+      totalOutstanding: rows.reduce((s, r) => s + Number(r.balance || 0), 0),
+    },
+  };
+}
+
+async function collectionsSummaryReport(from, to) {
+  const headers = [
+    { key: "day", label: "Date" },
+    { key: "success_count", label: "Successful payments" },
+    { key: "amount", label: "Collected (KES)" },
+  ];
+  const { clause, params } = dateWhere("pt.created_at", from, to);
+  const rows = await query(
+    `SELECT DATE(pt.created_at) AS day,
+            SUM(CASE WHEN pt.status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+            COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS amount
+     FROM payment_transactions pt
+     ${clause}
+     GROUP BY DATE(pt.created_at)
+     ORDER BY day ASC`,
+    params
+  );
+  const totalAmount = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  return {
+    title: "Collections Summary",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: { total: rows.length, totalAmount: Math.round(totalAmount * 100) / 100 },
+  };
+}
+
+async function revenueByPackageReport(from, to) {
+  const headers = [
+    { key: "package_name", label: "Package" },
+    { key: "payers", label: "Paying customers" },
+    { key: "revenue", label: "Revenue (KES)" },
+  ];
+  const { clause, params } = dateWhere("pt.created_at", from, to);
+  const rows = await query(
+    `SELECT COALESCE(p.name, 'Unknown') AS package_name,
+            COUNT(DISTINCT pt.account_reference) AS payers,
+            COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue
+     FROM payment_transactions pt
+     JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
+     LEFT JOIN products p ON p.id = c.product_id
+     ${clause} AND pt.status = 'SUCCESS'
+     GROUP BY COALESCE(p.name, 'Unknown')
+     ORDER BY revenue DESC
+     LIMIT 500`,
+    params
+  );
+  return {
+    title: "Revenue by Package",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: rows.length,
+      totalAmount: rows.reduce((s, r) => s + Number(r.revenue || 0), 0),
+    },
+  };
+}
+
+async function revenueByRegionReport(from, to) {
+  const headers = [
+    { key: "building", label: "Building / POP" },
+    { key: "payers", label: "Paying customers" },
+    { key: "revenue", label: "Revenue (KES)" },
+  ];
+  const { clause, params } = dateWhere("pt.created_at", from, to);
+  const rows = await query(
+    `SELECT COALESCE(b.name, 'Unassigned') AS building,
+            COUNT(DISTINCT pt.account_reference) AS payers,
+            COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue
+     FROM payment_transactions pt
+     JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
+     LEFT JOIN buildings b ON b.id = c.building_id
+     ${clause} AND pt.status = 'SUCCESS'
+     GROUP BY COALESCE(b.name, 'Unassigned')
+     ORDER BY revenue DESC
+     LIMIT 500`,
+    params
+  );
+  return {
+    title: "Revenue by Region",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: rows.length,
+      totalAmount: rows.reduce((s, r) => s + Number(r.revenue || 0), 0),
+    },
+  };
+}
+
+async function forecastVsActualRevenue(from, to) {
+  const kpis = await getKpiSnapshot({}, { from, to });
+  const headers = [
+    { key: "metric", label: "Metric" },
+    { key: "value", label: "Value (KES)" },
+  ];
+  const rows = [
+    { metric: "MRR (expected monthly obligation)", value: kpis.mrr },
+    { metric: "Collected in period", value: kpis.revenueCollected },
+    { metric: "Variance (collected − MRR)", value: kpis.revenueCollected - kpis.mrr },
+    { metric: "Collection rate %", value: kpis.collectionRate },
+  ];
+  return {
+    title: "Forecast vs Actual Revenue",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      lines: [
+        { label: "Period", value: `${from} → ${to}` },
+        { label: "Collection rate", value: `${kpis.collectionRate}%` },
+      ],
+    },
+  };
+}
+
+async function suspendedBillingReport() {
+  const headers = [
+    { key: "customer_number", label: "Customer #" },
+    { key: "full_name", label: "Name" },
+    { key: "building", label: "Building" },
+    { key: "subscription_status", label: "Subscription" },
+    { key: "package_price", label: "Package price" },
+  ];
+  const rows = await query(
+    `SELECT c.customer_number,
+            TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
+            b.name AS building,
+            c.subscription_status,
+            c.package_price
+     FROM customers c
+     LEFT JOIN buildings b ON b.id = c.building_id
+     WHERE c.status = 'active'
+       AND (
+         LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%'
+         OR c.subscription_status IS NULL
+         OR TRIM(c.subscription_status) = ''
+         OR LOWER(TRIM(c.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
+         OR (
+           LOWER(TRIM(c.subscription_status)) <> 'active'
+           AND LOWER(COALESCE(c.subscription_status, '')) NOT LIKE '%pause%'
+           AND LOWER(COALESCE(c.subscription_status, '')) NOT LIKE '%cancel%'
+         )
+       )
+     ORDER BY c.customer_number ASC
+     LIMIT 15000`
+  );
+  return {
+    title: "Suspended Billing",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: { total: rows.length, totalLabel: "Customers" },
+  };
+}
+
+async function expectedCollectionsReport() {
+  const expected = await getExpectedCollections({ days: 30 });
+  const forecast = expected.forecast || {};
+  const items = forecast.items || forecast.invoices || forecast.rows || [];
+  const headers = [
+    { key: "customer_number", label: "Customer #" },
+    { key: "next_invoice_date", label: "Next invoice" },
+    { key: "amount", label: "Expected amount" },
+  ];
+  const rows = Array.isArray(items)
+    ? items.slice(0, 5000).map((i) => ({
+        customer_number: i.customerNumber || i.customer_number || "",
+        next_invoice_date:
+          i.nextInvoiceDate || i.next_invoice_date || i.dueDate || "",
+        amount: i.expectedAmount || i.amount || i.packagePrice || i.package_price || 0,
+      }))
+    : [];
+  return {
+    title: "Expected Collections (30 days)",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: expected.invoiceCount || rows.length,
+      totalAmount: expected.expectedCollections,
+      lines: [{ label: "Horizon", value: "30 days" }],
+    },
+  };
+}
+
+async function mrrArrForecastReport() {
+  const kpis = await getKpiSnapshot({}, {});
+  const headers = [
+    { key: "metric", label: "Metric" },
+    { key: "value", label: "Value (KES)" },
+  ];
+  const rows = [
+    { metric: "MRR (secured)", value: kpis.mrr },
+    { metric: "ARR (MRR × 12)", value: kpis.arr },
+    { metric: "ARPU", value: kpis.arpu },
+    { metric: "Active customers", value: kpis.activeCustomers },
+  ];
+  return {
+    title: "MRR / ARR Forecast",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: { lines: [{ label: "Source", value: "kpiEngine" }] },
+  };
+}
+
+async function revenueForecastReport() {
+  const [kpis, expected] = await Promise.all([
+    getKpiSnapshot({}, {}),
+    getExpectedCollections({ days: 30 }),
+  ]);
+  const headers = [
+    { key: "metric", label: "Metric" },
+    { key: "value", label: "Value" },
+  ];
+  const rows = [
+    { metric: "Current MRR", value: kpis.mrr },
+    { metric: "Expected collections (30d)", value: expected.expectedCollections },
+    { metric: "Scheduled invoices (30d)", value: expected.invoiceCount },
+    { metric: "Outstanding balance", value: kpis.outstandingBalance },
+  ];
+  return {
+    title: "Revenue Forecast",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+  };
+}
+
+async function atRiskRevenueReport() {
+  const headers = [
+    { key: "invoice_number", label: "Invoice #" },
+    { key: "customer_number", label: "Customer #" },
+    { key: "due_date", label: "Due date" },
+    { key: "days_overdue", label: "Days overdue" },
+    { key: "balance_due", label: "At-risk amount" },
+  ];
+  const rows = await query(
+    `SELECT zi.invoice_number, c.customer_number, zi.due_date,
+            GREATEST(DATEDIFF(CURDATE(), COALESCE(zi.due_date, zi.invoice_date)), 0) AS days_overdue,
+            COALESCE(zi.balance_due, 0) AS balance_due
+     FROM zoho_customer_invoices zi
+     JOIN customers c ON c.id = zi.customer_id
+     WHERE COALESCE(zi.balance_due, 0) > 0
+       AND COALESCE(zi.due_date, zi.invoice_date) < CURDATE()
+     ORDER BY days_overdue DESC, balance_due DESC
+     LIMIT 20000`
+  ).catch(() => []);
+  return {
+    title: "At-Risk Revenue",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      total: rows.length,
+      totalOutstanding: rows.reduce((s, r) => s + Number(r.balance_due || 0), 0),
+    },
+  };
+}
+
+async function activeCustomersReport() {
+  const headers = [
+    { key: "customer_number", label: "Customer #" },
+    { key: "full_name", label: "Name" },
+    { key: "building", label: "Building" },
+    { key: "package_name", label: "Package" },
+    { key: "package_price", label: "Price" },
+    { key: "payment_frequency", label: "Billing" },
+    { key: "subscription_status", label: "Subscription" },
+  ];
+  const rows = await query(
+    `SELECT c.customer_number,
+            TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
+            b.name AS building,
+            p.name AS package_name,
+            c.package_price,
+            c.payment_frequency,
+            c.subscription_status
+     FROM customers c
+     LEFT JOIN buildings b ON b.id = c.building_id
+     LEFT JOIN products p ON p.id = c.product_id
+     WHERE c.status = 'active'
+     ORDER BY c.customer_number ASC
+     LIMIT 15000`
+  );
+  return {
+    title: "Active Customers",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: { total: rows.length, totalLabel: "Customers" },
+  };
+}
+
+async function highRiskCustomersReport(from, to) {
+  const headers = [
+    { key: "customer_number", label: "Customer #" },
+    { key: "failed_count", label: "Failed payments" },
+    { key: "last_failed_at", label: "Last failed" },
+  ];
+  const { clause, params } = dateWhere("pt.created_at", from, to);
+  const rows = await query(
+    `SELECT UPPER(pt.account_reference) AS customer_number,
+            COUNT(*) AS failed_count,
+            MAX(pt.created_at) AS last_failed_at
+     FROM payment_transactions pt
+     ${clause} AND pt.status = 'FAILED'
+     GROUP BY UPPER(pt.account_reference)
+     HAVING COUNT(*) >= 2
+     ORDER BY failed_count DESC, last_failed_at DESC
+     LIMIT 5000`,
+    params
+  );
+  return {
+    title: "High-Risk Customers (consecutive / repeated failed payments)",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: { total: rows.length, totalLabel: "Customers" },
+  };
+}
+
+async function customerLifetimeValueReport(from, to) {
+  const kpis = await getKpiSnapshot({}, { from, to });
+  const headers = [
+    { key: "metric", label: "Metric" },
+    { key: "value", label: "Value" },
+  ];
+  const rows = [
+    { metric: "ARPU", value: kpis.arpu },
+    { metric: "Churn rate %", value: kpis.churnRate },
+    { metric: "Estimated CLV", value: kpis.clv },
+    { metric: "Active customers", value: kpis.activeCustomers },
+  ];
+  return {
+    title: "Customer Lifetime Value",
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    summary: {
+      lines: [
+        { label: "Formula", value: "CLV = ARPU ÷ monthly churn; if churn=0 → ARPU × 24" },
+        { label: "Source", value: "kpiEngine" },
+      ],
+    },
+  };
+}
+
 const RUNNERS = {
   "revenue-summary": revenueSummary,
   "transaction-list": transactionList,
   "failed-payments": failedPayments,
+  "failed-billing": failedPayments,
   "channel-breakdown": channelBreakdown,
   "top-customers": topCustomers,
+  "revenue-by-customer": topCustomers,
   "subscriber-census": subscriberCensus,
   "package-distribution": packageDistribution,
   "customers-by-pop-package": customersByPopPackage,
@@ -1220,11 +2638,37 @@ const RUNNERS = {
   "dstv-iuc-roster": dstvIucRoster,
   "billing-reconciliation": billingReconciliationReport,
   "upcoming-invoices": upcomingInvoicesReport,
+  "invoice-generation-forecast": upcomingInvoicesReport,
+  "subscription-renewal-forecast": upcomingInvoicesReport,
+  "renewals-due": upcomingInvoicesReport,
+  "invoices-vs-payments": invoicesVsPayments,
+  "customer-monthly-billing-matrix": customerMonthlyBillingMatrix,
+  "business-health-summary": businessHealthSummary,
+  "executive-weekly": businessHealthSummary,
+  "executive-monthly": executiveMonthlyReport,
+  "outstanding-invoices": outstandingInvoicesReport,
+  "ar-aging": arAgingReport,
+  "collections-summary": collectionsSummaryReport,
+  "revenue-by-package": revenueByPackageReport,
+  "revenue-by-region": revenueByRegionReport,
+  "forecast-vs-actual-revenue": forecastVsActualRevenue,
+  "suspended-billing": suspendedBillingReport,
+  "expected-collections": expectedCollectionsReport,
+  "mrr-arr-forecast": mrrArrForecastReport,
+  "revenue-forecast": revenueForecastReport,
+  "at-risk-revenue": atRiskRevenueReport,
+  "active-customers": activeCustomersReport,
+  "high-risk-customers": highRiskCustomersReport,
+  "consecutive-failed-payments": highRiskCustomersReport,
+  "customer-lifetime-value": customerLifetimeValueReport,
 };
 
-async function runReport(reportId, { from, to, month } = {}) {
+async function runReport(reportId, { from, to, month, year, monthFrom, monthTo } = {}) {
   const def = getReportDefinition(reportId);
   if (!def) return null;
+  if (def.available === false) {
+    throw new Error("This report is not yet available.");
+  }
 
   const runner = RUNNERS[reportId];
   if (!runner) return null;
@@ -1241,6 +2685,26 @@ async function runReport(reportId, { from, to, month } = {}) {
     return { ...result, period: { from: range.from, to: range.to }, month: range.month };
   }
 
+  if (def.yearFilter) {
+    if (def.monthRangeFilter) {
+      const range = resolveYearMonthSpan(year || new Date().getFullYear(), monthFrom, monthTo);
+      const result = await runner(range.year, {
+        monthFrom: range.monthFrom,
+        monthTo: range.monthTo,
+      });
+      return {
+        ...result,
+        period: { from: range.from, to: range.to },
+        year: range.year,
+        monthFrom: range.monthFrom,
+        monthTo: range.monthTo,
+      };
+    }
+    const range = resolveYearRange(year || new Date().getFullYear());
+    const result = await runner(range.year);
+    return { ...result, period: { from: range.from, to: range.to }, year: range.year };
+  }
+
   const result = await runner();
   return result;
 }
@@ -1252,4 +2716,5 @@ module.exports = {
   getReportDefinition,
   runReport,
   getMonthlyPaymentChurnSummary,
+  getInvoicesVsPaymentsSummary,
 };

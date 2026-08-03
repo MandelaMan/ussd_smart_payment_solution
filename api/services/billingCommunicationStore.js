@@ -15,6 +15,7 @@ const { getZohoContactLookupKeys, resolveEffectiveCustomerEmail, isB2BCustomer }
 const COMMUNICABLE_STATUSES = new Set([
   "overdue",
   "partial_payment",
+  "skipped_payment",
   "missing_invoice",
   "stale_billing",
   "recurring_invoice_stopped",

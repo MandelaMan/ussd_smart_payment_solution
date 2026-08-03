@@ -890,6 +890,9 @@ const findContactByPhone_JS = async (rawPhone) => {
 const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
   const customer = options.customer || null;
   const identityFallback = options.identityFallback === true;
+  const previousCustomerNumber = options.previousCustomerNumber
+    ? String(options.previousCustomerNumber).trim()
+    : "";
   const customerNumber = String(
     customer?.customerNumber || customer?.customer_number || ""
   ).trim();
@@ -935,6 +938,15 @@ const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
         return result;
       }
 
+      // Apartment / account renumber: contact still has the previous company_name.
+      if (
+        previousCustomerNumber &&
+        normalizeCustomerRef(result.company_name) ===
+          normalizeCustomerRef(previousCustomerNumber)
+      ) {
+        return result;
+      }
+
       if (
         identityFallback &&
         (isEmailKey || isPhoneKey) &&
@@ -955,7 +967,12 @@ const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
         const foreignNumber =
           looksLikeCustomerNumber(company) &&
           customerNumber &&
-          normalizeCustomerRef(company) !== normalizeCustomerRef(customerNumber);
+          normalizeCustomerRef(company) !== normalizeCustomerRef(customerNumber) &&
+          !(
+            previousCustomerNumber &&
+            normalizeCustomerRef(company) ===
+              normalizeCustomerRef(previousCustomerNumber)
+          );
         if (nameHit && !foreignNumber && (!company || !looksLikeCustomerNumber(company))) {
           return result;
         }

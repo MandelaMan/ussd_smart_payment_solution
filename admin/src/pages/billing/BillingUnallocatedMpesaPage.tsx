@@ -1,7 +1,7 @@
 import { BillingModuleShell } from "../../components/billing/BillingModuleShell";
 import { BillingUnallocatedMpesaTable } from "../../components/billing/BillingUnallocatedMpesaTable";
 import { useBillingReconciliation } from "../../components/billing/BillingReconciliationContext";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { BILLING_MODULES, moduleCount } from "../../lib/billingReconciliationNav";
 import { canOperateFinance } from "../../lib/rbac";
 

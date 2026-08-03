@@ -551,14 +551,6 @@ export function BiInsightsCharts({ data }: Pick<Props, "data">) {
       >
         <LazyEChart option={referralOption} height="300px" />
       </BiChartCard>
-      <BiChartCard
-        title="Profit Margin by Package"
-        empty
-        emptyMessage="Cost of service is not tracked — margin charts stay hidden until network/support costs are available."
-      />
-      <BiChartCard title="Peak Internet Usage" empty emptyMessage="Usage heatmap requires network telemetry." />
-      <BiChartCard title="Router Inventory" empty emptyMessage="Router inventory not tracked in admin yet." />
-      <BiChartCard title="Monthly Data Consumption" empty emptyMessage="Data consumption metrics not connected." />
     </Grid>
   );
 }
@@ -569,16 +561,20 @@ export function formatKpiValue(key: string, value: number | null | undefined) {
     key.includes("Rate") ||
     key.includes("Uptime") ||
     key === "customerChurnRate" ||
-    key === "collectionRate"
+    key === "collectionRate" ||
+    key === "paymentSuccessRate"
   ) {
     return `${value}%`;
   }
   if (
     key.includes("Revenue") ||
     key.includes("mrr") ||
+    key === "arr" ||
     key.includes("Balance") ||
     key.includes("Lifetime") ||
-    key === "arpu"
+    key.includes("Collections") ||
+    key === "arpu" ||
+    key === "expectedCollections"
   ) {
     return formatMetricCurrency(value);
   }

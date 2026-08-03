@@ -30,7 +30,7 @@ import {
   type Lead,
 } from "../../lib/api";
 import { canMutateCustomers } from "../../lib/rbac";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { toaster } from "../ui/toaster";
 import { SelectField } from "../ui/SelectField";
 import { AppDialog } from "../ui/AppDialog";

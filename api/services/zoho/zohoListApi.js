@@ -80,10 +80,36 @@ async function fetchZohoRecord(resource, recordId) {
   return data[singular] || data[cfg.listKey]?.[0] || data;
 }
 
+/**
+ * Fetch every page for a Zoho list endpoint (capped).
+ * @param {keyof typeof RESOURCE_CONFIG} resource
+ */
+async function fetchZohoListAll(resource, options = {}) {
+  const maxPages = Math.min(Number(options.maxPages || 50), 100);
+  const items = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore && page <= maxPages) {
+    const result = await fetchZohoListPage(resource, {
+      page,
+      perPage: options.perPage || 200,
+      lastModifiedTime: options.lastModifiedTime,
+      extraParams: options.extraParams || {},
+    });
+    items.push(...(result.items || []));
+    hasMore = Boolean(result.hasMore) && (result.items || []).length > 0;
+    page += 1;
+  }
+
+  return items;
+}
+
 module.exports = {
   RESOURCE_CONFIG,
   formatZohoModifiedTime,
   parseZohoModifiedTime,
   fetchZohoListPage,
+  fetchZohoListAll,
   fetchZohoRecord,
 };

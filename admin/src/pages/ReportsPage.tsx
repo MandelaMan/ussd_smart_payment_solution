@@ -3,29 +3,110 @@ import {
   Badge,
   Box,
   Button,
+  Dialog,
   Flex,
-  Grid,
   Input,
+  SimpleGrid,
   Stack,
+  Table,
   Text,
 } from "@chakra-ui/react";
-import { FiDownload, FiFile, FiFileText } from "react-icons/fi";
+import {
+  FiDownload,
+  FiEye,
+  FiFile,
+  FiFileText,
+  FiSearch,
+  FiStar,
+} from "react-icons/fi";
 import { Link as RouterLink } from "react-router-dom";
-import { api, type ReportDefinition } from "../lib/api";
+import {
+  api,
+  type ReportDefinition,
+  type ReportFamily,
+} from "../lib/api";
 import { ReportsPageSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { DateField } from "../components/ui/DateField";
 import { PAGE_STACK_GAP, PageErrorBanner, PageHeader } from "../components/ui/pageLayout";
 import { toaster } from "../components/ui/toaster";
-import { useAuth } from "../lib/auth";
+import { AppDialog } from "../components/ui/AppDialog";
+import { useAuth } from "../lib/authContext";
 import { canAccessFinance, isPartner } from "../lib/rbac";
+import {
+  getFavoriteReportIds,
+  getRecentReportIds,
+  pushRecentReport,
+  toggleFavoriteReport,
+} from "../lib/reportLibraryPrefs";
+import { ReportSchedulesPanel } from "../components/ReportSchedulesPanel";
+import { SelectField } from "../components/ui/SelectField";
 
-const CATEGORY_COLORS: Record<string, string> = {
+const FAMILIES: ReportFamily[] = [
+  "Executive",
+  "Financial",
+  "Billing",
+  "Forecasting",
+  "Customer",
+  "Network",
+  "Audit",
+];
+
+const MONTH_OPTIONS = [
+  { value: "1", label: "January" },
+  { value: "2", label: "February" },
+  { value: "3", label: "March" },
+  { value: "4", label: "April" },
+  { value: "5", label: "May" },
+  { value: "6", label: "June" },
+  { value: "7", label: "July" },
+  { value: "8", label: "August" },
+  { value: "9", label: "September" },
+  { value: "10", label: "October" },
+  { value: "11", label: "November" },
+  { value: "12", label: "December" },
+];
+
+const FAMILY_COLORS: Record<string, string> = {
+  Executive: "purple",
   Financial: "green",
-  Customers: "blue",
-  Operations: "orange",
-  Integrations: "purple",
+  Billing: "teal",
+  Forecasting: "orange",
+  Customer: "blue",
+  Network: "cyan",
+  Audit: "gray",
+};
+
+type ReportFilterValues = {
+  from: string;
+  to: string;
+  month: string;
+  year: string;
+  monthFrom: string;
+  monthTo: string;
+};
+
+type PreviewState = {
+  id: string;
+  title: string;
+  period: { from: string; to: string } | null;
+  summary: Record<string, unknown> | null;
+  matrix?: {
+    rowHeaderKey?: string;
+    rowHeaderLabel?: string;
+    groups: Array<{
+      label: string;
+      columns: Array<{ key: string; label: string }>;
+    }>;
+  } | null;
+  sections: Array<{
+    title: string | null;
+    headers: Array<{ key: string; label: string }>;
+    rows: Array<Record<string, unknown>>;
+    totalRows: number;
+  }>;
+  truncated: boolean;
 };
 
 function defaultFromDate() {
@@ -42,6 +123,410 @@ function defaultMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
+function defaultYear() {
+  return String(new Date().getFullYear());
+}
+
+function createDefaultFilters(): ReportFilterValues {
+  return {
+    from: defaultFromDate(),
+    to: defaultToDate(),
+    month: defaultMonth(),
+    year: defaultYear(),
+    monthFrom: "1",
+    monthTo: "12",
+  };
+}
+
+function reportNeedsFilters(report: ReportDefinition) {
+  return Boolean(
+    report.dateFilter || report.monthFilter || report.yearFilter || report.monthRangeFilter
+  );
+}
+
+function buildFilterParams(report: ReportDefinition, values: ReportFilterValues) {
+  const params: Record<string, string> = {};
+  if (report.dateFilter) {
+    params.from = values.from;
+    params.to = values.to;
+  }
+  if (report.monthFilter) params.month = values.month;
+  if (report.yearFilter) params.year = values.year;
+  if (report.monthRangeFilter) {
+    params.monthFrom = values.monthFrom;
+    params.monthTo = values.monthTo;
+  }
+  return params;
+}
+
+function ReportFiltersForm({
+  report,
+  filters,
+  onChange,
+}: {
+  report: ReportDefinition;
+  filters: ReportFilterValues;
+  onChange: (patch: Partial<ReportFilterValues>) => void;
+}) {
+  if (!reportNeedsFilters(report)) {
+    return (
+      <Text fontSize="sm" color="fg.muted">
+        No period filters for this report.
+      </Text>
+    );
+  }
+
+  return (
+    <Stack gap={3}>
+      {report.dateFilter ? (
+        <Flex gap={3} flexWrap="wrap">
+          <Box flex="1" minW="140px">
+            <Text fontSize="xs" color="fg.muted" mb={1}>
+              From
+            </Text>
+            <DateField value={filters.from} onChange={(v) => onChange({ from: v })} />
+          </Box>
+          <Box flex="1" minW="140px">
+            <Text fontSize="xs" color="fg.muted" mb={1}>
+              To
+            </Text>
+            <DateField value={filters.to} onChange={(v) => onChange({ to: v })} />
+          </Box>
+        </Flex>
+      ) : null}
+
+      {report.monthFilter ? (
+        <Box maxW="220px">
+          <Text fontSize="xs" color="fg.muted" mb={1}>
+            Month
+          </Text>
+          <Input
+            size="sm"
+            type="month"
+            value={filters.month}
+            onChange={(e) => onChange({ month: e.target.value })}
+          />
+        </Box>
+      ) : null}
+
+      {report.yearFilter ? (
+        <Box maxW="140px">
+          <Text fontSize="xs" color="fg.muted" mb={1}>
+            Year
+          </Text>
+          <Input
+            size="sm"
+            type="number"
+            min={2000}
+            max={2100}
+            value={filters.year}
+            onChange={(e) => onChange({ year: e.target.value })}
+          />
+        </Box>
+      ) : null}
+
+      {report.monthRangeFilter ? (
+        <Stack gap={2}>
+          <Flex gap={3} flexWrap="wrap">
+            <Box flex="1" minW="140px">
+              <Text fontSize="xs" color="fg.muted" mb={1}>
+                From month
+              </Text>
+              <SelectField
+                size="sm"
+                fieldProps={{
+                  value: filters.monthFrom,
+                  onChange: (e) => onChange({ monthFrom: e.target.value }),
+                }}
+              >
+                {MONTH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </SelectField>
+            </Box>
+            <Box flex="1" minW="140px">
+              <Text fontSize="xs" color="fg.muted" mb={1}>
+                To month
+              </Text>
+              <SelectField
+                size="sm"
+                fieldProps={{
+                  value: filters.monthTo,
+                  onChange: (e) => onChange({ monthTo: e.target.value }),
+                }}
+              >
+                {MONTH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </SelectField>
+            </Box>
+          </Flex>
+          <Flex gap={1} flexWrap="wrap">
+            {(
+              [
+                ["All months", 1, 12],
+                ["This month", new Date().getMonth() + 1, new Date().getMonth() + 1],
+                ["Q1", 1, 3],
+                ["Q2", 4, 6],
+                ["Q3", 7, 9],
+                ["Q4", 10, 12],
+              ] as const
+            ).map(([label, fromM, toM]) => (
+              <Button
+                key={label}
+                size="xs"
+                variant="outline"
+                onClick={() => onChange({ monthFrom: String(fromM), monthTo: String(toM) })}
+              >
+                {label}
+              </Button>
+            ))}
+          </Flex>
+        </Stack>
+      ) : null}
+    </Stack>
+  );
+}
+
+function ReportPreviewTable({ preview }: { preview: PreviewState }) {
+  return (
+    <Stack gap={3}>
+      {preview.summary ? (
+        <Text fontSize="sm" color="fg.muted">
+          {typeof preview.summary.total === "number"
+            ? `${preview.summary.total} records`
+            : "Summary ready"}
+          {typeof preview.summary.totalOutstanding === "number"
+            ? ` · outstanding ${preview.summary.totalOutstanding}`
+            : ""}
+          {typeof preview.summary.totalAmount === "number"
+            ? ` · total ${preview.summary.totalAmount}`
+            : ""}
+        </Text>
+      ) : null}
+
+      {preview.sections.map((section, idx) => {
+        const matrix = preview.matrix;
+        const useMatrixHeaders = Boolean(matrix?.groups?.length) && !section.title;
+        const flatColumns = useMatrixHeaders
+          ? matrix!.groups.flatMap((g) => g.columns)
+          : section.headers;
+        const rowHeaderKey = matrix?.rowHeaderKey || "customer";
+        const rowHeaderLabel = matrix?.rowHeaderLabel || "Customer";
+
+        return (
+          <Box key={idx} overflowX="auto">
+            {section.title ? (
+              <Text fontSize="sm" fontWeight="medium" mb={2}>
+                {section.title}
+              </Text>
+            ) : null}
+            <Table.Root size="sm" variant="outline">
+              <Table.Header>
+                {useMatrixHeaders ? (
+                  <>
+                    <Table.Row>
+                      <Table.ColumnHeader rowSpan={2}>{rowHeaderLabel}</Table.ColumnHeader>
+                      {matrix!.groups.map((group) => (
+                        <Table.ColumnHeader
+                          key={group.label}
+                          colSpan={group.columns.length}
+                          textAlign="center"
+                        >
+                          {group.label}
+                        </Table.ColumnHeader>
+                      ))}
+                    </Table.Row>
+                    <Table.Row>
+                      {flatColumns.map((h) => (
+                        <Table.ColumnHeader key={h.key}>{h.label}</Table.ColumnHeader>
+                      ))}
+                    </Table.Row>
+                  </>
+                ) : (
+                  <Table.Row>
+                    {section.headers.map((h) => (
+                      <Table.ColumnHeader key={h.key}>{h.label}</Table.ColumnHeader>
+                    ))}
+                  </Table.Row>
+                )}
+              </Table.Header>
+              <Table.Body>
+                {section.rows.slice(0, 50).map((row, rIdx) => (
+                  <Table.Row key={rIdx}>
+                    {useMatrixHeaders ? (
+                      <>
+                        <Table.Cell>
+                          {row[rowHeaderKey] == null ? "" : String(row[rowHeaderKey])}
+                        </Table.Cell>
+                        {flatColumns.map((h) => (
+                          <Table.Cell key={h.key}>
+                            {row[h.key] == null ? "" : String(row[h.key])}
+                          </Table.Cell>
+                        ))}
+                      </>
+                    ) : (
+                      section.headers.map((h) => (
+                        <Table.Cell key={h.key}>
+                          {row[h.key] == null ? "" : String(row[h.key])}
+                        </Table.Cell>
+                      ))
+                    )}
+                  </Table.Row>
+                ))}
+              </Table.Body>
+            </Table.Root>
+            <Text fontSize="xs" color="fg.subtle" mt={1}>
+              Showing {Math.min(50, section.rows.length)} of {section.totalRows}
+              {preview.truncated ? " · truncated preview" : ""}
+            </Text>
+          </Box>
+        );
+      })}
+    </Stack>
+  );
+}
+
+function ReportRunnerDialog({
+  report,
+  open,
+  filters,
+  onFiltersChange,
+  preview,
+  previewing,
+  downloading,
+  onClose,
+  onDownload,
+}: {
+  report: ReportDefinition | null;
+  open: boolean;
+  filters: ReportFilterValues;
+  onFiltersChange: (patch: Partial<ReportFilterValues>) => void;
+  preview: PreviewState | null;
+  previewing: boolean;
+  downloading: string | null;
+  onClose: () => void;
+  onDownload: (format: "xlsx" | "pdf" | "csv") => void;
+}) {
+  if (!report) return null;
+
+  const downloadBusy = downloading?.startsWith(`${report.id}:`);
+
+  return (
+    <AppDialog
+      open={open}
+      onOpenChange={(d) => !d.open && onClose()}
+      nearFullScreen
+    >
+      <Box
+        px={5}
+        py={3.5}
+        pr={12}
+        borderBottomWidth="1px"
+        borderColor="border.muted"
+        flexShrink={0}
+      >
+        <Text fontSize="lg" fontWeight="semibold" lineHeight="1.25">
+          {report.title}
+        </Text>
+        <Text fontSize="sm" color="fg.muted" mt={1} lineHeight="1.4">
+          {report.description}
+        </Text>
+      </Box>
+
+      <Dialog.Body px={5} py={4} flex="1" minH={0} overflowY="auto">
+        <Stack gap={5}>
+          <Box>
+            <Text fontSize="sm" fontWeight="medium" mb={2}>
+              Filters
+            </Text>
+            <ReportFiltersForm report={report} filters={filters} onChange={onFiltersChange} />
+          </Box>
+
+          <Box>
+            <Flex align="center" justify="space-between" gap={2} mb={2} flexWrap="wrap">
+              <Text fontSize="sm" fontWeight="medium">
+                Preview
+              </Text>
+              {previewing ? (
+                <Text fontSize="xs" color="fg.muted">
+                  Loading…
+                </Text>
+              ) : null}
+            </Flex>
+            {previewing && !(preview && preview.id === report.id) ? (
+              <Text fontSize="sm" color="fg.muted">
+                Loading preview…
+              </Text>
+            ) : preview && preview.id === report.id ? (
+              <Stack gap={2} opacity={previewing ? 0.6 : 1}>
+                {preview.period ? (
+                  <Text fontSize="xs" color="fg.muted">
+                    {preview.period.from} → {preview.period.to}
+                  </Text>
+                ) : null}
+                <ReportPreviewTable preview={preview} />
+              </Stack>
+            ) : (
+              <Text fontSize="sm" color="fg.muted">
+                Preview will appear here once data loads.
+              </Text>
+            )}
+          </Box>
+        </Stack>
+      </Dialog.Body>
+
+      <Dialog.Footer
+        px={5}
+        py={3}
+        borderTopWidth="1px"
+        borderColor="border.muted"
+        gap={2}
+        flexWrap="wrap"
+        justifyContent="space-between"
+        flexShrink={0}
+      >
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+        <Flex gap={2} flexWrap="wrap">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={Boolean(downloadBusy)}
+            loading={downloading === `${report.id}:xlsx`}
+            onClick={() => onDownload("xlsx")}
+          >
+            <FiFile /> Excel
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={Boolean(downloadBusy)}
+            loading={downloading === `${report.id}:csv`}
+            onClick={() => onDownload("csv")}
+          >
+            <FiDownload /> CSV
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={Boolean(downloadBusy)}
+            loading={downloading === `${report.id}:pdf`}
+            onClick={() => onDownload("pdf")}
+          >
+            <FiFileText /> PDF
+          </Button>
+        </Flex>
+      </Dialog.Footer>
+    </AppDialog>
+  );
+}
+
 export function ReportsPage() {
   const { user } = useAuth();
   const partnerView = isPartner(user);
@@ -50,10 +535,16 @@ export function ReportsPage() {
   const [reports, setReports] = useState<ReportDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [from, setFrom] = useState(defaultFromDate);
-  const [to, setTo] = useState(defaultToDate);
-  const [month, setMonth] = useState(defaultMonth);
+  const [search, setSearch] = useState("");
+  const [family, setFamily] = useState<string>("All");
+  const [filtersByReport, setFiltersByReport] = useState<Record<string, ReportFilterValues>>({});
+  const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [favorites, setFavorites] = useState<string[]>(() => getFavoriteReportIds());
+  const [recent, setRecent] = useState<string[]>(() => getRecentReportIds());
+  const [showUnavailable, setShowUnavailable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,47 +567,150 @@ export function ReportsPage() {
     };
   }, []);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, ReportDefinition[]>();
-    for (const r of reports) {
-      const list = map.get(r.category) || [];
-      list.push(r);
-      map.set(r.category, list);
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [reports]);
+  const activeReport = useMemo(
+    () => reports.find((r) => r.id === activeReportId) || null,
+    [reports, activeReportId]
+  );
 
-  const download = useCallback(
-    async (report: ReportDefinition, format: "xlsx" | "pdf") => {
-      const key = `${report.id}-${format}`;
-      setDownloading(key);
+  const getReportFilters = useCallback(
+    (reportId: string) => filtersByReport[reportId] || createDefaultFilters(),
+    [filtersByReport]
+  );
+
+  const patchReportFilters = useCallback((reportId: string, patch: Partial<ReportFilterValues>) => {
+    setFiltersByReport((prev) => ({
+      ...prev,
+      [reportId]: { ...(prev[reportId] || createDefaultFilters()), ...patch },
+    }));
+  }, []);
+
+  const activeFilters = activeReport
+    ? getReportFilters(activeReport.id)
+    : createDefaultFilters();
+  const activeFiltersKey = activeReport
+    ? [
+        activeReport.id,
+        activeFilters.from,
+        activeFilters.to,
+        activeFilters.month,
+        activeFilters.year,
+        activeFilters.monthFrom,
+        activeFilters.monthTo,
+      ].join("|")
+    : "";
+
+  useEffect(() => {
+    if (!activeReport) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setPreviewing(true);
       try {
-        const params: Record<string, string> = { format };
-        if (report.dateFilter) {
-          params.from = from;
-          params.to = to;
-        }
-        if (report.monthFilter) {
-          params.month = month;
-        }
-        await api.downloadReport(report.id, params);
-        toaster.create({
-          title: "Report downloaded",
-          description: `${report.title} (${format.toUpperCase()})`,
-          type: "success",
-        });
+        const data = await api.previewReport(
+          activeReport.id,
+          buildFilterParams(activeReport, getReportFilters(activeReport.id))
+        );
+        if (cancelled) return;
+        setPreview(data);
+        setRecent(pushRecentReport(activeReport.id));
       } catch (e) {
+        if (cancelled) return;
+        setPreview(null);
         toaster.create({
-          title: "Download failed",
-          description: e instanceof Error ? e.message : "Could not download report",
+          title: e instanceof Error ? e.message : "Preview failed",
           type: "error",
         });
       } finally {
-        setDownloading(null);
+        if (!cancelled) setPreviewing(false);
       }
-    },
-    [from, to, month]
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeReport, activeFiltersKey, getReportFilters]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return reports.filter((r) => {
+      if (!showUnavailable && r.available === false) return false;
+      if (family !== "All" && (r.family || r.category) !== family) return false;
+      if (!q) return true;
+      return (
+        r.title.toLowerCase().includes(q) ||
+        r.description.toLowerCase().includes(q) ||
+        r.id.includes(q) ||
+        (r.family || r.category).toLowerCase().includes(q)
+      );
+    });
+  }, [reports, search, family, showUnavailable]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, ReportDefinition[]>();
+    for (const fam of FAMILIES) map.set(fam, []);
+    for (const r of filtered) {
+      const key = (r.family || r.category) as ReportFamily;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    }
+    return [...map.entries()].filter(([, list]) => list.length > 0);
+  }, [filtered]);
+
+  const favoriteReports = useMemo(
+    () => reports.filter((r) => favorites.includes(r.id)),
+    [reports, favorites]
   );
+  const recentReports = useMemo(
+    () =>
+      recent
+        .map((id) => reports.find((r) => r.id === id))
+        .filter((r): r is ReportDefinition => Boolean(r)),
+    [reports, recent]
+  );
+
+  function openReport(report: ReportDefinition) {
+    if (report.available === false) {
+      toaster.create({ title: "Report not available yet", type: "warning" });
+      return;
+    }
+    setPreview(null);
+    setPreviewing(true);
+    setActiveReportId(report.id);
+  }
+
+  function closeReport() {
+    setActiveReportId(null);
+    setPreview(null);
+    setPreviewing(false);
+  }
+
+  async function handleDownload(format: "xlsx" | "pdf" | "csv") {
+    if (!activeReport) return;
+    const key = `${activeReport.id}:${format}`;
+    setDownloading(key);
+    try {
+      await api.downloadReport(activeReport.id, {
+        ...buildFilterParams(activeReport, getReportFilters(activeReport.id)),
+        format,
+      });
+      setRecent(pushRecentReport(activeReport.id));
+      toaster.create({ title: `${activeReport.title} downloaded`, type: "success" });
+    } catch (e) {
+      toaster.create({
+        title: e instanceof Error ? e.message : "Download failed",
+        type: "error",
+      });
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  function handleFavorite(id: string) {
+    setFavorites(toggleFavoriteReport(id));
+  }
+
+  if (loading) return <ReportsPageSkeleton />;
 
   return (
     <Stack gap={PAGE_STACK_GAP}>
@@ -124,8 +718,8 @@ export function ReportsPage() {
         title="Reports"
         description={
           partnerView
-            ? "Export subscriber, revenue, and occupancy summaries for your records."
-            : "Download Excel or PDF exports for sharing and record-keeping."
+            ? "Downloadable partner reports — export the underlying data"
+            : "Single source of truth for downloadable business reports"
         }
         actions={
           showAnalyticsLink ? (
@@ -136,130 +730,173 @@ export function ReportsPage() {
         }
       />
 
-      <FilterToolbar embedded>
-        <FilterField label="From" flex={FILTER_FLEX.standard}>
-          <DateField
-            size="sm"
-            value={from}
-            onChange={setFrom}
-            max={to}
-            placeholder="Start date"
-          />
+      {error ? <PageErrorBanner message={error} /> : null}
+
+      <FilterToolbar>
+        <FilterField label="Search" flex={FILTER_FLEX.search}>
+          <Flex align="center" gap={2}>
+            <Box color="fg.muted">
+              <FiSearch />
+            </Box>
+            <Input
+              size="sm"
+              placeholder="Search reports…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </Flex>
         </FilterField>
-        <FilterField label="To" flex={FILTER_FLEX.standard}>
-          <DateField
-            size="sm"
-            value={to}
-            onChange={setTo}
-            min={from}
-            placeholder="End date"
-          />
-        </FilterField>
-        <FilterField label="Month report" flex={FILTER_FLEX.standard}>
-          <Input
-            size="sm"
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            borderRadius="md"
-            borderColor="border"
-            bg="bg.panel"
-          />
-        </FilterField>
-        <Box
-          display={{ base: "none", lg: "block" }}
-          flex={FILTER_FLEX.wide}
-          minW={0}
-          alignSelf="flex-end"
-          pb={1}
-        >
-          <Text fontSize="xs" color="fg.muted">
-            Applies to time-based and month-based report exports
-          </Text>
-        </Box>
       </FilterToolbar>
 
-      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
+      <Flex gap={2} flexWrap="wrap" align="center">
+        <Button
+          size="xs"
+          variant={family === "All" ? "solid" : "outline"}
+          colorPalette="brand"
+          onClick={() => setFamily("All")}
+        >
+          All
+        </Button>
+        {FAMILIES.map((f) => (
+          <Button
+            key={f}
+            size="xs"
+            variant={family === f ? "solid" : "outline"}
+            colorPalette="brand"
+            onClick={() => setFamily(f)}
+          >
+            {f}
+          </Button>
+        ))}
+        <Button
+          size="xs"
+          variant="ghost"
+          ml="auto"
+          onClick={() => setShowUnavailable((v) => !v)}
+        >
+          {showUnavailable ? "Hide upcoming" : "Show upcoming"}
+        </Button>
+      </Flex>
 
-      {loading ? (
-        <ReportsPageSkeleton />
-      ) : (
-        grouped.map(([category, items]) => (
-          <Box key={category}>
-            <Flex align="center" gap={2} mb={3}>
-              <Badge colorPalette={CATEGORY_COLORS[category] || "gray"} variant="subtle">
-                {category}
-              </Badge>
-              <Text fontSize="xs" color="fg.subtle">
-                {items.length} report{items.length !== 1 ? "s" : ""}
+      {(favoriteReports.length > 0 || recentReports.length > 0) && family === "All" && !search && (
+        <SimpleGrid columns={{ base: 1, md: 2 }} gap={3}>
+          {favoriteReports.length > 0 && (
+            <Box borderWidth="1px" borderColor="border" borderRadius="lg" p={3}>
+              <Text fontSize="sm" fontWeight="semibold" mb={2}>
+                Favorites
               </Text>
+              <Stack gap={1}>
+                {favoriteReports.slice(0, 6).map((r) => (
+                  <Text key={r.id} fontSize="sm" color="fg.muted">
+                    {r.title}
+                  </Text>
+                ))}
+              </Stack>
+            </Box>
+          )}
+          {recentReports.length > 0 && (
+            <Box borderWidth="1px" borderColor="border" borderRadius="lg" p={3}>
+              <Text fontSize="sm" fontWeight="semibold" mb={2}>
+                Recently used
+              </Text>
+              <Stack gap={1}>
+                {recentReports.slice(0, 6).map((r) => (
+                  <Text key={r.id} fontSize="sm" color="fg.muted">
+                    {r.title}
+                  </Text>
+                ))}
+              </Stack>
+            </Box>
+          )}
+        </SimpleGrid>
+      )}
+
+      <Text fontSize="sm" color="fg.muted">
+        {filtered.length} report{filtered.length === 1 ? "" : "s"}
+        {partnerView ? " · partner catalog" : ""}
+      </Text>
+
+      <Stack gap={6}>
+        {grouped.map(([fam, list]) => (
+          <Stack key={fam} gap={3}>
+            <Flex align="center" gap={2}>
+              <Text fontSize="md" fontWeight="semibold">
+                {fam}
+              </Text>
+              <Badge colorPalette={FAMILY_COLORS[fam] || "gray"}>{list.length}</Badge>
             </Flex>
-            <Grid
-              templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }}
-              gap={3}
-            >
-              {items.map((report) => (
-                <Box
-                  key={report.id}
-                  bg="bg.panel"
-                  border="1px solid"
-                  borderColor="border.muted"
-                  borderRadius="lg"
-                  p={4}
-                  display="flex"
-                  flexDirection="column"
-                  gap={3}
-                >
-                  <Box flex={1}>
-                    <Text fontWeight="semibold" fontSize="sm" color="fg">
-                      {report.title}
-                    </Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1} lineHeight="tall">
-                      {report.description}
-                    </Text>
-                    {!report.dateFilter && (
-                      <Badge size="sm" variant="outline" colorPalette="gray" mt={2}>
-                        {report.monthFilter ? "Month-based" : "Snapshot (no date filter)"}
+            <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} gap={3}>
+              {list.map((report) => {
+                const unavailable = report.available === false;
+                const isFav = favorites.includes(report.id);
+                return (
+                  <Box
+                    key={report.id}
+                    borderWidth="1px"
+                    borderColor="border"
+                    borderRadius="lg"
+                    p={4}
+                    opacity={unavailable ? 0.65 : 1}
+                    bg="bg"
+                  >
+                    <Flex justify="space-between" align="flex-start" gap={2} mb={3}>
+                      <Stack gap={1} flex="1" minW={0}>
+                        <Text fontWeight="semibold" fontSize="sm">
+                          {report.title}
+                        </Text>
+                        <Text fontSize="xs" color="fg.muted" lineClamp={2}>
+                          {report.description}
+                        </Text>
+                      </Stack>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        aria-label="Favorite"
+                        onClick={() => handleFavorite(report.id)}
+                        color={isFav ? "orange.500" : undefined}
+                      >
+                        <FiStar />
+                      </Button>
+                    </Flex>
+                    {unavailable ? (
+                      <Badge size="sm" colorPalette="orange">
+                        Coming soon
                       </Badge>
+                    ) : (
+                      <Button
+                        size="sm"
+                        colorPalette="brand"
+                        variant="outline"
+                        onClick={() => openReport(report)}
+                      >
+                        <FiEye /> Open report
+                      </Button>
                     )}
                   </Box>
-                  <Flex gap={2}>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      flex={1}
-                      loading={downloading === `${report.id}-xlsx`}
-                      onClick={() => download(report, "xlsx")}
-                    >
-                      <FiFile style={{ marginRight: 6 }} />
-                      Excel
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      flex={1}
-                      loading={downloading === `${report.id}-pdf`}
-                      onClick={() => download(report, "pdf")}
-                    >
-                      <FiFileText style={{ marginRight: 6 }} />
-                      PDF
-                    </Button>
-                  </Flex>
-                </Box>
-              ))}
-            </Grid>
-          </Box>
-        ))
-      )}
+                );
+              })}
+            </SimpleGrid>
+          </Stack>
+        ))}
+      </Stack>
 
-      {!loading && reports.length > 0 && (
-        <Flex align="center" gap={2} color="fg.subtle" fontSize="xs">
-          <FiDownload size={12} />
-          <Text>
-            {reports.length} reports available · Excel (.xlsx) and PDF formats supported
-          </Text>
-        </Flex>
-      )}
+      <ReportRunnerDialog
+        report={activeReport}
+        open={Boolean(activeReport)}
+        filters={activeFilters}
+        onFiltersChange={(patch) => {
+          if (activeReport) patchReportFilters(activeReport.id, patch);
+        }}
+        preview={preview}
+        previewing={previewing}
+        downloading={downloading}
+        onClose={closeReport}
+        onDownload={(format) => void handleDownload(format)}
+      />
+
+      {!partnerView && reports.length > 0 ? (
+        <ReportSchedulesPanel reports={reports} />
+      ) : null}
     </Stack>
   );
 }

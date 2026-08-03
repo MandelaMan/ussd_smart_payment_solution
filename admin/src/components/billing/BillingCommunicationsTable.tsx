@@ -47,7 +47,7 @@ import {
   type ExportScope,
 } from "../../lib/tableExport";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { canOperateFinance } from "../../lib/rbac";
 
 const PAGE_SIZE = 30;

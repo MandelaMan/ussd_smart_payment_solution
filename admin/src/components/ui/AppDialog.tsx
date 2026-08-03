@@ -12,6 +12,8 @@ type Props = {
   onOpenChange?: (details: { open: boolean }) => void;
   children: ReactNode;
   maxW?: string;
+  /** Nearly fills the viewport — useful for data-heavy dialogs. */
+  nearFullScreen?: boolean;
   zIndex?: number;
   showCloseButton?: boolean;
 } & Omit<
@@ -24,6 +26,7 @@ export function AppDialog({
   onOpenChange,
   children,
   maxW = "lg",
+  nearFullScreen = false,
   zIndex = APP_DIALOG_Z_INDEX,
   showCloseButton = true,
   ...rootProps
@@ -53,31 +56,41 @@ export function AppDialog({
         <Dialog.Positioner
           zIndex={zIndex}
           display="flex"
-          alignItems={{ base: "stretch", sm: "center" }}
+          alignItems={nearFullScreen ? "stretch" : { base: "stretch", sm: "center" }}
           justifyContent="center"
-          p={{ base: 0, sm: 4 }}
+          p={nearFullScreen ? { base: 3, sm: 4, md: 6 } : { base: 0, sm: 4 }}
           inset={0}
+          overflow="hidden"
         >
           <Dialog.Content
-            borderRadius={{ base: 0, sm: "xl" }}
-            mx={{ base: 0, sm: 4 }}
+            borderRadius={nearFullScreen ? "xl" : { base: 0, sm: "xl" }}
+            mx={nearFullScreen ? 0 : { base: 0, sm: 4 }}
             mb={0}
             w="full"
-            h={{ base: "100dvh", sm: "auto" }}
-            maxW={{ base: "100%", sm: maxW }}
-            maxH={{ base: "100dvh", sm: "calc(100dvh - 2rem)" }}
+            h={nearFullScreen ? undefined : { base: "100dvh", sm: "auto" }}
+            maxW={nearFullScreen ? "100%" : { base: "100%", sm: maxW }}
+            maxH={nearFullScreen ? "100%" : { base: "100dvh", sm: "calc(100dvh - 2rem)" }}
+            minH={0}
+            alignSelf={nearFullScreen ? "stretch" : undefined}
             overflow="hidden"
-            overflowY="auto"
             display="flex"
             flexDirection="column"
             bg="bg.panel"
             boxShadow="xl"
-            borderWidth={{ base: 0, sm: "1px" }}
+            borderWidth={nearFullScreen ? "1px" : { base: 0, sm: "1px" }}
             borderColor="border"
             zIndex={zIndex + 1}
             position="relative"
-            pb={{ base: "env(safe-area-inset-bottom, 0px)", sm: 0 }}
-            pt={{ base: "env(safe-area-inset-top, 0px)", sm: 0 }}
+            pb={
+              nearFullScreen
+                ? 0
+                : { base: "env(safe-area-inset-bottom, 0px)", sm: 0 }
+            }
+            pt={
+              nearFullScreen
+                ? 0
+                : { base: "env(safe-area-inset-top, 0px)", sm: 0 }
+            }
           >
             {showCloseButton ? (
               <IconButton

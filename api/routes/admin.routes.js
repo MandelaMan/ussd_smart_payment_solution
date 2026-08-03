@@ -68,8 +68,24 @@ const {
   getLog,
   retryLog,
 } = require("../controllers/logs.controller");
-const { listReports, downloadReport, getAnalytics, getMonthlyPaymentChurnSummary } = require("../controllers/reports.controller");
-const { getDashboard: getBiDashboard, exportSection: exportBiSection } = require("../controllers/bi.controller");
+const {
+  listReports,
+  previewReport,
+  downloadReport,
+  getAnalytics,
+  getKpis,
+  getMonthlyPaymentChurnSummaryHandler: getMonthlyPaymentChurnSummary,
+  getInvoicesVsPaymentsSummaryHandler: getInvoicesVsPaymentsSummary,
+} = require("../controllers/reports.controller");
+const { getDashboard: getBiDashboard, getForecast: getBiForecast, exportSection: exportBiSection } = require("../controllers/bi.controller");
+const {
+  listReportSchedules,
+  createReportSchedule,
+  updateReportScheduleActive,
+  deleteReportSchedule,
+  runReportSchedule,
+  listReportScheduleRuns,
+} = require("../controllers/reportSchedules.controller");
 const { exportTableReport } = require("../controllers/tableExport.controller");
 const { getSettings } = require("../controllers/settings.controller");
 const {
@@ -149,13 +165,27 @@ router.get("/revenue-chart", requireFinance, getRevenueChart);
 router.get("/activity", requireFinance, getActivityFeed);
 router.get("/reports", requireReportsAccess, listReports);
 router.get("/reports/analytics", requireFinance, getAnalytics);
+router.get("/reports/kpis", requireFinance, getKpis);
 router.get(
   "/reports/monthly-payment-churn/summary",
   requireReportsAccess,
   getMonthlyPaymentChurnSummary
 );
+router.get(
+  "/reports/invoices-vs-payments/summary",
+  requireReportsAccess,
+  getInvoicesVsPaymentsSummary
+);
 router.get("/bi/dashboard", requireFinance, getBiDashboard);
+router.get("/bi/forecast", requireFinance, getBiForecast);
 router.get("/bi/export", requireFinance, exportBiSection);
+router.get("/reports/schedules", requireReportsAccess, listReportSchedules);
+router.post("/reports/schedules", requireReportsAccess, createReportSchedule);
+router.patch("/reports/schedules/:id", requireReportsAccess, updateReportScheduleActive);
+router.delete("/reports/schedules/:id", requireReportsAccess, deleteReportSchedule);
+router.post("/reports/schedules/:id/run", requireReportsAccess, runReportSchedule);
+router.get("/reports/schedules/:id/runs", requireReportsAccess, listReportScheduleRuns);
+router.get("/reports/:id/preview", requireReportsAccess, previewReport);
 router.get("/reports/:id/download", requireReportsAccess, downloadReport);
 router.get("/transactions", requireFinance, listUnifiedTransactions);
 router.get("/transactions/export", requireFinance, exportUnifiedTransactions);

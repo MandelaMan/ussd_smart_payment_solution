@@ -94,7 +94,7 @@ import { SelectField } from "../components/ui/SelectField";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { formatDisplayText } from "../lib/formatText";
 import { DisplayText } from "../components/ui/DisplayText";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hidePricing } from "../lib/rbac";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";

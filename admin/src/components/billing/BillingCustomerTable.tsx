@@ -43,7 +43,7 @@ import { BillingSyncProgressBanner } from "./BillingSyncProgressBanner";
 import { DataTableExportButton } from "../ui/DataTableExportButton";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
 import type { ExportFormat, ExportScope } from "../../lib/tableExport";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { canOperateFinance } from "../../lib/rbac";
 
 const BROWSE_PAGE_SIZE = 10;

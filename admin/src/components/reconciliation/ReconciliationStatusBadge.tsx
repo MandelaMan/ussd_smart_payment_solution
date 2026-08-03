@@ -18,6 +18,7 @@ const STATUS_COLORS: Record<string, BadgeProps["colorPalette"]> = {
   missing_invoice: "orange",
   disconnected_not_invoiced: "red",
   stale_billing: "orange",
+  skipped_payment: "orange",
   no_zoho_link: "orange",
   credit_balance: "blue",
   unknown: "gray",

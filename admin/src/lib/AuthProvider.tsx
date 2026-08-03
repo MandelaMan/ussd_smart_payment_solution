@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -16,29 +14,50 @@ import {
   resetAuthSessionExpiredFlag,
   type User,
 } from "./api";
+import { AuthContext } from "./authContext";
+import { getSessionCache, setSessionCache } from "./authSessionCache";
 
-type AuthContextValue = {
-  user: User | null;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
-  refresh: () => Promise<void>;
-};
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
-const AuthContext = createContext<AuthContextValue | null>(null);
+/** Nodemon / proxy restarts briefly refuse connections — retry before clearing session. */
+async function fetchMeWithRetry(attempts = 4) {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await api.me();
+    } catch (err) {
+      lastErr = err;
+      if (isUnauthorizedError(err)) throw err;
+      if (i < attempts - 1) await sleep(250 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
 
+function userFromCache(): User | null {
+  const cached = getSessionCache()?.user;
+  if (!cached) return null;
+  return cached as User;
+}
+
+/**
+ * Component-only module so Vite Fast Refresh stays valid.
+ * useAuth lives in authContext.ts — do not re-export hooks from here.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(() => userFromCache());
+  const [loading, setLoading] = useState(() => !getSessionCache()?.user);
   const sessionTimerRef = useRef<number | null>(null);
   const sessionExpiredRef = useRef(false);
 
   const clearSessionTimer = useCallback(() => {
     if (sessionTimerRef.current != null) {
       window.clearTimeout(sessionTimerRef.current);
-      sessionTimerRef.current = null;
     }
+    sessionTimerRef.current = null;
   }, []);
 
   const resetSessionState = useCallback(() => {
@@ -49,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleSessionExpired = useCallback(() => {
     if (sessionExpiredRef.current) return;
     sessionExpiredRef.current = true;
+    setSessionCache(null);
     clearSessionTimer();
     setUser(null);
     setLoading(false);
@@ -76,27 +96,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const applySession = useCallback(
     (nextUser: User, expiresAt: number | null | undefined) => {
       resetSessionState();
+      setSessionCache({ user: nextUser, expiresAt: expiresAt ?? null });
       setUser(nextUser);
+      setLoading(false);
       scheduleSessionExpiry(expiresAt);
     },
     [resetSessionState, scheduleSessionExpiry]
   );
 
   const refresh = useCallback(async () => {
+    const hadCachedUser = Boolean(getSessionCache()?.user);
+    // Only show the boot/auth skeleton when we have nothing to paint.
+    if (!hadCachedUser) setLoading(true);
     try {
-      const session = await api.me();
+      const session = await fetchMeWithRetry();
       applySession(session.user, session.expiresAt);
     } catch (err) {
       // Only clear the session on a real auth failure. Network blips, aborts,
       // rate limits, and proxy restarts must not force a login redirect.
       if (isUnauthorizedError(err)) {
+        setSessionCache(null);
         clearSessionTimer();
         setUser(null);
+      } else {
+        // Restore cached user after HMR / nodemon so the shell does not blank.
+        const cached = getSessionCache();
+        if (cached?.user) {
+          setUser(cached.user as User);
+          scheduleSessionExpiry(cached.expiresAt);
+        }
       }
     } finally {
       setLoading(false);
     }
-  }, [applySession, clearSessionTimer]);
+  }, [applySession, clearSessionTimer, scheduleSessionExpiry]);
 
   useEffect(() => {
     registerAuthSessionExpiredHandler(handleSessionExpired);
@@ -107,22 +140,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [handleSessionExpired, clearSessionTimer]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    // Restore expiry timer after remount before /me round-trip completes.
+    const cached = getSessionCache();
+    if (cached?.expiresAt) {
+      scheduleSessionExpiry(cached.expiresAt);
+    }
+    void refresh();
+    // Mount-only: depending on `refresh` re-fired /me in a loop and starved page data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, []);
 
   useEffect(() => {
     if (!user) return;
 
+    // Window focus fires constantly in local multi-monitor / Cursor workflows and
+    // remounts race with Vite HMR. Validate only on tab visibility restore.
     const validateSession = () => {
       if (sessionExpiredRef.current) return;
-      void api
-        .me()
+      if (document.visibilityState !== "visible") return;
+      void fetchMeWithRetry(2)
         .then((session) => {
           applySession(session.user, session.expiresAt);
         })
         .catch((err) => {
-          // Focus/visibility checks fire often in local dev. Do not log the
-          // user out (or bump token_version via logout) unless the cookie is gone.
           if (isUnauthorizedError(err)) {
             handleSessionExpired();
           }
@@ -135,10 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    window.addEventListener("focus", validateSession);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      window.removeEventListener("focus", validateSession);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [user, applySession, handleSessionExpired]);
@@ -154,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     clearSessionTimer();
     resetSessionState();
+    setSessionCache(null);
     await api.logout();
     setUser(null);
   }, [clearSessionTimer, resetSessionState]);
@@ -164,22 +203,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  // During Vite HMR, AuthProvider can briefly disappear while consumers stay mounted.
-  // Returning a safe loading stub avoids a blank / thrown "must be used within" crash.
-  if (!ctx) {
-    return {
-      user: null,
-      loading: true,
-      login: async () => {
-        throw new Error("Auth is still loading — refresh the page and try again");
-      },
-      logout: async () => {},
-      refresh: async () => {},
-    };
-  }
-  return ctx;
 }

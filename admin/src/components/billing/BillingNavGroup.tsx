@@ -9,7 +9,7 @@ import {
   billingModulePath,
 } from "../../lib/billingReconciliationNav";
 import { canAccessFinance } from "../../lib/rbac";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 
 type Props = { onNavigate?: () => void };
 

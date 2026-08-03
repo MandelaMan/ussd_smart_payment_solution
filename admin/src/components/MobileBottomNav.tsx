@@ -1,6 +1,6 @@
 import { Box, Button, Flex, Text } from "@chakra-ui/react";
 import { NavLink, useLocation } from "react-router-dom";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import {
   buildMobileNavTabs,
   isMobileNavTabActive,

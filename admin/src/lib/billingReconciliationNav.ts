@@ -28,6 +28,7 @@ export const BILLING_GAP_STATUSES = [
   "recurring_invoice_stopped",
   "missing_invoice",
   "disconnected_not_invoiced",
+  "skipped_payment",
 ] as const;
 
 export const BILLING_GAP_ISSUE_LABELS: Record<string, string> = {
@@ -37,6 +38,7 @@ export const BILLING_GAP_ISSUE_LABELS: Record<string, string> = {
   recurring_invoice_stopped: "Recurring invoice stopped",
   missing_invoice: "Missing invoice",
   disconnected_not_invoiced: "Disconnected, not invoiced",
+  skipped_payment: "Skipped monthly payment",
   no_gaps: "No gaps",
 };
 
@@ -59,7 +61,7 @@ export const BILLING_MODULES: BillingModuleDef[] = [
     id: "billing-gaps",
     path: "billing-gaps",
     label: "Billing Gaps",
-    description: "TISP vs Zoho mismatches needing attention",
+    description: "TISP vs Zoho mismatches and skipped monthly payments",
     statusFilters: [...BILLING_GAP_STATUSES],
     summaryKeys: [
       "connectedWithoutPayment",
@@ -68,6 +70,7 @@ export const BILLING_MODULES: BillingModuleDef[] = [
       "recurringInvoicesStopped",
       "missingInvoices",
       "disconnectedNotInvoiced",
+      "skippedPayments",
     ],
   },
   {

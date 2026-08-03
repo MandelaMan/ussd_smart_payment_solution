@@ -36,7 +36,7 @@ import {
   type ZohoInvoice,
 } from "../lib/api";
 import { canMutateAgencies } from "../lib/rbac";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
 import { customerListExportColumns } from "../lib/dataTableExportColumns";
 import { exportTableData, type ExportFormat, type ExportScope } from "../lib/tableExport";

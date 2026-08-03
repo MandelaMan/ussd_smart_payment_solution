@@ -5,7 +5,7 @@ import { ActivityPanel } from "../components/ActivityPanel";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { PageErrorBanner } from "../components/ui/pageLayout";
 import { api, type ActivityItem } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { canAccessFinance, normalizeRole } from "../lib/rbac";
 import { useActivitySocket } from "../hooks/useActivitySocket";
 import {

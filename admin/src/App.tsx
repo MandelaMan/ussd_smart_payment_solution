@@ -2,7 +2,7 @@ import { Suspense, lazy, type ComponentType, type ReactNode } from "react";
 import { ChakraProvider, Flex, Spinner } from "@chakra-ui/react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { system, BRAND } from "./theme";
-import { AuthProvider } from "./lib/auth";
+import { AuthProvider } from "./lib/AuthProvider";
 import { Layout } from "./components/Layout";
 import { ScrollToTop } from "./components/ScrollToTop";
 import {

@@ -36,7 +36,7 @@ import { FormSection } from "./FormSection";
 import { AppDialog, NESTED_APP_DIALOG_Z_INDEX } from "../ui/AppDialog";
 import { FormSubmitSummary, type FormSummaryItem } from "../ui/FormSubmitSummary";
 import { formatCustomerPackageLabel } from "../../lib/formatText";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { canEditCustomerPackage } from "../../lib/rbac";
 import { DateField } from "../ui/DateField";
 import { TextStatus } from "../ui/TextStatus";

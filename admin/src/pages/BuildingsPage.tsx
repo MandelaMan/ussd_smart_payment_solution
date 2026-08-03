@@ -26,7 +26,7 @@ import {
   FiTrash2,
 } from "react-icons/fi";
 import { api, formatDate, type Building, type ListPagination } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { canMutateConfig } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
 import { SelectField } from "../components/ui/SelectField";

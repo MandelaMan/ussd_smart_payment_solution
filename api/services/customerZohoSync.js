@@ -98,7 +98,21 @@ function isActiveRecurring(recurring) {
   return !["stopped", "expired", "inactive"].includes(status);
 }
 
-async function findRecurringForCustomer(
+function recurringMatchesCustomerRefs(row, refs = []) {
+  const rowRef = String(row?.reference_number || "").trim().toUpperCase();
+  const rowName = String(row?.recurrence_name || "").trim().toUpperCase();
+  return refs.some(
+    (ref) =>
+      rowRef === ref ||
+      rowRef.includes(ref) ||
+      rowName === ref ||
+      rowName.startsWith(`${ref} `) ||
+      rowName.startsWith(`${ref}-`) ||
+      rowName.includes(`${ref} `)
+  );
+}
+
+async function listActiveRecurringForCustomer(
   contactId,
   customerNumber,
   previousCustomerNumber = null
@@ -113,26 +127,29 @@ async function findRecurringForCustomer(
   ].filter(Boolean);
 
   const active = (list || []).filter(isActiveRecurring);
-  const matched = active.find((row) => {
-    const rowRef = String(row.reference_number || "").trim().toUpperCase();
-    const rowName = String(row.recurrence_name || "").trim().toUpperCase();
-    return refs.some(
-      (ref) =>
-        rowRef === ref ||
-        rowRef.includes(ref) ||
-        rowName === ref ||
-        rowName.startsWith(`${ref} `) ||
-        rowName.startsWith(`${ref}-`) ||
-        rowName.includes(`${ref} `)
-    );
-  });
-  if (matched) return matched;
+  const matched = active.filter((row) =>
+    recurringMatchesCustomerRefs(row, refs)
+  );
+  if (matched.length) return matched;
 
   // After apartment/type change, fall back to the only active profile on the contact.
   if (previousCustomerNumber && active.length === 1) {
-    return active[0];
+    return [active[0]];
   }
-  return null;
+  return [];
+}
+
+async function findRecurringForCustomer(
+  contactId,
+  customerNumber,
+  previousCustomerNumber = null
+) {
+  const matched = await listActiveRecurringForCustomer(
+    contactId,
+    customerNumber,
+    previousCustomerNumber
+  );
+  return matched[0] || null;
 }
 
 async function updateRecurringProfileFields(
@@ -183,11 +200,60 @@ async function updateRecurringProfileFields(
 
 /**
  * Create or update the Zoho recurring invoice profile for a customer.
+ * On apartment / account renumber (previousCustomerNumber), always rename
+ * profile name + order number to the new customer number — even when package
+ * price is missing (identity-only update).
  */
 async function ensureRecurringSubscription(customer, zohoContact, options = {}) {
   const amount = Number(customer.packagePrice || 0);
+  const previousCustomerNumber = options.previousCustomerNumber
+    ? String(options.previousCustomerNumber).trim().toUpperCase()
+    : null;
+  // Order Number in Zoho Books = reference_number
+  const referenceNumber = String(customer.customerNumber || "").trim();
+  // Profile Name in Zoho Books = recurrence_name
+  const recurrenceName = buildRecurringProfileName(
+    referenceNumber,
+    customer.paymentFrequency,
+    customer.customPeriodDays
+  );
+
+  const matchedProfiles = await listActiveRecurringForCustomer(
+    zohoContact.contact_id,
+    customer.customerNumber,
+    previousCustomerNumber
+  );
+
+  // Apartment move with no package price: still rename existing profile(s).
   if (amount <= 0) {
-    return { created: false, updated: false, reason: "no_package_price" };
+    if (!previousCustomerNumber || !matchedProfiles.length) {
+      return { created: false, updated: false, reason: "no_package_price" };
+    }
+    let last = null;
+    let renamed = 0;
+    for (const row of matchedProfiles) {
+      const id = String(row.recurring_invoice_id || "");
+      if (!id) continue;
+      last = await updateRecurringProfileFields(id, {
+        recurrenceName,
+        referenceNumber,
+        lineItems: null,
+      });
+      renamed += 1;
+    }
+    return {
+      created: false,
+      updated: renamed > 0,
+      renameOnly: true,
+      profilesRenamed: renamed,
+      recurringInvoiceId: matchedProfiles[0]?.recurring_invoice_id
+        ? String(matchedProfiles[0].recurring_invoice_id)
+        : null,
+      recurring: last?.updated || null,
+      recurrenceName,
+      referenceNumber,
+      warning: last?.warning,
+    };
   }
 
   const recurrence = mapPaymentFrequencyToRecurrence(
@@ -199,20 +265,29 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     customPeriodDays: customer.customPeriodDays,
   });
   const lineItem = buildRecurringLineItems(customer, period, options);
-  // Order Number in Zoho Books = reference_number
-  const referenceNumber = String(customer.customerNumber || "").trim();
-  // Profile Name in Zoho Books = recurrence_name
-  const recurrenceName = buildRecurringProfileName(
-    referenceNumber,
-    customer.paymentFrequency,
-    customer.customPeriodDays
-  );
 
-  const existing = await findRecurringForCustomer(
-    zohoContact.contact_id,
-    customer.customerNumber,
-    options.previousCustomerNumber
-  );
+  const existing = matchedProfiles[0] || null;
+
+  // Renumber: rename every matched active profile (old + new refs) so nothing
+  // keeps the previous customer number as order/profile name.
+  if (previousCustomerNumber && matchedProfiles.length > 1) {
+    for (const row of matchedProfiles.slice(1)) {
+      const extraId = String(row.recurring_invoice_id || "");
+      if (!extraId) continue;
+      try {
+        await updateRecurringProfileFields(extraId, {
+          recurrenceName,
+          referenceNumber,
+          lineItems: null,
+        });
+      } catch (e) {
+        console.warn(
+          "Zoho extra recurring rename after apartment move failed:",
+          e.message || e
+        );
+      }
+    }
+  }
 
   if (existing?.recurring_invoice_id) {
     const id = String(existing.recurring_invoice_id);
@@ -232,6 +307,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         referenceNumber,
         lineItemsUpdated: result.lineItemsUpdated,
         warning: result.warning,
+        previousCustomerNumber: previousCustomerNumber || undefined,
       };
     }
 
@@ -272,6 +348,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     recurrenceName,
     referenceNumber,
     startDate,
+    previousCustomerNumber: previousCustomerNumber || undefined,
   };
 }
 
@@ -283,9 +360,11 @@ async function updateZohoContactDetails(customer, zohoContact) {
     return syncAgencyZohoContact(agency, zohoContact);
   }
 
-  const { buildZohoContactPayload } = require("../controllers/customers.controller");
+  const {
+    buildZohoContactPayload,
+    enforceZohoCompanyName,
+  } = require("../controllers/customers.controller");
   const { updateContact_JS, getContactFull_JS } = require("../controllers/zoho.controller");
-  const { normalizeCustomerRef } = require("../utils/zohoCustomerScope");
   const fullContact =
     (await getContactFull_JS(zohoContact.contact_id)) || zohoContact;
   const payload = await buildZohoContactPayload(customer, fullContact);
@@ -294,26 +373,32 @@ async function updateZohoContactDetails(customer, zohoContact) {
   const expected = String(
     customer.customerNumber || customer.customer_number || ""
   ).trim();
-  let contact = await getContactFull_JS(zohoContact.contact_id);
-  if (
-    expected &&
-    normalizeCustomerRef(contact?.company_name) !== normalizeCustomerRef(expected)
-  ) {
-    await updateContact_JS(zohoContact.contact_id, {
-      contact_type: "customer",
-      customer_sub_type: "business",
-      company_name: expected,
-    });
-    contact = await getContactFull_JS(zohoContact.contact_id);
+  // Always re-assert company_name = customer number (Zoho often ignores it on
+  // the combined contact_persons update, especially after apartment moves).
+  if (expected) {
+    const enforced = await enforceZohoCompanyName(
+      zohoContact.contact_id,
+      expected,
+      getContactFull_JS,
+      updateContact_JS
+    );
+    if (enforced) return enforced;
   }
-  return contact || fullContact;
+  return (await getContactFull_JS(zohoContact.contact_id)) || fullContact;
 }
 
 /**
  * Push customer changes to Zoho Books (contact + recurring subscription).
+ * When previousCustomerNumber is set (apartment move / type renumber), forces
+ * company_name + recurring profile name/order number onto the new number.
  */
 async function pushCustomerBillingToZoho(ctx, options = {}) {
-  const syncRecurring = options.syncRecurring !== false;
+  const previousCustomerNumber = options.previousCustomerNumber
+    ? String(options.previousCustomerNumber).trim().toUpperCase()
+    : null;
+  const renumbering = Boolean(previousCustomerNumber);
+  // Apartment / account renumber always refreshes recurring identity fields.
+  const syncRecurring = options.syncRecurring !== false || renumbering;
 
   if (isB2BCustomer({ customerType: ctx.customer_type })) {
     return {
@@ -327,27 +412,55 @@ async function pushCustomerBillingToZoho(ctx, options = {}) {
   const agencyName = ctx.agency_name || null;
 
   const customer = mapContextToCustomer(ctx, agencyName);
-  const { ensureZohoContactForCustomer } = require("../controllers/customers.controller");
+  const {
+    ensureZohoContactForCustomer,
+    enforceZohoCompanyName,
+  } = require("../controllers/customers.controller");
 
-  const zohoContact = await ensureZohoContactForCustomer({
-    ...customer,
-    customerType: ctx.customer_type,
-    agencyId: ctx.agency_id,
-  });
+  const zohoContact = await ensureZohoContactForCustomer(
+    {
+      ...customer,
+      customerType: ctx.customer_type,
+      agencyId: ctx.agency_id,
+    },
+    { previousCustomerNumber: previousCustomerNumber || undefined },
+  );
   if (!zohoContact?.contact_id) {
     throw new Error("Zoho contact could not be linked");
   }
 
-  const updatedContact = await updateZohoContactDetails(
+  let updatedContact = await updateZohoContactDetails(
     { ...customer, customerType: ctx.customer_type, agencyId: ctx.agency_id },
     zohoContact,
   );
+
+  // Apartment move: dedicated company_name pass + full contact refresh so
+  // Display Name and company_name both reflect the new customer number.
+  let companyNameUpdated = false;
+  if (renumbering) {
+    const { updateContact_JS, getContactFull_JS } = require("../controllers/zoho.controller");
+    const expectedCompany = String(customer.customerNumber || "").trim();
+    if (expectedCompany) {
+      updatedContact =
+        (await enforceZohoCompanyName(
+          updatedContact.contact_id,
+          expectedCompany,
+          getContactFull_JS,
+          updateContact_JS
+        )) || updatedContact;
+      companyNameUpdated = true;
+    }
+    updatedContact = await updateZohoContactDetails(
+      { ...customer, customerType: ctx.customer_type, agencyId: ctx.agency_id },
+      updatedContact,
+    );
+  }
 
   let recurring = null;
   if (syncRecurring) {
     recurring = await ensureRecurringSubscription(customer, updatedContact, {
       startDate: options.recurringStartDate,
-      previousCustomerNumber: options.previousCustomerNumber,
+      previousCustomerNumber: previousCustomerNumber || undefined,
     });
   }
 
@@ -377,6 +490,9 @@ async function pushCustomerBillingToZoho(ctx, options = {}) {
     ok: true,
     zohoContactId: updatedContact.contact_id,
     contactUpdated: true,
+    companyName: updatedContact?.company_name || customer.customerNumber || null,
+    companyNameUpdated: companyNameUpdated || renumbering,
+    previousCustomerNumber: previousCustomerNumber || undefined,
     recurring,
   };
 }

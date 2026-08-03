@@ -94,9 +94,25 @@ const ZOHO_INVOICE_TAX_INCLUSIVE =
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 
 async function findZohoContactForCustomer(customer, options = {}) {
-  return findContactByLookupKeys_JS(getZohoContactLookupKeys(customer), {
+  const keys = getZohoContactLookupKeys(customer);
+  const prev = options.previousCustomerNumber
+    ? String(options.previousCustomerNumber).trim()
+    : "";
+  // After apartment move, Zoho company_name is still the old number until we
+  // update it — look that up first so we refresh the same contact.
+  if (prev) {
+    const prevUpper = prev.toUpperCase();
+    const withoutPrev = keys.filter(
+      (k) => String(k).trim().toUpperCase() !== prevUpper
+    );
+    keys.length = 0;
+    keys.push(prev, ...withoutPrev);
+  }
+  return findContactByLookupKeys_JS(keys, {
     customer,
-    identityFallback: options.identityFallback === true,
+    identityFallback:
+      options.identityFallback === true || Boolean(prev),
+    previousCustomerNumber: prev || undefined,
   });
 }
 
@@ -387,12 +403,16 @@ async function enforceZohoCompanyName(contactId, expectedCompanyName, getContact
   return contact;
 }
 
-async function ensureZohoContactForCustomer(customer) {
+async function ensureZohoContactForCustomer(customer, options = {}) {
   if (isB2BCustomer(customer)) {
     const { ensureZohoContactForAgency } = require("./agencies.controller");
     const agency = await resolveAgencyForCustomer(customer, store);
     return ensureZohoContactForAgency(agency);
   }
+
+  const previousCustomerNumber = options.previousCustomerNumber
+    ? String(options.previousCustomerNumber).trim().toUpperCase()
+    : null;
 
   const { updateContact_JS, getSpecificCustomer_JS, getContactFull_JS, markContactActive_JS } = require("./zoho.controller");
 
@@ -488,11 +508,11 @@ async function ensureZohoContactForCustomer(customer) {
     }
   }
 
-  // Live lookup by customer number / email / phone / name — update if found,
-  // never duplicate. Identity fallback finds pre-existing Zoho contacts whose
-  // company_name is not yet our customer number.
+  // Live lookup by previous number (apartment move) / customer number / email /
+  // phone / name — update if found, never duplicate.
   const existing = await findZohoContactForCustomer(customer, {
     identityFallback: true,
+    previousCustomerNumber: previousCustomerNumber || undefined,
   });
   if (existing?.contact_id) {
     return refreshExisting(existing);
@@ -506,6 +526,7 @@ async function ensureZohoContactForCustomer(customer) {
     // Duplicate / race: resolve the existing contact and update it instead.
     const retry = await findZohoContactForCustomer(customer, {
       identityFallback: true,
+      previousCustomerNumber: previousCustomerNumber || undefined,
     });
     if (retry?.contact_id) {
       return refreshExisting(retry);
@@ -547,6 +568,7 @@ async function ensureZohoContactForCustomer(customer) {
   // Final safety: another create may have won the race.
   const retry = await findZohoContactForCustomer(customer, {
     identityFallback: true,
+    previousCustomerNumber: previousCustomerNumber || undefined,
   });
   if (retry?.contact_id) {
     return refreshExisting(retry);
@@ -1833,7 +1855,10 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       const wasOnZoho = Boolean(presence?.onZoho);
 
       // Always: resolve existing contact or create, then push company name + display name.
-      let contact = await ensureZohoContactForCustomer(customer);
+      // On apartment move, look up by previous company_name so we update the same contact.
+      let contact = await ensureZohoContactForCustomer(customer, {
+        previousCustomerNumber: previousCustomerNumber || undefined,
+      });
       if (!contact?.contact_id) {
         throw new Error("Zoho contact could not be linked");
       }
@@ -3358,6 +3383,8 @@ async function switchApartment(req, res, next) {
       console.warn("OLT mapping clear after apartment switch failed:", e.message);
     }
 
+    // Zoho: company_name → new customer number + recurring profile rename.
+    // TISP migrate already ran above; OLT ONU cleared (apartment-specific).
     const zoho = await runZohoSyncForCustomer(Number(req.params.id), {
       previousCustomerNumber: result.previousCustomerNumber,
       syncRecurring: true,
@@ -3365,16 +3392,54 @@ async function switchApartment(req, res, next) {
 
     const customer = await store.getCustomerById(Number(req.params.id));
 
+    const zohoCompanyOk =
+      zoho?.ok !== false &&
+      !zoho?.skipped &&
+      (zoho?.companyNameUpdated === true ||
+        String(zoho?.companyName || "")
+          .trim()
+          .toUpperCase() ===
+          String(customer?.customerNumber || "")
+            .trim()
+            .toUpperCase());
+    const zohoRecurringOk =
+      zoho?.ok === false || zoho?.skipped
+        ? false
+        : Boolean(
+            zoho?.recurring?.updated ||
+              zoho?.recurring?.created ||
+              zoho?.recurring?.renameOnly ||
+              zoho?.recurring?.reason === "no_package_price"
+          );
+
     try {
+      const zohoBits = [];
+      if (zoho?.skipped) zohoBits.push(`zoho skipped (${zoho.reason || "n/a"})`);
+      else if (zoho?.ok === false) zohoBits.push(`zoho failed: ${zoho.error || "unknown"}`);
+      else {
+        if (zohoCompanyOk) zohoBits.push("Zoho company → new number");
+        if (zoho?.recurring?.updated || zoho?.recurring?.renameOnly) {
+          zohoBits.push("recurring renamed");
+        } else if (zoho?.recurring?.created) {
+          zohoBits.push("recurring created");
+        }
+      }
       await logActivity({
         eventType: "customer_apartment_switched",
         title: "Customer apartment switched",
         message: `${customer?.customerNumber}: ${result.oldApartment} → ${result.newApartment}${
           result.ipAddress ? ` · IP ${result.ipAddress}` : ""
-        }${oltCleared ? " · OLT ONU mapping cleared" : ""}`,
+        }${oltCleared ? " · OLT ONU mapping cleared" : ""}${
+          zohoBits.length ? ` · ${zohoBits.join(", ")}` : ""
+        }`,
         source: "tisp",
-        status: tispError ? "failed" : "success",
+        status: tispError || zoho?.ok === false ? "failed" : "success",
         customerRef: customer?.customerNumber,
+        metadata: {
+          previousCustomerNumber: result.previousCustomerNumber,
+          companyNameUpdated: Boolean(zohoCompanyOk),
+          recurringUpdated: Boolean(zohoRecurringOk),
+        },
       });
     } catch (logErr) {
       console.error("activity log (switch apartment) failed:", logErr.message);
@@ -3386,6 +3451,16 @@ async function switchApartment(req, res, next) {
       tisp: tispError ? { ok: false, error: tispError } : { ok: true },
       zoho,
       olt: { clearedMapping: oltCleared },
+      renumber: {
+        previousCustomerNumber: result.previousCustomerNumber,
+        customerNumber: customer?.customerNumber,
+        companyNameUpdated: Boolean(zohoCompanyOk),
+        recurringUpdated: Boolean(
+          zoho?.recurring?.updated ||
+            zoho?.recurring?.created ||
+            zoho?.recurring?.renameOnly
+        ),
+      },
     });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -5180,6 +5255,7 @@ module.exports = {
   pushCustomerToZoho,
   ensureZohoContactForCustomer,
   buildZohoContactPayload,
+  enforceZohoCompanyName,
   getCustomerIntegrations,
   resolveCustomerIntegrationPresence,
 };

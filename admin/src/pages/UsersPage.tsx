@@ -490,7 +490,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                       onSort={toggleSort}
                       defaultDir="desc"
                     />
-                    <DataTableColumnHeader w="56px" textAlign="right">
+                    <DataTableColumnHeader w="48px" px={1} textAlign="right">
                       {" "}
                     </DataTableColumnHeader>
                   </Table.Row>
@@ -515,7 +515,15 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                       <Table.Cell {...dataTableCellProps} color="fg.muted">
                         {formatDate(u.created_at)}
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} textAlign="right" w="56px">
+                      {/* No text-overflow ellipsis — that painted a second "..." beside the menu. */}
+                      <Table.Cell
+                        {...dataTableCellProps}
+                        textAlign="right"
+                        w="48px"
+                        px={1}
+                        overflow="visible"
+                        textOverflow="clip"
+                      >
                         <UserActionMenu
                           user={u}
                           isProtectedAdmin={isProtectedAdmin(u)}

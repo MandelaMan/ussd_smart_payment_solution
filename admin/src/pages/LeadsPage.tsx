@@ -24,7 +24,7 @@ import {
   type LeadStats,
   type ListPagination,
 } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { canMutateCustomers } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";

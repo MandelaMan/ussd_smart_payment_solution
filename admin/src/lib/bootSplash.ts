@@ -51,9 +51,8 @@ function fadeOutSplash(el: HTMLElement) {
 
 /** Hide the HTML boot splash after first auth resolution (or max wait). */
 export function dismissBootSplash() {
-  if (dismissed) return;
-  dismissed = true;
-
+  // Always remove the DOM node — `dismissed` only gates the fade animation path
+  // so HMR re-entry cannot leave a stuck overlay after a prior dismiss.
   if (maxWaitTimer != null) {
     window.clearTimeout(maxWaitTimer);
     maxWaitTimer = null;
@@ -62,8 +61,16 @@ export function dismissBootSplash() {
   if (!isPwaDisplayMode()) {
     document.getElementById(SPLASH_ID)?.remove();
     document.documentElement.classList.add("sul-booted");
+    dismissed = true;
     return;
   }
+
+  if (dismissed) {
+    document.getElementById(SPLASH_ID)?.remove();
+    document.documentElement.classList.add("sul-booted");
+    return;
+  }
+  dismissed = true;
 
   const el = document.getElementById(SPLASH_ID);
   if (!el) {

@@ -37,6 +37,45 @@ export function isUnauthorizedError(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401;
 }
 
+type ApiRequestOptions = RequestInit & {
+  /** Override the default client abort window for this call. */
+  timeoutMs?: number;
+};
+
+function isTransientRequestError(err: unknown): boolean {
+  if (err instanceof ApiError) {
+    return (
+      err.status === 408 ||
+      err.status === 499 ||
+      err.status === 502 ||
+      err.status === 503 ||
+      err.status === 504
+    );
+  }
+  if (err instanceof TypeError) return true; // Failed to fetch / network
+  return false;
+}
+
+async function requestWithRetry<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+  retries = 1
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await request<T>(path, options);
+    } catch (err) {
+      lastErr = err;
+      if (isUnauthorizedError(err) || attempt >= retries || !isTransientRequestError(err)) {
+        throw err;
+      }
+      await new Promise((r) => window.setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 function rejectApiResponse(res: Response, body: Record<string, unknown>, path: string): never {
   if (res.status === 401) {
     notifyAuthSessionExpired(path);
@@ -811,6 +850,7 @@ export type ReconciliationSummary = {
   paymentUnderReview?: number;
   cancelledStillActive?: number;
   staleBilling?: number;
+  skippedPayments?: number;
   noZohoLink?: number;
   revenueAtRisk: number;
   totalOutstandingBalance: number;
@@ -1225,13 +1265,136 @@ export type MonthlyPaymentChurnSummary = {
   }>;
 };
 
+export type InvoicesVsPaymentsSummary = {
+  month: string;
+  period: { from: string; to: string };
+  invoiceCount: number;
+  invoiceTotal: number;
+  outstandingTotal: number;
+  paymentCount: number;
+  paymentTotal: number;
+  net: number;
+  source?: string;
+};
+
 export type ReportDefinition = {
   id: string;
   title: string;
   description: string;
+  /** @deprecated use family */
   category: string;
+  family: ReportFamily;
   dateFilter: boolean;
   monthFilter?: boolean;
+  yearFilter?: boolean;
+  /** Year report with optional monthFrom–monthTo span (1–12) */
+  monthRangeFilter?: boolean;
+  /** false = catalogued but runner not ready */
+  available?: boolean;
+};
+
+export type ForecastInsight = {
+  severity: "success" | "warning" | "danger" | "info";
+  title: string;
+  detail: string;
+  action?: string;
+};
+
+export type ForecastIntelligence = {
+  asOf: string;
+  kpis: {
+    mrr: number;
+    arr: number;
+    expectedCollections30d: number;
+    collectedMtd: number;
+    projectedMonthEnd: number;
+    outstanding: number;
+    atRisk: number;
+    collectionRate: number;
+  };
+  dueBuckets: Array<{
+    key: string;
+    label: string;
+    days: number;
+    invoiceCount: number;
+    amount: number;
+  }>;
+  expectedVsActual: {
+    expectedInvoices: number;
+    expectedValue: number;
+    collectedMtd: number;
+    outstanding: number;
+    atRisk: number;
+    securedMrr: number;
+    securedArr: number;
+  };
+  cashFlow: {
+    asOf: string;
+    monthStart: string;
+    monthEnd: string;
+    collectedMtd: number;
+    remainingExpected: number;
+    projectedMonthEnd: number;
+    mrr: number;
+    outstandingBalance: number;
+    atRiskTotal: number;
+    coverageVsMrr: number;
+    horizons: Array<{ horizonDays: number; expectedInvoices: number; expectedAmount: number }>;
+  };
+  scenarios: Array<{
+    label: string;
+    shockPct: number;
+    remainingExpected: number;
+    projectedMonthEnd: number;
+    gapVsMrr: number;
+    coverageVsMrr: number;
+  }>;
+  variance: {
+    period: { from: string; to: string };
+    budgetOrExpected: number;
+    actual: number;
+    variance: number;
+    variancePct: number;
+    label: string;
+  };
+  atRiskInvoices: Array<{
+    invoiceNumber: string;
+    customerId: number;
+    customerNumber: string;
+    customerName: string;
+    dueDate: string;
+    daysOverdue: number;
+    balanceDue: number;
+    risk: string;
+  }>;
+  churnRiskCustomers: Array<{
+    customerId: number;
+    customerNumber: string;
+    customerName: string;
+    building?: string;
+    failedPayments: number;
+    lastFailedAt?: string;
+    outstanding: number;
+    riskScore: number;
+  }>;
+  upcomingSample: Array<Record<string, unknown>>;
+  insights: ForecastInsight[];
+  networkReady: boolean;
+  meta: { generatedAt: string; engine?: string; cached?: boolean };
+};
+
+export type ReportSchedule = {
+  id: number;
+  reportId: string;
+  title: string;
+  format: "xlsx" | "pdf" | "csv";
+  cronExpr: string;
+  timezone: string;
+  recipients: string[];
+  params: Record<string, unknown>;
+  active: boolean;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
 };
 
 export type BiDashboardFilters = {
@@ -1261,7 +1424,9 @@ export type BiDashboard = {
     totalSuspendedCustomers: number;
     totalDisconnectedCustomers: number;
     mrr: number;
+    arr?: number;
     revenueCollectedThisMonth: number;
+    expectedCollections?: number;
     outstandingInvoiceBalance: number;
     collectionRate: number;
     newCustomersThisMonth: number;
@@ -1269,6 +1434,8 @@ export type BiDashboard = {
     activeTvSubscribers: number;
     arpu: number;
     avgCustomerLifetimeValue: number;
+    paymentSuccessRate?: number;
+    avgDaysToPay?: number | null;
     avgInstallationTimeDays: number | null;
     activeSupportTickets: number | null;
     networkUptimePct: number | null;
@@ -1335,12 +1502,12 @@ export type BiDashboard = {
     debtAging: Array<{ bucket: string; amount: number }>;
     paymentStatus: Array<{ status: string; count: number }>;
   };
-  operations: {
+  operations?: {
     installations: { available: boolean; message: string };
     supportTickets: { available: boolean; message: string };
     avgInstallTime: unknown[];
   };
-  network: {
+  network?: {
     uptime: { today: number | null; monthly: number | null; annual: number | null; message?: string };
     bandwidth: unknown[];
     speedComplaints: unknown[];
@@ -1349,18 +1516,18 @@ export type BiDashboard = {
   insights: {
     upgradeDowngrade: Array<{ month: string; upgrades: number; downgrades: number }>;
     referralSources: Array<{ source: string; count: number }>;
-    profitMarginByPackage: Array<{
+    profitMarginByPackage?: Array<{
       package: string;
       revenue: number;
       networkCost: number;
       supportCost: number;
       margin: number;
     }>;
-    routerInventory: unknown[];
-    dataConsumption: unknown[];
-    peakUsageHeatmap: unknown[];
+    routerInventory?: unknown[];
+    dataConsumption?: unknown[];
+    peakUsageHeatmap?: unknown[];
   };
-  meta: { generatedAt: string; cached: boolean };
+  meta: { generatedAt: string; cached: boolean; metricEngine?: string };
 };
 
 export type ReportAnalytics = {
@@ -1410,24 +1577,58 @@ function buildQueryString(params: Record<string, string | undefined> = {}) {
   return `?${new URLSearchParams(entries as [string, string][]).toString()}`;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-    cache: options.cache ?? "no-store",
-  });
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
-  // Conditional GETs (304) have no body — treat as failure for JSON APIs.
-  if (res.status === 304 || !res.ok) {
-    const body = res.status === 304 ? {} : await res.json().catch(() => ({}));
-    rejectApiResponse(res, body as Record<string, unknown>, path);
+async function request<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, signal: callerSignal, ...fetchOptions } =
+    options;
+  const outer = new AbortController();
+  let timedOutByClient = false;
+  const timer = window.setTimeout(() => {
+    timedOutByClient = true;
+    outer.abort();
+  }, timeoutMs);
+
+  // Honor caller abort (e.g. api.me) and still enforce a max wait so page
+  // spinners cannot spin forever on a hung proxy / nodemon restart.
+  const onCallerAbort = () => outer.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) outer.abort();
+    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
   }
 
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      credentials: "include",
+      ...fetchOptions,
+      headers: {
+        "Content-Type": "application/json",
+        ...(fetchOptions.headers || {}),
+      },
+      signal: outer.signal,
+      cache: fetchOptions.cache ?? "no-store",
+    });
+
+    // Conditional GETs (304) have no body — treat as failure for JSON APIs.
+    if (res.status === 304 || !res.ok) {
+      const body = res.status === 304 ? {} : await res.json().catch(() => ({}));
+      rejectApiResponse(res, body as Record<string, unknown>, path);
+    }
+
+    return res.json();
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    if (name === "AbortError") {
+      if (timedOutByClient) {
+        throw new ApiError(`Request timed out (${path})`, 408, path);
+      }
+      throw new ApiError(`Request cancelled (${path})`, 499, path);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  }
 }
 
 async function downloadExport(path: string, filename: string) {
@@ -1485,7 +1686,7 @@ async function downloadReportFile(
   }
   const disposition = res.headers.get("Content-Disposition") || "";
   const match = disposition.match(/filename="?([^"]+)"?/);
-  const filename = match?.[1] || `report.${params.format === "pdf" ? "pdf" : "xlsx"}`;
+  const filename = match?.[1] || `report.${params.format === "pdf" ? "pdf" : params.format === "csv" ? "csv" : "xlsx"}`;
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -2150,7 +2351,11 @@ export const api = {
     }),
 
   listCustomers: (params: Record<string, string | undefined> = {}) =>
-    request<Paginated<Customer>>(`/admin/customers${buildQueryString(params)}`),
+    requestWithRetry<Paginated<Customer>>(
+      `/admin/customers${buildQueryString(params)}`,
+      {},
+      2
+    ),
   exportCustomers: (
     params: Record<string, string | undefined> = {},
     format: "csv" | "xls" | "pdf" = "csv",
@@ -2738,8 +2943,45 @@ export const api = {
     }),
 
   listReports: () =>
-    request<{ reports: ReportDefinition[] }>("/admin/reports"),
+    request<{ reports: ReportDefinition[]; families: string[] }>("/admin/reports"),
 
+  previewReport: (reportId: string, params: Record<string, string | undefined> = {}) =>
+    request<{
+      id: string;
+      title: string;
+      period: { from: string; to: string } | null;
+      summary: Record<string, unknown> | null;
+      matrix?: {
+        rowHeaderKey?: string;
+        rowHeaderLabel?: string;
+        groups: Array<{
+          label: string;
+          columns: Array<{ key: string; label: string }>;
+        }>;
+      } | null;
+      sections: Array<{
+        title: string | null;
+        headers: Array<{ key: string; label: string }>;
+        rows: Array<Record<string, unknown>>;
+        totalRows: number;
+      }>;
+      truncated: boolean;
+    }>(`/admin/reports/${reportId}/preview${buildQueryString(params)}`, {
+      timeoutMs: 45_000,
+    }),
+
+  getKpis: (params: BiDashboardFilters & { horizonDays?: string } = {}) =>
+    request<{
+      kpis: BiDashboard["kpis"];
+      dictionary: Array<{ key: string; label: string; unit: string }>;
+    }>(`/admin/reports/kpis${buildQueryString(params)}`),
+
+  getInvoicesVsPaymentsSummary: (month: string) =>
+    requestWithRetry<InvoicesVsPaymentsSummary>(
+      `/admin/reports/invoices-vs-payments/summary?month=${encodeURIComponent(month)}`,
+      { timeoutMs: 45_000 },
+      1
+    ),
   getMonthlyPaymentChurnSummary: (month: string) =>
     request<MonthlyPaymentChurnSummary>(
       `/admin/reports/monthly-payment-churn/summary?month=${encodeURIComponent(month)}`
@@ -2768,6 +3010,53 @@ export const api = {
         internetTv: params.internetTv,
       })}`
     ),
+
+  getBiForecast: (params: BiDashboardFilters = {}) =>
+    request<ForecastIntelligence>(
+      `/admin/bi/forecast${buildQueryString({
+        from: params.from,
+        to: params.to,
+        buildingId: params.buildingId,
+        productId: params.productId,
+        agencyId: params.agencyId,
+        customerStatus: params.customerStatus,
+        subscriptionStatus: params.subscriptionStatus,
+      })}`,
+      { timeoutMs: 45_000 }
+    ),
+
+  listReportSchedules: () =>
+    request<{ schedules: ReportSchedule[] }>("/admin/reports/schedules"),
+
+  createReportSchedule: (body: {
+    reportId: string;
+    title?: string;
+    format?: "xlsx" | "pdf" | "csv";
+    cronExpr?: string;
+    recipients: string[];
+    params?: Record<string, string>;
+  }) =>
+    request<{ schedule: ReportSchedule }>("/admin/reports/schedules", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  runReportSchedule: (id: number) =>
+    request<{
+      ok: boolean;
+      delivery: string;
+      message: string;
+      byteLength: number;
+    }>(`/admin/reports/schedules/${id}/run`, { method: "POST" }),
+
+  setReportScheduleActive: (id: number, active: boolean) =>
+    request<{ schedule: ReportSchedule }>(`/admin/reports/schedules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
+    }),
+
+  deleteReportSchedule: (id: number) =>
+    request<{ ok: boolean }>(`/admin/reports/schedules/${id}`, { method: "DELETE" }),
 
   exportBiSection: (section: string, params: BiDashboardFilters = {}) => {
     const qs = buildQueryString({

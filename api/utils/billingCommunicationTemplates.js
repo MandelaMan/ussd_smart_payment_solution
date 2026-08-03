@@ -68,6 +68,22 @@ const TEMPLATE_DEFS = {
 <p>Thank you,<br/>Starlynx Billing</p>`);
     },
   },
+  skipped_payment: {
+    label: "Skipped monthly payment",
+    statuses: ["skipped_payment"],
+    subject: (ctx) => `Missed monthly payment — ${ctx.customerNumber}`,
+    build: (ctx) => {
+      const g = greeting(ctx.customerName, ctx.customerNumber);
+      const outstanding = formatKes(ctx.outstandingBalance);
+      return wrapHtml(`
+<p>Dear ${g},</p>
+<p>Our records show that a monthly invoice on account <strong>${ctx.customerNumber}</strong> was not paid after earlier payments were received.</p>
+<p>Outstanding balance: <strong>${outstanding}</strong>.</p>
+<p>Please settle via M-Pesa Paybill using your account number as the payment reference to avoid service interruption.</p>
+<p>If you have already paid, kindly disregard this message — we will reconcile shortly.</p>
+<p>Thank you,<br/>Starlynx Billing</p>`);
+    },
+  },
   recurring_invoice: {
     label: "Recurring billing profile",
     statuses: ["recurring_invoice_stopped"],

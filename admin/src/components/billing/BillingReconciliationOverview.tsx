@@ -14,7 +14,7 @@ import { UpcomingInvoicesForecastStrip } from "./UpcomingInvoicesForecastStrip";
 import { BillingModuleCard } from "./BillingModuleCard";
 import { BillingReconciliationGuides } from "./BillingReconciliationGuides";
 import { useBillingReconciliation } from "./BillingReconciliationContext";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { canOperateFinance } from "../../lib/rbac";
 
 type Props = {

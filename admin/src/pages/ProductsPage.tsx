@@ -24,7 +24,7 @@ import {
   type PackageCategory,
   type Product,
 } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import { canMutateConfig } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
 import { SelectField } from "../components/ui/SelectField";

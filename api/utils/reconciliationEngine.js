@@ -2,6 +2,7 @@ const { normalizeSubscriptionStatus } = require("./subscriptionStatus");
 const {
   isOverdueZohoInvoice,
 } = require("./zohoInvoiceStatus");
+const { detectSkippedMonthlyPayment } = require("./skippedPayment");
 
 const BILLING_STATUSES = [
   "current",
@@ -20,6 +21,7 @@ const BILLING_STATUSES = [
   "credit_balance",
   "cancelled_still_active",
   "stale_billing",
+  "skipped_payment",
   "no_zoho_link",
   "unknown",
 ];
@@ -33,6 +35,7 @@ const STATUS_PRIORITY = {
   recurring_invoice_stopped: 80,
   unmatched_payment: 75,
   payment_under_review: 72,
+  skipped_payment: 68,
   partial_payment: 70,
   overdue: 65,
   stale_billing: 62,
@@ -250,6 +253,8 @@ function detectBillingScenarios(ctx) {
     creditBalance,
     partialInvoices,
     tispDueDate,
+    zohoPayments,
+    skippedPayment,
   } = ctx;
 
   const accountActive = String(accountStatus || customer.status || "").toLowerCase() === "active";
@@ -394,6 +399,25 @@ function detectBillingScenarios(ctx) {
       recommendations: [
         rec("contact_customer", "Collect remaining balance or adjust billing frequency"),
         rec("resume_recurring_invoice", "Overdue partial pay may have stopped recurring billing"),
+      ],
+    });
+  }
+
+  // Monthly customer paid an earlier cycle then left a later raised invoice unpaid.
+  if (skippedPayment?.skipped && accountActive) {
+    add({
+      status: "skipped_payment",
+      code: skippedPayment.code || "skipped_monthly_cycle",
+      severity: "high",
+      message: `Zoho: ${skippedPayment.message} · TISP: ${tispLabel}`,
+      recommendations: [
+        rec(
+          "contact_customer",
+          skippedPayment.unpaidBalance
+            ? `Collect skipped month balance of ${formatKes(skippedPayment.unpaidBalance)}`
+            : "Follow up on the skipped monthly payment"
+        ),
+        rec("investigate_payment", "Confirm no unallocated M-Pesa covers this invoice"),
       ],
     });
   }
@@ -613,6 +637,9 @@ function buildRecommendations(statuses, context, scenarioRecs = []) {
     if (statuses.includes("paid_but_disconnected")) add("reconnect_service");
     if (statuses.includes("unmatched_payment")) add("allocate_payment");
     if (statuses.includes("overdue")) add("contact_customer", "Send payment reminder");
+    if (statuses.includes("skipped_payment")) {
+      add("contact_customer", "Follow up on skipped monthly payment");
+    }
   }
 
   if (statuses.includes("connected_without_payment") && context.hasRecentPayment) {
@@ -681,6 +708,16 @@ function computeCustomerReconciliation(context = {}) {
     return bal > 0 && bal < total;
   });
 
+  const skippedPayment = detectSkippedMonthlyPayment({
+    customer: {
+      ...customer,
+      status: accountStatus ?? customer.status,
+    },
+    invoices,
+    zohoPayments,
+    mpesaPayments,
+  });
+
   const serviceActive = isActiveService(subscriptionStatus);
   const serviceDisconnected = isDisconnectedService(subscriptionStatus);
   const serviceUnknown = isUnknownService(subscriptionStatus);
@@ -716,6 +753,8 @@ function computeCustomerReconciliation(context = {}) {
     creditBalance,
     partialInvoices,
     tispDueDate: context.tispDueDate ?? null,
+    zohoPayments,
+    skippedPayment,
   });
 
   let finalStatuses = [...statuses];
@@ -780,6 +819,11 @@ function computeCustomerReconciliation(context = {}) {
       recurringInvoiceActive: !recurring.stopped,
       zohoLinked,
       revenueAtRisk,
+      skippedPayment: Boolean(skippedPayment?.skipped),
+      skippedInvoiceNumber:
+        skippedPayment?.skippedInvoice?.invoiceNumber ||
+        skippedPayment?.skippedInvoice?.id ||
+        null,
     },
   };
 }
@@ -798,6 +842,7 @@ function aggregateSummary(records = []) {
     paymentUnderReview: 0,
     cancelledStillActive: 0,
     staleBilling: 0,
+    skippedPayments: 0,
     noZohoLink: 0,
     revenueAtRisk: 0,
     totalOutstandingBalance: 0,
@@ -821,6 +866,7 @@ function aggregateSummary(records = []) {
     if (statuses.includes("payment_under_review")) summary.paymentUnderReview += 1;
     if (statuses.includes("cancelled_still_active")) summary.cancelledStillActive += 1;
     if (statuses.includes("stale_billing")) summary.staleBilling += 1;
+    if (statuses.includes("skipped_payment")) summary.skippedPayments += 1;
     if (statuses.includes("no_zoho_link")) summary.noZohoLink += 1;
     summary.revenueAtRisk += roundMoney(metrics.revenueAtRisk ?? 0);
     summary.totalOutstandingBalance += roundMoney(metrics.outstandingBalance ?? 0);
@@ -847,7 +893,8 @@ function aggregateSummary(records = []) {
     summary.noZohoLink +
     summary.recurringInvoicesStopped +
     summary.missingInvoices +
-    summary.disconnectedNotInvoiced;
+    summary.disconnectedNotInvoiced +
+    summary.skippedPayments;
 
   return summary;
 }
@@ -857,6 +904,7 @@ const ISSUE_TILE_DEFINITIONS = [
   { id: "cancelled_still_active", label: "Cancelled but Still Active", severity: "critical" },
   { id: "paid_but_disconnected", label: "Paid but Disconnected", severity: "critical" },
   { id: "payment_under_review", label: "Payment Pending Allocation", severity: "high" },
+  { id: "skipped_payment", label: "Skipped Monthly Payment", severity: "high" },
   { id: "no_zoho_link", label: "Not in Zoho Books", severity: "high" },
   { id: "billing_frequency_mismatch", label: "Billing Frequency Mismatch", severity: "high" },
   { id: "unmatched_payment", label: "Unmatched M-Pesa", severity: "high" },
@@ -969,6 +1017,7 @@ module.exports = {
   hasInvoiceForCurrentPeriod,
   isTispDueDatePassed,
   detectBillingScenarios,
+  detectSkippedMonthlyPayment,
   isActiveService,
   isDisconnectedService,
 };

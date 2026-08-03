@@ -11,7 +11,7 @@ import {
   moduleCount,
   moduleStatusParam,
 } from "../../lib/billingReconciliationNav";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { canOperateFinance } from "../../lib/rbac";
 
 type Column =

@@ -22,7 +22,7 @@ import {
   type LeadMessage,
 } from "../../lib/api";
 import { canMutateCustomers } from "../../lib/rbac";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/authContext";
 import { toaster } from "../ui/toaster";
 import { BRAND, fieldControlStyles } from "../../theme";
 

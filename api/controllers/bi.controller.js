@@ -1,4 +1,5 @@
 const { getBiDashboard } = require("../services/biAnalyticsStore");
+const { getForecastIntelligence } = require("../services/forecastIntelligenceStore");
 const { getCache, setCache } = require("../lib/cache");
 
 function parseFilters(query = {}) {
@@ -37,14 +38,32 @@ async function getDashboard(req, res, next) {
   }
 }
 
+async function getForecast(req, res, next) {
+  try {
+    const filters = parseFilters(req.query);
+    const key = `forecast:${cacheKeyFor(filters)}`;
+    const cached = await getCache("bi-forecast", key);
+    if (cached) {
+      return res.json({ ...cached, meta: { ...cached.meta, cached: true } });
+    }
+    const data = await getForecastIntelligence(filters);
+    await setCache("bi-forecast", key, data, 90);
+    return res.json(data);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 function rowsToCsv(rows, columns) {
   const header = columns.join(",");
   const lines = rows.map((row) =>
-    columns.map((col) => {
-      const val = row[col] ?? "";
-      const str = String(val).replace(/"/g, '""');
-      return `"${str}"`;
-    }).join(",")
+    columns
+      .map((col) => {
+        const val = row[col] ?? "";
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      })
+      .join(",")
   );
   return [header, ...lines].join("\n");
 }
@@ -98,5 +117,6 @@ async function exportSection(req, res, next) {
 
 module.exports = {
   getDashboard,
+  getForecast,
   exportSection,
 };

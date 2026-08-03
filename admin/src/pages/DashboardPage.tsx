@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import {
   Box,
   Button,
@@ -23,7 +24,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, formatCurrency, formatMetricCurrency, type MonthlyPaymentChurnSummary } from "../lib/api";
+import { api, formatCurrency, formatMetricCurrency } from "../lib/api";
 import type { ActivityItem, Stats } from "../lib/api";
 import { formatProductNameForDisplay } from "../lib/formatText";
 import { DisplayText } from "../components/ui/DisplayText";
@@ -150,10 +151,6 @@ export function DashboardPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
-  const [churnMonth, setChurnMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [churnDownloading, setChurnDownloading] = useState<"xlsx" | "pdf" | null>(null);
-  const [churnSummary, setChurnSummary] = useState<MonthlyPaymentChurnSummary | null>(null);
-  const [churnSummaryLoading, setChurnSummaryLoading] = useState(false);
 
   useEffect(() => {
     if (!isMobile || mobileRevenueDefaultApplied.current) return;
@@ -233,25 +230,6 @@ export function DashboardPage() {
       cancelled = true;
     };
   }, [chartMonth, chartYear]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setChurnSummaryLoading(true);
-    api
-      .getMonthlyPaymentChurnSummary(churnMonth)
-      .then((summary) => {
-        if (!cancelled) setChurnSummary(summary);
-      })
-      .catch(() => {
-        if (!cancelled) setChurnSummary(null);
-      })
-      .finally(() => {
-        if (!cancelled) setChurnSummaryLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [churnMonth]);
 
   if (loading && !stats) {
     return <DashboardSkeleton />;
@@ -340,31 +318,6 @@ export function DashboardPage() {
     stats.zoho.total > 0 ? Math.round((stats.zoho.success / stats.zoho.total) * 100) : null;
   const tispSyncRate =
     stats.tisp.total > 0 ? Math.round((stats.tisp.success / stats.tisp.total) * 100) : null;
-
-  const churnMonthLabel = new Date(`${churnMonth}-01`).toLocaleDateString("en-KE", {
-    month: "long",
-    year: "numeric",
-  });
-
-  async function downloadChurnReport(format: "xlsx" | "pdf") {
-    try {
-      setChurnDownloading(format);
-      await api.downloadReport("monthly-payment-churn", { format, month: churnMonth });
-      toaster.create({
-        title: "Monthly churn report downloaded",
-        description: `${churnMonthLabel} (${format.toUpperCase()})`,
-        type: "success",
-      });
-    } catch (e) {
-      toaster.create({
-        title: "Could not download churn report",
-        description: e instanceof Error ? e.message : "Download failed",
-        type: "error",
-      });
-    } finally {
-      setChurnDownloading(null);
-    }
-  }
 
   return (
     <Flex
@@ -849,74 +802,18 @@ export function DashboardPage() {
           display={{ base: "none", lg: "grid" }}
         >
           <Card
-            title="Monthly Payment Churn Report"
-            subtitle={churnMonthLabel}
+            title="Reports library"
+            subtitle="Churn, collections, and board packs"
             accent="cerulean"
-            action={
-              <Input
-                size="sm"
-                type="month"
-                w="150px"
-                value={churnMonth}
-                onChange={(e) => setChurnMonth(e.target.value)}
-              />
-            }
           >
-            <Flex direction="column" h={trendChartHeight} minH={trendChartHeight} mt={1}>
-              <Stack gap={2.5} flex={1}>
-                <Flex justify="space-between" align="baseline" gap={2}>
-                  <Text fontSize="xs" color="fg.muted">
-                    Total churned
-                  </Text>
-                  <Text fontSize="lg" fontWeight="semibold" color="brand.700">
-                    {churnSummaryLoading ? "…" : (churnSummary?.total ?? 0)}
-                  </Text>
-                </Flex>
-                <Flex justify="space-between" align="baseline" gap={2}>
-                  <Text fontSize="xs" color="fg.muted">
-                    Outstanding
-                  </Text>
-                  <Text fontSize="sm" fontWeight="medium" color="fg">
-                    {churnSummaryLoading
-                      ? "…"
-                      : formatCurrency(churnSummary?.totalOutstanding ?? 0)}
-                  </Text>
-                </Flex>
-                <Stack gap={1.5} fontSize="xs" flex={1}>
-                  {(churnSummary?.byReason ?? []).map((row) => (
-                    <Flex key={row.reason} justify="space-between" gap={2}>
-                      <Text color="fg.muted">{row.label}</Text>
-                      <Text fontWeight="semibold" color={row.count > 0 ? "brand.700" : "fg.subtle"}>
-                        {churnSummaryLoading
-                          ? "…"
-                          : row.outstanding > 0
-                            ? `${row.count} · ${formatCurrency(row.outstanding)}`
-                            : row.count}
-                      </Text>
-                    </Flex>
-                  ))}
-                </Stack>
-              </Stack>
-              <Flex gap={2} mt={3}>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  flex={1}
-                  loading={churnDownloading === "xlsx"}
-                  onClick={() => void downloadChurnReport("xlsx")}
-                >
-                  Excel
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  flex={1}
-                  loading={churnDownloading === "pdf"}
-                  onClick={() => void downloadChurnReport("pdf")}
-                >
-                  PDF
-                </Button>
-              </Flex>
+            <Flex direction="column" h={trendChartHeight} minH={trendChartHeight} mt={1} justify="center" gap={3}>
+              <Text fontSize="sm" color="fg.muted">
+                Monthly payment churn and other exports live in the Reports library so numbers stay
+                consistent with Analytics KPIs.
+              </Text>
+              <Button asChild size="sm" colorPalette="brand" alignSelf="flex-start">
+                <RouterLink to="/reports">Open Reports</RouterLink>
+              </Button>
             </Flex>
           </Card>
 

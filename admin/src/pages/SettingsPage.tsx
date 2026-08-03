@@ -23,7 +23,7 @@ import { LogsPage } from "./LogsPage";
 import { SynchronizationPage } from "./SynchronizationPage";
 import { toaster } from "../components/ui/toaster";
 import { PAGE_STACK_GAP, PageHeader } from "../components/ui/pageLayout";
-import { useAuth } from "../lib/auth";
+import { useAuth } from "../lib/authContext";
 import {
   canAccessOps,
   canManageUsers,
