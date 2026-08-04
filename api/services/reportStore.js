@@ -1,5 +1,6 @@
 const { query } = require("../config/db");
 const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
+const { attributeDocumentAmount, unitWeight } = require("../utils/b2bDocumentAttribution");
 const {
   getKpiSnapshot,
   getExpectedCollections,
@@ -177,12 +178,22 @@ const REPORT_DEFINITIONS = [
     id: "customer-monthly-billing-matrix",
     title: "Customer Monthly Billing Matrix",
     description:
-      "Customers × selected months in a year: invoice amount/date and payment amount/date per month. Choose one month, a range, or all months.",
+      "Customers × selected months in a year: invoice amount/date and payment amount/date per month. Invoices land in the month they were raised. Months with no raise show projected dates/amounts from Zoho recurring (including stopped) or last-invoice cadence; otherwise No recurring. Projected invoice total is the scheduled expected bill for the selected months (including past months). Consolidated B2B amounts are split per managed house.",
     category: "Billing",
     family: "Billing",
     dateFilter: false,
     yearFilter: true,
     monthRangeFilter: true,
+  },
+  {
+    id: "collection-gap-by-customer",
+    title: "Collection Gap by Customer",
+    description:
+      "Per-customer expected bill vs invoiced share vs collected share for a month. Splits consolidated B2B agency documents across managed houses so Skynest/Diar-style portfolios show a true unit-level collection gap.",
+    category: "Billing",
+    family: "Billing",
+    dateFilter: false,
+    monthFilter: true,
   },
   {
     id: "payment-frequency-mix",
@@ -1920,6 +1931,11 @@ function monthKeyFromDate(value) {
   return d.slice(5, 7);
 }
 
+/** Month key for matrix invoices: month the invoice was raised. */
+function invoiceRaiseDate(row) {
+  return row?.invoice_date || null;
+}
+
 function emptyMonthBucket() {
   return {
     invoiceAmount: 0,
@@ -1929,8 +1945,119 @@ function emptyMonthBucket() {
   };
 }
 
+/** True when year-month is the current calendar month or later. */
+function isOpenOrFutureYearMonth(year, monthNum, now = new Date()) {
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  return Number(year) > y || (Number(year) === y && Number(monthNum) >= m);
+}
+
+function daysInMonth(year, monthNum) {
+  return new Date(Number(year), Number(monthNum), 0).getDate();
+}
+
+function recurringMonthStep(frequency, customPeriodDays) {
+  const freq = String(frequency || "monthly").toLowerCase();
+  if (freq === "quarterly") return 3;
+  if (freq === "yearly") return 12;
+  if (freq === "custom") {
+    const days = Math.max(Number(customPeriodDays) || 30, 1);
+    return Math.max(1, Math.round(days / 30));
+  }
+  return 1;
+}
+
+/**
+ * Project recurring invoice dates across a year month span from next_invoice_date.
+ * @returns {Map<string, string>} month key "MM" → YYYY-MM-DD
+ */
+function projectRecurringDatesInSpan(
+  nextInvoiceDate,
+  year,
+  monthFrom,
+  monthTo,
+  frequency,
+  customPeriodDays
+) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  const start = dateOnly(nextInvoiceDate);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return out;
+
+  const step = recurringMonthStep(frequency, customPeriodDays);
+  let y = Number(start.slice(0, 4));
+  let m = Number(start.slice(5, 7));
+  const dayOfMonth = Number(start.slice(8, 10));
+  const periodStart = `${year}-${String(monthFrom).padStart(2, "0")}-01`;
+  const periodEnd = `${year}-${String(monthTo).padStart(2, "0")}-${String(
+    daysInMonth(year, monthTo)
+  ).padStart(2, "0")}`;
+
+  let guard = 0;
+  // Walk forward from next_invoice_date until we enter / pass the selected span.
+  while (guard < 240) {
+    const dim = daysInMonth(y, m);
+    const d = Math.min(dayOfMonth, dim);
+    const dateStr = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if (dateStr > periodEnd) break;
+    if (dateStr >= periodStart && y === Number(year) && m >= monthFrom && m <= monthTo) {
+      const mm = String(m).padStart(2, "0");
+      if (!out.has(mm)) out.set(mm, dateStr);
+    }
+    m += step;
+    while (m > 12) {
+      m -= 12;
+      y += 1;
+    }
+    guard += 1;
+  }
+  return out;
+}
+
+function isUsableRecurringForProjection(status) {
+  const s = String(status || "")
+    .trim()
+    .toLowerCase();
+  // Keep stopped/paused — Zoho still has a profile and next_invoice_date.
+  if (s.includes("expire") || s.includes("deleted") || s.includes("void")) return false;
+  return true;
+}
+
+/** Active B2B managed houses keyed by agency_id for consolidated document splits. */
+async function loadAgencyPeerIndex() {
+  const rows = await query(
+    `SELECT c.id,
+            c.customer_number,
+            c.customer_type,
+            c.agency_id,
+            COALESCE(c.package_price, 0) AS package_price,
+            a.discount_percent
+     FROM customers c
+     LEFT JOIN agencies a ON a.id = c.agency_id
+     WHERE c.customer_type = 'B2B'
+       AND c.agency_id IS NOT NULL
+       AND c.status = 'active'
+     ORDER BY c.agency_id ASC, c.customer_number ASC
+     LIMIT 20000`
+  );
+  /** @type {Map<number, any[]>} */
+  const byAgency = new Map();
+  /** @type {Map<number, any>} */
+  const byId = new Map();
+  for (const row of rows) {
+    const id = Number(row.id);
+    const agencyId = Number(row.agency_id);
+    byId.set(id, row);
+    if (!byAgency.has(agencyId)) byAgency.set(agencyId, []);
+    byAgency.get(agencyId).push(row);
+  }
+  return { byAgency, byId };
+}
+
 /**
  * Customer × month matrix: invoice amount/date and payment amount/date for selected months of a year.
+ * Invoices are bucketed by invoice_date (month raised).
+ * Consolidated B2B agency documents are split across each managed house.
  */
 async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
   const period = resolveYearMonthSpan(year, monthFrom, monthTo);
@@ -1942,41 +2069,123 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
 
   // Prefer active customers; also include inactive with activity in-year via UNION
   // of lean id lists (avoids expensive OR + DISTINCT subqueries on large tables).
-  const [activeCustomers, invoiceActivityIds, paymentActivityIds] = await Promise.all([
-    query(
-      `SELECT c.id,
-              c.customer_number,
-              c.customer_type,
-              c.status,
-              TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
-              b.name AS building,
-              a.name AS agency_name
-       FROM customers c
-       LEFT JOIN buildings b ON b.id = c.building_id
-       LEFT JOIN agencies a ON a.id = c.agency_id
-       WHERE c.status = 'active'
-       ORDER BY c.customer_number ASC
-       LIMIT 15000`
-    ),
-    query(
-      `SELECT DISTINCT zi.customer_id AS id
-       FROM zoho_customer_invoices zi
-       WHERE zi.invoice_date >= ? AND zi.invoice_date <= ?
-         AND ${raisedZohoInvoiceSql("zi")}
-       LIMIT 20000`,
-      [period.from, period.to]
-    ),
-    query(
-      `SELECT DISTINCT zp.customer_id AS id
-       FROM zoho_customer_payments zp
-       WHERE zp.payment_date >= ? AND zp.payment_date <= ?
-         AND zp.payment_id IS NOT NULL AND TRIM(zp.payment_id) <> ''
-       LIMIT 20000`,
-      [period.from, period.to]
-    ),
-  ]);
+  const [
+    activeCustomers,
+    invoiceActivityIds,
+    paymentActivityIds,
+    agencyPeerIndex,
+    recurringRows,
+    lastInvoiceRows,
+  ] = await Promise.all([
+      query(
+        `SELECT c.id,
+                c.customer_number,
+                c.customer_type,
+                c.status,
+                c.agency_id,
+                c.payment_frequency,
+                c.custom_period_days,
+                COALESCE(c.package_price, 0) AS package_price,
+                TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
+                b.name AS building,
+                a.name AS agency_name,
+                a.discount_percent,
+                zc.zoho_contact_id
+         FROM customers c
+         LEFT JOIN buildings b ON b.id = c.building_id
+         LEFT JOIN agencies a ON a.id = c.agency_id
+         LEFT JOIN zoho_customer_contacts zc ON zc.customer_id = c.id
+         WHERE c.status = 'active'
+         ORDER BY c.customer_number ASC
+         LIMIT 15000`
+      ),
+      query(
+        `SELECT DISTINCT zi.customer_id AS id
+         FROM zoho_customer_invoices zi
+         WHERE zi.invoice_date >= ? AND zi.invoice_date <= ?
+           AND ${raisedZohoInvoiceSql("zi")}
+         LIMIT 20000`,
+        [period.from, period.to]
+      ),
+      query(
+        `SELECT DISTINCT zp.customer_id AS id
+         FROM zoho_customer_payments zp
+         WHERE zp.payment_date >= ? AND zp.payment_date <= ?
+           AND zp.payment_id IS NOT NULL AND TRIM(zp.payment_id) <> ''
+         LIMIT 20000`,
+        [period.from, period.to]
+      ),
+      loadAgencyPeerIndex(),
+      query(
+        `SELECT zri.customer_id,
+                zri.status,
+                zri.next_invoice_date,
+                zc.zoho_contact_id
+         FROM zoho_recurring_invoices zri
+         LEFT JOIN zoho_customer_contacts zc ON zc.customer_id = zri.customer_id
+         WHERE zri.recurring_invoice_id IS NOT NULL
+           AND TRIM(zri.recurring_invoice_id) <> ''
+         ORDER BY zri.next_invoice_date ASC
+         LIMIT 30000`
+      ),
+      query(
+        `SELECT zi.customer_id,
+                MAX(zi.invoice_date) AS last_invoice_date
+         FROM zoho_customer_invoices zi
+         WHERE ${raisedZohoInvoiceSql("zi")}
+         GROUP BY zi.customer_id
+         LIMIT 30000`
+      ),
+    ]);
+
+  /** @type {Map<number, { nextInvoiceDate: string, status: string }>} */
+  const recurringByCustomer = new Map();
+  /** @type {Map<string, { nextInvoiceDate: string, status: string }>} */
+  const recurringByContact = new Map();
+  for (const row of recurringRows) {
+    if (!isUsableRecurringForProjection(row.status)) continue;
+    const next = dateOnly(row.next_invoice_date);
+    if (!next) continue;
+    const entry = {
+      nextInvoiceDate: next,
+      status: row.status || "active",
+    };
+    const id = Number(row.customer_id);
+    if (Number.isFinite(id) && id > 0) {
+      const existing = recurringByCustomer.get(id);
+      // Prefer active profiles, then earliest next date.
+      const prefer =
+        !existing ||
+        (String(entry.status).toLowerCase().includes("active") &&
+          !String(existing.status).toLowerCase().includes("active")) ||
+        (next && (!existing.nextInvoiceDate || next < existing.nextInvoiceDate));
+      if (prefer) recurringByCustomer.set(id, entry);
+    }
+    const contactId = row.zoho_contact_id ? String(row.zoho_contact_id) : "";
+    if (contactId) {
+      const existing = recurringByContact.get(contactId);
+      const prefer =
+        !existing ||
+        (String(entry.status).toLowerCase().includes("active") &&
+          !String(existing.status).toLowerCase().includes("active")) ||
+        (next && (!existing.nextInvoiceDate || next < existing.nextInvoiceDate));
+      if (prefer) recurringByContact.set(contactId, entry);
+    }
+  }
+
+  /** @type {Map<number, string>} */
+  const lastInvoiceByCustomer = new Map();
+  for (const row of lastInvoiceRows) {
+    const id = Number(row.customer_id);
+    const d = dateOnly(row.last_invoice_date);
+    if (Number.isFinite(id) && id > 0 && d) lastInvoiceByCustomer.set(id, d);
+  }
 
   const customerById = new Map(activeCustomers.map((c) => [Number(c.id), c]));
+  for (const [id, peer] of agencyPeerIndex.byId) {
+    if (!customerById.has(id)) customerById.set(id, peer);
+  }
+
   const missingIds = [
     ...new Set([
       ...invoiceActivityIds.map((r) => Number(r.id)),
@@ -1991,12 +2200,19 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
               c.customer_number,
               c.customer_type,
               c.status,
+              c.agency_id,
+              c.payment_frequency,
+              c.custom_period_days,
+              COALESCE(c.package_price, 0) AS package_price,
               TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
               b.name AS building,
-              a.name AS agency_name
+              a.name AS agency_name,
+              a.discount_percent,
+              zc.zoho_contact_id
        FROM customers c
        LEFT JOIN buildings b ON b.id = c.building_id
        LEFT JOIN agencies a ON a.id = c.agency_id
+       LEFT JOIN zoho_customer_contacts zc ON zc.customer_id = c.id
        WHERE c.id IN (${placeholders})
        ORDER BY c.customer_number ASC`,
       missingIds
@@ -2008,7 +2224,7 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
     String(a.customer_number).localeCompare(String(b.customer_number))
   );
 
-  // SQL-deduped documents only — avoids loading B2B fan-out copies into memory.
+  // SQL-deduped documents only — amounts are then split across B2B managed houses.
   const [invoiceRows, paymentRows] = await Promise.all([
     query(
       `SELECT zi.id,
@@ -2016,9 +2232,18 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
               zi.invoice_id,
               zi.invoice_number,
               zi.invoice_date,
-              COALESCE(zi.total, 0) AS amount
+              zi.due_date,
+              zi.raw_json,
+              COALESCE(zi.total, 0) AS amount,
+              c.customer_number,
+              c.customer_type,
+              c.agency_id,
+              COALESCE(c.package_price, 0) AS package_price,
+              a.discount_percent
        FROM zoho_customer_invoices zi
-       INNER JOIN (${DEDUPED_INVOICE_IDS_SQL}) d ON d.keep_id = zi.id`,
+       INNER JOIN (${DEDUPED_INVOICE_IDS_SQL}) d ON d.keep_id = zi.id
+       JOIN customers c ON c.id = zi.customer_id
+       LEFT JOIN agencies a ON a.id = c.agency_id`,
       [period.from, period.to]
     ),
     query(
@@ -2028,9 +2253,17 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
               zp.reference_number,
               zp.invoice_number AS related_invoice,
               zp.payment_date,
-              COALESCE(zp.amount, 0) AS amount
+              zp.raw_json,
+              COALESCE(zp.amount, 0) AS amount,
+              c.customer_number,
+              c.customer_type,
+              c.agency_id,
+              COALESCE(c.package_price, 0) AS package_price,
+              a.discount_percent
        FROM zoho_customer_payments zp
-       INNER JOIN (${DEDUPED_PAYMENT_IDS_SQL}) d ON d.keep_id = zp.id`,
+       INNER JOIN (${DEDUPED_PAYMENT_IDS_SQL}) d ON d.keep_id = zp.id
+       JOIN customers c ON c.id = zp.customer_id
+       LEFT JOIN agencies a ON a.id = c.agency_id`,
       [period.from, period.to]
     ),
   ]);
@@ -2059,21 +2292,53 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
   const selectedMonthKeys = new Set(selectedMonths.map((m) => String(m).padStart(2, "0")));
 
   for (const row of invoiceRows) {
-    const month = monthKeyFromDate(row.invoice_date);
+    const month = monthKeyFromDate(invoiceRaiseDate(row));
     if (!month || !selectedMonthKeys.has(month)) continue;
-    const bucket = ensureCustomerMonths(row.customer_id)[month];
-    bucket.invoiceAmount += Number(row.amount) || 0;
+    const keepCustomer = {
+      id: Number(row.customer_id),
+      customer_number: row.customer_number,
+      customer_type: row.customer_type,
+      agency_id: row.agency_id,
+      package_price: row.package_price,
+      discount_percent: row.discount_percent,
+    };
+    const shares = attributeDocumentAmount({
+      amount: row.amount,
+      rawJson: row.raw_json,
+      keepCustomer,
+      agencyPeers: agencyPeerIndex.byAgency.get(Number(row.agency_id)) || [keepCustomer],
+    });
     const d = dateOnly(row.invoice_date);
-    if (!bucket.invoiceDate || d < bucket.invoiceDate) bucket.invoiceDate = d;
+    for (const share of shares) {
+      const bucket = ensureCustomerMonths(share.customerId)[month];
+      bucket.invoiceAmount += Number(share.amount) || 0;
+      if (!bucket.invoiceDate || d < bucket.invoiceDate) bucket.invoiceDate = d;
+    }
   }
 
   for (const row of paymentRows) {
     const month = monthKeyFromDate(row.payment_date);
     if (!month || !selectedMonthKeys.has(month)) continue;
-    const bucket = ensureCustomerMonths(row.customer_id)[month];
-    bucket.paymentAmount += Number(row.amount) || 0;
+    const keepCustomer = {
+      id: Number(row.customer_id),
+      customer_number: row.customer_number,
+      customer_type: row.customer_type,
+      agency_id: row.agency_id,
+      package_price: row.package_price,
+      discount_percent: row.discount_percent,
+    };
+    const shares = attributeDocumentAmount({
+      amount: row.amount,
+      rawJson: row.raw_json,
+      keepCustomer,
+      agencyPeers: agencyPeerIndex.byAgency.get(Number(row.agency_id)) || [keepCustomer],
+    });
     const d = dateOnly(row.payment_date);
-    if (!bucket.paymentDate || d < bucket.paymentDate) bucket.paymentDate = d;
+    for (const share of shares) {
+      const bucket = ensureCustomerMonths(share.customerId)[month];
+      bucket.paymentAmount += Number(share.amount) || 0;
+      if (!bucket.paymentDate || d < bucket.paymentDate) bucket.paymentDate = d;
+    }
   }
 
   const matrixGroups = selectedMonths.map((monthNum) => {
@@ -2095,6 +2360,9 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
   ];
 
   const matrixRows = [];
+  /** @type {Map<number, Map<string, string>|null>} */
+  const projectedByCustomer = new Map();
+  let yearProjectedInvoiceTotal = 0;
   for (const c of customers) {
     const months = byCustomer.get(Number(c.id)) || {};
     const hasActivity = Object.values(months).some(
@@ -2112,9 +2380,62 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
     for (const m of selectedMonths) {
       const mm = String(m).padStart(2, "0");
       const bucket = months[mm] || emptyMonthBucket();
-      row[`m${mm}_invoice_amount`] =
+      let invoiceAmount =
         bucket.invoiceAmount > 0 ? Math.round(bucket.invoiceAmount * 100) / 100 : "";
-      row[`m${mm}_invoice_date`] = bucket.invoiceDate || "";
+      let invoiceDate = bucket.invoiceDate || "";
+      let amountIsProjected = false;
+
+      if (!projectedByCustomer.has(Number(c.id))) {
+        const byId = recurringByCustomer.get(Number(c.id));
+        const contactId = c.zoho_contact_id ? String(c.zoho_contact_id) : "";
+        const byContact = contactId ? recurringByContact.get(contactId) : null;
+        const scheduleStart =
+          byId?.nextInvoiceDate ||
+          byContact?.nextInvoiceDate ||
+          lastInvoiceByCustomer.get(Number(c.id)) ||
+          "";
+        projectedByCustomer.set(
+          Number(c.id),
+          scheduleStart
+            ? projectRecurringDatesInSpan(
+                scheduleStart,
+                period.year,
+                period.monthFrom,
+                period.monthTo,
+                c.payment_frequency,
+                c.custom_period_days
+              )
+            : null
+        );
+      }
+      const projected = projectedByCustomer.get(Number(c.id));
+      const expectedUnit = unitWeight({
+        package_price: c.package_price,
+        discount_percent:
+          String(c.customer_type || "").toUpperCase() === "B2B" ? c.discount_percent : null,
+      });
+      const scheduledDate = projected?.get(mm) || "";
+      if (scheduledDate && expectedUnit > 0) {
+        yearProjectedInvoiceTotal += expectedUnit;
+      }
+
+      // No raised invoice: show scheduled expected date/amount for any selected month
+      // (including past months — what was projected before the month closed).
+      if (!invoiceDate && !(Number(invoiceAmount) > 0)) {
+        if (projected) {
+          invoiceDate = scheduledDate;
+          if (invoiceDate && expectedUnit > 0) {
+            invoiceAmount = Math.round(expectedUnit * 100) / 100;
+            amountIsProjected = true;
+          }
+        } else {
+          invoiceDate = "No recurring";
+        }
+      }
+
+      row[`m${mm}_invoice_amount`] = invoiceAmount;
+      row[`m${mm}_invoice_date`] = invoiceDate;
+      row[`m${mm}_invoice_projected`] = amountIsProjected ? 1 : "";
       row[`m${mm}_payment_amount`] =
         bucket.paymentAmount > 0 ? Math.round(bucket.paymentAmount * 100) / 100 : "";
       row[`m${mm}_payment_date`] = bucket.paymentDate || "";
@@ -2128,10 +2449,42 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
   for (const row of matrixRows) {
     for (const m of selectedMonths) {
       const mm = String(m).padStart(2, "0");
-      yearInvoiceTotal += Number(row[`m${mm}_invoice_amount`]) || 0;
+      if (!row[`m${mm}_invoice_projected`]) {
+        yearInvoiceTotal += Number(row[`m${mm}_invoice_amount`]) || 0;
+      }
       yearPaymentTotal += Number(row[`m${mm}_payment_amount`]) || 0;
     }
   }
+  yearProjectedInvoiceTotal = Math.round(yearProjectedInvoiceTotal * 100) / 100;
+
+  // Sort by invoice date (earliest dated cell in the selected span); "No recurring" / blank last.
+  matrixRows.sort((a, b) => {
+    const rank = (row) => {
+      let earliest = null;
+      let onlyNoRecurring = true;
+      let hasAnyDateCell = false;
+      for (const m of selectedMonths) {
+        const mm = String(m).padStart(2, "0");
+        const d = String(row[`m${mm}_invoice_date`] || "").trim();
+        if (!d) continue;
+        hasAnyDateCell = true;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+          onlyNoRecurring = false;
+          if (!earliest || d < earliest) earliest = d;
+        } else if (d !== "No recurring") {
+          onlyNoRecurring = false;
+        }
+      }
+      if (earliest) return { bucket: 0, date: earliest };
+      if (hasAnyDateCell && onlyNoRecurring) return { bucket: 2, date: "9999-99-99" };
+      return { bucket: 1, date: "9999-99-98" }; // blank / other — above No recurring
+    };
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra.bucket !== rb.bucket) return ra.bucket - rb.bucket;
+    if (ra.date !== rb.date) return ra.date < rb.date ? -1 : 1;
+    return String(a.customer || "").localeCompare(String(b.customer || ""));
+  });
 
   return {
     title: `Customer Monthly Billing Matrix (${period.year} · ${spanLabel})`,
@@ -2152,8 +2505,255 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
       lines: [
         { label: "Year", value: period.year },
         { label: "Months", value: spanLabel },
-        { label: "Invoice total (KES)", value: Math.round(yearInvoiceTotal * 100) / 100 },
-        { label: "Payment total (KES)", value: Math.round(yearPaymentTotal * 100) / 100 },
+        {
+          label: "Projected invoice total (KES)",
+          value: Math.round(yearProjectedInvoiceTotal * 100) / 100,
+        },
+        { label: "Invoiced total (KES)", value: Math.round(yearInvoiceTotal * 100) / 100 },
+        { label: "Payments collected (KES)", value: Math.round(yearPaymentTotal * 100) / 100 },
+      ],
+    },
+  };
+}
+
+/**
+ * Per-customer expected vs invoiced vs collected for a month.
+ * Consolidated B2B documents are split so unit-level gaps are visible.
+ */
+async function collectionGapByCustomer(month) {
+  const period = resolveMonthRange(month);
+  const [customers, agencyPeerIndex, invoiceRows, paymentRows] = await Promise.all([
+    query(
+      `SELECT c.id,
+              c.customer_number,
+              c.customer_type,
+              c.status,
+              c.agency_id,
+              c.payment_frequency,
+              c.custom_period_days,
+              COALESCE(c.package_price, 0) AS package_price,
+              TRIM(CONCAT(c.first_name, ' ', COALESCE(c.middle_name, ''), ' ', c.last_name)) AS full_name,
+              b.name AS building,
+              a.name AS agency_name,
+              a.discount_percent
+       FROM customers c
+       LEFT JOIN buildings b ON b.id = c.building_id
+       LEFT JOIN agencies a ON a.id = c.agency_id
+       WHERE c.status = 'active'
+       ORDER BY c.customer_number ASC
+       LIMIT 15000`
+    ),
+    loadAgencyPeerIndex(),
+    query(
+      `SELECT zi.id,
+              zi.customer_id,
+              zi.invoice_date,
+              zi.due_date,
+              zi.raw_json,
+              COALESCE(zi.total, 0) AS amount,
+              c.customer_number,
+              c.customer_type,
+              c.agency_id,
+              COALESCE(c.package_price, 0) AS package_price,
+              a.discount_percent
+       FROM zoho_customer_invoices zi
+       INNER JOIN (${DEDUPED_INVOICE_IDS_SQL}) d ON d.keep_id = zi.id
+       JOIN customers c ON c.id = zi.customer_id
+       LEFT JOIN agencies a ON a.id = c.agency_id`,
+      [period.from, period.to]
+    ),
+    query(
+      `SELECT zp.id,
+              zp.customer_id,
+              zp.payment_date,
+              zp.raw_json,
+              COALESCE(zp.amount, 0) AS amount,
+              c.customer_number,
+              c.customer_type,
+              c.agency_id,
+              COALESCE(c.package_price, 0) AS package_price,
+              a.discount_percent
+       FROM zoho_customer_payments zp
+       INNER JOIN (${DEDUPED_PAYMENT_IDS_SQL}) d ON d.keep_id = zp.id
+       JOIN customers c ON c.id = zp.customer_id
+       LEFT JOIN agencies a ON a.id = c.agency_id`,
+      [period.from, period.to]
+    ),
+  ]);
+
+  /** @type {Map<number, { expected: number, invoiced: number, collected: number }>} */
+  const totals = new Map();
+  for (const c of customers) {
+    const freq = String(c.payment_frequency || "monthly").toLowerCase();
+    let monthly = Number(c.package_price) || 0;
+    if (freq === "quarterly") monthly /= 3;
+    else if (freq === "yearly") monthly /= 12;
+    else if (freq === "custom") {
+      const days = Math.max(Number(c.custom_period_days) || 30, 1);
+      monthly = (monthly / days) * 30;
+    }
+    const expected = unitWeight({
+      package_price: monthly,
+      discount_percent:
+        String(c.customer_type || "").toUpperCase() === "B2B" ? c.discount_percent : null,
+    });
+    totals.set(Number(c.id), {
+      expected: Math.round(expected * 100) / 100,
+      invoiced: 0,
+      collected: 0,
+    });
+  }
+
+  function ensureTotals(customerId) {
+    const id = Number(customerId);
+    if (!totals.has(id)) {
+      totals.set(id, { expected: 0, invoiced: 0, collected: 0 });
+    }
+    return totals.get(id);
+  }
+
+  for (const row of invoiceRows) {
+    const keepCustomer = {
+      id: Number(row.customer_id),
+      customer_number: row.customer_number,
+      customer_type: row.customer_type,
+      agency_id: row.agency_id,
+      package_price: row.package_price,
+      discount_percent: row.discount_percent,
+    };
+    const shares = attributeDocumentAmount({
+      amount: row.amount,
+      rawJson: row.raw_json,
+      keepCustomer,
+      agencyPeers: agencyPeerIndex.byAgency.get(Number(row.agency_id)) || [keepCustomer],
+    });
+    for (const share of shares) {
+      ensureTotals(share.customerId).invoiced += Number(share.amount) || 0;
+    }
+  }
+
+  for (const row of paymentRows) {
+    const keepCustomer = {
+      id: Number(row.customer_id),
+      customer_number: row.customer_number,
+      customer_type: row.customer_type,
+      agency_id: row.agency_id,
+      package_price: row.package_price,
+      discount_percent: row.discount_percent,
+    };
+    const shares = attributeDocumentAmount({
+      amount: row.amount,
+      rawJson: row.raw_json,
+      keepCustomer,
+      agencyPeers: agencyPeerIndex.byAgency.get(Number(row.agency_id)) || [keepCustomer],
+    });
+    for (const share of shares) {
+      ensureTotals(share.customerId).collected += Number(share.amount) || 0;
+    }
+  }
+
+  const headers = [
+    { key: "customer_number", label: "Customer" },
+    { key: "customer_name", label: "Name" },
+    { key: "customer_type", label: "Type" },
+    { key: "agency", label: "Agency" },
+    { key: "building", label: "Building" },
+    { key: "expected", label: "Expected (KES)" },
+    { key: "invoiced", label: "Invoiced share (KES)" },
+    { key: "collected", label: "Collected share (KES)" },
+    { key: "gap_vs_expected", label: "Gap vs expected (KES)" },
+    { key: "gap_vs_invoice", label: "Gap vs invoice (KES)" },
+    { key: "collection_status", label: "Status" },
+  ];
+
+  const customerById = new Map(customers.map((c) => [Number(c.id), c]));
+  for (const [id, peer] of agencyPeerIndex.byId) {
+    if (!customerById.has(id)) customerById.set(id, peer);
+  }
+
+  const rows = [];
+  let sumExpected = 0;
+  let sumInvoiced = 0;
+  let sumCollected = 0;
+  let unpaidCount = 0;
+  let unbilledCount = 0;
+  let partialCount = 0;
+  let collectedCount = 0;
+
+  for (const [id, t] of totals) {
+    const c = customerById.get(id);
+    if (!c) continue;
+    const expected = Math.round((t.expected || 0) * 100) / 100;
+    const invoiced = Math.round((t.invoiced || 0) * 100) / 100;
+    const collected = Math.round((t.collected || 0) * 100) / 100;
+    if (expected <= 0 && invoiced <= 0 && collected <= 0) continue;
+
+    const gapExpected = Math.round((expected - collected) * 100) / 100;
+    const gapInvoice = Math.round((invoiced - collected) * 100) / 100;
+    let status = "Collected";
+    if (invoiced <= 0 && collected <= 0) {
+      status = "Unbilled";
+      unbilledCount += 1;
+    } else if (collected <= 0) {
+      status = "Unpaid";
+      unpaidCount += 1;
+    } else if (expected > 0 && collected + 0.5 < expected * 0.95) {
+      status = "Partial";
+      partialCount += 1;
+    } else if (invoiced > 0 && collected + 0.5 < invoiced * 0.95) {
+      status = "Partial";
+      partialCount += 1;
+    } else {
+      collectedCount += 1;
+    }
+
+    sumExpected += expected;
+    sumInvoiced += invoiced;
+    sumCollected += collected;
+
+    rows.push({
+      customer_number: c.customer_number,
+      customer_name: c.full_name || "",
+      customer_type: c.customer_type || "",
+      agency: c.agency_name || "",
+      building: c.building || "",
+      expected,
+      invoiced,
+      collected,
+      gap_vs_expected: gapExpected,
+      gap_vs_invoice: gapInvoice,
+      collection_status: status,
+    });
+  }
+
+  rows.sort((a, b) => Number(b.gap_vs_expected) - Number(a.gap_vs_expected));
+
+  const collectionRate =
+    sumExpected > 0 ? Math.round((sumCollected / sumExpected) * 1000) / 10 : 0;
+
+  return {
+    title: `Collection Gap by Customer (${period.month})`,
+    headers,
+    rows: rows.map((r) => formatRow(r, headers)),
+    period: { from: period.from, to: period.to },
+    month: period.month,
+    summary: {
+      total: rows.length,
+      totalLabel: "Customers",
+      lines: [
+        { label: "Month", value: period.month },
+        { label: "Expected (KES)", value: Math.round(sumExpected * 100) / 100 },
+        { label: "Invoiced share (KES)", value: Math.round(sumInvoiced * 100) / 100 },
+        { label: "Collected share (KES)", value: Math.round(sumCollected * 100) / 100 },
+        {
+          label: "Gap vs expected (KES)",
+          value: Math.round((sumExpected - sumCollected) * 100) / 100,
+        },
+        { label: "Collection rate", value: `${collectionRate}%` },
+        { label: "Collected", value: collectedCount },
+        { label: "Partial", value: partialCount },
+        { label: "Unpaid", value: unpaidCount },
+        { label: "Unbilled", value: unbilledCount },
       ],
     },
   };
@@ -2643,6 +3243,7 @@ const RUNNERS = {
   "renewals-due": upcomingInvoicesReport,
   "invoices-vs-payments": invoicesVsPayments,
   "customer-monthly-billing-matrix": customerMonthlyBillingMatrix,
+  "collection-gap-by-customer": collectionGapByCustomer,
   "business-health-summary": businessHealthSummary,
   "executive-weekly": businessHealthSummary,
   "executive-monthly": executiveMonthlyReport,

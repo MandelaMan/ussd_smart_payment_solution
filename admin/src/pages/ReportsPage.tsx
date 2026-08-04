@@ -36,8 +36,6 @@ import { useAuth } from "../lib/authContext";
 import { canAccessFinance, isPartner } from "../lib/rbac";
 import {
   getFavoriteReportIds,
-  getRecentReportIds,
-  pushRecentReport,
   toggleFavoriteReport,
 } from "../lib/reportLibraryPrefs";
 import { ReportSchedulesPanel } from "../components/ReportSchedulesPanel";
@@ -177,57 +175,57 @@ function ReportFiltersForm({
   }
 
   return (
-    <Stack gap={3}>
-      {report.dateFilter ? (
-        <Flex gap={3} flexWrap="wrap">
-          <Box flex="1" minW="140px">
+    <Stack gap={2}>
+      <Flex gap={3} flexWrap="nowrap" align="flex-end" overflowX="auto">
+        {report.dateFilter ? (
+          <>
+            <Box flex="1" minW="140px">
+              <Text fontSize="xs" color="fg.muted" mb={1}>
+                From
+              </Text>
+              <DateField value={filters.from} onChange={(v) => onChange({ from: v })} />
+            </Box>
+            <Box flex="1" minW="140px">
+              <Text fontSize="xs" color="fg.muted" mb={1}>
+                To
+              </Text>
+              <DateField value={filters.to} onChange={(v) => onChange({ to: v })} />
+            </Box>
+          </>
+        ) : null}
+
+        {report.monthFilter ? (
+          <Box minW="160px" maxW="220px">
             <Text fontSize="xs" color="fg.muted" mb={1}>
-              From
+              Month
             </Text>
-            <DateField value={filters.from} onChange={(v) => onChange({ from: v })} />
+            <Input
+              size="sm"
+              type="month"
+              value={filters.month}
+              onChange={(e) => onChange({ month: e.target.value })}
+            />
           </Box>
-          <Box flex="1" minW="140px">
+        ) : null}
+
+        {report.yearFilter ? (
+          <Box minW="100px" maxW="120px" flexShrink={0}>
             <Text fontSize="xs" color="fg.muted" mb={1}>
-              To
+              Year
             </Text>
-            <DateField value={filters.to} onChange={(v) => onChange({ to: v })} />
+            <Input
+              size="sm"
+              type="number"
+              min={2000}
+              max={2100}
+              value={filters.year}
+              onChange={(e) => onChange({ year: e.target.value })}
+            />
           </Box>
-        </Flex>
-      ) : null}
+        ) : null}
 
-      {report.monthFilter ? (
-        <Box maxW="220px">
-          <Text fontSize="xs" color="fg.muted" mb={1}>
-            Month
-          </Text>
-          <Input
-            size="sm"
-            type="month"
-            value={filters.month}
-            onChange={(e) => onChange({ month: e.target.value })}
-          />
-        </Box>
-      ) : null}
-
-      {report.yearFilter ? (
-        <Box maxW="140px">
-          <Text fontSize="xs" color="fg.muted" mb={1}>
-            Year
-          </Text>
-          <Input
-            size="sm"
-            type="number"
-            min={2000}
-            max={2100}
-            value={filters.year}
-            onChange={(e) => onChange({ year: e.target.value })}
-          />
-        </Box>
-      ) : null}
-
-      {report.monthRangeFilter ? (
-        <Stack gap={2}>
-          <Flex gap={3} flexWrap="wrap">
+        {report.monthRangeFilter ? (
+          <>
             <Box flex="1" minW="140px">
               <Text fontSize="xs" color="fg.muted" mb={1}>
                 From month
@@ -264,29 +262,32 @@ function ReportFiltersForm({
                 ))}
               </SelectField>
             </Box>
-          </Flex>
-          <Flex gap={1} flexWrap="wrap">
-            {(
-              [
-                ["All months", 1, 12],
-                ["This month", new Date().getMonth() + 1, new Date().getMonth() + 1],
-                ["Q1", 1, 3],
-                ["Q2", 4, 6],
-                ["Q3", 7, 9],
-                ["Q4", 10, 12],
-              ] as const
-            ).map(([label, fromM, toM]) => (
-              <Button
-                key={label}
-                size="xs"
-                variant="outline"
-                onClick={() => onChange({ monthFrom: String(fromM), monthTo: String(toM) })}
-              >
-                {label}
-              </Button>
-            ))}
-          </Flex>
-        </Stack>
+          </>
+        ) : null}
+      </Flex>
+
+      {report.monthRangeFilter ? (
+        <Flex gap={1} flexWrap="wrap">
+          {(
+            [
+              ["All months", 1, 12],
+              ["This month", new Date().getMonth() + 1, new Date().getMonth() + 1],
+              ["Q1", 1, 3],
+              ["Q2", 4, 6],
+              ["Q3", 7, 9],
+              ["Q4", 10, 12],
+            ] as const
+          ).map(([label, fromM, toM]) => (
+            <Button
+              key={label}
+              size="xs"
+              variant="outline"
+              onClick={() => onChange({ monthFrom: String(fromM), monthTo: String(toM) })}
+            >
+              {label}
+            </Button>
+          ))}
+        </Flex>
       ) : null}
     </Stack>
   );
@@ -433,19 +434,11 @@ function ReportRunnerDialog({
         <Text fontSize="lg" fontWeight="semibold" lineHeight="1.25">
           {report.title}
         </Text>
-        <Text fontSize="sm" color="fg.muted" mt={1} lineHeight="1.4">
-          {report.description}
-        </Text>
       </Box>
 
       <Dialog.Body px={5} py={4} flex="1" minH={0} overflowY="auto">
         <Stack gap={5}>
-          <Box>
-            <Text fontSize="sm" fontWeight="medium" mb={2}>
-              Filters
-            </Text>
-            <ReportFiltersForm report={report} filters={filters} onChange={onFiltersChange} />
-          </Box>
+          <ReportFiltersForm report={report} filters={filters} onChange={onFiltersChange} />
 
           <Box>
             <Flex align="center" justify="space-between" gap={2} mb={2} flexWrap="wrap">
@@ -543,7 +536,6 @@ export function ReportsPage() {
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [favorites, setFavorites] = useState<string[]>(() => getFavoriteReportIds());
-  const [recent, setRecent] = useState<string[]>(() => getRecentReportIds());
   const [showUnavailable, setShowUnavailable] = useState(false);
 
   useEffect(() => {
@@ -612,7 +604,6 @@ export function ReportsPage() {
         );
         if (cancelled) return;
         setPreview(data);
-        setRecent(pushRecentReport(activeReport.id));
       } catch (e) {
         if (cancelled) return;
         setPreview(null);
@@ -661,13 +652,6 @@ export function ReportsPage() {
     () => reports.filter((r) => favorites.includes(r.id)),
     [reports, favorites]
   );
-  const recentReports = useMemo(
-    () =>
-      recent
-        .map((id) => reports.find((r) => r.id === id))
-        .filter((r): r is ReportDefinition => Boolean(r)),
-    [reports, recent]
-  );
 
   function openReport(report: ReportDefinition) {
     if (report.available === false) {
@@ -694,7 +678,6 @@ export function ReportsPage() {
         ...buildFilterParams(activeReport, getReportFilters(activeReport.id)),
         format,
       });
-      setRecent(pushRecentReport(activeReport.id));
       toaster.create({ title: `${activeReport.title} downloaded`, type: "success" });
     } catch (e) {
       toaster.create({
@@ -778,37 +761,19 @@ export function ReportsPage() {
         </Button>
       </Flex>
 
-      {(favoriteReports.length > 0 || recentReports.length > 0) && family === "All" && !search && (
-        <SimpleGrid columns={{ base: 1, md: 2 }} gap={3}>
-          {favoriteReports.length > 0 && (
-            <Box borderWidth="1px" borderColor="border" borderRadius="lg" p={3}>
-              <Text fontSize="sm" fontWeight="semibold" mb={2}>
-                Favorites
+      {favoriteReports.length > 0 && family === "All" && !search && (
+        <Box borderWidth="1px" borderColor="border" borderRadius="lg" p={3} maxW="md">
+          <Text fontSize="sm" fontWeight="semibold" mb={2}>
+            Favorites
+          </Text>
+          <Stack gap={1}>
+            {favoriteReports.slice(0, 6).map((r) => (
+              <Text key={r.id} fontSize="sm" color="fg.muted">
+                {r.title}
               </Text>
-              <Stack gap={1}>
-                {favoriteReports.slice(0, 6).map((r) => (
-                  <Text key={r.id} fontSize="sm" color="fg.muted">
-                    {r.title}
-                  </Text>
-                ))}
-              </Stack>
-            </Box>
-          )}
-          {recentReports.length > 0 && (
-            <Box borderWidth="1px" borderColor="border" borderRadius="lg" p={3}>
-              <Text fontSize="sm" fontWeight="semibold" mb={2}>
-                Recently used
-              </Text>
-              <Stack gap={1}>
-                {recentReports.slice(0, 6).map((r) => (
-                  <Text key={r.id} fontSize="sm" color="fg.muted">
-                    {r.title}
-                  </Text>
-                ))}
-              </Stack>
-            </Box>
-          )}
-        </SimpleGrid>
+            ))}
+          </Stack>
+        </Box>
       )}
 
       <Text fontSize="sm" color="fg.muted">

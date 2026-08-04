@@ -840,6 +840,12 @@ async function logZohoMpesaPaymentResult(result, meta = {}) {
   }
 }
 
+/**
+ * Apply an M-Pesa payment to Zoho Books.
+ * Guarantee: when the Zoho contact exists and amount is valid —
+ *   1) pay an open invoice if one matches, OR
+ *   2) create an invoice for the exact payment amount and mark it paid.
+ */
 async function applyZohoPaymentForMpesa({
   customerNumber,
   amount,
@@ -900,14 +906,14 @@ async function applyZohoPaymentForMpesa({
       (inv) => String(inv.invoice_id) === String(forceInvoiceId)
     );
     if (!openInvoice?.invoice_id) {
-      return {
-        paid: false,
-        reason: "invoice_not_found",
-        customerNumber: companyName,
-        invoice_id: forceInvoiceId,
-      };
+      console.warn(
+        "Zoho forceInvoiceId not found — creating invoice for M-Pesa payment",
+        { forceInvoiceId, customerNumber: companyName, transactionId }
+      );
     }
-  } else {
+  }
+
+  if (!openInvoice?.invoice_id) {
     openInvoice = await findOpenInvoiceForPayment({
       customerNumber: companyName,
       customer_id,
@@ -916,90 +922,22 @@ async function applyZohoPaymentForMpesa({
     });
   }
 
+  // No usable open invoice → create one for this payment amount, then mark paid.
   if (!openInvoice?.invoice_id) {
-    const created = await createInvoiceForExactAmount({
+    return createAndMarkInvoicePaidForMpesa({
       companyName,
       customer_id,
       paymentAmount,
       transactionId,
       source,
-      referenceNumber: companyName,
+      dbCustomer,
     });
-    if (!created?.invoice_id) {
-      return { paid: false, reason: "create_failed" };
-    }
-
-    const createdBalance = invoiceOutstandingBalance(created);
-    if (!amountsEqual(createdBalance, paymentAmount)) {
-      console.error("Zoho invoice total does not match M-Pesa amount", {
-        paymentAmount,
-        invoice_total: created.total,
-        invoice_balance: createdBalance,
-        invoice_id: created.invoice_id,
-        is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
-      });
-      return {
-        paid: false,
-        reason: "invoice_amount_mismatch",
-        invoice_id: created.invoice_id,
-        invoice_number: created.invoice_number,
-        payment_amount: paymentAmount,
-        invoice_total: roundMoney(created.total),
-        invoice_balance: createdBalance,
-      };
-    }
-
-    const plan = planInvoicePayment(paymentAmount, createdBalance);
-    const payment = await recordInvoicePayment({
-      invoice_id: created.invoice_id,
-      customer_id,
-      paymentAmount: plan.payment_amount,
-      amountApplied: plan.amount_applied,
-      transactionId,
-      source,
-    });
-    if (!payment) {
-      return {
-        paid: false,
-        reason: "created_mark_paid_failed",
-        invoice_id: created.invoice_id,
-      };
-    }
-
-    if (dbCustomer?.id) {
-      try {
-        const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
-        await integrationSnapshot.recordZohoPaymentSnapshot(dbCustomer.id, {
-          invoiceId: created.invoice_id,
-          invoiceNumber: created.invoice_number,
-          paymentId: payment.payment_id,
-          amount: plan.payment_amount,
-          referenceId: transactionId,
-          remainingBalance: plan.remaining_balance ?? 0,
-        });
-        const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
-        invalidateCustomerZoho(dbCustomer.id);
-      } catch (e) {
-        console.warn("Zoho payment snapshot update failed:", e.message);
-      }
-    }
-
-    return {
-      paid: true,
-      strategy: "created_and_paid",
-      invoice_id: created.invoice_id,
-      invoice_number: created.invoice_number,
-      invoice_balance_before: createdBalance,
-      payment_amount: plan.payment_amount,
-      amount_applied: plan.amount_applied,
-      excess_amount: plan.excess_amount || 0,
-      remaining_balance: plan.remaining_balance ?? 0,
-      zoho_payment_id: payment.payment_id || null,
-    };
   }
 
   const invoiceBalance = invoiceOutstandingBalance(openInvoice);
-  const plan = planInvoicePayment(paymentAmount, invoiceBalance);
+  const balanceForPlan =
+    invoiceBalance > 0 ? invoiceBalance : paymentAmount;
+  const plan = planInvoicePayment(paymentAmount, balanceForPlan);
   const payment = await recordInvoicePayment({
     invoice_id: openInvoice.invoice_id,
     customer_id,
@@ -1053,6 +991,97 @@ async function applyZohoPaymentForMpesa({
     invoice_id: openInvoice.invoice_id,
     invoice_number: openInvoice.invoice_number,
     invoice_balance_before: invoiceBalance,
+    payment_amount: plan.payment_amount,
+    amount_applied: plan.amount_applied,
+    excess_amount: plan.excess_amount || 0,
+    remaining_balance: plan.remaining_balance ?? 0,
+    zoho_payment_id: payment.payment_id || null,
+  };
+}
+
+/**
+ * Create a Zoho invoice for the M-Pesa amount and mark it paid.
+ * Always attempts mark-paid after a successful create (tax/balance drift is logged, not fatal).
+ */
+async function createAndMarkInvoicePaidForMpesa({
+  companyName,
+  customer_id,
+  paymentAmount,
+  transactionId,
+  source,
+  dbCustomer,
+}) {
+  const created = await createInvoiceForExactAmount({
+    companyName,
+    customer_id,
+    paymentAmount,
+    transactionId,
+    source,
+    referenceNumber: companyName,
+  });
+  if (!created?.invoice_id) {
+    return { paid: false, reason: "create_failed" };
+  }
+
+  let createdBalance = invoiceOutstandingBalance(created);
+  if (!(createdBalance > 0)) {
+    createdBalance = paymentAmount;
+  }
+  if (!amountsEqual(createdBalance, paymentAmount)) {
+    console.warn(
+      "Zoho invoice total/balance differs from M-Pesa amount — applying payment anyway",
+      {
+        paymentAmount,
+        invoice_total: created.total,
+        invoice_balance: createdBalance,
+        invoice_id: created.invoice_id,
+        is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+      }
+    );
+  }
+
+  const plan = planInvoicePayment(paymentAmount, createdBalance);
+  const payment = await recordInvoicePayment({
+    invoice_id: created.invoice_id,
+    customer_id,
+    paymentAmount: plan.payment_amount,
+    amountApplied: plan.amount_applied,
+    transactionId,
+    source,
+  });
+  if (!payment) {
+    return {
+      paid: false,
+      reason: "created_mark_paid_failed",
+      invoice_id: created.invoice_id,
+      invoice_number: created.invoice_number || null,
+    };
+  }
+
+  if (dbCustomer?.id) {
+    try {
+      const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
+      await integrationSnapshot.recordZohoPaymentSnapshot(dbCustomer.id, {
+        invoiceId: created.invoice_id,
+        invoiceNumber: created.invoice_number,
+        paymentId: payment.payment_id,
+        amount: plan.payment_amount,
+        referenceId: transactionId,
+        remainingBalance: plan.remaining_balance ?? 0,
+      });
+      const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
+      invalidateCustomerZoho(dbCustomer.id);
+    } catch (e) {
+      console.warn("Zoho payment snapshot update failed:", e.message);
+    }
+  }
+
+  return {
+    paid: true,
+    strategy: "created_and_paid",
+    invoice_id: created.invoice_id,
+    invoice_number: created.invoice_number,
+    invoice_balance_before: createdBalance,
     payment_amount: plan.payment_amount,
     amount_applied: plan.amount_applied,
     excess_amount: plan.excess_amount || 0,
