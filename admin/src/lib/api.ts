@@ -2554,6 +2554,13 @@ export const api = {
       middleName?: string;
       phone: string;
       email: string;
+      billingAttention?: string;
+      billingAddress?: string;
+      billingStreet2?: string;
+      billingCity?: string;
+      billingState?: string;
+      billingZip?: string;
+      billingCountry?: string;
       isVatExempt?: boolean;
       customerType?: "C2B" | "B2B";
       agencyId?: number;
