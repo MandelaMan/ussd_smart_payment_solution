@@ -3,6 +3,13 @@ const { sendTableExport } = require("../utils/tableExportResponse");
 const { listIntegrationEvents } = require("../services/integrationEventStore");
 const { listActivity } = require("../services/activityLogStore");
 
+// Best-effort cache for optional org-balance derivation.
+// updatedSubscriptions.json can be large and is not required for core dashboard KPIs.
+let _updatedSubscriptionsJsonCache = {
+  expiresAt: 0,
+  parsed: null,
+};
+
 function buildWhere(conditions, params) {
   return conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 }
@@ -66,33 +73,69 @@ function formatChartRows(rows) {
 }
 
 async function queryRevenueChartByMonth(year, monthNum) {
+  const monthStart = new Date(Date.UTC(year, monthNum - 1, 1)).toISOString().slice(0, 10);
+  const monthEnd = new Date(Date.UTC(year, monthNum, 1)).toISOString().slice(0, 10); // first day of next month
   const rows = await query(
-    `SELECT DATE(created_at) AS day,
+    `SELECT
+      t.day,
       COUNT(*) AS count,
-      COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue,
-      SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
-      SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
-     FROM payment_transactions
-     WHERE YEAR(created_at) = ? AND MONTH(created_at) = ?
-     GROUP BY DATE(created_at)
-     ORDER BY day ASC`,
-    [year, monthNum]
+      COALESCE(SUM(t.revenue), 0) AS revenue,
+      COALESCE(SUM(t.success_count), 0) AS success_count,
+      COALESCE(SUM(t.failed_count), 0) AS failed_count
+     FROM (
+       SELECT
+         DATE(pt.created_at) AS day,
+         CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END AS revenue,
+         CASE WHEN pt.status = 'SUCCESS' THEN 1 ELSE 0 END AS success_count,
+         CASE WHEN pt.status = 'FAILED' THEN 1 ELSE 0 END AS failed_count
+       FROM payment_transactions pt
+       WHERE pt.created_at >= ? AND pt.created_at < ?
+       UNION ALL
+       SELECT
+         zp.payment_date AS day,
+         COALESCE(zp.amount, 0) AS revenue,
+         1 AS success_count,
+         0 AS failed_count
+       FROM zoho_customer_payments zp
+       WHERE zp.payment_date >= ? AND zp.payment_date < ?
+     ) t
+     GROUP BY t.day
+     ORDER BY t.day ASC`,
+    [monthStart, monthEnd, monthStart, monthEnd]
   );
   return formatChartRows(rows);
 }
 
 async function queryRevenueChartByYear(year) {
+  const yearStart = new Date(Date.UTC(year, 0, 1)).toISOString().slice(0, 10);
+  const yearEnd = new Date(Date.UTC(year + 1, 0, 1)).toISOString().slice(0, 10); // first day of next year
   const rows = await query(
-    `SELECT DATE_FORMAT(created_at, '%Y-%m-01') AS day,
+    `SELECT
+      t.day,
       COUNT(*) AS count,
-      COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue,
-      SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
-      SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
-     FROM payment_transactions
-     WHERE YEAR(created_at) = ?
-     GROUP BY YEAR(created_at), MONTH(created_at)
-     ORDER BY MONTH(created_at) ASC`,
-    [year]
+      COALESCE(SUM(t.revenue), 0) AS revenue,
+      COALESCE(SUM(t.success_count), 0) AS success_count,
+      COALESCE(SUM(t.failed_count), 0) AS failed_count
+     FROM (
+       SELECT
+         DATE_FORMAT(pt.created_at, '%Y-%m-01') AS day,
+         CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END AS revenue,
+         CASE WHEN pt.status = 'SUCCESS' THEN 1 ELSE 0 END AS success_count,
+         CASE WHEN pt.status = 'FAILED' THEN 1 ELSE 0 END AS failed_count
+       FROM payment_transactions pt
+       WHERE pt.created_at >= ? AND pt.created_at < ?
+       UNION ALL
+       SELECT
+         DATE_FORMAT(zp.payment_date, '%Y-%m-01') AS day,
+         COALESCE(zp.amount, 0) AS revenue,
+         1 AS success_count,
+         0 AS failed_count
+       FROM zoho_customer_payments zp
+       WHERE zp.payment_date >= ? AND zp.payment_date < ?
+     ) t
+     GROUP BY t.day
+     ORDER BY t.day ASC`,
+    [yearStart, yearEnd, yearStart, yearEnd]
   );
   const formatted = formatChartRows(rows);
   const byMonth = new Map(
@@ -142,6 +185,9 @@ async function getStats(req, res, next) {
   try {
     const period = req.query.period || "30d";
     const days = period === "7d" ? 6 : period === "90d" ? 89 : 29;
+    const currentYear = new Date().getFullYear();
+    const yearStart = `${currentYear}-01-01`;
+    const yearEnd = `${currentYear + 1}-01-01`;
     const customerStore = require("../services/customerModuleStore");
     const emptySubscribers = {
       total: 0,
@@ -183,56 +229,155 @@ async function getStats(req, res, next) {
       avgTransactionRows,
       subscribers,
     ] = await Promise.all([
-      query(`
+      query(
+        `
         SELECT
-          COUNT(*) AS total,
-          SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+          (
+            COUNT(*)
+            + (SELECT COUNT(*)
+               FROM zoho_customer_payments zp
+               WHERE zp.payment_date >= ? AND zp.payment_date < ?
+              )
+          ) AS total,
+          (
+            SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END)
+            + (SELECT COUNT(*)
+               FROM zoho_customer_payments zp
+               WHERE zp.payment_date >= ? AND zp.payment_date < ?
+              )
+          ) AS success_count,
           SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
           SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count,
-          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS total_revenue
-        FROM payment_transactions
+          (
+            COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0)
+            + (SELECT COALESCE(SUM(zp.amount), 0)
+               FROM zoho_customer_payments zp
+               WHERE zp.payment_date >= ? AND zp.payment_date < ?
+              )
+          ) AS total_revenue
+        FROM payment_transactions pt
+        WHERE pt.created_at >= ? AND pt.created_at < ?
+      `,
+        [
+          yearStart,
+          yearEnd,
+          yearStart,
+          yearEnd,
+          yearStart,
+          yearEnd,
+          yearStart,
+          yearEnd,
+        ]
+      ),
+      query(`
+        SELECT
+          SUM(x.txn_count) AS total,
+          SUM(x.revenue) AS revenue
+        FROM (
+          SELECT
+            1 AS txn_count,
+            CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END AS revenue
+          FROM payment_transactions
+          WHERE created_at >= CURDATE()
+            AND created_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          UNION ALL
+          SELECT
+            1 AS txn_count,
+            COALESCE(amount, 0) AS revenue
+          FROM zoho_customer_payments
+          WHERE payment_date = CURDATE()
+        ) x
       `),
       query(`
         SELECT
-          COUNT(*) AS total,
-          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-        FROM payment_transactions
-        WHERE created_at >= CURDATE()
-          AND created_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
-      `),
-      query(`
-        SELECT
-          COUNT(*) AS total,
-          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-        FROM payment_transactions
-        WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
-          AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+          SUM(x.txn_count) AS total,
+          SUM(x.revenue) AS revenue
+        FROM (
+          SELECT
+            1 AS txn_count,
+            CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END AS revenue
+          FROM payment_transactions
+          WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+            AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)
+          UNION ALL
+          SELECT
+            1 AS txn_count,
+            COALESCE(amount, 0) AS revenue
+          FROM zoho_customer_payments
+          WHERE YEAR(payment_date) = YEAR(CURDATE())
+            AND MONTH(payment_date) = MONTH(CURDATE())
+        ) x
       `),
       query(
-        `SELECT COUNT(*) AS total,
-          COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-         FROM payment_transactions
-         WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
-        [days]
+        `SELECT
+          SUM(x.txn_count) AS total,
+          SUM(x.revenue) AS revenue
+         FROM (
+           SELECT
+             1 AS txn_count,
+             CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END AS revenue
+           FROM payment_transactions pt
+           WHERE pt.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+           UNION ALL
+           SELECT
+             1 AS txn_count,
+             COALESCE(zp.amount, 0) AS revenue
+           FROM zoho_customer_payments zp
+           WHERE zp.payment_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+         ) x`,
+        [days, days]
       ),
       query(`
         SELECT COUNT(*) AS count FROM (
-          SELECT phone FROM payment_transactions
-          WHERE status = 'SUCCESS' AND phone IS NOT NULL AND phone != ''
+          SELECT phone FROM (
+            SELECT phone
+            FROM payment_transactions
+            WHERE status = 'SUCCESS' AND phone IS NOT NULL AND phone != ''
+              AND created_at >= ? AND created_at < ?
+            UNION ALL
+            SELECT c.phone
+            FROM zoho_customer_payments zp
+            JOIN customers c ON c.id = zp.customer_id
+            WHERE c.phone IS NOT NULL
+              AND c.phone != ''
+              AND zp.payment_date >= ? AND zp.payment_date < ?
+          ) rc
           GROUP BY phone HAVING COUNT(*) > 1
-        ) rc
-      `),
+        ) rc2
+      `, [yearStart, yearEnd, yearStart, yearEnd]),
       query(`
-        SELECT COUNT(DISTINCT account_reference) AS count
-        FROM payment_transactions
-        WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
-      `),
+        SELECT COUNT(DISTINCT customer_ref) AS count FROM (
+          SELECT account_reference AS customer_ref
+          FROM payment_transactions
+          WHERE status = 'SUCCESS'
+            AND account_reference IS NOT NULL
+            AND created_at >= ? AND created_at < ?
+          UNION ALL
+          SELECT c.customer_number AS customer_ref
+          FROM zoho_customer_payments zp
+          JOIN customers c ON c.id = zp.customer_id
+          WHERE c.customer_number IS NOT NULL
+            AND zp.payment_date >= ? AND zp.payment_date < ?
+        ) u
+      `, [yearStart, yearEnd, yearStart, yearEnd]),
       query(
         `SELECT COUNT(*) AS count FROM (
-          SELECT account_reference, MIN(created_at) AS first_pay
-          FROM payment_transactions
-          WHERE status = 'SUCCESS' AND account_reference IS NOT NULL
-          GROUP BY account_reference
+          SELECT customer_ref, MIN(first_paid_date) AS first_pay
+          FROM (
+            SELECT
+              pt.account_reference AS customer_ref,
+              DATE(pt.created_at) AS first_paid_date
+            FROM payment_transactions pt
+            WHERE pt.status = 'SUCCESS' AND pt.account_reference IS NOT NULL
+            UNION ALL
+            SELECT
+              c.customer_number AS customer_ref,
+              zp.payment_date AS first_paid_date
+            FROM zoho_customer_payments zp
+            JOIN customers c ON c.id = zp.customer_id
+            WHERE zp.payment_date IS NOT NULL
+          ) allp
+          GROUP BY customer_ref
           HAVING first_pay >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         ) nc`,
         [days]
@@ -278,26 +423,160 @@ async function getStats(req, res, next) {
         LIMIT 5
       `),
       query(
-        `SELECT b.name AS building,
-          COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue,
+        `SELECT
+          b.name AS building,
+          COALESCE(mp.revenue, 0) + COALESCE(zp.revenue, 0) AS revenue,
           COUNT(DISTINCT CASE WHEN c.status = 'active' THEN c.id END) AS subscribers
          FROM buildings b
          LEFT JOIN customers c ON c.building_id = b.id
-         LEFT JOIN payment_transactions pt ON pt.account_reference = c.customer_number
-           AND pt.status = 'SUCCESS'
-           AND pt.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+         LEFT JOIN (
+           SELECT
+             c.building_id,
+             COALESCE(SUM(pt.amount), 0) AS revenue
+           FROM payment_transactions pt
+           JOIN customers c ON c.customer_number = pt.account_reference
+           WHERE pt.status = 'SUCCESS'
+             AND pt.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+           GROUP BY c.building_id
+         ) mp ON mp.building_id = b.id
+         LEFT JOIN (
+           SELECT
+             c.building_id,
+             COALESCE(SUM(zp.amount), 0) AS revenue
+           FROM zoho_customer_payments zp
+           JOIN customers c ON c.id = zp.customer_id
+           WHERE zp.payment_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+           GROUP BY c.building_id
+         ) zp ON zp.building_id = b.id
          GROUP BY b.id, b.name
          HAVING revenue > 0 OR subscribers > 0
          ORDER BY revenue DESC
          LIMIT 12`,
-        [days]
+        [days, days]
       ),
-      query(`
-        SELECT COALESCE(AVG(amount), 0) AS avg_amount
-        FROM payment_transactions WHERE status = 'SUCCESS'
-      `),
+      query(
+        `
+        SELECT COALESCE(AVG(x.amount), 0) AS avg_amount
+        FROM (
+          SELECT pt.amount
+          FROM payment_transactions pt
+          WHERE pt.status = 'SUCCESS'
+            AND pt.created_at >= ? AND pt.created_at < ?
+            AND pt.amount IS NOT NULL
+          UNION ALL
+          SELECT zp.amount
+          FROM zoho_customer_payments zp
+          WHERE zp.payment_date >= ? AND zp.payment_date < ?
+            AND zp.amount IS NOT NULL
+        ) x
+        `,
+        [yearStart, yearEnd, yearStart, yearEnd]
+      ),
       customerStore.getSubscriberStats(days).catch(() => emptySubscribers),
     ]);
+
+    // Optional: derive "org balance" signals from the live ISP transaction log.
+    // This is best-effort: updatedSubscriptions.json may be empty or contain STK snapshots with OrgAccountBalance="0".
+    let orgBalanceTotal = 0;
+    let orgBalanceActive = 0;
+    let orgBalanceSuspended = 0;
+    let orgBalanceUpdatedAt = null;
+    try {
+      const fs = require("fs/promises");
+      const path = require("path");
+      const SUBS_FILE = path.resolve(__dirname, "../../logs/updatedSubscriptions.json");
+      const CACHE_MS = 10_000;
+      const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2MB
+
+      let parsed = _updatedSubscriptionsJsonCache.parsed;
+      const now = Date.now();
+
+      // Skip heavy parsing if file is huge or we recently parsed it.
+      if (!parsed || now > _updatedSubscriptionsJsonCache.expiresAt) {
+        const stat = await fs.stat(SUBS_FILE).catch(() => null);
+        if (!stat || stat.size === 0) {
+          parsed = [];
+        } else if (stat.size > MAX_FILE_BYTES) {
+          parsed = [];
+        } else {
+          const raw = await fs.readFile(SUBS_FILE, "utf8");
+          parsed = JSON.parse(raw || "[]");
+        }
+
+        _updatedSubscriptionsJsonCache = {
+          expiresAt: now + CACHE_MS,
+          parsed,
+        };
+      }
+
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const byAccount = new Map();
+        for (const rec of parsed) {
+          const account = String(
+            rec?.customerAccount ??
+              rec?.ispPayload?.BillRefNumber ??
+              rec?.ispPayload?.CustomerAccount ??
+              rec?.ispPayload?.BillRef ??
+              rec?.rawTx?.BillRefNumber ??
+              rec?.rawTx?.AccountReference ??
+              ""
+          ).trim();
+          if (!account) continue;
+
+          const balRaw =
+            rec?.ispPayload?.OrgAccountBalance ??
+            rec?.ispPayload?.OrgAccountBal ??
+            rec?.rawTx?.OrgAccountBalance ??
+            rec?.rawTx?.OrgAccountBal ??
+            null;
+          const bal = balRaw != null && String(balRaw).trim() !== "" ? Number(balRaw) : null;
+
+          const updatedAtStr = rec?.lastUpdatedAt ?? rec?.updatedAt ?? null;
+          const updatedAtMs = updatedAtStr ? new Date(updatedAtStr).getTime() : 0;
+
+          const prev = byAccount.get(account);
+          if (!prev || updatedAtMs >= (prev.updatedAtMs || 0)) {
+            byAccount.set(account, { account, bal, updatedAtMs });
+          }
+        }
+
+        if (byAccount.size > 0) {
+          let anyNonZero = false;
+          for (const { bal } of byAccount.values()) {
+            if (!Number.isFinite(bal)) continue;
+            orgBalanceTotal += bal;
+            if (bal > 0) {
+              orgBalanceActive += 1;
+              anyNonZero = true;
+            } else {
+              orgBalanceSuspended += 1;
+            }
+          }
+
+          // UpdatedAt: use latest seen timestamp among records.
+          const latest = Array.from(byAccount.values()).reduce((acc, r) =>
+            (r.updatedAtMs || 0) > (acc.updatedAtMs || 0) ? r : acc, { updatedAtMs: 0 });
+          if (latest?.updatedAtMs) {
+            orgBalanceUpdatedAt = new Date(latest.updatedAtMs).toISOString();
+          }
+
+          subscribers.orgBalanceTotal = orgBalanceTotal;
+          subscribers.orgBalanceActive = orgBalanceActive;
+          subscribers.orgBalanceSuspended = orgBalanceSuspended;
+          subscribers.orgBalanceUpdatedAt = orgBalanceUpdatedAt;
+
+          // Only override dashboard subscriber counts when we have evidence of non-zero org balance.
+          if (anyNonZero) {
+            subscribers.tispActive = orgBalanceActive;
+            subscribers.tispSuspended = orgBalanceSuspended;
+            subscribers.tispPaused = 0;
+            subscribers.tispUnknown = orgBalanceSuspended;
+          }
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
 
     return res.json({
       mpesa: {
@@ -306,6 +585,7 @@ async function getStats(req, res, next) {
         failed: Number(mpesaStats.failed_count || 0),
         pending: Number(mpesaStats.pending_count || 0),
         revenue: Number(mpesaStats.total_revenue || 0),
+        orgBalanceTotal,
       },
       today: {
         transactions: Number(todayStats.total || 0),

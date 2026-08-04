@@ -3435,18 +3435,19 @@ async function getSubscriberStats(days = 29) {
     `),
     query(`
       SELECT
-        SUM(CASE WHEN LOWER(TRIM(COALESCE(c.subscription_status, ''))) = 'active' THEN 1 ELSE 0 END) AS active_count,
-        SUM(CASE WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%pause%' THEN 1 ELSE 0 END) AS paused_count,
+        SUM(CASE WHEN LOWER(TRIM(COALESCE(ts.subscription_status, ''))) = 'active' THEN 1 ELSE 0 END) AS active_count,
+        SUM(CASE WHEN LOWER(TRIM(COALESCE(ts.subscription_status, '')) ) LIKE '%pause%' THEN 1 ELSE 0 END) AS paused_count,
         SUM(CASE
-          WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%pause%' THEN 0
-          WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%cancel%' THEN 0
-          WHEN LOWER(COALESCE(c.subscription_status, '')) LIKE '%suspend%' THEN 1
-          WHEN c.subscription_status IS NULL
-            OR TRIM(c.subscription_status) = ''
-            OR LOWER(TRIM(c.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
-            OR LOWER(TRIM(c.subscription_status)) <> 'active'
+          WHEN LOWER(TRIM(COALESCE(ts.subscription_status, ''))) LIKE '%pause%' THEN 0
+          WHEN LOWER(TRIM(COALESCE(ts.subscription_status, ''))) LIKE '%cancel%' THEN 0
+          WHEN LOWER(TRIM(COALESCE(ts.subscription_status, ''))) LIKE '%suspend%' THEN 1
+          WHEN ts.subscription_status IS NULL
+            OR TRIM(ts.subscription_status) = ''
+            OR LOWER(TRIM(ts.subscription_status)) IN ('unknown', 'not on tisp', 'not_on_tisp')
+            OR LOWER(TRIM(ts.subscription_status)) <> 'active'
           THEN 1 ELSE 0 END) AS suspended_count
       FROM customers c
+      LEFT JOIN tisp_customer_snapshots ts ON ts.customer_id = c.id
       WHERE c.status = 'active'
     `),
   ]);
