@@ -744,6 +744,7 @@ async function createInvoiceForExactAmount({
   transactionId,
   source,
   referenceNumber,
+  customer,
 }) {
   const description = `M-Pesa payment for ${companyName} (Tx: ${
     transactionId || "N/A"
@@ -765,6 +766,7 @@ async function createInvoiceForExactAmount({
     items: [lineItem],
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
     reference_number: referenceNumber || companyName,
+    customer,
   });
 }
 
@@ -1018,6 +1020,7 @@ async function createAndMarkInvoicePaidForMpesa({
     transactionId,
     source,
     referenceNumber: companyName,
+    customer: dbCustomer,
   });
   if (!created?.invoice_id) {
     return { paid: false, reason: "create_failed" };

@@ -346,6 +346,7 @@ export type AppSettings = {
       fromAddress: string;
       fromName: string;
       accountId: string | null;
+      invoiceCcEmails?: string[];
       configured: boolean;
       oauthTokenConfigured: boolean;
       dnsHint?: string;
@@ -384,6 +385,13 @@ export type Customer = {
   fullName: string;
   phone: string;
   email: string | null;
+  billingAttention?: string | null;
+  billingAddress?: string | null;
+  billingStreet2?: string | null;
+  billingCity?: string | null;
+  billingState?: string | null;
+  billingZip?: string | null;
+  billingCountry?: string | null;
   ipAddress: string | null;
   isVatExempt: boolean;
   customerType: "C2B" | "B2B";
@@ -1829,6 +1837,7 @@ export const api = {
     fromAddress?: string;
     fromName?: string;
     accountId?: string | null;
+    invoiceCcEmails?: string[] | string;
   }) =>
     request<{
       ok: boolean;
@@ -1836,6 +1845,7 @@ export const api = {
         fromAddress: string;
         fromName: string;
         accountId: string | null;
+        invoiceCcEmails?: string[];
         configured: boolean;
         oauthTokenConfigured?: boolean;
       };

@@ -167,6 +167,13 @@ export function CustomerForm({
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [billingAttention, setBillingAttention] = useState("");
+  const [billingAddress, setBillingAddress] = useState("");
+  const [billingStreet2, setBillingStreet2] = useState("");
+  const [billingCity, setBillingCity] = useState("");
+  const [billingState, setBillingState] = useState("");
+  const [billingZip, setBillingZip] = useState("");
+  const [billingCountry, setBillingCountry] = useState("Kenya");
   const [ipPrefix, setIpPrefix] = useState("");
   const [ipLastOctet, setIpLastOctet] = useState("");
   const [isVatExempt, setIsVatExempt] = useState(false);
@@ -318,6 +325,13 @@ export function CustomerForm({
     setLastName(customer.lastName);
     setPhone(customer.phone);
     setEmail(customer.email || "");
+    setBillingAttention(customer.billingAttention || "");
+    setBillingAddress(customer.billingAddress || "");
+    setBillingStreet2(customer.billingStreet2 || "");
+    setBillingCity(customer.billingCity || "");
+    setBillingState(customer.billingState || "");
+    setBillingZip(customer.billingZip || "");
+    setBillingCountry(customer.billingCountry || "Kenya");
     setIsVatExempt(customer.isVatExempt);
     setCustomerType(customer.customerType);
     setApartmentNumber(customer.apartmentNumber);
@@ -571,6 +585,14 @@ export function CustomerForm({
           (customerType === "B2B" && b2bAgencyEmail ? `${b2bAgencyEmail} (agency)` : "—"),
       },
       {
+        label: "Billing address",
+        value:
+          [billingAddress, billingCity, billingCountry]
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .join(", ") || "—",
+      },
+      {
         label: "Building",
         value: selectedBuilding?.name || customer?.buildingName || "—",
       },
@@ -682,6 +704,9 @@ export function CustomerForm({
     apartmentNumber,
     b2bAgencyEmail,
     b2bAgencyPhone,
+    billingAddress,
+    billingCity,
+    billingCountry,
     customer,
     customer?.buildingName,
     customer?.customerNumber,
@@ -847,6 +872,21 @@ export function CustomerForm({
           middleName: middleName.trim() || undefined,
           phone,
           email: email.trim().toLowerCase(),
+          billingAttention: billingAttention.trim() || undefined,
+          billingAddress: billingAddress.trim() || undefined,
+          billingStreet2: billingStreet2.trim() || undefined,
+          billingCity: billingCity.trim() || undefined,
+          billingState: billingState.trim() || undefined,
+          billingZip: billingZip.trim() || undefined,
+          billingCountry:
+            billingAddress.trim() ||
+            billingCity.trim() ||
+            billingAttention.trim() ||
+            billingStreet2.trim() ||
+            billingState.trim() ||
+            billingZip.trim()
+              ? billingCountry.trim() || "Kenya"
+              : undefined,
           ipAddress: ipResult.ip || undefined,
           isVatExempt,
           customerType,
@@ -953,6 +993,21 @@ export function CustomerForm({
         middleName: middleName.trim() || undefined,
         phone,
         email: email.trim().toLowerCase(),
+        billingAttention: billingAttention.trim() || undefined,
+        billingAddress: billingAddress.trim() || undefined,
+        billingStreet2: billingStreet2.trim() || undefined,
+        billingCity: billingCity.trim() || undefined,
+        billingState: billingState.trim() || undefined,
+        billingZip: billingZip.trim() || undefined,
+        billingCountry:
+          billingAddress.trim() ||
+          billingCity.trim() ||
+          billingAttention.trim() ||
+          billingStreet2.trim() ||
+          billingState.trim() ||
+          billingZip.trim()
+            ? billingCountry.trim() || "Kenya"
+            : undefined,
         ipAddress: ipResult.ip || undefined,
         isVatExempt,
         customerType,
@@ -1085,7 +1140,7 @@ export function CustomerForm({
         "";
 
   const formBody = (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} autoComplete="off">
       <Stack gap={4}>
         <FormSection
           title="Location"
@@ -1123,8 +1178,11 @@ export function CustomerForm({
             <Input
               w="full"
               value={apartmentNumber}
-              onChange={(e) => setApartmentNumber(e.target.value)}
+              onChange={(e) => setApartmentNumber(e.target.value.toUpperCase())}
               placeholder="e.g. S444"
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
               readOnly={!isActive}
               disabled={fieldsDisabled}
               bg={!isActive ? "gray.50" : undefined}
@@ -1693,6 +1751,82 @@ export function CustomerForm({
             {b2bUsesAgencyEmail ? (
               <Field.HelperText>Leave blank to use agency email</Field.HelperText>
             ) : null}
+          </Field.Root>
+        </FormSection>
+
+        <FormSection title="Billing address">
+          <Field.Root>
+            <Field.Label>Attention</Field.Label>
+            <Input
+              value={billingAttention}
+              onChange={(e) => setBillingAttention(e.target.value)}
+              placeholder="Billing contact name"
+              disabled={fieldsDisabled}
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>Street address</Field.Label>
+            <Input
+              value={billingAddress}
+              onChange={(e) => setBillingAddress(e.target.value)}
+              placeholder="Street / building"
+              disabled={fieldsDisabled}
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>Street 2</Field.Label>
+            <Input
+              value={billingStreet2}
+              onChange={(e) => setBillingStreet2(e.target.value)}
+              placeholder="Apartment, suite, etc."
+              disabled={fieldsDisabled}
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>City</Field.Label>
+            <Input
+              value={billingCity}
+              onChange={(e) => setBillingCity(e.target.value)}
+              placeholder="Nairobi"
+              disabled={fieldsDisabled}
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>State / County</Field.Label>
+            <Input
+              value={billingState}
+              onChange={(e) => setBillingState(e.target.value)}
+              placeholder="Nairobi"
+              disabled={fieldsDisabled}
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>ZIP / Postal code</Field.Label>
+            <Input
+              value={billingZip}
+              onChange={(e) => setBillingZip(e.target.value)}
+              placeholder="00100"
+              disabled={fieldsDisabled}
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>Country</Field.Label>
+            <Input
+              value={billingCountry}
+              onChange={(e) => setBillingCountry(e.target.value)}
+              placeholder="Kenya"
+              disabled={fieldsDisabled}
+              autoComplete="off"
+            />
+            <Field.HelperText>
+              Pushed to Zoho Books as the contact billing address.
+            </Field.HelperText>
           </Field.Root>
         </FormSection>
 

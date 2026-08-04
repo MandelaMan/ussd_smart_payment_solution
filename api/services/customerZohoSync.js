@@ -35,6 +35,13 @@ function mapContextToCustomer(ctx, agencyName = null) {
       .join(" "),
     phone: ctx.phone,
     email: ctx.email,
+    billingAttention: ctx.billing_attention || null,
+    billingAddress: ctx.billing_address || null,
+    billingStreet2: ctx.billing_street2 || null,
+    billingCity: ctx.billing_city || null,
+    billingState: ctx.billing_state || null,
+    billingZip: ctx.billing_zip || null,
+    billingCountry: ctx.billing_country || null,
     customerType: ctx.customer_type,
     customerNumber: ctx.customer_number,
     apartmentNumber: ctx.apartment_number,
@@ -334,6 +341,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     repeat_every: recurrence.repeat_every,
     line_items: lineItem,
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    customer,
   });
 
   if (!created?.recurring_invoice_id) {

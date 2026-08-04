@@ -190,6 +190,9 @@ function CommunicationPanel({
   );
   const [fromName, setFromName] = useState(email?.fromName || "Customer Support");
   const [accountId, setAccountId] = useState(email?.accountId || "");
+  const [invoiceCcEmails, setInvoiceCcEmails] = useState(
+    (email?.invoiceCcEmails || []).join("\n")
+  );
   const [savingEmail, setSavingEmail] = useState(false);
 
   const [phoneNumberId, setPhoneNumberId] = useState(whatsapp?.phoneNumberId || "");
@@ -219,7 +222,13 @@ function CommunicationPanel({
     setFromAddress(email?.fromAddress || "customersupport@sulsolutions.biz");
     setFromName(email?.fromName || "Customer Support");
     setAccountId(email?.accountId || "");
-  }, [email?.fromAddress, email?.fromName, email?.accountId]);
+    setInvoiceCcEmails((email?.invoiceCcEmails || []).join("\n"));
+  }, [
+    email?.fromAddress,
+    email?.fromName,
+    email?.accountId,
+    email?.invoiceCcEmails,
+  ]);
 
   useEffect(() => {
     setPhoneNumberId(whatsapp?.phoneNumberId || "");
@@ -248,6 +257,7 @@ function CommunicationPanel({
         fromAddress: fromAddress.trim(),
         fromName: fromName.trim(),
         accountId: accountId.trim() || null,
+        invoiceCcEmails: invoiceCcEmails,
       });
       onUpdated({
         ...settings,
@@ -257,6 +267,7 @@ function CommunicationPanel({
             fromAddress: res.email.fromAddress,
             fromName: res.email.fromName,
             accountId: res.email.accountId,
+            invoiceCcEmails: res.email.invoiceCcEmails || [],
             configured: res.email.configured,
             oauthTokenConfigured:
               res.email.oauthTokenConfigured ?? email?.oauthTokenConfigured ?? false,
@@ -339,8 +350,8 @@ function CommunicationPanel({
         }
       >
         <Text fontSize="sm" color="fg.muted" mb={4}>
-          From address and display name used in Communication → Email. OAuth
-          secrets stay in server environment variables.
+          From address, display name, and invoice CC list used for customer
+          emails. OAuth secrets stay in server environment variables.
         </Text>
 
         <Stack gap={3} maxW="560px">
@@ -373,6 +384,21 @@ function CommunicationPanel({
             />
             <Field.HelperText>
               Numeric account ID from Zoho Mail (optional if auto-resolved).
+            </Field.HelperText>
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>Invoice CC emails</Field.Label>
+            <Textarea
+              value={invoiceCcEmails}
+              onChange={(e) => setInvoiceCcEmails(e.target.value)}
+              placeholder={"support@sulsolutions.biz\ndirector@sulsolutions.biz"}
+              rows={4}
+              fontFamily="mono"
+              fontSize="sm"
+            />
+            <Field.HelperText>
+              CCd on signup and receipt invoice emails from Zoho Books. One
+              address per line (or comma-separated).
             </Field.HelperText>
           </Field.Root>
           <Button

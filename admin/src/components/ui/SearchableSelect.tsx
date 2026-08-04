@@ -267,6 +267,16 @@ export function SearchableSelect({
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}
           aria-busy={isLoading || undefined}
+          // Chrome often ignores autocomplete=off; new-password reliably suppresses
+          // saved-form overlays on combobox search fields in PWA/browser.
+          autoComplete="new-password"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          name="searchable-select-filter"
+          data-1p-ignore=""
+          data-lpignore="true"
+          data-form-type="other"
           value={displayValue}
           onChange={(e) => {
             setQuery(e.target.value);

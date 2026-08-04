@@ -27,9 +27,11 @@ const {
 } = require("../utils/upgradeQuote");
 const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
 const {
+  DEFAULT_TZ,
   computeServiceDueDate,
   computeTrialEndDate,
 } = require("../utils/billingPeriod");
+const moment = require("moment-timezone");
 const {
   classifyPackageChangeByPrice,
   resolveBaselinePriceAtFrequency,
@@ -285,6 +287,8 @@ function buildZohoContactPersonsPayload(existingContact, primaryFields) {
   });
 }
 
+const { buildZohoBillingAddress } = require("../utils/zohoBillingAddress");
+
 async function buildZohoContactPayload(customer, existingContact = null) {
   const { firstName, middleName, lastName } = resolveZohoPersonNames(customer);
   const displayName = [firstName, middleName, lastName].filter(Boolean).join(" ").trim();
@@ -338,6 +342,11 @@ async function buildZohoContactPayload(customer, existingContact = null) {
     payload.mobile = phone;
   }
   if (email) payload.email = email;
+
+  const billingAddress = buildZohoBillingAddress(customer);
+  if (billingAddress) {
+    payload.billing_address = billingAddress;
+  }
 
   if (!isB2B && (firstName || lastName || displayName)) {
     payload.contact_persons = buildZohoContactPersonsPayload(existingContact, {
@@ -2413,20 +2422,27 @@ async function createCustomer(req, res, next) {
 
     const created = await store.createCustomer(body);
 
-    // TISP BillingCycle stays Monthly; DueDate = payment/signup date + real frequency
-    // (quarterly → +3 months, yearly → +1 year, monthly → +1 month).
+    // TISP BillingCycle stays Monthly.
+    // Unpaid (no advance): DueDate = today (service pending payment).
+    // Advance paid: DueDate = payment/signup + billing frequency
+    //   (monthly +1 month, quarterly +3 months, yearly +1 year, custom +N days).
+    // Trial: DueDate = trial end.
     const paymentAnchor = new Date();
-    let serviceDueDate = body.trialPeriod
-      ? computeTrialEndDate(paymentAnchor)
-      : computeServiceDueDate({
-          anchorDate: paymentAnchor,
-          paymentFrequency: body.paymentFrequency,
-          customPeriodDays:
-            body.customPeriodDays ||
-            (body.customPeriodMonths
-              ? Number(body.customPeriodMonths) * 30
-              : null),
-        });
+    const customPeriodDays =
+      body.customPeriodDays ||
+      (body.customPeriodMonths ? Number(body.customPeriodMonths) * 30 : null);
+    let serviceDueDate;
+    if (body.trialPeriod) {
+      serviceDueDate = computeTrialEndDate(paymentAnchor);
+    } else if (paymentAlreadyMade) {
+      serviceDueDate = computeServiceDueDate({
+        anchorDate: paymentAnchor,
+        paymentFrequency: body.paymentFrequency,
+        customPeriodDays,
+      });
+    } else {
+      serviceDueDate = moment.tz(DEFAULT_TZ).startOf("day").format("YYYY-MM-DD");
+    }
 
     const tispError = await syncNewCustomerToTisp(
       created.customerId,
@@ -2462,11 +2478,7 @@ async function createCustomer(req, res, next) {
         const revisedDue = computeServiceDueDate({
           anchorDate: zohoPayDate,
           paymentFrequency: body.paymentFrequency,
-          customPeriodDays:
-            body.customPeriodDays ||
-            (body.customPeriodMonths
-              ? Number(body.customPeriodMonths) * 30
-              : null),
+          customPeriodDays,
         });
         if (revisedDue && revisedDue !== serviceDueDate) {
           serviceDueDate = revisedDue;
@@ -2903,6 +2915,7 @@ async function createUpgradeInvoice(customer, quote) {
       customerNumber: customer.customerNumber,
       buildingCode,
     }),
+    customer,
   });
 
   return {
@@ -4704,6 +4717,13 @@ async function updateCustomer(req, res, next) {
         middleName: body.middleName,
         phone: body.phone,
         email: body.email,
+        billingAttention: body.billingAttention,
+        billingAddress: body.billingAddress,
+        billingStreet2: body.billingStreet2,
+        billingCity: body.billingCity,
+        billingState: body.billingState,
+        billingZip: body.billingZip,
+        billingCountry: body.billingCountry,
         isVatExempt: Boolean(body.isVatExempt),
         customerType: body.customerType,
         agencyId: body.agencyId,

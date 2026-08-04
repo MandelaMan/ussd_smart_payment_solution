@@ -36,6 +36,19 @@ const SIGNUP_INVOICE_EMAIL_ENABLED =
   String(process.env.ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED || "false").toLowerCase() ===
   "true";
 
+async function resolveInvoiceCcMailIds() {
+  try {
+    const appSettingsStore = require("./appSettingsStore");
+    const settings = await appSettingsStore.getCommunicationEmailSettings();
+    if (settings?.invoiceCcEmails?.length) {
+      return settings.invoiceCcEmails;
+    }
+  } catch (e) {
+    console.warn("resolveInvoiceCcMailIds settings lookup failed:", e.message);
+  }
+  return [...(require("./appSettingsStore").DEFAULT_INVOICE_CC_EMAILS || [])];
+}
+
 const EMAILED_INVOICE_STATUSES = new Set([
   "sent",
   "overdue",
@@ -164,6 +177,7 @@ async function emailSignupInvoiceOnce(invoice, customer, tracking = null, option
     const sent = await emailInvoice_JS({
       invoice_id: invoice.invoice_id,
       to_mail_ids: [toEmail],
+      cc_mail_ids: await resolveInvoiceCcMailIds(),
     });
     if (sent) {
       await customerStore.recordSignupInvoiceDelivery(customer.id, invoiceId, {
@@ -250,6 +264,7 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     reference_number: referenceNumber,
     invoice_number: invoiceNumber,
     due_date: computeInvoiceDueDate(customer),
+    customer,
   });
 
   if (!invoice?.invoice_id) {
@@ -898,6 +913,7 @@ async function emailAdvancePaymentReceipt({
       emailed = await emailInvoice_JS({
         invoice_id: invoiceId,
         to_mail_ids: [toEmail],
+        cc_mail_ids: await resolveInvoiceCcMailIds(),
         subject,
         body,
       });
@@ -919,6 +935,7 @@ async function emailAdvancePaymentReceipt({
       const paymentEmailed = await emailCustomerPayment_JS({
         payment_id: paymentId,
         to_mail_ids: [toEmail],
+        cc_mail_ids: await resolveInvoiceCcMailIds(),
         subject,
         body,
       });

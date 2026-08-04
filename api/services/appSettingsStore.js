@@ -29,8 +29,30 @@ async function setSetting(key, value, updatedBy = null) {
   return getSetting(key);
 }
 
+const DEFAULT_INVOICE_CC_EMAILS = [
+  "support@sulsolutions.biz",
+  "director@sulsolutions.biz",
+  "accounts@sulsolutions.biz",
+  "it@sulsolutions.biz",
+];
+
+function normalizeEmailList(value, fallback = []) {
+  const raw = Array.isArray(value)
+    ? value.join(",")
+    : value == null
+      ? ""
+      : String(value);
+  const list = raw
+    .split(/[,;\n]+/)
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.includes("@"));
+  if (list.length) return [...new Set(list)];
+  return [...fallback];
+}
+
 async function getCommunicationEmailSettings() {
   const saved = (await getSetting("communication.email")) || {};
+  const envCc = String(process.env.ZOHO_INVOICE_CC_EMAILS || "").trim();
   return {
     fromAddress:
       String(saved.fromAddress || process.env.ZOHO_MAIL_FROM_ADDRESS || "")
@@ -41,6 +63,10 @@ async function getCommunicationEmailSettings() {
     accountId: String(
       saved.accountId || process.env.ZOHO_MAIL_ACCOUNT_ID || ""
     ).trim() || null,
+    invoiceCcEmails: normalizeEmailList(
+      saved.invoiceCcEmails != null ? saved.invoiceCcEmails : envCc,
+      DEFAULT_INVOICE_CC_EMAILS
+    ),
   };
 }
 
@@ -57,12 +83,19 @@ async function saveCommunicationEmailSettings(patch = {}, updatedBy = null) {
       patch.accountId != null
         ? String(patch.accountId).trim() || null
         : current.accountId,
+    invoiceCcEmails:
+      patch.invoiceCcEmails != null
+        ? normalizeEmailList(patch.invoiceCcEmails, [])
+        : current.invoiceCcEmails,
   };
   if (!next.fromAddress || !next.fromAddress.includes("@")) {
     throw new Error("A valid from address is required");
   }
   if (!next.fromName) {
     throw new Error("From name is required");
+  }
+  if (!next.invoiceCcEmails.length) {
+    throw new Error("At least one invoice CC email is required");
   }
   await setSetting("communication.email", next, updatedBy);
   return next;
@@ -204,6 +237,7 @@ module.exports = {
   getCommunicationWhatsAppSettings,
   saveCommunicationWhatsAppSettings,
   toPublicWhatsAppSettings,
+  DEFAULT_INVOICE_CC_EMAILS,
   DEFAULT_WHATSAPP_WELCOME,
   DEFAULT_WHATSAPP_COMPLETE,
 };

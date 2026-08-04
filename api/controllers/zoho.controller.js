@@ -493,8 +493,15 @@ const createRecurringInvoice_JS = async ({
   repeat_every,
   line_items,
   is_inclusive_tax,
+  billing_address,
+  customer,
 }) => {
   if (!customer_id || !line_items?.length) return null;
+  const { buildZohoBillingAddress } = require("../utils/zohoBillingAddress");
+  const resolvedBilling =
+    billing_address ||
+    (customer ? buildZohoBillingAddress(customer) : null);
+
   const payload = {
     customer_id,
     recurrence_name,
@@ -506,6 +513,9 @@ const createRecurringInvoice_JS = async ({
   };
   if (is_inclusive_tax != null) {
     payload.is_inclusive_tax = Boolean(is_inclusive_tax);
+  }
+  if (resolvedBilling) {
+    payload.billing_address = resolvedBilling;
   }
 
   const createResult = await withTimeout(
@@ -1268,11 +1278,18 @@ const createInvoice_JS = async ({
   discount_type = "entity_level",
   is_discount_before_tax,
   due_date,
+  billing_address,
+  customer,
 }) => {
   try {
     if (!customer_id || !items?.length) {
       return null;
     }
+
+    const { buildZohoBillingAddress } = require("../utils/zohoBillingAddress");
+    const resolvedBilling =
+      billing_address ||
+      (customer ? buildZohoBillingAddress(customer) : null);
 
     const invoiceData = {
       customer_id,
@@ -1297,6 +1314,9 @@ const createInvoice_JS = async ({
       if (is_discount_before_tax != null) {
         invoiceData.is_discount_before_tax = Boolean(is_discount_before_tax);
       }
+    }
+    if (resolvedBilling) {
+      invoiceData.billing_address = resolvedBilling;
     }
 
     const extraParams = invoice_number

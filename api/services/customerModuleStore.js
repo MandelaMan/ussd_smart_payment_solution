@@ -200,6 +200,13 @@ function mapCustomerRow(row) {
       .join(" "),
     phone: row.phone,
     email: row.email,
+    billingAttention: row.billing_attention || null,
+    billingAddress: row.billing_address || null,
+    billingStreet2: row.billing_street2 || null,
+    billingCity: row.billing_city || null,
+    billingState: row.billing_state || null,
+    billingZip: row.billing_zip || null,
+    billingCountry: row.billing_country || null,
     ipAddress: row.ip_address,
     isVatExempt: Boolean(row.is_vat_exempt),
     customerType: row.customer_type,
@@ -1859,21 +1866,53 @@ async function createCustomer(data) {
   const trialPeriodEnabled = Boolean(data.trialPeriod);
   const trialEndsAt = trialPeriodEnabled ? computeTrialEndDate() : null;
 
+  const trimOrNull = (v) => {
+    const s = v == null ? "" : String(v).trim();
+    return s || null;
+  };
+  const billingAttention = trimOrNull(data.billingAttention);
+  const billingAddress = trimOrNull(data.billingAddress);
+  const billingStreet2 = trimOrNull(data.billingStreet2);
+  const billingCity = trimOrNull(data.billingCity);
+  const billingState = trimOrNull(data.billingState);
+  const billingZip = trimOrNull(data.billingZip);
+  const hasBilling =
+    billingAttention ||
+    billingAddress ||
+    billingStreet2 ||
+    billingCity ||
+    billingState ||
+    billingZip ||
+    trimOrNull(data.billingCountry);
+  const billingCountry = hasBilling
+    ? trimOrNull(data.billingCountry) || "Kenya"
+    : null;
+
   const result = await query(
     `INSERT INTO customers (
-       first_name, middle_name, last_name, phone, email, ip_address,
+       first_name, middle_name, last_name, phone, email,
+       billing_attention, billing_address, billing_street2, billing_city,
+       billing_state, billing_zip, billing_country,
+       ip_address,
        is_vat_exempt, customer_type, apartment_number, payment_frequency,
        custom_period_days, building_id, product_id, agency_id,
        customer_number, tisp_password, ppoe_username, package_price,
        decoder_fee_amount, decoder_fee_required, dstv_decoder_serial,
        trial_period_enabled, trial_ends_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       names.first_name,
       names.middle_name,
       names.last_name,
       String(phone),
       email,
+      billingAttention,
+      billingAddress,
+      billingStreet2,
+      billingCity,
+      billingState,
+      billingZip,
+      billingCountry,
       resolvedIp,
       data.isVatExempt ? 1 : 0,
       data.customerType,
@@ -2645,16 +2684,69 @@ async function updateCustomerDetails(id, data, options = {}) {
     tispPassword = existing.tispPassword || existing.apartmentNumber;
   }
 
+  const trimOrNull = (v) => {
+    const s = v == null ? "" : String(v).trim();
+    return s || null;
+  };
+  const billingAttention =
+    data.billingAttention !== undefined
+      ? trimOrNull(data.billingAttention)
+      : existing.billingAttention || null;
+  const billingAddress =
+    data.billingAddress !== undefined
+      ? trimOrNull(data.billingAddress)
+      : existing.billingAddress || null;
+  const billingStreet2 =
+    data.billingStreet2 !== undefined
+      ? trimOrNull(data.billingStreet2)
+      : existing.billingStreet2 || null;
+  const billingCity =
+    data.billingCity !== undefined
+      ? trimOrNull(data.billingCity)
+      : existing.billingCity || null;
+  const billingState =
+    data.billingState !== undefined
+      ? trimOrNull(data.billingState)
+      : existing.billingState || null;
+  const billingZip =
+    data.billingZip !== undefined
+      ? trimOrNull(data.billingZip)
+      : existing.billingZip || null;
+  const hasBilling =
+    billingAttention ||
+    billingAddress ||
+    billingStreet2 ||
+    billingCity ||
+    billingState ||
+    billingZip ||
+    (data.billingCountry !== undefined
+      ? trimOrNull(data.billingCountry)
+      : existing.billingCountry);
+  const billingCountry = hasBilling
+    ? data.billingCountry !== undefined
+      ? trimOrNull(data.billingCountry) || "Kenya"
+      : existing.billingCountry || "Kenya"
+    : null;
+
   const contactChanged =
     firstName !== existing.firstName ||
     lastName !== existing.lastName ||
     (middleName || null) !== (existing.middleName || null) ||
     phone !== existing.phone ||
-    email !== (existing.email || "");
+    email !== (existing.email || "") ||
+    billingAttention !== (existing.billingAttention || null) ||
+    billingAddress !== (existing.billingAddress || null) ||
+    billingStreet2 !== (existing.billingStreet2 || null) ||
+    billingCity !== (existing.billingCity || null) ||
+    billingState !== (existing.billingState || null) ||
+    billingZip !== (existing.billingZip || null) ||
+    billingCountry !== (existing.billingCountry || null);
 
   await query(
     `UPDATE customers
      SET first_name = ?, middle_name = ?, last_name = ?, phone = ?, email = ?,
+         billing_attention = ?, billing_address = ?, billing_street2 = ?,
+         billing_city = ?, billing_state = ?, billing_zip = ?, billing_country = ?,
          is_vat_exempt = ?, customer_type = ?, agency_id = ?, ip_address = ?,
          dstv_decoder_serial = ?,
          tisp_password = ?, ppoe_username = ?,
@@ -2666,6 +2758,13 @@ async function updateCustomerDetails(id, data, options = {}) {
       lastName,
       phone,
       email,
+      billingAttention,
+      billingAddress,
+      billingStreet2,
+      billingCity,
+      billingState,
+      billingZip,
+      billingCountry,
       data.isVatExempt ? 1 : 0,
       customerType,
       agencyId,

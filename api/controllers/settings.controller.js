@@ -63,6 +63,7 @@ async function getSettings(req, res, next) {
           fromAddress: emailSettings.fromAddress,
           fromName: emailSettings.fromName,
           accountId: emailSettings.accountId,
+          invoiceCcEmails: emailSettings.invoiceCcEmails,
           configured: isZohoMailConfigured(),
           oauthTokenConfigured: mailStatus.oauthTokenConfigured,
           dnsHint:

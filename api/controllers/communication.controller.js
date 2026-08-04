@@ -258,6 +258,7 @@ async function updateCommunicationEmailSettings(req, res, next) {
         fromAddress: req.body?.fromAddress,
         fromName: req.body?.fromName,
         accountId: req.body?.accountId,
+        invoiceCcEmails: req.body?.invoiceCcEmails,
       },
       req.user?.id || null
     );
