@@ -2300,7 +2300,6 @@ export function CustomerForm({
           <Field.Root required>
             <Field.Label>Payment method</Field.Label>
             <SelectField
-              usePortal={false}
               fieldProps={{
                 value: paymentStatusDraft?.method || "",
                 onChange: (e) => {

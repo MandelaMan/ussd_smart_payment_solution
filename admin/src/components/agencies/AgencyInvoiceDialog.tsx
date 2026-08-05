@@ -243,7 +243,6 @@ export function AgencyInvoiceDialog({
                   <Field.Label fontSize="xs">Discount type</Field.Label>
                   <SelectField
                     size="sm"
-                    usePortal={false}
                     fieldProps={{
                       value: discountType,
                       onChange: (e) =>

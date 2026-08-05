@@ -138,7 +138,6 @@ export function PaymentFrequencyForm({
         <Field.Label fontSize="sm">New payment frequency</Field.Label>
         <SelectField
           width="100%"
-          usePortal={false}
           disabled={fieldsDisabled}
           isLoading={dataLoading}
           fieldProps={{

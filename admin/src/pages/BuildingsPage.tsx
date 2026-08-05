@@ -690,7 +690,6 @@ function BuildingForm({
         <Field.Root required>
           <Field.Label>IP setup</Field.Label>
           <SelectField
-            usePortal={false}
             fieldProps={{
               value: formIpSetup,
               onChange: (e) => {
@@ -707,7 +706,6 @@ function BuildingForm({
         <Field.Root required>
           <Field.Label>DSTV setup</Field.Label>
           <SelectField
-            usePortal={false}
             fieldProps={{
               value: formDstvSetup,
               onChange: (e) =>

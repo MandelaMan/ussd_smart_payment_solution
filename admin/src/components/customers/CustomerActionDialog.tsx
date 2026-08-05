@@ -242,7 +242,6 @@ function MoveApartmentForm({
             {ipRules.prefixes.length > 1 ? (
               <Box maxW={{ sm: "220px" }} w={{ base: "100%", sm: "auto" }} flexShrink={0}>
                 <SelectField
-                  usePortal={false}
                   fieldProps={{
                     value: ipPrefix,
                     onChange: (e) => setIpPrefix(e.target.value),

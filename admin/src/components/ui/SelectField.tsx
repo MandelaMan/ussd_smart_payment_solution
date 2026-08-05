@@ -15,9 +15,10 @@ import {
 } from "react";
 import { FiChevronDown } from "react-icons/fi";
 import { fieldControlStyles, FILTER_CONTROL_HEIGHT } from "../../theme";
+import { APP_DIALOG_Z_INDEX } from "./AppDialog";
 import { MODAL_Z_INDEX } from "./ModalShell";
 
-export const SELECT_FIELD_MENU_Z_INDEX = MODAL_Z_INDEX + 100;
+export const SELECT_FIELD_MENU_Z_INDEX = Math.max(MODAL_Z_INDEX, APP_DIALOG_Z_INDEX) + 100;
 
 type SelectOption = {
   value: string;
@@ -301,6 +302,10 @@ export function SelectField({
       overflowX="hidden"
       isolation="isolate"
       py={1}
+      // Keep wheel/touch scrolling on the menu instead of a parent overflow container
+      // (e.g. AppDialog body), which otherwise steals scroll and makes options unusable.
+      onWheel={(e) => e.stopPropagation()}
+      onTouchMove={(e) => e.stopPropagation()}
     >
       {menuItems}
     </Box>

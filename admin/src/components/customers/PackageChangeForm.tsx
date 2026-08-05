@@ -446,7 +446,6 @@ export function PackageChangeForm({
           <Field.Label fontSize="sm">Payment frequency</Field.Label>
           <SelectField
             width="100%"
-            usePortal={false}
             disabled={fieldsDisabled}
             fieldProps={{
               value: paymentFrequency,
@@ -499,7 +498,6 @@ export function PackageChangeForm({
             ) : (
               <SelectField
                 width="100%"
-                usePortal={false}
                 disabled={fieldsDisabled}
                 fieldProps={{
                   value: productId,
@@ -541,7 +539,6 @@ export function PackageChangeForm({
           ) : (
             <SelectField
               width="100%"
-              usePortal={false}
               disabled={fieldsDisabled}
               fieldProps={{
                 value: productId,

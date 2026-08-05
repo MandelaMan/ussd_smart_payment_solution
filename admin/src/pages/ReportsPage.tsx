@@ -176,7 +176,7 @@ function ReportFiltersForm({
 
   return (
     <Stack gap={2}>
-      <Flex gap={3} flexWrap="nowrap" align="flex-end" overflowX="auto">
+      <Flex gap={3} flexWrap="wrap" align="flex-end">
         {report.dateFilter ? (
           <>
             <Box flex="1" minW="140px">
@@ -232,7 +232,6 @@ function ReportFiltersForm({
               </Text>
               <SelectField
                 size="sm"
-                usePortal={false}
                 fieldProps={{
                   value: filters.monthFrom,
                   onChange: (e) => onChange({ monthFrom: e.target.value }),
@@ -251,7 +250,6 @@ function ReportFiltersForm({
               </Text>
               <SelectField
                 size="sm"
-                usePortal={false}
                 fieldProps={{
                   value: filters.monthTo,
                   onChange: (e) => onChange({ monthTo: e.target.value }),
@@ -438,41 +436,51 @@ function ReportRunnerDialog({
         </Text>
       </Box>
 
-      <Dialog.Body px={5} py={4} flex="1" minH={0} overflowY="auto">
-        <Stack gap={5}>
-          <ReportFiltersForm report={report} filters={filters} onChange={onFiltersChange} />
+      {/* Keep filters outside the scrollable preview so dropdowns are never clipped/covered. */}
+      <Box
+        px={5}
+        py={3}
+        borderBottomWidth="1px"
+        borderColor="border.muted"
+        flexShrink={0}
+        bg="bg.panel"
+        position="relative"
+        zIndex={2}
+      >
+        <ReportFiltersForm report={report} filters={filters} onChange={onFiltersChange} />
+      </Box>
 
-          <Box>
-            <Flex align="center" justify="space-between" gap={2} mb={2} flexWrap="wrap">
-              <Text fontSize="sm" fontWeight="medium">
-                Preview
+      <Dialog.Body px={5} py={4} flex="1" minH={0} overflowY="auto">
+        <Box>
+          <Flex align="center" justify="space-between" gap={2} mb={2} flexWrap="wrap">
+            <Text fontSize="sm" fontWeight="medium">
+              Preview
+            </Text>
+            {previewing ? (
+              <Text fontSize="xs" color="fg.muted">
+                Loading…
               </Text>
-              {previewing ? (
+            ) : null}
+          </Flex>
+          {previewing && !(preview && preview.id === report.id) ? (
+            <Text fontSize="sm" color="fg.muted">
+              Loading preview…
+            </Text>
+          ) : preview && preview.id === report.id ? (
+            <Stack gap={2} opacity={previewing ? 0.6 : 1}>
+              {preview.period ? (
                 <Text fontSize="xs" color="fg.muted">
-                  Loading…
+                  {preview.period.from} → {preview.period.to}
                 </Text>
               ) : null}
-            </Flex>
-            {previewing && !(preview && preview.id === report.id) ? (
-              <Text fontSize="sm" color="fg.muted">
-                Loading preview…
-              </Text>
-            ) : preview && preview.id === report.id ? (
-              <Stack gap={2} opacity={previewing ? 0.6 : 1}>
-                {preview.period ? (
-                  <Text fontSize="xs" color="fg.muted">
-                    {preview.period.from} → {preview.period.to}
-                  </Text>
-                ) : null}
-                <ReportPreviewTable preview={preview} />
-              </Stack>
-            ) : (
-              <Text fontSize="sm" color="fg.muted">
-                Preview will appear here once data loads.
-              </Text>
-            )}
-          </Box>
-        </Stack>
+              <ReportPreviewTable preview={preview} />
+            </Stack>
+          ) : (
+            <Text fontSize="sm" color="fg.muted">
+              Preview will appear here once data loads.
+            </Text>
+          )}
+        </Box>
       </Dialog.Body>
 
       <Dialog.Footer

@@ -789,7 +789,6 @@ function ProductForm({
         <Field.Root required>
           <Field.Label>Category</Field.Label>
           <SelectField
-            usePortal={false}
             disabled={readOnlyStructure || fieldsDisabled}
             isLoading={lookupsLoading}
             fieldProps={{
@@ -809,7 +808,6 @@ function ProductForm({
         <Field.Root required>
           <Field.Label>Plan</Field.Label>
           <SelectField
-            usePortal={false}
             disabled={readOnlyStructure || !categoryId || fieldsDisabled}
             isLoading={lookupsLoading}
             fieldProps={{
@@ -826,7 +824,6 @@ function ProductForm({
         <Field.Root required>
           <Field.Label>Billing frequency</Field.Label>
           <SelectField
-            usePortal={false}
             disabled={readOnlyStructure || fieldsDisabled}
             fieldProps={{
               value: paymentFrequency,
@@ -902,7 +899,7 @@ function ProductForm({
         {showStatus && (
           <Field.Root>
             <Field.Label>Status</Field.Label>
-            <SelectField usePortal={false} disabled={fieldsDisabled} fieldProps={{ value: isActive ? "active" : "inactive", onChange: (e) => setIsActive(e.target.value === "active") }}>
+            <SelectField disabled={fieldsDisabled} fieldProps={{ value: isActive ? "active" : "inactive", onChange: (e) => setIsActive(e.target.value === "active") }}>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </SelectField>
