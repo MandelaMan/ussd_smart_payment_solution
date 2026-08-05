@@ -15,6 +15,8 @@ async function getSettings(req, res, next) {
     const appSettingsStore = require("../services/appSettingsStore");
     const { getZohoMailConfig, isZohoMailConfigured } = require("../utils/zohoMail");
     const emailSettings = await appSettingsStore.getCommunicationEmailSettings();
+    const customerEmailSettings =
+      await appSettingsStore.getCustomerEmailSettings();
     const mailStatus = await getZohoMailConfig();
     const whatsappSettings =
       await appSettingsStore.getCommunicationWhatsAppSettings();
@@ -63,11 +65,18 @@ async function getSettings(req, res, next) {
           fromAddress: emailSettings.fromAddress,
           fromName: emailSettings.fromName,
           accountId: emailSettings.accountId,
-          invoiceCcEmails: emailSettings.invoiceCcEmails,
           configured: isZohoMailConfigured(),
           oauthTokenConfigured: mailStatus.oauthTokenConfigured,
           dnsHint:
             "Use a single SPF TXT on @ for sulsolutions.biz (merge includes). Enable DKIM in Zoho Mail Admin, then add DMARC on _dmarc.",
+        },
+        customerEmail: {
+          invoiceCcEmails: customerEmailSettings.invoiceCcEmails,
+          templates: customerEmailSettings.templates,
+          welcomeEnabled: customerEmailSettings.welcomeEnabled,
+          welcomeSubject: customerEmailSettings.welcomeSubject,
+          welcomeBodyHtml: customerEmailSettings.welcomeBodyHtml,
+          welcomeCcEmails: customerEmailSettings.welcomeCcEmails,
         },
         whatsapp: whatsappPublic,
       },

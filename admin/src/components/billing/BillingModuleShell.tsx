@@ -7,7 +7,7 @@ import { ListPageStack } from "../ui/pageLayout";
 
 type Props = {
   title: string;
-  description: string;
+  description?: string;
   summary: ReconciliationSummary | null;
   syncing: boolean;
   exporting?: boolean;
@@ -47,9 +47,11 @@ export function BillingModuleShell({
       >
         <Box minW={0} flex="1">
           <Heading size="lg">{title}</Heading>
-          <Text fontSize="sm" color="fg.muted" mt={0.5}>
-            {description}
-          </Text>
+          {description ? (
+            <Text fontSize="sm" color="fg.muted" mt={0.5}>
+              {description}
+            </Text>
+          ) : null}
           {count != null && (
             <Text fontSize="xs" color="brand.700" fontWeight="medium" mt={1}>
               {count} record{count === 1 ? "" : "s"}

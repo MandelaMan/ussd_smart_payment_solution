@@ -154,10 +154,6 @@ export function ApartmentOverviewPage() {
         borderRadius="lg"
         p={4}
       >
-        <Text fontSize="sm" color="fg.muted" mb={3}>
-          Occupancy and IP changes for this unit live under History — including
-          addresses assigned after apartment moves.
-        </Text>
         <Button asChild size="sm" colorPalette="brand">
           <RouterLink to={historyPath}>
             <FiClock /> Open history

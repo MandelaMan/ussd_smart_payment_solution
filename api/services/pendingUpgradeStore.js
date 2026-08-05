@@ -245,6 +245,23 @@ async function completePendingUpgrade(pendingId) {
     console.error("activity log (upgrade) failed:", logErr.message);
   }
 
+  try {
+    const { sendCustomerLifecycleEmail } = require("./customerWelcomeEmail");
+    await sendCustomerLifecycleEmail("upgrade", customerRow, {
+      extraVars: {
+        previousMbps: currentMbps,
+        previousProductName: customer.product_name || "",
+        productName: pending.targetProductName || customerRow?.productName,
+        productMbps: pending.targetProductMbps,
+        packagePrice: customerRow?.packagePrice,
+        paymentFrequency:
+          quote.paymentFrequency || customerRow?.paymentFrequency,
+      },
+    });
+  } catch (e) {
+    console.warn("upgrade email (pending complete) failed:", e.message);
+  }
+
   return {
     ok: true,
     customer: customerRow,

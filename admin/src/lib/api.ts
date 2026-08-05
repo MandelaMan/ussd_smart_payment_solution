@@ -46,7 +46,6 @@ function isTransientRequestError(err: unknown): boolean {
   if (err instanceof ApiError) {
     return (
       err.status === 408 ||
-      err.status === 499 ||
       err.status === 502 ||
       err.status === 503 ||
       err.status === 504
@@ -129,6 +128,14 @@ export type Building = {
   olts?: BuildingOlt[];
   oltCount?: number;
   ipPrefixes: string[];
+  addressAttention?: string | null;
+  addressStreet?: string | null;
+  addressStreet2?: string | null;
+  addressPoBox?: string | null;
+  addressCity?: string | null;
+  addressState?: string | null;
+  addressZip?: string | null;
+  addressCountry?: string | null;
   createdAt?: string;
 };
 
@@ -346,10 +353,29 @@ export type AppSettings = {
       fromAddress: string;
       fromName: string;
       accountId: string | null;
+      /** @deprecated Prefer communication.customerEmail.invoiceCcEmails */
       invoiceCcEmails?: string[];
       configured: boolean;
       oauthTokenConfigured: boolean;
       dnsHint?: string;
+    };
+    customerEmail?: {
+      welcomeEnabled: boolean;
+      welcomeSubject: string;
+      welcomeBodyHtml: string;
+      welcomeCcEmails: string[];
+      invoiceCcEmails: string[];
+      templates?: Record<
+        string,
+        {
+          enabled: boolean;
+          subject: string;
+          bodyHtml: string;
+          ccEmails: string[];
+          label?: string;
+          description?: string;
+        }
+      >;
     };
     whatsapp?: {
       phoneNumberId: string;
@@ -1763,9 +1789,14 @@ export const api = {
   getPartnerDashboard: (months = 12) =>
     request<PartnerDashboard>(`/admin/partner/dashboard?months=${months}`),
 
-  getRevenueChart: (month: string, year = new Date().getFullYear()) =>
+  getRevenueChart: (
+    month: string,
+    year = new Date().getFullYear(),
+    options: ApiRequestOptions = {}
+  ) =>
     request<{ month: string; year: number; chart: Stats["chart"] }>(
-      `/admin/revenue-chart?month=${encodeURIComponent(month)}&year=${year}`
+      `/admin/revenue-chart?month=${encodeURIComponent(month)}&year=${year}`,
+      options
     ),
 
   getActivity: (limit = 40) =>
@@ -1837,7 +1868,6 @@ export const api = {
     fromAddress?: string;
     fromName?: string;
     accountId?: string | null;
-    invoiceCcEmails?: string[] | string;
   }) =>
     request<{
       ok: boolean;
@@ -1845,11 +1875,36 @@ export const api = {
         fromAddress: string;
         fromName: string;
         accountId: string | null;
-        invoiceCcEmails?: string[];
         configured: boolean;
         oauthTokenConfigured?: boolean;
       };
     }>("/admin/settings/communication/email", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  updateCustomerEmailSettings: (data: {
+    welcomeEnabled?: boolean;
+    welcomeSubject?: string;
+    welcomeBodyHtml?: string;
+    welcomeCcEmails?: string[] | string;
+    invoiceCcEmails?: string[] | string;
+    templates?: Record<
+      string,
+      {
+        enabled?: boolean;
+        subject?: string;
+        bodyHtml?: string;
+        ccEmails?: string[] | string;
+      }
+    >;
+  }) =>
+    request<{
+      ok: boolean;
+      customerEmail: NonNullable<
+        NonNullable<AppSettings["communication"]>["customerEmail"]
+      >;
+    }>("/admin/settings/customer-email", {
       method: "PUT",
       body: JSON.stringify(data),
     }),
@@ -1911,6 +1966,14 @@ export const api = {
     ipSetup: "STATIC" | "PPOE";
     dstvSetup: "headend_coax" | "decoder";
     ipPrefixes?: string[];
+    addressAttention?: string;
+    addressStreet?: string;
+    addressStreet2?: string;
+    addressPoBox?: string;
+    addressCity?: string;
+    addressState?: string;
+    addressZip?: string;
+    addressCountry?: string;
   }) =>
     request<{ ok: boolean; id: number; building: Building }>("/admin/buildings", {
       method: "POST",
@@ -1926,6 +1989,14 @@ export const api = {
       ipSetup: "STATIC" | "PPOE";
       dstvSetup: "headend_coax" | "decoder";
       ipPrefixes: string[];
+      addressAttention: string;
+      addressStreet: string;
+      addressStreet2: string;
+      addressPoBox: string;
+      addressCity: string;
+      addressState: string;
+      addressZip: string;
+      addressCountry: string;
     }>
   ) =>
     request<{ ok: boolean; building: Building }>(`/admin/buildings/${id}`, {
@@ -2369,10 +2440,13 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  listCustomers: (params: Record<string, string | undefined> = {}) =>
+  listCustomers: (
+    params: Record<string, string | undefined> = {},
+    options: ApiRequestOptions = {}
+  ) =>
     requestWithRetry<Paginated<Customer>>(
       `/admin/customers${buildQueryString(params)}`,
-      {},
+      options,
       2
     ),
   exportCustomers: (
@@ -2528,6 +2602,8 @@ export const api = {
           paid?: boolean;
           paymentError?: string;
           paymentAttached?: boolean;
+          paymentMethod?: "mpesa" | "paystack" | "bank";
+          paymentReference?: string | null;
           mpesaCode?: string;
           receiptEmailed?: boolean;
           invoiceNumber?: string | null;

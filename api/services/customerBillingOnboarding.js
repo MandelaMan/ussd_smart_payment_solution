@@ -39,7 +39,7 @@ const SIGNUP_INVOICE_EMAIL_ENABLED =
 async function resolveInvoiceCcMailIds() {
   try {
     const appSettingsStore = require("./appSettingsStore");
-    const settings = await appSettingsStore.getCommunicationEmailSettings();
+    const settings = await appSettingsStore.getCustomerEmailSettings();
     if (settings?.invoiceCcEmails?.length) {
       return settings.invoiceCcEmails;
     }
@@ -301,15 +301,27 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
  * invoices (unless forceBilling). Use edit-customer options (or retry with
  * forceBilling) for those.
  *
- * options.paymentAlreadyMade + options.mpesaCode — create signup invoice and
- * mark it paid with the M-Pesa receipt (no email).
+ * options.paymentAlreadyMade + paymentMethod — create signup invoice and
+ * reconcile / mark paid based on channel:
+ *   - mpesa (+ mpesaCode): find Zoho payment by REFERENCE# / apply M-Pesa
+ *   - paystack (+ paystackReference): find Zoho payment and attach
+ *   - bank (+ optional bankReference): create invoice if needed, mark paid
  * options.forceEmail — email the signup invoice to the customer.
  */
 async function onboardNewCustomerBilling(customerId, options = {}) {
   const forceBilling = options.forceBilling === true;
   const paymentAlreadyMade = options.paymentAlreadyMade === true;
+  const paymentMethod = String(options.paymentMethod || "")
+    .trim()
+    .toLowerCase();
   const mpesaCode = options.mpesaCode
     ? String(options.mpesaCode).trim().toUpperCase()
+    : "";
+  const paystackReference = options.paystackReference
+    ? String(options.paystackReference).trim()
+    : "";
+  const bankReference = options.bankReference
+    ? String(options.bankReference).trim()
     : "";
   const forceEmail = options.forceEmail === true && !paymentAlreadyMade;
   const skipEmail = options.skipEmail === true || paymentAlreadyMade;
@@ -412,13 +424,30 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         skipEmail,
       });
 
-      if (paymentAlreadyMade && mpesaCode && invoice.invoiceId) {
-        invoice = await applyAdvanceMpesaToSignupInvoice({
-          customer,
-          zohoContact,
-          invoice,
-          mpesaCode,
-        });
+      if (paymentAlreadyMade && invoice.invoiceId) {
+        if (paymentMethod === "paystack") {
+          invoice = await applyAdvancePaystackToSignupInvoice({
+            customer,
+            zohoContact,
+            invoice,
+            paystackReference,
+          });
+        } else if (paymentMethod === "bank") {
+          invoice = await applyAdvanceBankToSignupInvoice({
+            customer,
+            zohoContact,
+            invoice,
+            bankReference,
+          });
+        } else if (mpesaCode) {
+          // Default / explicit M-Pesa
+          invoice = await applyAdvanceMpesaToSignupInvoice({
+            customer,
+            zohoContact,
+            invoice,
+            mpesaCode,
+          });
+        }
       }
 
       // Always create/ensure recurring profile after signup invoice
@@ -504,7 +533,13 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
           : hasTrial
             ? `${customer.customerNumber}: 30-day trial — first invoice scheduled ${trialEndsAt}`
             : invoice.paid
-              ? `${customer.customerNumber}: ${invoice.invoiceNumber || invoice.invoiceId} paid (M-Pesa ${mpesaCode})${
+              ? `${customer.customerNumber}: ${invoice.invoiceNumber || invoice.invoiceId} paid (${
+                  paymentMethod === "paystack"
+                    ? `Paystack ${paystackReference || invoice.paymentReference || ""}`
+                    : paymentMethod === "bank"
+                      ? `Bank transfer${bankReference || invoice.paymentReference ? ` ${bankReference || invoice.paymentReference}` : ""}`
+                      : `M-Pesa ${mpesaCode}`
+                })${
                   invoice.receiptEmailed || invoice.emailed
                     ? " — receipt emailed"
                     : ""
@@ -524,6 +559,9 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         amount: invoice.total ?? null,
         referenceId:
           mpesaCode ||
+          paystackReference ||
+          bankReference ||
+          invoice.paymentReference ||
           invoice.invoiceId ||
           recurring?.recurringInvoiceId ||
           null,
@@ -574,6 +612,242 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
   }
 }
 
+async function applyAdvancePaystackToSignupInvoice({
+  customer,
+  zohoContact,
+  invoice,
+  paystackReference,
+}) {
+  const {
+    findCustomerPaymentByReference_JS,
+    getCustomerPayment_JS,
+    updateCustomerPayment_JS,
+  } = require("../controllers/zoho.controller");
+
+  const contactId = zohoContact?.contact_id
+    ? String(zohoContact.contact_id)
+    : null;
+  const ref = String(paystackReference || "").trim();
+  if (!contactId || !invoice.invoiceId) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "missing_zoho_contact_or_invoice",
+      paymentReference: ref,
+    };
+  }
+  if (!ref) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "missing_paystack_reference",
+      paymentReference: ref,
+    };
+  }
+
+  let attached = null;
+  try {
+    const listed = await findCustomerPaymentByReference_JS(ref);
+    if (!listed?.payment_id) {
+      return {
+        ...invoice,
+        paid: false,
+        paymentError: "paystack_payment_not_found_in_zoho",
+        paymentReference: ref,
+      };
+    }
+    const full = (await getCustomerPayment_JS(listed.payment_id)) || listed;
+    attached = await attachZohoPaymentToSignupInvoice({
+      customer,
+      contactId,
+      invoice,
+      payment: full,
+      reference: ref,
+      channelLabel: "Paystack",
+      updateCustomerPayment_JS,
+    });
+  } catch (e) {
+    console.error(
+      "Paystack Zoho payment lookup/attach failed:",
+      e.response?.data || e.message
+    );
+    return {
+      ...invoice,
+      paid: false,
+      paymentError:
+        e.response?.data?.message || e.message || "paystack_attach_failed",
+      paymentReference: ref,
+    };
+  }
+
+  if (attached?.paid || attached?.paymentError === "payment_already_on_invoice") {
+    const payAmount = Number(
+      attached.payment_amount || attached.payment?.amount || invoice.total || 0
+    );
+    const receiptEmail = await emailAdvancePaymentReceipt({
+      customer,
+      invoice,
+      payResult: {
+        invoice_id: invoice.invoiceId,
+        invoice_number: invoice.invoiceNumber,
+        payment_amount: payAmount,
+        zoho_payment_id: attached.zoho_payment_id,
+      },
+      paymentReference: ref,
+      paymentChannel: "Paystack",
+      payAmount,
+    });
+
+    try {
+      await logActivity({
+        eventType: "zoho_invoice_updated",
+        title: "Paystack payment reconciled",
+        message: `${customer.customerNumber}: attached Zoho payment REFERENCE# ${ref} to ${invoice.invoiceNumber || invoice.invoiceId}`,
+        source: "zoho",
+        status: "success",
+        customerRef: customer.customerNumber,
+        amount: payAmount,
+        referenceId: ref,
+      });
+    } catch {
+      /* ignore */
+    }
+
+    return {
+      ...invoice,
+      paid: true,
+      paymentAttached: true,
+      payment: attached.payment || null,
+      zohoPaymentId: attached.zoho_payment_id,
+      paymentReference: ref,
+      paymentMethod: "paystack",
+      emailed: receiptEmail.emailed,
+      emailReason: receiptEmail.reason,
+      receiptEmailed: receiptEmail.emailed,
+    };
+  }
+
+  return {
+    ...invoice,
+    paid: false,
+    paymentError: attached?.paymentError || "paystack_reconcile_failed",
+    paymentReference: ref,
+    paymentMethod: "paystack",
+  };
+}
+
+async function applyAdvanceBankToSignupInvoice({
+  customer,
+  zohoContact,
+  invoice,
+  bankReference,
+}) {
+  const { markInvoiceAsPaid_JS } = require("../controllers/zoho.controller");
+
+  const contactId = zohoContact?.contact_id
+    ? String(zohoContact.contact_id)
+    : null;
+  const ref = String(bankReference || "").trim();
+  if (!contactId || !invoice.invoiceId) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "missing_zoho_contact_or_invoice",
+      paymentReference: ref || null,
+    };
+  }
+
+  const payAmount = Number(invoice.total || customer.packagePrice || 0);
+  if (!(payAmount > 0)) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "invalid_payment_amount",
+      paymentReference: ref || null,
+    };
+  }
+
+  const paymentMode =
+    process.env.ZOHO_BANK_PAYMENT_MODE || "Bank Remittance";
+
+  const payment = await markInvoiceAsPaid_JS({
+    invoice_id: invoice.invoiceId,
+    customer_id: contactId,
+    amount: payAmount,
+    amount_applied: payAmount,
+    reference_number: ref || undefined,
+    description: `Direct bank transfer on signup (${customer.customerNumber})${
+      ref ? ` — ${ref}` : ""
+    }`,
+    payment_mode: paymentMode,
+  });
+
+  if (!payment?.payment_id) {
+    return {
+      ...invoice,
+      paid: false,
+      paymentError: "bank_mark_paid_failed",
+      paymentReference: ref || null,
+      paymentMethod: "bank",
+    };
+  }
+
+  try {
+    const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
+    await integrationSnapshot.recordZohoPaymentSnapshot(customer.id, {
+      invoiceId: invoice.invoiceId,
+      invoiceNumber: invoice.invoiceNumber,
+      paymentId: String(payment.payment_id),
+      amount: payAmount,
+      referenceId: ref || null,
+      remainingBalance: 0,
+    });
+  } catch (e) {
+    console.warn("Zoho payment snapshot after bank mark-paid failed:", e.message);
+  }
+
+  const receiptEmail = await emailAdvancePaymentReceipt({
+    customer,
+    invoice,
+    payResult: {
+      invoice_id: invoice.invoiceId,
+      invoice_number: invoice.invoiceNumber,
+      payment_amount: payAmount,
+      zoho_payment_id: payment.payment_id,
+    },
+    paymentReference: ref || null,
+    paymentChannel: "Direct Bank",
+    payAmount,
+  });
+
+  try {
+    await logActivity({
+      eventType: "zoho_invoice_updated",
+      title: "Bank transfer marked paid",
+      message: `${customer.customerNumber}: ${invoice.invoiceNumber || invoice.invoiceId} marked paid (Bank Remittance${ref ? ` ${ref}` : ""})`,
+      source: "zoho",
+      status: "success",
+      customerRef: customer.customerNumber,
+      amount: payAmount,
+      referenceId: ref || invoice.invoiceId,
+    });
+  } catch {
+    /* ignore */
+  }
+
+  return {
+    ...invoice,
+    paid: true,
+    payment,
+    zohoPaymentId: payment.payment_id,
+    paymentReference: ref || null,
+    paymentMethod: "bank",
+    emailed: receiptEmail.emailed,
+    emailReason: receiptEmail.reason,
+    receiptEmailed: receiptEmail.emailed,
+  };
+}
+
 async function applyAdvanceMpesaToSignupInvoice({
   customer,
   zohoContact,
@@ -613,7 +887,8 @@ async function applyAdvanceMpesaToSignupInvoice({
         contactId,
         invoice,
         payment: full,
-        mpesaCode,
+        reference: mpesaCode,
+        channelLabel: "M-Pesa",
         updateCustomerPayment_JS,
       });
     }
@@ -642,7 +917,8 @@ async function applyAdvanceMpesaToSignupInvoice({
         payment_amount: payAmount,
         zoho_payment_id: attached.zoho_payment_id,
       },
-      mpesaCode,
+      paymentReference: mpesaCode,
+      paymentChannel: "M-Pesa",
       payAmount,
     });
 
@@ -684,7 +960,8 @@ async function applyAdvanceMpesaToSignupInvoice({
         payment_amount: Number(invoice.total || 0),
         zoho_payment_id: attached.zoho_payment_id,
       },
-      mpesaCode,
+      paymentReference: mpesaCode,
+      paymentChannel: "M-Pesa",
       payAmount: Number(invoice.total || 0),
     });
     return {
@@ -757,7 +1034,8 @@ async function applyAdvanceMpesaToSignupInvoice({
     customer,
     invoice,
     payResult,
-    mpesaCode,
+    paymentReference: mpesaCode,
+    paymentChannel: "M-Pesa",
     payAmount,
   });
 
@@ -777,10 +1055,13 @@ async function attachZohoPaymentToSignupInvoice({
   contactId,
   invoice,
   payment,
+  reference,
   mpesaCode,
+  channelLabel = "payment",
   updateCustomerPayment_JS,
 }) {
   const paymentId = String(payment.payment_id || "").trim();
+  const ref = String(reference || mpesaCode || "").trim();
   if (!paymentId) {
     return { paid: false, paymentError: "payment_not_found" };
   }
@@ -829,10 +1110,10 @@ async function attachZohoPaymentToSignupInvoice({
     payment_mode: paymentMode,
     amount: paymentAmount > 0 ? paymentAmount : amountApplied,
     date: payment.date || undefined,
-    reference_number: payment.reference_number || mpesaCode,
+    reference_number: payment.reference_number || ref,
     description:
       payment.description ||
-      `Attached to ${customer.customerNumber} on signup (${mpesaCode})`,
+      `Attached to ${customer.customerNumber} on signup (${channelLabel}${ref ? ` ${ref}` : ""})`,
     invoices: [
       {
         invoice_id: invoice.invoiceId,
@@ -848,7 +1129,7 @@ async function attachZohoPaymentToSignupInvoice({
       invoiceNumber: invoice.invoiceNumber,
       paymentId,
       amount: amountApplied,
-      referenceId: mpesaCode,
+      referenceId: ref || null,
       remainingBalance: 0,
     });
   } catch (e) {
@@ -864,7 +1145,7 @@ async function attachZohoPaymentToSignupInvoice({
 }
 
 /**
- * Email payment receipt after advance M-Pesa is applied:
+ * Email payment receipt after advance payment is applied:
  * 1) Paid invoice PDF via Zoho invoice email (primary receipt)
  * 2) Customer payment email when Zoho supports it for the payment id
  */
@@ -872,7 +1153,9 @@ async function emailAdvancePaymentReceipt({
   customer,
   invoice,
   payResult,
+  paymentReference,
   mpesaCode,
+  paymentChannel = "M-Pesa",
   payAmount,
 }) {
   const { emailCustomerPayment_JS } = require("../controllers/zoho.controller");
@@ -893,12 +1176,16 @@ async function emailAdvancePaymentReceipt({
     currency: "KES",
     maximumFractionDigits: 0,
   });
+  const ref = String(paymentReference || mpesaCode || "").trim();
   const subject = `Payment receipt — ${
     invoiceNumber || customer.customerNumber
   }`;
+  const paymentLine = ref
+    ? `We have received your ${paymentChannel} payment <strong>${ref}</strong> for account <strong>${customer.customerNumber}</strong>.`
+    : `We have received your ${paymentChannel} payment for account <strong>${customer.customerNumber}</strong>.`;
   const body = [
     `<p>Dear ${[customer.firstName, customer.lastName].filter(Boolean).join(" ") || "Customer"},</p>`,
-    `<p>Thank you. We have received your M-Pesa payment <strong>${mpesaCode}</strong> for account <strong>${customer.customerNumber}</strong>.</p>`,
+    `<p>Thank you. ${paymentLine}</p>`,
     `<p>Amount: <strong>${amountLabel}</strong>${
       invoiceNumber ? `<br/>Invoice: <strong>${invoiceNumber}</strong>` : ""
     }</p>`,

@@ -359,7 +359,6 @@ export function ApartmentHistoryPage() {
           <ListPageStickyChrome>
             <MobilePageChrome
         title="Occupancy ledger"
-        description="Cross-building occupancy events"
         desktopActions={
           <>
             <DataTableExportButton

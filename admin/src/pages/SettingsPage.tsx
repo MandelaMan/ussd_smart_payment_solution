@@ -33,6 +33,98 @@ import {
   CURRENT_APP_VERSION,
   VERSION_LOG,
 } from "../lib/versionLog";
+import { RichTextEditor } from "../components/ui/RichTextEditor";
+import { RowCheckbox } from "../components/ui/RowCheckbox";
+
+const CUSTOMER_EMAIL_TEMPLATE_META: Array<{
+  key: string;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "welcome",
+    label: "Welcome email",
+    description: "Sent when a customer is registered.",
+  },
+  {
+    key: "trial_started",
+    label: "Trial started",
+    description: "Sent when a customer signs up with a free trial.",
+  },
+  {
+    key: "upgrade",
+    label: "Upgrade plan",
+    description: "Sent after a package upgrade is completed.",
+  },
+  {
+    key: "downgrade",
+    label: "Downgrade plan",
+    description: "Sent after a package downgrade is completed.",
+  },
+  {
+    key: "apartment_move",
+    label: "Apartment movement",
+    description:
+      "Sent when a customer moves to a different apartment (account number may change).",
+  },
+  {
+    key: "cancellation",
+    label: "Subscription cancellation",
+    description: "Sent when a subscription is cancelled.",
+  },
+  {
+    key: "pause",
+    label: "Service pause",
+    description: "Sent when service is paused (customer away).",
+  },
+  {
+    key: "disconnect",
+    label: "Service disconnect",
+    description: "Sent when service is disconnected / suspended on the network.",
+  },
+];
+
+type CustomerEmailTemplateDraft = {
+  enabled: boolean;
+  subject: string;
+  bodyHtml: string;
+  ccEmails: string;
+};
+
+function emptyTemplateDraft(): CustomerEmailTemplateDraft {
+  return { enabled: true, subject: "", bodyHtml: "", ccEmails: "" };
+}
+
+function templatesFromSettings(
+  customerEmail: AppSettings["communication"] extends { customerEmail?: infer T }
+    ? T
+    : undefined
+): Record<string, CustomerEmailTemplateDraft> {
+  const out: Record<string, CustomerEmailTemplateDraft> = {};
+  for (const meta of CUSTOMER_EMAIL_TEMPLATE_META) {
+    const t = customerEmail?.templates?.[meta.key];
+    if (t) {
+      out[meta.key] = {
+        enabled: t.enabled !== false,
+        subject: t.subject || "",
+        bodyHtml: t.bodyHtml || "",
+        ccEmails: (t.ccEmails || []).join("\n"),
+      };
+      continue;
+    }
+    if (meta.key === "welcome") {
+      out[meta.key] = {
+        enabled: customerEmail?.welcomeEnabled !== false,
+        subject: customerEmail?.welcomeSubject || "",
+        bodyHtml: customerEmail?.welcomeBodyHtml || "",
+        ccEmails: (customerEmail?.welcomeCcEmails || []).join("\n"),
+      };
+      continue;
+    }
+    out[meta.key] = emptyTemplateDraft();
+  }
+  return out;
+}
 
 type TabId =
   | "permissions"
@@ -182,6 +274,7 @@ function CommunicationPanel({
   onUpdated: (next: AppSettings) => void;
 }) {
   const email = settings.communication?.email;
+  const customerEmail = settings.communication?.customerEmail;
   const whatsapp = settings.communication?.whatsapp;
   const webhookUrl = settings.webhooks?.leads?.whatsappWebhook || "";
 
@@ -190,10 +283,19 @@ function CommunicationPanel({
   );
   const [fromName, setFromName] = useState(email?.fromName || "Customer Support");
   const [accountId, setAccountId] = useState(email?.accountId || "");
-  const [invoiceCcEmails, setInvoiceCcEmails] = useState(
-    (email?.invoiceCcEmails || []).join("\n")
-  );
   const [savingEmail, setSavingEmail] = useState(false);
+
+  const [invoiceCcEmails, setInvoiceCcEmails] = useState(
+    (
+      customerEmail?.invoiceCcEmails ||
+      email?.invoiceCcEmails ||
+      []
+    ).join("\n")
+  );
+  const [savingCustomerEmail, setSavingCustomerEmail] = useState(false);
+  const [templates, setTemplates] = useState(() =>
+    templatesFromSettings(customerEmail)
+  );
 
   const [phoneNumberId, setPhoneNumberId] = useState(whatsapp?.phoneNumberId || "");
   const [accessToken, setAccessToken] = useState("");
@@ -222,13 +324,18 @@ function CommunicationPanel({
     setFromAddress(email?.fromAddress || "customersupport@sulsolutions.biz");
     setFromName(email?.fromName || "Customer Support");
     setAccountId(email?.accountId || "");
-    setInvoiceCcEmails((email?.invoiceCcEmails || []).join("\n"));
-  }, [
-    email?.fromAddress,
-    email?.fromName,
-    email?.accountId,
-    email?.invoiceCcEmails,
-  ]);
+  }, [email?.fromAddress, email?.fromName, email?.accountId]);
+
+  useEffect(() => {
+    setTemplates(templatesFromSettings(customerEmail));
+    setInvoiceCcEmails(
+      (
+        customerEmail?.invoiceCcEmails ||
+        email?.invoiceCcEmails ||
+        []
+      ).join("\n")
+    );
+  }, [customerEmail, email?.invoiceCcEmails]);
 
   useEffect(() => {
     setPhoneNumberId(whatsapp?.phoneNumberId || "");
@@ -257,7 +364,6 @@ function CommunicationPanel({
         fromAddress: fromAddress.trim(),
         fromName: fromName.trim(),
         accountId: accountId.trim() || null,
-        invoiceCcEmails: invoiceCcEmails,
       });
       onUpdated({
         ...settings,
@@ -267,25 +373,89 @@ function CommunicationPanel({
             fromAddress: res.email.fromAddress,
             fromName: res.email.fromName,
             accountId: res.email.accountId,
-            invoiceCcEmails: res.email.invoiceCcEmails || [],
             configured: res.email.configured,
             oauthTokenConfigured:
               res.email.oauthTokenConfigured ?? email?.oauthTokenConfigured ?? false,
             dnsHint: email?.dnsHint,
           },
+          customerEmail: settings.communication?.customerEmail,
           whatsapp: settings.communication?.whatsapp,
         },
       });
-      toaster.create({ type: "success", title: "Email settings saved" });
+      toaster.create({ type: "success", title: "Zoho Mail settings saved" });
     } catch (e) {
       toaster.create({
         type: "error",
-        title: e instanceof Error ? e.message : "Failed to save email settings",
+        title: e instanceof Error ? e.message : "Failed to save Zoho Mail settings",
       });
     } finally {
       setSavingEmail(false);
     }
   }
+
+  async function saveCustomerEmail() {
+    setSavingCustomerEmail(true);
+    try {
+      const templatesPayload = Object.fromEntries(
+        CUSTOMER_EMAIL_TEMPLATE_META.map(({ key }) => {
+          const t = templates[key] || emptyTemplateDraft();
+          return [
+            key,
+            {
+              enabled: t.enabled,
+              subject: t.subject.trim(),
+              bodyHtml: t.bodyHtml,
+              ccEmails: t.ccEmails,
+            },
+          ];
+        })
+      );
+      const res = await api.updateCustomerEmailSettings({
+        invoiceCcEmails,
+        templates: templatesPayload,
+      });
+      onUpdated({
+        ...settings,
+        communication: {
+          ...settings.communication,
+          email: settings.communication?.email || {
+            fromAddress: "",
+            fromName: "",
+            accountId: null,
+            configured: false,
+            oauthTokenConfigured: false,
+          },
+          customerEmail: res.customerEmail,
+          whatsapp: settings.communication?.whatsapp,
+        },
+      });
+      toaster.create({ type: "success", title: "Customer email settings saved" });
+    } catch (e) {
+      toaster.create({
+        type: "error",
+        title:
+          e instanceof Error
+            ? e.message
+            : "Failed to save customer email settings",
+      });
+    } finally {
+      setSavingCustomerEmail(false);
+    }
+  }
+
+  function patchTemplate(
+    key: string,
+    patch: Partial<CustomerEmailTemplateDraft>
+  ) {
+    setTemplates((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] || emptyTemplateDraft()), ...patch },
+    }));
+  }
+
+  const enabledTemplateCount = CUSTOMER_EMAIL_TEMPLATE_META.filter(
+    (m) => templates[m.key]?.enabled !== false
+  ).length;
 
   async function saveWhatsApp() {
     setSavingWhatsApp(true);
@@ -320,6 +490,7 @@ function CommunicationPanel({
             configured: false,
             oauthTokenConfigured: false,
           },
+          customerEmail: settings.communication?.customerEmail,
           whatsapp: res.whatsapp,
         },
       });
@@ -339,7 +510,7 @@ function CommunicationPanel({
   return (
     <Stack gap={2}>
       <SettingsAccordionSection
-        title="Customer email (Zoho Mail)"
+        title="Zoho Mail identity"
         defaultOpen
         badges={
           <StatusBadge
@@ -349,11 +520,6 @@ function CommunicationPanel({
           />
         }
       >
-        <Text fontSize="sm" color="fg.muted" mb={4}>
-          From address, display name, and invoice CC list used for customer
-          emails. OAuth secrets stay in server environment variables.
-        </Text>
-
         <Stack gap={3} maxW="560px">
           <Field.Root>
             <Field.Label>From name</Field.Label>
@@ -386,28 +552,13 @@ function CommunicationPanel({
               Numeric account ID from Zoho Mail (optional if auto-resolved).
             </Field.HelperText>
           </Field.Root>
-          <Field.Root>
-            <Field.Label>Invoice CC emails</Field.Label>
-            <Textarea
-              value={invoiceCcEmails}
-              onChange={(e) => setInvoiceCcEmails(e.target.value)}
-              placeholder={"support@sulsolutions.biz\ndirector@sulsolutions.biz"}
-              rows={4}
-              fontFamily="mono"
-              fontSize="sm"
-            />
-            <Field.HelperText>
-              CCd on signup and receipt invoice emails from Zoho Books. One
-              address per line (or comma-separated).
-            </Field.HelperText>
-          </Field.Root>
           <Button
             colorPalette="brand"
             alignSelf="flex-start"
             loading={savingEmail}
             onClick={() => void saveEmail()}
           >
-            Save email settings
+            Save Zoho Mail settings
           </Button>
         </Stack>
 
@@ -457,6 +608,155 @@ function CommunicationPanel({
       </SettingsAccordionSection>
 
       <SettingsAccordionSection
+        title="Customer emails"
+        defaultOpen
+        badges={
+          <StatusBadge
+            ok={enabledTemplateCount > 0}
+            okLabel={`${enabledTemplateCount} templates on`}
+            failLabel="All templates off"
+          />
+        }
+      >
+        <Text fontSize="sm" color="fg.muted" mb={4}>
+          Placeholders:{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{firstName}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{customerNumber}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{buildingName}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{apartmentNumber}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{productName}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{previousProductName}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{previousApartment}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{pauseEndDate}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{fullName}}"}
+          </Text>
+          .
+        </Text>
+
+        <Stack gap={4} maxW="720px">
+          <Field.Root>
+            <Field.Label>Invoice CC emails</Field.Label>
+            <Textarea
+              value={invoiceCcEmails}
+              onChange={(e) => setInvoiceCcEmails(e.target.value)}
+              placeholder={"support@sulsolutions.biz\ndirector@sulsolutions.biz"}
+              rows={4}
+              fontFamily="mono"
+              fontSize="sm"
+            />
+            <Field.HelperText>
+              One address per line (or comma-separated). Applied to Zoho invoice
+              emails.
+            </Field.HelperText>
+          </Field.Root>
+
+          {CUSTOMER_EMAIL_TEMPLATE_META.map((meta) => {
+            const draft = templates[meta.key] || emptyTemplateDraft();
+            const apiMeta = customerEmail?.templates?.[meta.key];
+            const label = apiMeta?.label || meta.label;
+            const description = apiMeta?.description || meta.description;
+            return (
+              <Box
+                key={meta.key}
+                borderWidth="1px"
+                borderColor="border.muted"
+                borderRadius="lg"
+                p={4}
+              >
+                <Heading size="xs" mb={1}>
+                  {label}
+                </Heading>
+                <Text fontSize="xs" color="fg.muted" mb={3}>
+                  {description}
+                </Text>
+                <Stack gap={3}>
+                  <Flex align="center" gap={2}>
+                    <RowCheckbox
+                      checked={draft.enabled}
+                      onChange={() =>
+                        patchTemplate(meta.key, { enabled: !draft.enabled })
+                      }
+                      aria-label={`Enable ${label}`}
+                    />
+                    <Text fontSize="sm">Send this email automatically</Text>
+                  </Flex>
+                  <Field.Root>
+                    <Field.Label>Subject</Field.Label>
+                    <Input
+                      value={draft.subject}
+                      onChange={(e) =>
+                        patchTemplate(meta.key, { subject: e.target.value })
+                      }
+                      placeholder={`${label} — {{customerNumber}}`}
+                    />
+                  </Field.Root>
+                  <Field.Root>
+                    <Field.Label>Body</Field.Label>
+                    <RichTextEditor
+                      value={draft.bodyHtml}
+                      onChange={(bodyHtml) =>
+                        patchTemplate(meta.key, { bodyHtml })
+                      }
+                      placeholder={`${label} message…`}
+                      minH="160px"
+                    />
+                  </Field.Root>
+                  <Field.Root>
+                    <Field.Label>CC emails</Field.Label>
+                    <Textarea
+                      value={draft.ccEmails}
+                      onChange={(e) =>
+                        patchTemplate(meta.key, { ccEmails: e.target.value })
+                      }
+                      placeholder={"support@sulsolutions.biz"}
+                      rows={2}
+                      fontFamily="mono"
+                      fontSize="sm"
+                    />
+                    <Field.HelperText>One address per line.</Field.HelperText>
+                  </Field.Root>
+                </Stack>
+              </Box>
+            );
+          })}
+
+          <Button
+            colorPalette="brand"
+            alignSelf="flex-start"
+            loading={savingCustomerEmail}
+            onClick={() => void saveCustomerEmail()}
+          >
+            Save customer email settings
+          </Button>
+        </Stack>
+      </SettingsAccordionSection>
+
+      <SettingsAccordionSection
         title="WhatsApp Cloud API"
         badges={
           <>
@@ -478,11 +778,6 @@ function CommunicationPanel({
           </>
         }
       >
-        <Text fontSize="sm" color="fg.muted" mb={4}>
-          Credentials and bot copy for Leads WhatsApp and Communication → WhatsApp.
-          Register the webhook URL in Meta Developer Console with the verify token below.
-        </Text>
-
         <Stack gap={3} maxW="560px">
           <Field.Root>
             <Field.Label>Webhook URL</Field.Label>
@@ -550,9 +845,6 @@ function CommunicationPanel({
               onChange={(e) => setClickToChatUrl(e.target.value)}
               placeholder="https://wa.me/2547XXXXXXXX"
             />
-            <Field.HelperText>
-              Shown on the public lead form when set.
-            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Welcome message</Field.Label>
@@ -674,11 +966,6 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
           </>
         }
       >
-        <Text fontSize="sm" color="fg.muted" mb={3}>
-          Public intake form and embeddable widget for prospects. Configure WhatsApp
-          Cloud API credentials under Settings → Communication. Register the webhook
-          URL in Meta with the verify token saved there.
-        </Text>
         <Stack gap={2}>
           <ConfigRow label="Public form" value={webhooks.leads.publicForm} />
           <ConfigRow
@@ -695,9 +982,6 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
       </SettingsAccordionSection>
 
       <SettingsAccordionSection title="Integration flags">
-        <Text fontSize="sm" color="fg.muted" mb={3}>
-          Server environment toggles (read-only here).
-        </Text>
         <Stack gap={2}>
           <Flex
             justify="space-between"
@@ -756,9 +1040,6 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
 function RolesPanel({ settings }: { settings: AppSettings }) {
   return (
     <Box>
-      <Text fontSize="sm" color="fg.muted" mb={3}>
-        Assign when creating or editing users.
-      </Text>
       <Stack gap={2}>
         {settings.roles?.map((role) => (
           <Box
@@ -802,9 +1083,6 @@ function VersioningPanel() {
             Current {CURRENT_APP_VERSION}
           </Badge>
         </Flex>
-        <Text fontSize="sm" color="fg.muted">
-          Feature releases for SUL Bix — new capabilities only, newest first.
-        </Text>
       </Box>
 
       <Stack gap={3}>

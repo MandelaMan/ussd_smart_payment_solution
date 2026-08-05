@@ -203,9 +203,6 @@ export function ExportScopeDialog({
         <Text fontSize="lg" fontWeight="semibold" color="fg" lineHeight="1.25">
           Export {label.toLowerCase()}
         </Text>
-        <Text fontSize="sm" color="fg.muted" mt={1} lineHeight="1.4">
-          Choose format, records, and columns to export.
-        </Text>
       </Box>
 
       <Dialog.Body px={5} pt={2.5} pb={3.5}>

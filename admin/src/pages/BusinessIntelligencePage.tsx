@@ -140,7 +140,6 @@ export function BusinessIntelligencePage() {
     <Stack gap={4} pb={6}>
       <PageHeader
         title="Analytics"
-        description="What is happening now, why, and where we are heading"
         actions={
           <Button asChild size="sm" variant="outline">
             <RouterLink to="/reports">Open Reports</RouterLink>

@@ -17,7 +17,6 @@ export function BillingOverviewPage() {
   return (
     <BillingModuleShell
       title="Billing Reconciliation"
-      description="Customers matched to Zoho Books"
       summary={summary}
       syncing={syncing}
       onSync={runSync}

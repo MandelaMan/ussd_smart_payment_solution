@@ -402,7 +402,6 @@ export function ProductsPage() {
           <ListPageStickyChrome>
             <MobilePageChrome
         title="Packages"
-        description="Building package prices"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Package name…"

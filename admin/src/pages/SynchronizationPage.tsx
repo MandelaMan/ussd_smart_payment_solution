@@ -538,7 +538,6 @@ export function SynchronizationPage({
 
       <SyncModuleSection
         title="Other integrations"
-        subtitle="Local data and third-party status checks"
         items={otherModules}
         liveProgress={liveProgress}
         syncingId={syncingId}

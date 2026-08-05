@@ -62,9 +62,20 @@ function rowsToCsv(headers, rows) {
   return lines.join("\n");
 }
 
+function normalizeChartDay(value) {
+  if (value == null) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const raw = String(value).trim();
+  // MySQL DATE / DATE_FORMAT may arrive as "YYYY-MM-DD" or a Date-like string.
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : raw.slice(0, 10);
+}
+
 function formatChartRows(rows) {
   return rows.map((d) => ({
-    day: d.day,
+    day: normalizeChartDay(d.day),
     count: Number(d.count),
     revenue: Number(d.revenue),
     success: Number(d.success_count),
@@ -75,29 +86,34 @@ function formatChartRows(rows) {
 async function queryRevenueChartByMonth(year, monthNum) {
   const monthStart = new Date(Date.UTC(year, monthNum - 1, 1)).toISOString().slice(0, 10);
   const monthEnd = new Date(Date.UTC(year, monthNum, 1)).toISOString().slice(0, 10); // first day of next month
+  // Aggregate inside each source first so large payment tables are not UNION-expanded row-by-row.
   const rows = await query(
     `SELECT
       t.day,
-      COUNT(*) AS count,
+      COALESCE(SUM(t.count), 0) AS count,
       COALESCE(SUM(t.revenue), 0) AS revenue,
       COALESCE(SUM(t.success_count), 0) AS success_count,
       COALESCE(SUM(t.failed_count), 0) AS failed_count
      FROM (
        SELECT
          DATE(pt.created_at) AS day,
-         CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END AS revenue,
-         CASE WHEN pt.status = 'SUCCESS' THEN 1 ELSE 0 END AS success_count,
-         CASE WHEN pt.status = 'FAILED' THEN 1 ELSE 0 END AS failed_count
+         COUNT(*) AS count,
+         COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue,
+         SUM(CASE WHEN pt.status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+         SUM(CASE WHEN pt.status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
        FROM payment_transactions pt
        WHERE pt.created_at >= ? AND pt.created_at < ?
+       GROUP BY DATE(pt.created_at)
        UNION ALL
        SELECT
          zp.payment_date AS day,
-         COALESCE(zp.amount, 0) AS revenue,
-         1 AS success_count,
+         COUNT(*) AS count,
+         COALESCE(SUM(zp.amount), 0) AS revenue,
+         COUNT(*) AS success_count,
          0 AS failed_count
        FROM zoho_customer_payments zp
        WHERE zp.payment_date >= ? AND zp.payment_date < ?
+       GROUP BY zp.payment_date
      ) t
      GROUP BY t.day
      ORDER BY t.day ASC`,
@@ -109,29 +125,34 @@ async function queryRevenueChartByMonth(year, monthNum) {
 async function queryRevenueChartByYear(year) {
   const yearStart = new Date(Date.UTC(year, 0, 1)).toISOString().slice(0, 10);
   const yearEnd = new Date(Date.UTC(year + 1, 0, 1)).toISOString().slice(0, 10); // first day of next year
+  // Pre-aggregate by month in each source (≤12 rows each) before merging.
   const rows = await query(
     `SELECT
       t.day,
-      COUNT(*) AS count,
+      COALESCE(SUM(t.count), 0) AS count,
       COALESCE(SUM(t.revenue), 0) AS revenue,
       COALESCE(SUM(t.success_count), 0) AS success_count,
       COALESCE(SUM(t.failed_count), 0) AS failed_count
      FROM (
        SELECT
          DATE_FORMAT(pt.created_at, '%Y-%m-01') AS day,
-         CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END AS revenue,
-         CASE WHEN pt.status = 'SUCCESS' THEN 1 ELSE 0 END AS success_count,
-         CASE WHEN pt.status = 'FAILED' THEN 1 ELSE 0 END AS failed_count
+         COUNT(*) AS count,
+         COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue,
+         SUM(CASE WHEN pt.status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+         SUM(CASE WHEN pt.status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
        FROM payment_transactions pt
        WHERE pt.created_at >= ? AND pt.created_at < ?
+       GROUP BY DATE_FORMAT(pt.created_at, '%Y-%m-01')
        UNION ALL
        SELECT
          DATE_FORMAT(zp.payment_date, '%Y-%m-01') AS day,
-         COALESCE(zp.amount, 0) AS revenue,
-         1 AS success_count,
+         COUNT(*) AS count,
+         COALESCE(SUM(zp.amount), 0) AS revenue,
+         COUNT(*) AS success_count,
          0 AS failed_count
        FROM zoho_customer_payments zp
        WHERE zp.payment_date >= ? AND zp.payment_date < ?
+       GROUP BY DATE_FORMAT(zp.payment_date, '%Y-%m-01')
      ) t
      GROUP BY t.day
      ORDER BY t.day ASC`,
@@ -139,7 +160,11 @@ async function queryRevenueChartByYear(year) {
   );
   const formatted = formatChartRows(rows);
   const byMonth = new Map(
-    formatted.map((row) => [new Date(row.day).getMonth() + 1, row])
+    formatted.map((row) => {
+      const parts = String(row.day).split("-");
+      const month = Number(parts[1]) || new Date(row.day).getUTCMonth() + 1;
+      return [month, row];
+    })
   );
   return Array.from({ length: 12 }, (_, index) => {
     const month = index + 1;

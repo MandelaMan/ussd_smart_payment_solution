@@ -73,7 +73,6 @@ export function BillingModulePage() {
   return (
     <BillingModuleShell
       title={module.label}
-      description={module.description}
       summary={summary}
       syncing={syncing}
       exporting={exporting}

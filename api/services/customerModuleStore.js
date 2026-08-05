@@ -376,7 +376,10 @@ async function listBuildings(filters = {}) {
   );
 
   const rows = await query(
-    `SELECT id, name, c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes, created_at
+    `SELECT id, name,
+            address_attention, address_street, address_street2, address_po_box,
+            address_city, address_state, address_zip, address_country,
+            c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes, created_at
      FROM buildings WHERE ${clauses.join(" AND ")}
      ORDER BY ${sort.orderClause} LIMIT ? OFFSET ?`,
     [...params, limit, offset]
@@ -461,6 +464,14 @@ function mapBuildingRow(row, olts = []) {
     olts: Array.isArray(olts) ? olts : [],
     oltCount: Array.isArray(olts) ? olts.length : 0,
     ipPrefixes: parseBuildingPrefixes(row.ip_prefixes),
+    addressAttention: row.address_attention || null,
+    addressStreet: row.address_street || null,
+    addressStreet2: row.address_street2 || null,
+    addressPoBox: row.address_po_box || null,
+    addressCity: row.address_city || null,
+    addressState: row.address_state || null,
+    addressZip: row.address_zip || null,
+    addressCountry: row.address_country || null,
     createdAt: row.created_at,
   };
 }
@@ -481,11 +492,26 @@ function parseBuildingPrefixes(raw) {
 
 async function createBuilding(data) {
   const { normalizeIpPrefixes } = require("../config/buildingIpRules");
+  const {
+    normalizeBuildingAddressFields,
+  } = require("../utils/buildingBillingAddress");
   const name = String(data.name || "").trim();
   const c2bCode = String(data.c2bCode || "").trim().toUpperCase();
   const b2bCode = String(data.b2bCode || "").trim().toUpperCase();
   const ipSetup = data.ipSetup;
   const dstvSetup = data.dstvSetup || "decoder";
+  const address = normalizeBuildingAddressFields(data);
+  const addressCountry =
+    address.addressAttention ||
+    address.addressStreet ||
+    address.addressStreet2 ||
+    address.addressPoBox ||
+    address.addressCity ||
+    address.addressState ||
+    address.addressZip ||
+    address.addressCountry
+      ? address.addressCountry || "Kenya"
+      : null;
 
   if (!name || !c2bCode || !b2bCode) {
     throw new Error("Name, C2B code, and B2B code are required");
@@ -509,9 +535,27 @@ async function createBuilding(data) {
   }
 
   const result = await query(
-    `INSERT INTO buildings (name, c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [name, c2bCode, b2bCode, ipSetup, dstvSetup, JSON.stringify(ipPrefixes)]
+    `INSERT INTO buildings (
+       name, address_attention, address_street, address_street2, address_po_box,
+       address_city, address_state, address_zip, address_country,
+       c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      name,
+      address.addressAttention,
+      address.addressStreet,
+      address.addressStreet2,
+      address.addressPoBox,
+      address.addressCity,
+      address.addressState,
+      address.addressZip,
+      addressCountry,
+      c2bCode,
+      b2bCode,
+      ipSetup,
+      dstvSetup,
+      JSON.stringify(ipPrefixes),
+    ]
   );
 
   return result.insertId;
@@ -519,6 +563,9 @@ async function createBuilding(data) {
 
 async function updateBuilding(id, data) {
   const { normalizeIpPrefixes } = require("../config/buildingIpRules");
+  const {
+    normalizeBuildingAddressFields,
+  } = require("../utils/buildingBillingAddress");
   const existing = await getBuildingById(id);
   if (!existing) throw new Error("Building not found");
 
@@ -534,6 +581,33 @@ async function updateBuilding(id, data) {
   const ipSetup = data.ipSetup !== undefined ? data.ipSetup : existing.ip_setup;
   const dstvSetup =
     data.dstvSetup !== undefined ? data.dstvSetup : existing.dstv_setup || "decoder";
+
+  const addressIncoming = normalizeBuildingAddressFields(data);
+  const pickAddress = (key, column) =>
+    data[key] !== undefined ? addressIncoming[key] : existing[column] || null;
+  const addressAttention = pickAddress("addressAttention", "address_attention");
+  const addressStreet = pickAddress("addressStreet", "address_street");
+  const addressStreet2 = pickAddress("addressStreet2", "address_street2");
+  const addressPoBox = pickAddress("addressPoBox", "address_po_box");
+  const addressCity = pickAddress("addressCity", "address_city");
+  const addressState = pickAddress("addressState", "address_state");
+  const addressZip = pickAddress("addressZip", "address_zip");
+  const hasAddress =
+    addressAttention ||
+    addressStreet ||
+    addressStreet2 ||
+    addressPoBox ||
+    addressCity ||
+    addressState ||
+    addressZip ||
+    (data.addressCountry !== undefined
+      ? addressIncoming.addressCountry
+      : existing.address_country);
+  const addressCountry = hasAddress
+    ? data.addressCountry !== undefined
+      ? addressIncoming.addressCountry || "Kenya"
+      : existing.address_country || "Kenya"
+    : null;
 
   if (!name || !c2bCode || !b2bCode) {
     throw new Error("Name, C2B code, and B2B code are required");
@@ -564,9 +638,29 @@ async function updateBuilding(id, data) {
 
   await query(
     `UPDATE buildings
-     SET name = ?, c2b_code = ?, b2b_code = ?, ip_setup = ?, dstv_setup = ?, ip_prefixes = ?
+     SET name = ?,
+         address_attention = ?, address_street = ?, address_street2 = ?,
+         address_po_box = ?, address_city = ?, address_state = ?,
+         address_zip = ?, address_country = ?,
+         c2b_code = ?, b2b_code = ?, ip_setup = ?, dstv_setup = ?, ip_prefixes = ?
      WHERE id = ?`,
-    [name, c2bCode, b2bCode, ipSetup, dstvSetup, JSON.stringify(ipPrefixes), id]
+    [
+      name,
+      addressAttention,
+      addressStreet,
+      addressStreet2,
+      addressPoBox,
+      addressCity,
+      addressState,
+      addressZip,
+      addressCountry,
+      c2bCode,
+      b2bCode,
+      ipSetup,
+      dstvSetup,
+      JSON.stringify(ipPrefixes),
+      id,
+    ]
   );
 }
 
@@ -1870,23 +1964,36 @@ async function createCustomer(data) {
     const s = v == null ? "" : String(v).trim();
     return s || null;
   };
-  const billingAttention = trimOrNull(data.billingAttention);
-  const billingAddress = trimOrNull(data.billingAddress);
-  const billingStreet2 = trimOrNull(data.billingStreet2);
-  const billingCity = trimOrNull(data.billingCity);
-  const billingState = trimOrNull(data.billingState);
-  const billingZip = trimOrNull(data.billingZip);
-  const hasBilling =
+  const { buildingToBillingAddress } = require("../utils/buildingBillingAddress");
+  let billingAttention = trimOrNull(data.billingAttention);
+  let billingAddress = trimOrNull(data.billingAddress);
+  let billingStreet2 = trimOrNull(data.billingStreet2);
+  let billingCity = trimOrNull(data.billingCity);
+  let billingState = trimOrNull(data.billingState);
+  let billingZip = trimOrNull(data.billingZip);
+  let billingCountry = trimOrNull(data.billingCountry);
+  let hasBilling =
     billingAttention ||
     billingAddress ||
     billingStreet2 ||
     billingCity ||
     billingState ||
     billingZip ||
-    trimOrNull(data.billingCountry);
-  const billingCountry = hasBilling
-    ? trimOrNull(data.billingCountry) || "Kenya"
-    : null;
+    billingCountry;
+  if (!hasBilling) {
+    const fromBuilding = buildingToBillingAddress(building);
+    if (fromBuilding) {
+      billingAttention = fromBuilding.billingAttention;
+      billingAddress = fromBuilding.billingAddress;
+      billingStreet2 = fromBuilding.billingStreet2;
+      billingCity = fromBuilding.billingCity;
+      billingState = fromBuilding.billingState;
+      billingZip = fromBuilding.billingZip;
+      billingCountry = fromBuilding.billingCountry;
+      hasBilling = true;
+    }
+  }
+  billingCountry = hasBilling ? billingCountry || "Kenya" : null;
 
   const result = await query(
     `INSERT INTO customers (
@@ -2688,45 +2795,57 @@ async function updateCustomerDetails(id, data, options = {}) {
     const s = v == null ? "" : String(v).trim();
     return s || null;
   };
-  const billingAttention =
+  const { buildingToBillingAddress } = require("../utils/buildingBillingAddress");
+  let billingAttention =
     data.billingAttention !== undefined
       ? trimOrNull(data.billingAttention)
       : existing.billingAttention || null;
-  const billingAddress =
+  let billingAddress =
     data.billingAddress !== undefined
       ? trimOrNull(data.billingAddress)
       : existing.billingAddress || null;
-  const billingStreet2 =
+  let billingStreet2 =
     data.billingStreet2 !== undefined
       ? trimOrNull(data.billingStreet2)
       : existing.billingStreet2 || null;
-  const billingCity =
+  let billingCity =
     data.billingCity !== undefined
       ? trimOrNull(data.billingCity)
       : existing.billingCity || null;
-  const billingState =
+  let billingState =
     data.billingState !== undefined
       ? trimOrNull(data.billingState)
       : existing.billingState || null;
-  const billingZip =
+  let billingZip =
     data.billingZip !== undefined
       ? trimOrNull(data.billingZip)
       : existing.billingZip || null;
-  const hasBilling =
+  let billingCountry =
+    data.billingCountry !== undefined
+      ? trimOrNull(data.billingCountry)
+      : existing.billingCountry || null;
+  let hasBilling =
     billingAttention ||
     billingAddress ||
     billingStreet2 ||
     billingCity ||
     billingState ||
     billingZip ||
-    (data.billingCountry !== undefined
-      ? trimOrNull(data.billingCountry)
-      : existing.billingCountry);
-  const billingCountry = hasBilling
-    ? data.billingCountry !== undefined
-      ? trimOrNull(data.billingCountry) || "Kenya"
-      : existing.billingCountry || "Kenya"
-    : null;
+    billingCountry;
+  if (!hasBilling) {
+    const fromBuilding = buildingToBillingAddress(building);
+    if (fromBuilding) {
+      billingAttention = fromBuilding.billingAttention;
+      billingAddress = fromBuilding.billingAddress;
+      billingStreet2 = fromBuilding.billingStreet2;
+      billingCity = fromBuilding.billingCity;
+      billingState = fromBuilding.billingState;
+      billingZip = fromBuilding.billingZip;
+      billingCountry = fromBuilding.billingCountry;
+      hasBilling = true;
+    }
+  }
+  billingCountry = hasBilling ? billingCountry || "Kenya" : null;
 
   const contactChanged =
     firstName !== existing.firstName ||

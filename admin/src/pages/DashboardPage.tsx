@@ -109,15 +109,28 @@ function buildRevenueChartData(
   chartYear: number
 ) {
   if (chartMonth === "all") {
-    return chart.map((d, index) => ({
-      ...d,
-      label: MONTH_LABELS[new Date(d.day).getMonth()] || MONTH_LABELS[index] || "",
-    }));
+    return chart.map((d, index) => {
+      const parts = String(d.day || "").split("-");
+      const monthIndex = Number(parts[1]) - 1;
+      return {
+        ...d,
+        label:
+          MONTH_LABELS[Number.isFinite(monthIndex) ? monthIndex : index] ||
+          MONTH_LABELS[index] ||
+          "",
+      };
+    });
   }
 
   const monthNum = parseInt(chartMonth, 10);
   const daysInMonth = new Date(chartYear, monthNum, 0).getDate();
-  const byDay = new Map(chart.map((d) => [new Date(d.day).getDate(), d]));
+  const byDay = new Map(
+    chart.map((d) => {
+      const parts = String(d.day || "").split("-");
+      const dayNum = Number(parts[2]) || new Date(d.day).getUTCDate();
+      return [dayNum, d];
+    })
+  );
 
   return Array.from({ length: daysInMonth }, (_, index) => {
     const dayNum = index + 1;
@@ -149,6 +162,7 @@ export function DashboardPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
+  const [chartError, setChartError] = useState("");
 
   useEffect(() => {
     if (!isMobile || mobileRevenueDefaultApplied.current) return;
@@ -209,23 +223,28 @@ export function DashboardPage() {
   useActivitySocket(onLiveActivity, !isMobile);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setChartLoading(true);
+    setChartError("");
 
     api
-      .getRevenueChart(chartMonth, chartYear)
+      .getRevenueChart(chartMonth, chartYear, { signal: controller.signal })
       .then((r) => {
-        if (!cancelled) setChartData(r.chart);
+        if (controller.signal.aborted) return;
+        setChartData(r.chart ?? []);
+        setChartError("");
       })
       .catch((e) => {
-        if (!cancelled) setError(e.message);
+        if (controller.signal.aborted) return;
+        setChartData([]);
+        setChartError(e instanceof Error ? e.message : "Failed to load chart");
       })
       .finally(() => {
-        if (!cancelled) setChartLoading(false);
+        if (!controller.signal.aborted) setChartLoading(false);
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [chartMonth, chartYear]);
 
@@ -605,6 +624,12 @@ export function DashboardPage() {
             <Box h="180px" minH="180px" mt={0.5}>
               {chartLoading ? (
                 <ChartSkeleton height="100%" />
+              ) : chartError ? (
+                <Flex h="100%" align="center" justify="center" px={3}>
+                  <Text fontSize="sm" color="fg.subtle" textAlign="center">
+                    Couldn’t load revenue chart
+                  </Text>
+                </Flex>
               ) : chartIsEmpty ? (
                 <Flex h="100%" align="center" justify="center">
                   <Text fontSize="sm" color="fg.subtle">
@@ -703,6 +728,12 @@ export function DashboardPage() {
             <Box h={trendChartHeight} minH={trendChartHeight} mt={1}>
               {chartLoading ? (
                 <ChartSkeleton height="100%" />
+              ) : chartError ? (
+                <Flex h="100%" align="center" justify="center" px={3}>
+                  <Text fontSize="sm" color="fg.subtle" textAlign="center">
+                    Couldn’t load revenue chart
+                  </Text>
+                </Flex>
               ) : chartIsEmpty ? (
                 <Flex h="100%" align="center" justify="center">
                   <Text fontSize="sm" color="fg.subtle">

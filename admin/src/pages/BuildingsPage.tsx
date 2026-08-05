@@ -96,10 +96,40 @@ export function BuildingsPage() {
   const [formDstvSetup, setFormDstvSetup] = useState<"headend_coax" | "decoder">("decoder");
   const [prefixInput, setPrefixInput] = useState("");
   const [ipPrefixes, setIpPrefixes] = useState<string[]>([]);
+  const [addressAttention, setAddressAttention] = useState("");
+  const [addressStreet, setAddressStreet] = useState("");
+  const [addressStreet2, setAddressStreet2] = useState("");
+  const [addressPoBox, setAddressPoBox] = useState("");
+  const [addressCity, setAddressCity] = useState("");
+  const [addressState, setAddressState] = useState("");
+  const [addressZip, setAddressZip] = useState("");
+  const [addressCountry, setAddressCountry] = useState("Kenya");
   const { sorts, toggleSort, sortQuery } = useTableSort<BuildingSortKey>({
     sortBy: "name",
     sortDir: "asc",
   });
+
+  function buildingAddressPayload() {
+    const hasAny =
+      addressAttention.trim() ||
+      addressStreet.trim() ||
+      addressStreet2.trim() ||
+      addressPoBox.trim() ||
+      addressCity.trim() ||
+      addressState.trim() ||
+      addressZip.trim() ||
+      addressCountry.trim();
+    return {
+      addressAttention: addressAttention.trim(),
+      addressStreet: addressStreet.trim(),
+      addressStreet2: addressStreet2.trim(),
+      addressPoBox: addressPoBox.trim(),
+      addressCity: addressCity.trim(),
+      addressState: addressState.trim(),
+      addressZip: addressZip.trim(),
+      addressCountry: hasAny ? addressCountry.trim() || "Kenya" : "",
+    };
+  }
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;
@@ -167,6 +197,14 @@ export function BuildingsPage() {
     setFormDstvSetup(building.dstvSetup || "decoder");
     setIpPrefixes(building.ipPrefixes || []);
     setPrefixInput("");
+    setAddressAttention(building.addressAttention || "");
+    setAddressStreet(building.addressStreet || "");
+    setAddressStreet2(building.addressStreet2 || "");
+    setAddressPoBox(building.addressPoBox || "");
+    setAddressCity(building.addressCity || "");
+    setAddressState(building.addressState || "");
+    setAddressZip(building.addressZip || "");
+    setAddressCountry(building.addressCountry || "Kenya");
   }
 
   function closeEdit() {
@@ -182,6 +220,14 @@ export function BuildingsPage() {
     setFormDstvSetup("decoder");
     setIpPrefixes([]);
     setPrefixInput("");
+    setAddressAttention("");
+    setAddressStreet("");
+    setAddressStreet2("");
+    setAddressPoBox("");
+    setAddressCity("");
+    setAddressState("");
+    setAddressZip("");
+    setAddressCountry("Kenya");
   }
 
   function addPrefix() {
@@ -214,6 +260,7 @@ export function BuildingsPage() {
         ipSetup: formIpSetup,
         dstvSetup: formDstvSetup,
         ipPrefixes: formIpSetup === "STATIC" ? ipPrefixes : [],
+        ...buildingAddressPayload(),
       });
       toaster.create({ title: "Building created", type: "success" });
       resetForm();
@@ -245,6 +292,7 @@ export function BuildingsPage() {
           : ipPrefixes.length > 0
             ? { ipPrefixes }
             : {}),
+        ...buildingAddressPayload(),
       });
       toaster.create({ title: "Building updated", type: "success" });
       closeEdit();
@@ -416,6 +464,14 @@ export function BuildingsPage() {
             formDstvSetup={formDstvSetup} setFormDstvSetup={setFormDstvSetup}
             prefixInput={prefixInput} setPrefixInput={setPrefixInput}
             ipPrefixes={ipPrefixes} addPrefix={addPrefix} removePrefix={removePrefix}
+            addressAttention={addressAttention} setAddressAttention={setAddressAttention}
+            addressStreet={addressStreet} setAddressStreet={setAddressStreet}
+            addressStreet2={addressStreet2} setAddressStreet2={setAddressStreet2}
+            addressPoBox={addressPoBox} setAddressPoBox={setAddressPoBox}
+            addressCity={addressCity} setAddressCity={setAddressCity}
+            addressState={addressState} setAddressState={setAddressState}
+            addressZip={addressZip} setAddressZip={setAddressZip}
+            addressCountry={addressCountry} setAddressCountry={setAddressCountry}
             onSubmit={handleCreate} submitting={submitting}
             requireIpPrefixes
             onCancel={() => { setShowForm(false); resetForm(); }}
@@ -555,11 +611,11 @@ export function BuildingsPage() {
       </DataTableCard>
       </ListPageTableSection>
 
-      <AppDialog open={!!editing} onOpenChange={(d) => !d.open && closeEdit()} maxW="2xl">
-        <Dialog.Header pr={12}>
+      <AppDialog open={!!editing} onOpenChange={(d) => !d.open && closeEdit()} maxW="3xl">
+        <Dialog.Header pr={12} flexShrink={0}>
           <Dialog.Title>Edit building</Dialog.Title>
         </Dialog.Header>
-        <Dialog.Body>
+        <Dialog.Body overflowY="auto" flex="1" minH={0} maxH="min(75vh, 720px)">
           <BuildingForm
             name={name} setName={setName}
             c2bCode={c2bCode} setC2bCode={setC2bCode}
@@ -568,6 +624,14 @@ export function BuildingsPage() {
             formDstvSetup={formDstvSetup} setFormDstvSetup={setFormDstvSetup}
             prefixInput={prefixInput} setPrefixInput={setPrefixInput}
             ipPrefixes={ipPrefixes} addPrefix={addPrefix} removePrefix={removePrefix}
+            addressAttention={addressAttention} setAddressAttention={setAddressAttention}
+            addressStreet={addressStreet} setAddressStreet={setAddressStreet}
+            addressStreet2={addressStreet2} setAddressStreet2={setAddressStreet2}
+            addressPoBox={addressPoBox} setAddressPoBox={setAddressPoBox}
+            addressCity={addressCity} setAddressCity={setAddressCity}
+            addressState={addressState} setAddressState={setAddressState}
+            addressZip={addressZip} setAddressZip={setAddressZip}
+            addressCountry={addressCountry} setAddressCountry={setAddressCountry}
             onSubmit={handleUpdate} submitting={editSubmitting}
             onCancel={closeEdit}
             submitLabel="Save changes"
@@ -582,7 +646,16 @@ export function BuildingsPage() {
 function BuildingForm({
   name, setName, c2bCode, setC2bCode, b2bCode, setB2bCode,
   formIpSetup, setFormIpSetup, formDstvSetup, setFormDstvSetup, setIpPrefixes, prefixInput, setPrefixInput,
-  ipPrefixes, addPrefix, removePrefix, onSubmit, submitting, onCancel,
+  ipPrefixes, addPrefix, removePrefix,
+  addressAttention, setAddressAttention,
+  addressStreet, setAddressStreet,
+  addressStreet2, setAddressStreet2,
+  addressPoBox, setAddressPoBox,
+  addressCity, setAddressCity,
+  addressState, setAddressState,
+  addressZip, setAddressZip,
+  addressCountry, setAddressCountry,
+  onSubmit, submitting, onCancel,
   submitLabel = "Save building", requireIpPrefixes = false,
 }: {
   name: string; setName: (v: string) => void;
@@ -594,6 +667,14 @@ function BuildingForm({
   setIpPrefixes: (v: string[]) => void;
   prefixInput: string; setPrefixInput: (v: string) => void;
   ipPrefixes: string[]; addPrefix: () => void; removePrefix: (i: number) => void;
+  addressAttention: string; setAddressAttention: (v: string) => void;
+  addressStreet: string; setAddressStreet: (v: string) => void;
+  addressStreet2: string; setAddressStreet2: (v: string) => void;
+  addressPoBox: string; setAddressPoBox: (v: string) => void;
+  addressCity: string; setAddressCity: (v: string) => void;
+  addressState: string; setAddressState: (v: string) => void;
+  addressZip: string; setAddressZip: (v: string) => void;
+  addressCountry: string; setAddressCountry: (v: string) => void;
   onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
   submitLabel?: string;
   requireIpPrefixes?: boolean;
@@ -670,9 +751,89 @@ function BuildingForm({
           </Box>
         )}
       </Grid>
-      <Text fontSize="xs" color="fg.muted" mt={3}>
-        Add one or more OLTs from the building expand panel after saving.
-      </Text>
+
+      <Box mt={6}>
+        <Heading size="sm" mb={3}>Address</Heading>
+        <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap={4}>
+          <Field.Root>
+            <Field.Label>Attention</Field.Label>
+            <Input
+              value={addressAttention}
+              onChange={(e) => setAddressAttention(e.target.value)}
+              placeholder="Billing contact / building manager"
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>PO Box</Field.Label>
+            <Input
+              value={addressPoBox}
+              onChange={(e) => setAddressPoBox(e.target.value)}
+              placeholder="e.g. 12345-00100"
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Box gridColumn={{ md: "span 2" }}>
+            <Field.Root>
+              <Field.Label>Street</Field.Label>
+              <Input
+                value={addressStreet}
+                onChange={(e) => setAddressStreet(e.target.value)}
+                placeholder="Street / building location"
+                autoComplete="off"
+              />
+            </Field.Root>
+          </Box>
+          <Box gridColumn={{ md: "span 2" }}>
+            <Field.Root>
+              <Field.Label>Street 2</Field.Label>
+              <Input
+                value={addressStreet2}
+                onChange={(e) => setAddressStreet2(e.target.value)}
+                placeholder="Floor, wing, landmark"
+                autoComplete="off"
+              />
+            </Field.Root>
+          </Box>
+          <Field.Root>
+            <Field.Label>City</Field.Label>
+            <Input
+              value={addressCity}
+              onChange={(e) => setAddressCity(e.target.value)}
+              placeholder="Nairobi"
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>State / County</Field.Label>
+            <Input
+              value={addressState}
+              onChange={(e) => setAddressState(e.target.value)}
+              placeholder="Nairobi"
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>ZIP / Postal code</Field.Label>
+            <Input
+              value={addressZip}
+              onChange={(e) => setAddressZip(e.target.value)}
+              placeholder="00100"
+              autoComplete="off"
+            />
+          </Field.Root>
+          <Field.Root>
+            <Field.Label>Country</Field.Label>
+            <Input
+              value={addressCountry}
+              onChange={(e) => setAddressCountry(e.target.value)}
+              placeholder="Kenya"
+              autoComplete="off"
+            />
+          </Field.Root>
+        </Grid>
+      </Box>
+
       <Flex gap={2} mt={4}>
         <Button type="submit" colorPalette="brand" loading={submitting}>{submitLabel}</Button>
         <Button variant="ghost" onClick={onCancel}>Cancel</Button>

@@ -549,11 +549,6 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       >
         <Box px={5} py={4} borderBottomWidth="1px" borderColor="border.muted">
           <Heading size="sm">Edit name</Heading>
-          {renameUser ? (
-            <Box fontSize="sm" color="fg.muted" mt={1}>
-              Update display name for {renameUser.email}
-            </Box>
-          ) : null}
         </Box>
         <Box px={5} py={4}>
           <Field.Root required>
@@ -604,7 +599,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           <Heading size="sm">Reset password</Heading>
           {resetUser ? (
             <Box fontSize="sm" color="fg.muted" mt={1}>
-              Set a new password for {resetUser.name} ({resetUser.email})
+              {resetUser.name} ({resetUser.email})
             </Box>
           ) : null}
         </Box>

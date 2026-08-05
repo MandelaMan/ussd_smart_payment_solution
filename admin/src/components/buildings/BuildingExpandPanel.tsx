@@ -191,6 +191,26 @@ export function BuildingExpandPanel({
           label="Added"
           value={building.createdAt ? formatDate(building.createdAt) : null}
         />
+        <DetailCard
+          label="Street"
+          value={building.addressStreet || null}
+        />
+        <DetailCard
+          label="PO Box"
+          value={building.addressPoBox || null}
+        />
+        <DetailCard
+          label="City"
+          value={
+            [building.addressCity, building.addressState, building.addressZip]
+              .filter(Boolean)
+              .join(", ") || null
+          }
+        />
+        <DetailCard
+          label="Country"
+          value={building.addressCountry || null}
+        />
       </DetailGrid>
 
       <Box mt={4}>

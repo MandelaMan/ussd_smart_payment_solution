@@ -438,7 +438,6 @@ export function LeadsPage() {
           <ListPageStickyChrome gap={{ base: 4, lg: 5 }}>
             <MobilePageChrome
         title="Leads"
-        description="Prospects who are not customers yet — WhatsApp, website, and embed"
         desktopActions={section === "all" ? leadStatsActions : undefined}
         searchValue={section === "all" ? searchInput : undefined}
         onSearchChange={section === "all" ? setSearchInput : undefined}

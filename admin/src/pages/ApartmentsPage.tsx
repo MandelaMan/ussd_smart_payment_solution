@@ -171,7 +171,6 @@ export function ApartmentsPage() {
           <ListPageStickyChrome>
             <MobilePageChrome
         title="Apartments"
-        description="Occupancy by building"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Unit, building, IP…"

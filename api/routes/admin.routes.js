@@ -133,6 +133,7 @@ const {
   listCustomerEmailConversation,
   sendCustomerEmail,
   updateCommunicationEmailSettings,
+  updateCustomerEmailSettings,
   updateCommunicationWhatsAppSettings,
 } = require("../controllers/communication.controller");
 
@@ -232,6 +233,11 @@ router.put(
   "/settings/communication/email",
   requireAdmin,
   updateCommunicationEmailSettings
+);
+router.put(
+  "/settings/customer-email",
+  requireAdmin,
+  updateCustomerEmailSettings
 );
 router.put(
   "/settings/communication/whatsapp",

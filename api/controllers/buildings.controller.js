@@ -21,8 +21,22 @@ async function listBuildings(req, res, next) {
 
 async function createBuilding(req, res, next) {
   try {
-    const { name, c2bCode, b2bCode, ipSetup, dstvSetup, ipPrefixes } =
-      req.body || {};
+    const {
+      name,
+      c2bCode,
+      b2bCode,
+      ipSetup,
+      dstvSetup,
+      ipPrefixes,
+      addressAttention,
+      addressStreet,
+      addressStreet2,
+      addressPoBox,
+      addressCity,
+      addressState,
+      addressZip,
+      addressCountry,
+    } = req.body || {};
     const id = await store.createBuilding({
       name,
       c2bCode,
@@ -30,6 +44,14 @@ async function createBuilding(req, res, next) {
       ipSetup,
       dstvSetup,
       ipPrefixes,
+      addressAttention,
+      addressStreet,
+      addressStreet2,
+      addressPoBox,
+      addressCity,
+      addressState,
+      addressZip,
+      addressCountry,
     });
     const building = await store.getBuildingMapped(id);
     emitAdminUpdate("buildings", { action: "created", buildingId: id });
@@ -66,8 +88,22 @@ async function createBuilding(req, res, next) {
 async function updateBuilding(req, res, next) {
   try {
     const id = Number(req.params.id);
-    const { name, c2bCode, b2bCode, ipSetup, dstvSetup, ipPrefixes } =
-      req.body || {};
+    const {
+      name,
+      c2bCode,
+      b2bCode,
+      ipSetup,
+      dstvSetup,
+      ipPrefixes,
+      addressAttention,
+      addressStreet,
+      addressStreet2,
+      addressPoBox,
+      addressCity,
+      addressState,
+      addressZip,
+      addressCountry,
+    } = req.body || {};
     await store.updateBuilding(id, {
       name,
       c2bCode,
@@ -75,6 +111,14 @@ async function updateBuilding(req, res, next) {
       ipSetup,
       dstvSetup,
       ipPrefixes,
+      addressAttention,
+      addressStreet,
+      addressStreet2,
+      addressPoBox,
+      addressCity,
+      addressState,
+      addressZip,
+      addressCountry,
     });
     const building = await store.getBuildingMapped(id);
     emitAdminUpdate("buildings", { action: "updated", buildingId: id });

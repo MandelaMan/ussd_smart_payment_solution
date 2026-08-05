@@ -279,6 +279,32 @@ async function updateCommunicationEmailSettings(req, res, next) {
   }
 }
 
+async function updateCustomerEmailSettings(req, res, next) {
+  try {
+    const saved = await appSettingsStore.saveCustomerEmailSettings(
+      {
+        welcomeEnabled: req.body?.welcomeEnabled,
+        welcomeSubject: req.body?.welcomeSubject,
+        welcomeBodyHtml: req.body?.welcomeBodyHtml,
+        welcomeCcEmails: req.body?.welcomeCcEmails,
+        invoiceCcEmails: req.body?.invoiceCcEmails,
+        templates: req.body?.templates,
+      },
+      req.user?.id || null
+    );
+    emitAdminUpdate("settings", { action: "customer_email_updated" });
+    res.json({
+      ok: true,
+      customerEmail: saved,
+    });
+  } catch (err) {
+    if (err.message?.includes("required") || err.message?.includes("valid")) {
+      return res.status(400).json({ error: err.message });
+    }
+    next(err);
+  }
+}
+
 async function updateCommunicationWhatsAppSettings(req, res, next) {
   try {
     const whatsappLeadBot = require("../services/whatsappLeadBot");
@@ -319,5 +345,6 @@ module.exports = {
   listCustomerEmailConversation,
   sendCustomerEmail,
   updateCommunicationEmailSettings,
+  updateCustomerEmailSettings,
   updateCommunicationWhatsAppSettings,
 };

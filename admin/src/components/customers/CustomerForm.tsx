@@ -31,6 +31,10 @@ import {
   getBuildingIpRules,
   validateIpForBuilding,
 } from "../../lib/buildingIpRules";
+import {
+  buildingToBillingAddress,
+  isBillingAddressEmpty,
+} from "../../lib/buildingBillingAddress";
 import { embeddedFieldInputStyles } from "../../theme";
 import { FormSection } from "./FormSection";
 import { AppDialog, NESTED_APP_DIALOG_Z_INDEX } from "../ui/AppDialog";
@@ -191,8 +195,22 @@ export function CustomerForm({
   const [ppoePassword, setPpoePassword] = useState("");
   const [ppoeUsernameTouched, setPpoeUsernameTouched] = useState(false);
   const [trialPeriod, setTrialPeriod] = useState(false);
+  /** Advance payment: false = No payment (default); true = already paid. */
   const [paymentAlreadyMade, setPaymentAlreadyMade] = useState(false);
+  /** Advance payment channel when customer already paid: mpesa | paystack | bank */
+  const [advancePaymentMethod, setAdvancePaymentMethod] = useState<
+    "" | "mpesa" | "paystack" | "bank"
+  >("");
   const [mpesaCode, setMpesaCode] = useState("");
+  const [paystackReference, setPaystackReference] = useState("");
+  const [bankReference, setBankReference] = useState("");
+  const [paymentStatusOpen, setPaymentStatusOpen] = useState(false);
+  const [paymentStatusDraft, setPaymentStatusDraft] = useState<{
+    method: "" | "mpesa" | "paystack" | "bank";
+    mpesaCode: string;
+    paystackReference: string;
+    bankReference: string;
+  } | null>(null);
   const [createInitialInvoice, setCreateInitialInvoice] = useState(false);
   const [createRecurringInvoice, setCreateRecurringInvoice] = useState(false);
   const [updateZohoRecurring, setUpdateZohoRecurring] = useState(false);
@@ -553,7 +571,138 @@ export function CustomerForm({
   const previewIpResult = validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
   const previewIp = previewIpResult.ok ? previewIpResult.ip : null;
 
-  const fieldsDisabled = submitting || confirmOpen || initializingEdit || lookupsLoading;
+  const fieldsDisabled =
+    submitting ||
+    confirmOpen ||
+    paymentStatusOpen ||
+    initializingEdit ||
+    lookupsLoading;
+
+  function clearAdvancePaymentFields() {
+    setAdvancePaymentMethod("");
+    setMpesaCode("");
+    setPaystackReference("");
+    setBankReference("");
+  }
+
+  function billingFieldsMatchBuilding(building: Building | undefined): boolean {
+    const mapped = buildingToBillingAddress(building);
+    if (!mapped) return false;
+    return (
+      billingAttention.trim() === mapped.billingAttention &&
+      billingAddress.trim() === mapped.billingAddress &&
+      billingStreet2.trim() === mapped.billingStreet2 &&
+      billingCity.trim() === mapped.billingCity &&
+      billingState.trim() === mapped.billingState &&
+      billingZip.trim() === mapped.billingZip &&
+      (billingCountry.trim() || "Kenya") === (mapped.billingCountry || "Kenya")
+    );
+  }
+
+  function applyBuildingBillingAddress(building: Building | undefined) {
+    const mapped = buildingToBillingAddress(building);
+    if (!mapped) return false;
+    setBillingAttention(mapped.billingAttention);
+    setBillingAddress(mapped.billingAddress);
+    setBillingStreet2(mapped.billingStreet2);
+    setBillingCity(mapped.billingCity);
+    setBillingState(mapped.billingState);
+    setBillingZip(mapped.billingZip);
+    setBillingCountry(mapped.billingCountry || "Kenya");
+    return true;
+  }
+
+  function onBuildingChange(nextBuildingId: string) {
+    const previousBuilding = buildings.find((b) => String(b.id) === buildingId);
+    const nextBuilding = buildings.find((b) => String(b.id) === nextBuildingId);
+    const shouldFill =
+      isBillingAddressEmpty({
+        billingAttention,
+        billingAddress,
+        billingStreet2,
+        billingCity,
+        billingState,
+        billingZip,
+        billingCountry,
+      }) || billingFieldsMatchBuilding(previousBuilding);
+
+    setBuildingId(nextBuildingId);
+    setPaymentFrequency("monthly");
+    setCategoryId("");
+    setPlanId("");
+    setProductId("");
+
+    if (shouldFill) {
+      applyBuildingBillingAddress(nextBuilding);
+    }
+  }
+
+  function paymentStatusSummaryLabel(): string {
+    if (!paymentAlreadyMade) return "No payment";
+    if (advancePaymentMethod === "mpesa") {
+      return `Paid · M-Pesa ${mpesaCode.trim().toUpperCase() || "—"}`;
+    }
+    if (advancePaymentMethod === "paystack") {
+      return `Paid · Paystack ${paystackReference.trim() || "—"}`;
+    }
+    if (advancePaymentMethod === "bank") {
+      return bankReference.trim()
+        ? `Paid · Bank transfer (${bankReference.trim()})`
+        : "Paid · Bank transfer";
+    }
+    return "Paid";
+  }
+
+  function openPaymentStatusModal() {
+    setPaymentStatusDraft({
+      method: advancePaymentMethod,
+      mpesaCode,
+      paystackReference,
+      bankReference,
+    });
+    setPaymentStatusOpen(true);
+  }
+
+  function closePaymentStatusModal(commit: boolean) {
+    if (commit && paymentStatusDraft) {
+      const { method, mpesaCode: code, paystackReference: paystack, bankReference: bank } =
+        paymentStatusDraft;
+      if (!method) {
+        toaster.create({
+          title: "Payment method required",
+          description: "Select M-Pesa, Paystack, or Direct Bank.",
+          type: "error",
+        });
+        return;
+      }
+      if (method === "mpesa" && !/^[A-Z0-9]{8,15}$/i.test(code.trim())) {
+        toaster.create({
+          title: "M-Pesa receipt code required",
+          description: "Enter the M-Pesa confirmation code (8–15 letters/numbers).",
+          type: "error",
+        });
+        return;
+      }
+      if (method === "paystack" && !paystack.trim()) {
+        toaster.create({
+          title: "Paystack reference required",
+          type: "error",
+        });
+        return;
+      }
+      setPaymentAlreadyMade(true);
+      setAdvancePaymentMethod(method);
+      setMpesaCode(method === "mpesa" ? code.trim().toUpperCase() : "");
+      setPaystackReference(method === "paystack" ? paystack.trim() : "");
+      setBankReference(method === "bank" ? bank.trim() : "");
+      setTrialPeriod(false);
+    } else if (!paymentAlreadyMade) {
+      // Cancelled before completing — stay on No payment
+      clearAdvancePaymentFields();
+    }
+    setPaymentStatusOpen(false);
+    setPaymentStatusDraft(null);
+  }
 
   const summaryItems = useMemo((): FormSummaryItem[] => {
     const agency = agencies.find((a) => String(a.id) === agencyId);
@@ -624,9 +773,7 @@ export function CustomerForm({
     if (!isEdit && customerType === "C2B" && !trialPeriod) {
       items.push({
         label: "Advance payment",
-        value: paymentAlreadyMade
-          ? `Paid · M-Pesa ${mpesaCode.trim().toUpperCase() || "—"}`
-          : "No — create invoice and send",
+        value: paymentStatusSummaryLabel(),
       });
     }
     items.push({
@@ -736,7 +883,10 @@ export function CustomerForm({
     selectedPackage,
     trialPeriod,
     paymentAlreadyMade,
+    advancePaymentMethod,
     mpesaCode,
+    paystackReference,
+    bankReference,
     isActive,
     onTisp,
     onZoho,
@@ -830,18 +980,41 @@ export function CustomerForm({
       });
       return false;
     }
-    if (
-      !isEdit &&
-      customerType === "C2B" &&
-      paymentAlreadyMade &&
-      !/^[A-Z0-9]{8,15}$/i.test(mpesaCode.trim())
-    ) {
-      toaster.create({
-        title: "M-Pesa receipt code required",
-        description: "Enter the M-Pesa confirmation code (8–15 letters/numbers).",
-        type: "error",
-      });
-      return false;
+    if (!isEdit && customerType === "C2B" && !trialPeriod) {
+      if (paymentAlreadyMade) {
+        if (!advancePaymentMethod) {
+          toaster.create({
+            title: "Payment method required",
+            description: "Select how the customer paid (M-Pesa, Paystack, or Direct Bank).",
+            type: "error",
+          });
+          openPaymentStatusModal();
+          return false;
+        }
+        if (
+          advancePaymentMethod === "mpesa" &&
+          !/^[A-Z0-9]{8,15}$/i.test(mpesaCode.trim())
+        ) {
+          toaster.create({
+            title: "M-Pesa receipt code required",
+            description: "Enter the M-Pesa confirmation code (8–15 letters/numbers).",
+            type: "error",
+          });
+          openPaymentStatusModal();
+          return false;
+        }
+        if (
+          advancePaymentMethod === "paystack" &&
+          !paystackReference.trim()
+        ) {
+          toaster.create({
+            title: "Paystack reference required",
+            type: "error",
+          });
+          openPaymentStatusModal();
+          return false;
+        }
+      }
     }
     if (!isEdit && trialPeriod && paymentAlreadyMade) {
       toaster.create({
@@ -1029,10 +1202,30 @@ export function CustomerForm({
           : {}),
         trialPeriod: trialPeriod || undefined,
         paymentAlreadyMade:
-          customerType === "C2B" && paymentAlreadyMade ? true : undefined,
+          customerType === "C2B" && paymentAlreadyMade === true ? true : undefined,
+        paymentMethod:
+          customerType === "C2B" &&
+          paymentAlreadyMade === true &&
+          advancePaymentMethod
+            ? advancePaymentMethod
+            : undefined,
         mpesaCode:
-          customerType === "C2B" && paymentAlreadyMade
+          customerType === "C2B" &&
+          paymentAlreadyMade === true &&
+          advancePaymentMethod === "mpesa"
             ? mpesaCode.trim().toUpperCase()
+            : undefined,
+        paystackReference:
+          customerType === "C2B" &&
+          paymentAlreadyMade === true &&
+          advancePaymentMethod === "paystack"
+            ? paystackReference.trim()
+            : undefined,
+        bankReference:
+          customerType === "C2B" &&
+          paymentAlreadyMade === true &&
+          advancePaymentMethod === "bank"
+            ? bankReference.trim() || undefined
             : undefined,
       });
 
@@ -1058,13 +1251,21 @@ export function CustomerForm({
           duration: 12000,
         });
       } else if (res.zoho?.invoice?.paid) {
+        const refLabel =
+          res.zoho.invoice.mpesaCode ||
+          res.zoho.invoice.paymentReference ||
+          (advancePaymentMethod === "mpesa"
+            ? mpesaCode.trim().toUpperCase()
+            : advancePaymentMethod === "paystack"
+              ? paystackReference.trim()
+              : bankReference.trim() || "bank transfer");
         toaster.create({
           title: "Customer created",
           description: `${res.customer.customerNumber} — ${
             res.zoho.invoice.paymentAttached
               ? "Zoho payment attached"
               : "signup invoice marked paid"
-          } (ref ${res.zoho.invoice.mpesaCode || mpesaCode.trim().toUpperCase()})${
+          } (ref ${refLabel})${
             res.zoho.invoice.receiptEmailed || res.zoho.invoice.emailed
               ? " · receipt emailed"
               : ""
@@ -1079,7 +1280,7 @@ export function CustomerForm({
       } else if (res.zoho?.invoice?.paymentError) {
         toaster.create({
           title: `Customer ${res.customer.customerNumber} created`,
-          description: `Signup invoice created but M-Pesa payment failed: ${res.zoho.invoice.paymentError}. Mark the invoice paid from Billing if needed.`,
+          description: `Signup invoice created but payment reconciliation failed: ${res.zoho.invoice.paymentError}. Mark the invoice paid from Billing if needed.`,
           type: "warning",
           duration: 14000,
         });
@@ -1159,13 +1360,7 @@ export function CustomerForm({
                 value={buildingId}
                 disabled={fieldsDisabled}
                 isLoading={lookupsLoading}
-                onChange={(nextBuildingId) => {
-                  setBuildingId(nextBuildingId);
-                  setPaymentFrequency("monthly");
-                  setCategoryId("");
-                  setPlanId("");
-                  setProductId("");
-                }}
+                onChange={onBuildingChange}
                 options={buildingOptions}
                 placeholder="Select building"
                 searchPlaceholder="Search buildings…"
@@ -1370,12 +1565,19 @@ export function CustomerForm({
           )}
           <Field.Root
             gridColumn={
-              !isEdit && customerType === "C2B" ? undefined : { md: "span 2" }
+              !isEdit && customerType === "C2B" && !trialPeriod
+                ? undefined
+                : { md: "span 2" }
             }
           >
             <Field.Label>Trial period</Field.Label>
             <SelectField
-              disabled={fieldsDisabled || !isActive || isEdit || paymentAlreadyMade}
+              disabled={
+                fieldsDisabled ||
+                !isActive ||
+                isEdit ||
+                paymentAlreadyMade
+              }
               fieldProps={{
                 value: trialPeriod ? "yes" : "no",
                 onChange: (e) => {
@@ -1383,7 +1585,7 @@ export function CustomerForm({
                   setTrialPeriod(on);
                   if (on) {
                     setPaymentAlreadyMade(false);
-                    setMpesaCode("");
+                    clearAdvancePaymentFields();
                   }
                 },
               }}
@@ -1392,51 +1594,43 @@ export function CustomerForm({
               <option value="yes">Yes — 30-day free trial, bill after trial</option>
             </SelectField>
           </Field.Root>
-          {!isEdit && customerType === "C2B" ? (
-            <>
-              <Field.Root>
-                <Field.Label>Has the customer already paid?</Field.Label>
-                <SelectField
-                  disabled={fieldsDisabled || !isActive || trialPeriod}
-                  fieldProps={{
-                    value: paymentAlreadyMade ? "yes" : "no",
-                    onChange: (e) => {
-                      const paid = e.target.value === "yes";
-                      setPaymentAlreadyMade(paid);
-                      if (!paid) setMpesaCode("");
-                      if (paid) setTrialPeriod(false);
-                    },
-                  }}
-                >
-                  <option value="no">
-                    No — create invoice and send it to the customer
-                  </option>
-                  <option value="yes">Yes — paid via M-Pesa (enter receipt)</option>
-                </SelectField>
-                <Field.HelperText>
-                  {trialPeriod
-                    ? "Advance payment is unavailable during a free trial."
-                    : paymentAlreadyMade
-                      ? "Enter the Zoho Received Payments REFERENCE# (M-Pesa code). We will find that payment, attach it to this customer’s signup invoice, and email the receipt."
-                      : "We will create the Zoho signup invoice and email it to the customer."}
-                </Field.HelperText>
-              </Field.Root>
-              {paymentAlreadyMade && !trialPeriod ? (
-                <Field.Root required gridColumn={{ md: "span 2" }}>
-                  <Field.Label>Payment REFERENCE# (M-Pesa code)</Field.Label>
-                  <Input
-                    value={mpesaCode}
-                    onChange={(e) =>
-                      setMpesaCode(e.target.value.toUpperCase().replace(/\s+/g, ""))
+          {!isEdit && customerType === "C2B" && !trialPeriod ? (
+            <Field.Root>
+              <Field.Label>Has the customer already paid?</Field.Label>
+              <SelectField
+                disabled={fieldsDisabled || !isActive}
+                fieldProps={{
+                  value: paymentAlreadyMade ? "yes" : "no",
+                  onChange: (e) => {
+                    if (e.target.value === "yes") {
+                      openPaymentStatusModal();
+                    } else {
+                      setPaymentAlreadyMade(false);
+                      clearAdvancePaymentFields();
                     }
-                    placeholder="e.g. UH39A1LI2Y"
-                    fontFamily="mono"
-                    autoComplete="off"
-                    disabled={fieldsDisabled}
-                  />
-                </Field.Root>
+                  },
+                }}
+              >
+                <option value="no">No payment</option>
+                <option value="yes">Yes — already paid</option>
+              </SelectField>
+              {paymentAlreadyMade ? (
+                <Flex mt={2} align="center" gap={2} flexWrap="wrap">
+                  <Text fontSize="sm" color="fg.muted" fontFamily="mono">
+                    {paymentStatusSummaryLabel()}
+                  </Text>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    colorPalette="brand"
+                    disabled={fieldsDisabled || !isActive}
+                    onClick={() => openPaymentStatusModal()}
+                  >
+                    Edit details
+                  </Button>
+                </Flex>
               ) : null}
-            </>
+            </Field.Root>
           ) : null}
             </>
           )}
@@ -1780,7 +1974,7 @@ export function CustomerForm({
             <Input
               value={billingStreet2}
               onChange={(e) => setBillingStreet2(e.target.value)}
-              placeholder="Apartment, suite, etc."
+              placeholder="Apartment, suite, PO Box"
               disabled={fieldsDisabled}
               autoComplete="off"
             />
@@ -1824,9 +2018,6 @@ export function CustomerForm({
               disabled={fieldsDisabled}
               autoComplete="off"
             />
-            <Field.HelperText>
-              Pushed to Zoho Books as the contact billing address.
-            </Field.HelperText>
           </Field.Root>
         </FormSection>
 
@@ -1842,7 +2033,7 @@ export function CustomerForm({
                   setCustomerType(next);
                   if (next === "B2B") {
                     setPaymentAlreadyMade(false);
-                    setMpesaCode("");
+                    clearAdvancePaymentFields();
                   }
                 },
               }}
@@ -1960,9 +2151,6 @@ export function CustomerForm({
                       />
                     </Flex>
                   </Flex>
-                  {previewIp ? (
-                    <Field.HelperText>Assigned IP: {previewIp}</Field.HelperText>
-                  ) : null}
                 </Field.Root>
               </Box>
             ) : null}
@@ -1981,9 +2169,6 @@ export function CustomerForm({
                   disabled={fieldsDisabled}
                   bg={!isActive ? "gray.50" : undefined}
                 />
-                <Field.HelperText>
-                  Defaults to the customer number.
-                </Field.HelperText>
               </Field.Root>
             ) : null}
             {isPpoe ? (
@@ -2061,8 +2246,12 @@ export function CustomerForm({
               ? undefined
               : trialPeriod
                 ? "Creates with a 30-day trial — no signup invoice."
-                : paymentAlreadyMade
-                  ? "Creates the customer, finds the Zoho payment by REFERENCE#, attaches it to the signup invoice, and emails the receipt."
+                : paymentAlreadyMade === true
+                  ? advancePaymentMethod === "paystack"
+                    ? "Creates the customer, finds the Paystack payment in Zoho Books, attaches it to the signup invoice, and marks it paid."
+                    : advancePaymentMethod === "bank"
+                      ? "Creates the customer, issues a signup invoice if needed, and marks it paid as a bank transfer."
+                      : "Creates the customer, finds the Zoho payment by REFERENCE#, attaches it to the signup invoice, and emails the receipt."
                   : customerType === "C2B"
                     ? "Creates the customer, issues a signup invoice in Zoho Books, and emails it to the customer."
                     : undefined
@@ -2090,10 +2279,136 @@ export function CustomerForm({
     </AppDialog>
   );
 
+  const paymentStatusDialog = (
+    <AppDialog
+      open={paymentStatusOpen}
+      onOpenChange={(details) => {
+        if (!details.open) closePaymentStatusModal(false);
+      }}
+      maxW="sm"
+      zIndex={embedded ? NESTED_APP_DIALOG_Z_INDEX : undefined}
+      showCloseButton
+    >
+      <Dialog.Header borderBottomWidth="1px" borderColor="border.muted" px={5} py={3.5} pr={12}>
+        <Dialog.Title fontSize="lg">Select Advanced payment method</Dialog.Title>
+      </Dialog.Header>
+      <Dialog.Body px={5} py={4} flex="none">
+        <Stack gap={3}>
+          <Field.Root required>
+            <Field.Label>Payment method</Field.Label>
+            <SelectField
+              fieldProps={{
+                value: paymentStatusDraft?.method || "",
+                onChange: (e) => {
+                  const method = e.target.value as
+                    | ""
+                    | "mpesa"
+                    | "paystack"
+                    | "bank";
+                  setPaymentStatusDraft((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          method,
+                          mpesaCode: method === "mpesa" ? prev.mpesaCode : "",
+                          paystackReference:
+                            method === "paystack" ? prev.paystackReference : "",
+                          bankReference:
+                            method === "bank" ? prev.bankReference : "",
+                        }
+                      : prev
+                  );
+                },
+              }}
+            >
+              <option value="">Select payment method…</option>
+              <option value="mpesa">M-Pesa</option>
+              <option value="paystack">Paystack</option>
+              <option value="bank">Direct Bank</option>
+            </SelectField>
+          </Field.Root>
+
+          {paymentStatusDraft?.method === "mpesa" ? (
+            <Field.Root required>
+              <Field.Label>Payment REFERENCE# (M-Pesa code)</Field.Label>
+              <Input
+                value={paymentStatusDraft.mpesaCode}
+                onChange={(e) =>
+                  setPaymentStatusDraft((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          mpesaCode: e.target.value
+                            .toUpperCase()
+                            .replace(/\s+/g, ""),
+                        }
+                      : prev
+                  )
+                }
+                placeholder="e.g. UH39A1LI2Y"
+                fontFamily="mono"
+                autoComplete="off"
+              />
+            </Field.Root>
+          ) : null}
+
+          {paymentStatusDraft?.method === "paystack" ? (
+            <Field.Root required>
+              <Field.Label>Paystack / Zoho payment REFERENCE#</Field.Label>
+              <Input
+                value={paymentStatusDraft.paystackReference}
+                onChange={(e) =>
+                  setPaymentStatusDraft((prev) =>
+                    prev
+                      ? { ...prev, paystackReference: e.target.value }
+                      : prev
+                  )
+                }
+                placeholder="Paystack transaction or Zoho reference"
+                fontFamily="mono"
+                autoComplete="off"
+              />
+            </Field.Root>
+          ) : null}
+
+          {paymentStatusDraft?.method === "bank" ? (
+            <Field.Root>
+              <Field.Label>Bank transfer reference (optional)</Field.Label>
+              <Input
+                value={paymentStatusDraft.bankReference}
+                onChange={(e) =>
+                  setPaymentStatusDraft((prev) =>
+                    prev
+                      ? { ...prev, bankReference: e.target.value }
+                      : prev
+                  )
+                }
+                placeholder="Bank slip / transfer reference"
+                autoComplete="off"
+              />
+            </Field.Root>
+          ) : null}
+        </Stack>
+      </Dialog.Body>
+      <Dialog.Footer px={5} py={3} borderTopWidth="1px" borderColor="border.muted" gap={2}>
+        <Button variant="ghost" onClick={() => closePaymentStatusModal(false)}>
+          Cancel
+        </Button>
+        <Button
+          colorPalette="brand"
+          onClick={() => closePaymentStatusModal(true)}
+        >
+          Save
+        </Button>
+      </Dialog.Footer>
+    </AppDialog>
+  );
+
   if (embedded) {
     return (
       <>
         {formBody}
+        {paymentStatusDialog}
         {confirmDialog}
       </>
     );
@@ -2149,6 +2464,7 @@ export function CustomerForm({
 
       {formBody}
     </Stack>
+    {paymentStatusDialog}
     {confirmDialog}
     </>
   );

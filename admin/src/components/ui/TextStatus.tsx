@@ -32,10 +32,10 @@ export function TextStatus({
   status,
   variant = "default",
 }: {
-  status: string;
+  status: string | null | undefined;
   variant?: "default" | "caption";
 }) {
-  const label = status.trim() || "—";
+  const label = String(status || "").trim() || "—";
   const isCaption = variant === "caption";
   const multiWord = label.includes(" ");
   return (

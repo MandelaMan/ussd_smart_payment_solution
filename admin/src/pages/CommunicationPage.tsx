@@ -1,5 +1,5 @@
 import { useSearchParams } from "react-router-dom";
-import { Box, Text } from "@chakra-ui/react";
+import { Box } from "@chakra-ui/react";
 import { TabStrip } from "../components/ui/TabStrip";
 import { ListPageStack } from "../components/ui/pageLayout";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
@@ -38,10 +38,7 @@ export function CommunicationPage() {
 
   const chrome = (
     <ListPageStickyChrome gap={{ base: 3, lg: 5 }}>
-      <MobilePageChrome
-        title="Communication"
-        description="Message existing customers by WhatsApp or email"
-      />
+      <MobilePageChrome title="Communication" />
       <TabStrip
         tabs={[...SECTIONS]}
         active={section}
@@ -70,15 +67,6 @@ export function CommunicationPage() {
             <CustomerWhatsAppChannel />
           )}
         </Box>
-        <Text
-          fontSize="xs"
-          color="fg.muted"
-          mt={2}
-          flexShrink={0}
-          display={{ base: "none", md: "block" }}
-        >
-          For people who are not customers yet, use Leads → WhatsApp (prospects).
-        </Text>
       </Box>
     </ListPageStack>
   );

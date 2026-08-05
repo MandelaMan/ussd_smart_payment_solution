@@ -14,7 +14,6 @@ export function BillingCommunicationsPage() {
   return (
     <BillingModuleShell
       title={BILLING_COMMUNICATIONS_MODULE.label}
-      description={BILLING_COMMUNICATIONS_MODULE.description}
       summary={summary}
       syncing={syncing}
       onSync={runSync}

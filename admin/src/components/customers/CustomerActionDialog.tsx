@@ -181,11 +181,6 @@ function MoveApartmentForm({
     onSwitchIpChange(result.ok ? result.ip : "");
   }, [needsIp, building, ipPrefix, ipLastOctet, onSwitchIpChange]);
 
-  const previewIp =
-    needsIp && ipLastOctet
-      ? validateIpForBuilding(building, ipPrefix, ipLastOctet)
-      : null;
-
   const apartmentOk =
     Boolean(newApartment.trim()) &&
     occupancy?.available === true &&
@@ -303,9 +298,6 @@ function MoveApartmentForm({
               />
             </Flex>
           </Flex>
-          {previewIp?.ok ? (
-            <Field.HelperText>Assigned IP: {previewIp.ip}</Field.HelperText>
-          ) : null}
         </Field.Root>
       ) : null}
 

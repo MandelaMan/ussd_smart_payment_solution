@@ -24,6 +24,7 @@ import {
 } from "react-icons/fi";
 import {
   api,
+  ApiError,
   formatCurrency,
   formatDateOnly,
   type Building,
@@ -233,6 +234,7 @@ export function CustomersListPage() {
   const loadCustomersRef = useRef<
     (opts?: boolean | { refresh?: boolean; silent?: boolean }) => Promise<void>
   >(async () => {});
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   useVisibilityRefresh(() => {
     void loadCustomersRef.current({ silent: true });
@@ -310,14 +312,18 @@ export function CustomersListPage() {
       }
 
       const requestId = ++loadRequestRef.current;
+      const controller = new AbortController();
+      loadAbortRef.current?.abort();
+      loadAbortRef.current = controller;
+
       const append = isMobile && page > 1 && !refresh;
       if (append) setLoadingMore(true);
       else setLoading(true);
       setError("");
       try {
         const { params, query } = buildParams();
-        const res = await api.listCustomers(params);
-        if (requestId !== loadRequestRef.current) return;
+        const res = await api.listCustomers(params, { signal: controller.signal });
+        if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
         setCustomers((prev) =>
           mergeInfinitePage(prev, res.data, page, isMobile && !refresh, (c) => c.id)
         );
@@ -356,8 +362,15 @@ export function CustomersListPage() {
           setLiveSyncing(false);
         }
       } catch (e) {
-        if (requestId !== loadRequestRef.current) return;
+        if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
         const message = e instanceof Error ? e.message : "Failed to load customers";
+        // Aborted/cancelled loads should not blank the page or toast.
+        if (
+          e instanceof ApiError &&
+          (e.status === 499 || /cancelled/i.test(e.message))
+        ) {
+          return;
+        }
         setError(message);
         toaster.create({ title: message, type: "error" });
       } finally {
@@ -589,7 +602,10 @@ export function CustomersListPage() {
   }
 
   useEffect(() => {
-    loadCustomers();
+    void loadCustomers();
+    return () => {
+      loadAbortRef.current?.abort();
+    };
   }, [loadCustomers]);
 
   function toggleRow(id: number) {

@@ -2399,13 +2399,19 @@ async function createCustomer(req, res, next) {
     }
 
     const paymentAlreadyMade = body.paymentAlreadyMade === true;
+    const paymentMethod = String(body.paymentMethod || "")
+      .trim()
+      .toLowerCase();
     const mpesaCode = String(body.mpesaCode || body.mpesaReceipt || "")
       .trim()
       .toUpperCase();
+    const paystackReference = String(body.paystackReference || "").trim();
+    const bankReference = String(body.bankReference || "").trim();
+
     if (paymentAlreadyMade) {
       if (String(body.customerType).toUpperCase() !== "C2B") {
         return res.status(400).json({
-          error: "Advance M-Pesa payment applies to C2B customers only",
+          error: "Advance payment applies to C2B customers only",
         });
       }
       if (body.trialPeriod === true) {
@@ -2413,9 +2419,19 @@ async function createCustomer(req, res, next) {
           error: "Trial period cannot be combined with advance payment",
         });
       }
-      if (!/^[A-Z0-9]{8,15}$/.test(mpesaCode)) {
+      if (!["mpesa", "paystack", "bank"].includes(paymentMethod)) {
+        return res.status(400).json({
+          error: "Select a payment method: mpesa, paystack, or bank",
+        });
+      }
+      if (paymentMethod === "mpesa" && !/^[A-Z0-9]{8,15}$/.test(mpesaCode)) {
         return res.status(400).json({
           error: "Enter a valid M-Pesa receipt code (8–15 letters/numbers)",
+        });
+      }
+      if (paymentMethod === "paystack" && !paystackReference) {
+        return res.status(400).json({
+          error: "Enter the Paystack / Zoho payment REFERENCE#",
         });
       }
     }
@@ -2460,7 +2476,17 @@ async function createCustomer(req, res, next) {
         forceEmail: wantsSignupInvoice && !paymentAlreadyMade,
         skipEmail: paymentAlreadyMade,
         paymentAlreadyMade,
-        mpesaCode: paymentAlreadyMade ? mpesaCode : undefined,
+        paymentMethod: paymentAlreadyMade ? paymentMethod : undefined,
+        mpesaCode:
+          paymentAlreadyMade && paymentMethod === "mpesa" ? mpesaCode : undefined,
+        paystackReference:
+          paymentAlreadyMade && paymentMethod === "paystack"
+            ? paystackReference
+            : undefined,
+        bankReference:
+          paymentAlreadyMade && paymentMethod === "bank"
+            ? bankReference || undefined
+            : undefined,
         serviceDueDate,
       });
 
@@ -2498,6 +2524,21 @@ async function createCustomer(req, res, next) {
       }
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho billing setup failed" };
+    }
+
+    let welcomeEmail = { ok: false, skipped: true };
+    try {
+      const { sendCustomerWelcomeEmail } = require("../services/customerWelcomeEmail");
+      const welcomeCustomer = await store.getCustomerById(created.customerId);
+      welcomeEmail = await sendCustomerWelcomeEmail(welcomeCustomer, {
+        createdBy: req.user?.id || null,
+      });
+    } catch (e) {
+      welcomeEmail = {
+        ok: false,
+        error: e.message || "Welcome email failed",
+      };
+      console.warn("welcome email on signup failed:", e.message);
     }
 
     try {
@@ -2545,6 +2586,7 @@ async function createCustomer(req, res, next) {
             trial: zoho.trial || null,
           }
         : { ok: false, error: zoho.error },
+      welcomeEmail,
     });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -3194,6 +3236,23 @@ async function upgradePackage(req, res, next) {
       console.error("activity log (upgrade) failed:", logErr.message);
     }
 
+    try {
+      const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+      await sendCustomerLifecycleEmail("upgrade", customer, {
+        createdBy: req.user?.id || null,
+        extraVars: {
+          previousProductName: current.product_name || "",
+          previousMbps: current.product_mbps,
+          productName: newProduct.name || customer?.productName,
+          productMbps: newProduct.mbps,
+          packagePrice: customer?.packagePrice,
+          paymentFrequency: customer?.paymentFrequency,
+        },
+      });
+    } catch (e) {
+      console.warn("upgrade email failed:", e.message);
+    }
+
     return res.json({
       ok: true,
       pending: false,
@@ -3319,6 +3378,23 @@ async function downgradePackage(req, res, next) {
       } catch (logErr) {
         console.error("activity log (downgrade credit note) failed:", logErr.message);
       }
+    }
+
+    try {
+      const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+      await sendCustomerLifecycleEmail("downgrade", customer, {
+        createdBy: req.user?.id || null,
+        extraVars: {
+          previousProductName: current.product_name || "",
+          previousMbps: current.product_mbps,
+          productName: newProduct.name || customer?.productName,
+          productMbps: newProduct.mbps,
+          packagePrice: customer?.packagePrice,
+          paymentFrequency: customer?.paymentFrequency,
+        },
+      });
+    } catch (e) {
+      console.warn("downgrade email failed:", e.message);
     }
 
     return res.json({
@@ -3547,6 +3623,19 @@ async function switchApartment(req, res, next) {
       });
     } catch (logErr) {
       console.error("activity log (switch apartment) failed:", logErr.message);
+    }
+
+    try {
+      const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+      await sendCustomerLifecycleEmail("apartment_move", customer, {
+        createdBy: req.user?.id || null,
+        extraVars: {
+          previousApartment: result.oldApartment,
+          previousCustomerNumber: result.previousCustomerNumber,
+        },
+      });
+    } catch (e) {
+      console.warn("apartment move email failed:", e.message);
     }
 
     return res.json({
@@ -3905,6 +3994,19 @@ async function cancelSubscription(req, res, next) {
     const cancellationDate = new Date();
     const customer = await store.getCustomerById(customerId);
 
+    try {
+      const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+      await sendCustomerLifecycleEmail("cancellation", customer, {
+        createdBy: req.user?.id || null,
+        extraVars: {
+          cancellationReason:
+            customer?.cancellationReason || reason || notes || "",
+        },
+      });
+    } catch (e) {
+      console.warn("cancellation email failed:", e.message);
+    }
+
     // TISP + Zoho after response — local cancel is already committed.
     setImmediate(() => {
       syncCancellationIntegrations(customerId, cancellationDate)
@@ -4062,6 +4164,15 @@ async function disconnectCustomer(req, res, next) {
       customerRef: customer?.customerNumber,
     });
 
+    try {
+      const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+      await sendCustomerLifecycleEmail("disconnect", customer, {
+        createdBy: req.user?.id || null,
+      });
+    } catch (e) {
+      console.warn("disconnect email failed:", e.message);
+    }
+
     return res.json({
       ok: true,
       customer,
@@ -4183,6 +4294,20 @@ async function pauseCustomer(req, res, next) {
         tisp.ok && (olt.ok || olt.skipped) && zoho.ok ? "success" : "failed",
       customerRef: customer?.customerNumber,
     });
+
+    try {
+      const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+      await sendCustomerLifecycleEmail("pause", customer, {
+        createdBy: req.user?.id || null,
+        extraVars: {
+          pauseStartDate: pauseStart,
+          pauseEndDate: pauseEnd,
+          pauseReason,
+        },
+      });
+    } catch (e) {
+      console.warn("pause email failed:", e.message);
+    }
 
     return res.json({
       ok: true,

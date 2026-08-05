@@ -15,7 +15,6 @@ export function BillingUnallocatedMpesaPage() {
   return (
     <BillingModuleShell
       title={MODULE.label}
-      description={MODULE.description}
       summary={summary}
       syncing={syncing}
       onSync={runSync}

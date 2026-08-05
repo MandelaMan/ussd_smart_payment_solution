@@ -699,11 +699,6 @@ export function ReportsPage() {
     <Stack gap={PAGE_STACK_GAP}>
       <PageHeader
         title="Reports"
-        description={
-          partnerView
-            ? "Downloadable partner reports — export the underlying data"
-            : "Single source of truth for downloadable business reports"
-        }
         actions={
           showAnalyticsLink ? (
             <Button asChild size="sm" variant="outline">

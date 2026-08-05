@@ -22,6 +22,13 @@ export const buildingExportColumns: ExportColumn<Building>[] = [
   { header: "B2B Code", value: (row) => row.b2bCode },
   { header: "IP Setup", value: (row) => row.ipSetup },
   { header: "DSTV Setup", value: (row) => row.dstvSetup },
+  { header: "Street", value: (row) => row.addressStreet },
+  { header: "Street 2", value: (row) => row.addressStreet2 },
+  { header: "PO Box", value: (row) => row.addressPoBox },
+  { header: "City", value: (row) => row.addressCity },
+  { header: "State", value: (row) => row.addressState },
+  { header: "ZIP", value: (row) => row.addressZip },
+  { header: "Country", value: (row) => row.addressCountry },
   { header: "IP Prefixes", value: (row) => (row.ipPrefixes || []).join("; ") },
   { header: "Created", value: (row) => (row.createdAt ? formatDate(row.createdAt) : "") },
 ];

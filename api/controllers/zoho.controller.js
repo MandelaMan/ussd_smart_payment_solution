@@ -1494,6 +1494,7 @@ const markInvoiceAsPaid_JS = async ({
   amount_applied,
   reference_number,
   description,
+  payment_mode,
 }) => {
   try {
     const paymentAmount = Number(amount);
@@ -1507,7 +1508,7 @@ const markInvoiceAsPaid_JS = async ({
 
     const paymentData = {
       customer_id,
-      payment_mode: ZOHO_PAYMENT_MODE,
+      payment_mode: String(payment_mode || ZOHO_PAYMENT_MODE).trim() || ZOHO_PAYMENT_MODE,
       amount: paymentAmount,
       date: moment().format("YYYY-MM-DD"),
       invoices: [{ invoice_id, amount_applied: applied }],

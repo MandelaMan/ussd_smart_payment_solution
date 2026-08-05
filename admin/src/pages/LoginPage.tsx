@@ -868,11 +868,8 @@ export function LoginPage() {
           >
             Welcome back
           </Heading>
-          <Text fontSize="xs" color="fg.muted" mb={5} lineHeight="1.4" flexShrink={0}>
-            Sign in to access your operations dashboard
-          </Text>
 
-          <Box flexShrink={0}>{loginForm}</Box>
+          <Box flexShrink={0} mt={5}>{loginForm}</Box>
 
           <Text mt={4} mb={1} fontSize="2xs" color="fg.subtle" textAlign="center" flexShrink={0}>
             {COPYRIGHT}
@@ -1002,10 +999,7 @@ export function LoginPage() {
           >
             Welcome back
           </Heading>
-          <Text fontSize="sm" color="fg.muted" mb={7} lineHeight="1.5">
-            Sign in to access your operations dashboard
-          </Text>
-          {loginForm}
+          <Box mt={7}>{loginForm}</Box>
           <Text mt={8} fontSize="xs" color="fg.subtle" textAlign="center">
             {COPYRIGHT}
           </Text>

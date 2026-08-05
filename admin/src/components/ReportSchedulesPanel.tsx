@@ -98,11 +98,8 @@ export function ReportSchedulesPanel({ reports }: Props) {
 
   return (
     <Box borderWidth="1px" borderColor="border" borderRadius="lg" p={4}>
-      <Text fontWeight="semibold" mb={1}>
+      <Text fontWeight="semibold" mb={3}>
         Scheduled delivery (Phase 3)
-      </Text>
-      <Text fontSize="xs" color="fg.muted" mb={3}>
-        Generate on a cadence and queue email. Mail transport connection enables automatic send.
       </Text>
 
       <Stack gap={3} mb={4}>

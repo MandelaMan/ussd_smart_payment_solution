@@ -128,11 +128,8 @@ export function ApartmentUnitHistoryPage() {
         borderRadius="lg"
         p={4}
       >
-        <Text fontSize="sm" fontWeight="semibold" mb={1}>
+        <Text fontSize="sm" fontWeight="semibold" mb={3}>
           IP address history
-        </Text>
-        <Text fontSize="sm" color="fg.muted" mb={3}>
-          Addresses recorded on this unit across moves and signups.
         </Text>
         {loading ? (
           <Text fontSize="sm" color="fg.subtle">
