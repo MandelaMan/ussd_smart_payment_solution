@@ -95,10 +95,10 @@ function emptyTemplateDraft(): CustomerEmailTemplateDraft {
   return { enabled: true, subject: "", bodyHtml: "", ccEmails: "" };
 }
 
+type CustomerEmailSettings = NonNullable<AppSettings["communication"]>["customerEmail"];
+
 function templatesFromSettings(
-  customerEmail: AppSettings["communication"] extends { customerEmail?: infer T }
-    ? T
-    : undefined
+  customerEmail: CustomerEmailSettings
 ): Record<string, CustomerEmailTemplateDraft> {
   const out: Record<string, CustomerEmailTemplateDraft> = {};
   for (const meta of CUSTOMER_EMAIL_TEMPLATE_META) {

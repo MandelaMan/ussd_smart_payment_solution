@@ -898,6 +898,7 @@ export function ProspectEmailInbox({ initialLeadId = null }: Props) {
               <Field.Label>Building</Field.Label>
               <SelectField
                 size="sm"
+                usePortal={false}
                 fieldProps={{
                   value: form.buildingId,
                   onChange: (e) =>

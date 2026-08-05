@@ -222,10 +222,11 @@ function buildTispNarration(
   customer: Customer,
   integrations: CustomerIntegrationsSummary | null
 ): StatusNarration {
-  const due =
-    integrations?.tispDueDate || customer.tispDueDate
-      ? formatDateOnly(integrations?.tispDueDate || customer.tispDueDate)
-      : null;
+  // "Internet expires" must be driven by the latest TISP-derived due date
+  // (integration snapshot / TISP sync), not by any locally-estimated customer field.
+  const due = integrations?.tispDueDate
+    ? formatDateOnly(integrations.tispDueDate)
+    : null;
   const dueLabel = due && due !== "—" ? due : null;
   const service = displayCustomerStatus(customer);
 

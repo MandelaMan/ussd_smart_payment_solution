@@ -1065,11 +1065,14 @@ export function CustomerForm({
           customerType,
           agencyId: customerType === "B2B" ? Number(agencyId) : undefined,
           apartmentNumber: isActive ? apartmentNumber : undefined,
-          dstvDecoderSerial: requiresDstvSerial
-            ? dstvDecoderSerial.trim().toUpperCase()
-            : dstvDecoderSerial.trim()
+          // Explicitly clear serial when building is not decoder.
+          dstvDecoderSerial: !buildingRequiresDecoderSerial
+            ? null
+            : requiresDstvSerial
               ? dstvDecoderSerial.trim().toUpperCase()
-              : undefined,
+              : dstvDecoderSerial.trim()
+                ? dstvDecoderSerial.trim().toUpperCase()
+                : undefined,
           ...(isPpoe
             ? {
                 ppoeUsername: ppoeUsername.trim().toUpperCase(),
@@ -2297,6 +2300,7 @@ export function CustomerForm({
           <Field.Root required>
             <Field.Label>Payment method</Field.Label>
             <SelectField
+              usePortal={false}
               fieldProps={{
                 value: paymentStatusDraft?.method || "",
                 onChange: (e) => {

@@ -232,6 +232,7 @@ function ReportFiltersForm({
               </Text>
               <SelectField
                 size="sm"
+                usePortal={false}
                 fieldProps={{
                   value: filters.monthFrom,
                   onChange: (e) => onChange({ monthFrom: e.target.value }),
@@ -250,6 +251,7 @@ function ReportFiltersForm({
               </Text>
               <SelectField
                 size="sm"
+                usePortal={false}
                 fieldProps={{
                   value: filters.monthTo,
                   onChange: (e) => onChange({ monthTo: e.target.value }),

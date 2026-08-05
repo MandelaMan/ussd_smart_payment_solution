@@ -2645,7 +2645,7 @@ export const api = {
       customPeriodDays?: number;
       productId?: number;
       ipAddress?: string;
-      dstvDecoderSerial?: string;
+      dstvDecoderSerial?: string | null;
       /** Create Zoho signup invoice when provisioning a missing Zoho contact (default false). */
       createInitialInvoice?: boolean;
       /** Create Zoho recurring when provisioning missing Zoho contact (default false). */
