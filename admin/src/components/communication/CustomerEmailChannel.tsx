@@ -30,7 +30,7 @@ import {
   isRichTextEmpty,
   sanitizeEmailHtml,
 } from "../ui/RichTextEditor";
-import { sanitizeHtml } from "../../lib/sanitizeHtml";
+import { EmailMessageBubble } from "./EmailMessageBubble";
 
 type PendingAttachment = {
   fileName: string;
@@ -74,26 +74,6 @@ function initials(name: string): string {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
-function formatMsgTime(value: string | null | undefined): string {
-  if (!value) return "";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) {
-    return d.toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" });
-  }
-  return d.toLocaleString("en-KE", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function replySubject(previous: string | undefined, fallback: string): string {
   const base = (previous || fallback || "").trim();
   if (!base) return "";
@@ -116,16 +96,6 @@ function fileToBase64(file: File): Promise<PendingAttachment> {
     reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
     reader.readAsDataURL(file);
   });
-}
-
-function messageBody(msg: CustomerEmailMessage): string {
-  if (msg.bodyHtml) return sanitizeHtml(msg.bodyHtml);
-  const text = msg.bodyText || msg.summary || "";
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\n/g, "<br/>");
 }
 
 function formatBytes(n: number): string {
@@ -621,80 +591,13 @@ export function CustomerEmailChannel() {
                   </Flex>
                 ) : (
                   <Flex direction="column" gap={2.5}>
-                    {messages.map((msg) => {
-                      const outbound = msg.direction === "outbound";
-                      return (
-                        <Flex
-                          key={msg.id}
-                          justify={outbound ? "flex-end" : "flex-start"}
-                        >
-                          <Box
-                            maxW={{ base: "96%", md: "85%" }}
-                            bg={outbound ? "brand.600" : "bg.panel"}
-                            color={outbound ? "white" : "fg"}
-                            borderWidth={outbound ? 0 : "1px"}
-                            borderColor="border"
-                            borderRadius="xl"
-                            borderBottomRightRadius={outbound ? "sm" : "xl"}
-                            borderBottomLeftRadius={outbound ? "xl" : "sm"}
-                            px={3}
-                            py={2}
-                            boxShadow="sm"
-                            overflow="visible"
-                          >
-                            <Text fontSize="xs" fontWeight="700" opacity={0.9} mb={1}>
-                              {msg.subject}
-                            </Text>
-                            <Box
-                              fontSize="sm"
-                              whiteSpace="normal"
-                              overflowWrap="anywhere"
-                              css={{
-                                "& a": {
-                                  color: outbound
-                                    ? "white"
-                                    : "var(--chakra-colors-brand-600)",
-                                  textDecoration: "underline",
-                                },
-                                "& p": { margin: "0 0 0.35em" },
-                                "& p:last-child": { marginBottom: 0 },
-                                "& blockquote": {
-                                  margin: "0.5em 0",
-                                  paddingLeft: "0.75em",
-                                  borderLeft: outbound
-                                    ? "3px solid rgba(255,255,255,0.45)"
-                                    : "3px solid var(--chakra-colors-border)",
-                                  opacity: 0.92,
-                                },
-                                "& img": { maxWidth: "100%", height: "auto" },
-                                "& table": { maxWidth: "100%", display: "block", overflowX: "auto" },
-                              }}
-                              dangerouslySetInnerHTML={{
-                                __html: messageBody(msg),
-                              }}
-                            />
-                            {msg.attachmentNames && msg.attachmentNames.length > 0 ? (
-                              <Flex gap={1} flexWrap="wrap" mt={1.5}>
-                                {msg.attachmentNames.map((name) => (
-                                  <Badge
-                                    key={`${msg.id}-${name}`}
-                                    colorPalette="gray"
-                                    variant="subtle"
-                                    size="sm"
-                                  >
-                                    <FiPaperclip /> {name}
-                                  </Badge>
-                                ))}
-                              </Flex>
-                            ) : null}
-                            <Text fontSize="2xs" opacity={0.75} mt={1.5}>
-                              {outbound ? mailboxName : msg.fromAddress || "Customer"}{" "}
-                              · {formatMsgTime(msg.createdAt)}
-                            </Text>
-                          </Box>
-                        </Flex>
-                      );
-                    })}
+                    {messages.map((msg) => (
+                      <EmailMessageBubble
+                        key={msg.id}
+                        message={msg}
+                        outboundLabel={mailboxName}
+                      />
+                    ))}
                     <div ref={threadEndRef} />
                   </Flex>
                 )}
@@ -929,66 +832,13 @@ export function CustomerEmailChannel() {
               </Text>
             ) : (
               <Flex direction="column" gap={2.5}>
-                {messages.map((msg) => {
-                  const outbound = msg.direction === "outbound";
-                  return (
-                    <Flex
-                      key={`pop-${msg.id}`}
-                      justify={outbound ? "flex-end" : "flex-start"}
-                    >
-                      <Box
-                        maxW={{ base: "96%", md: "85%" }}
-                        bg={outbound ? "brand.600" : "bg.panel"}
-                        color={outbound ? "white" : "fg"}
-                        borderWidth={outbound ? 0 : "1px"}
-                        borderColor="border"
-                        borderRadius="xl"
-                        px={3}
-                        py={2}
-                        boxShadow="sm"
-                        overflow="visible"
-                      >
-                        <Text fontSize="xs" fontWeight="700" mb={1}>
-                          {msg.subject}
-                        </Text>
-                        <Box
-                          fontSize="sm"
-                          whiteSpace="normal"
-                          overflowWrap="anywhere"
-                          css={{
-                            "& a": {
-                              color: outbound
-                                ? "white"
-                                : "var(--chakra-colors-brand-600)",
-                              textDecoration: "underline",
-                            },
-                            "& p": { margin: "0 0 0.35em" },
-                            "& p:last-child": { marginBottom: 0 },
-                            "& blockquote": {
-                              margin: "0.5em 0",
-                              paddingLeft: "0.75em",
-                              borderLeft: outbound
-                                ? "3px solid rgba(255,255,255,0.45)"
-                                : "3px solid var(--chakra-colors-border)",
-                              opacity: 0.92,
-                            },
-                            "& img": { maxWidth: "100%", height: "auto" },
-                            "& table": {
-                              maxWidth: "100%",
-                              display: "block",
-                              overflowX: "auto",
-                            },
-                          }}
-                          dangerouslySetInnerHTML={{ __html: messageBody(msg) }}
-                        />
-                        <Text fontSize="2xs" opacity={0.75} mt={1.5}>
-                          {outbound ? mailboxName : msg.fromAddress || "Customer"} ·{" "}
-                          {formatMsgTime(msg.createdAt)}
-                        </Text>
-                      </Box>
-                    </Flex>
-                  );
-                })}
+                {messages.map((msg) => (
+                  <EmailMessageBubble
+                    key={`pop-${msg.id}`}
+                    message={msg}
+                    outboundLabel={mailboxName}
+                  />
+                ))}
               </Flex>
             )}
           </Box>

@@ -296,13 +296,16 @@ async function createAgency(req, res, next) {
     const agency = await store.getAgencyById(id);
     let zoho = { ok: false };
     try {
-      const contact = await ensureZohoContactForAgency(agency);
+      const { onboardAgencyZohoBilling } = require("../services/agencyZohoBilling");
+      const billing = await onboardAgencyZohoBilling(agency);
       zoho = {
         ok: true,
-        zohoContactId: contact?.contact_id ? String(contact.contact_id) : null,
+        zohoContactId: billing.zohoContactId,
+        invoice: billing.invoice,
+        recurring: billing.recurring,
       };
     } catch (e) {
-      zoho = { ok: false, error: e.message || "Zoho contact sync failed" };
+      zoho = { ok: false, error: e.message || "Zoho agency billing failed" };
     }
     emitAdminUpdate("agencies", { action: "created", agencyId: id });
     await logActivity({
@@ -449,6 +452,10 @@ async function createAgencyInvoice(req, res, next) {
     }
 
     const zohoContact = await ensureZohoContactForAgency(agency);
+    const {
+      resolveZohoPaymentTerms,
+    } = require("../utils/billingPeriod");
+    const terms = resolveZohoPaymentTerms({ customerType: "B2B" });
     const invoice = await createInvoice_JS({
       customer_id: zohoContact.contact_id,
       items: lineItems,
@@ -458,6 +465,8 @@ async function createAgencyInvoice(req, res, next) {
       discount_type: "entity_level",
       is_discount_before_tax: !ZOHO_INVOICE_TAX_INCLUSIVE,
       due_date: computeInvoiceDueDate({ customerType: "B2B" }),
+      payment_terms: terms.payment_terms,
+      payment_terms_label: terms.payment_terms_label,
     });
 
     if (!invoice?.invoice_id) {
@@ -543,9 +552,18 @@ async function updateAgency(req, res, next) {
     let zoho = { ok: false };
     try {
       const contact = await syncAgencyZohoContact(agency);
+      let recurring = null;
+      try {
+        const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+        const refreshed = await refreshAgencyRecurring(id);
+        recurring = refreshed.recurring || null;
+      } catch (e) {
+        console.warn("agency recurring refresh on update failed:", e.message);
+      }
       zoho = {
         ok: true,
         zohoContactId: contact?.contact_id ? String(contact.contact_id) : null,
+        recurring,
       };
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho contact sync failed" };

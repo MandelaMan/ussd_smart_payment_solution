@@ -30,6 +30,8 @@ const {
   DEFAULT_TZ,
   computeServiceDueDate,
   computeTrialEndDate,
+  computeInvoiceDueDate,
+  resolveZohoPaymentTerms,
 } = require("../utils/billingPeriod");
 const moment = require("moment-timezone");
 const {
@@ -2957,8 +2959,19 @@ async function createUpgradeInvoice(customer, quote) {
       customerNumber: customer.customerNumber,
       buildingCode,
     }),
+    due_date: computeInvoiceDueDate(customer),
+    ...resolveZohoPaymentTerms(customer),
     customer,
   });
+
+  if (isB2BCustomer(customer) && customer.agencyId) {
+    try {
+      const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+      await refreshAgencyRecurring(customer.agencyId);
+    } catch (e) {
+      console.warn("agency recurring refresh after upgrade invoice failed:", e.message);
+    }
+  }
 
   return {
     invoiceId: invoice?.invoice_id ? String(invoice.invoice_id) : null,
@@ -3929,24 +3942,41 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
 
     if (isB2BCustomer(customer)) {
       const agency = await resolveAgencyForCustomer(customer, store);
-      if (!agency?.name) {
+      if (!agency?.id) {
         result.zoho = { ok: true, skipped: true, reason: "b2b_no_agency" };
       } else {
-        const agencyContact = await getCustomerByCompanyName_JS(agency.name);
-        if (!agencyContact?.contact_id) {
-          result.zoho = { ok: true, skipped: true, reason: "b2b_no_zoho_contact" };
-        } else {
-          const recurring = await stopZohoRecurringForCustomer(
-            agencyContact.contact_id,
-            ctx.customer_number
-          );
+        try {
+          const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+          const refreshed = await refreshAgencyRecurring(agency.id);
           result.zoho = {
             ok: true,
             skipped: false,
             contactInactivated: false,
-            reason: "b2b_agency_contact_kept",
-            recurringStopped: recurring.stopped,
+            reason: "b2b_agency_recurring_refreshed",
+            recurring: refreshed.recurring || null,
           };
+        } catch (e) {
+          // Fall back to legacy per-number stop if consolidated refresh fails
+          const agencyContact = await getCustomerByCompanyName_JS(agency.name);
+          if (agencyContact?.contact_id) {
+            const recurring = await stopZohoRecurringForCustomer(
+              agencyContact.contact_id,
+              ctx.customer_number
+            );
+            result.zoho = {
+              ok: true,
+              skipped: false,
+              contactInactivated: false,
+              reason: "b2b_agency_contact_kept",
+              recurringStopped: recurring.stopped,
+              warning: e.message,
+            };
+          } else {
+            result.zoho = {
+              ok: false,
+              error: e.message || "Agency recurring refresh failed",
+            };
+          }
         }
       }
     } else {
@@ -4943,6 +4973,7 @@ async function convertCustomerTypeHandler(req, res, next) {
     }
 
     let agencyId = body.agencyId ? Number(body.agencyId) : null;
+    let newAgencyZoho = null;
     if (body.newAgency) {
       const { name, email, phone, contactPerson } = body.newAgency;
       if (!name || !email || !phone) {
@@ -4951,6 +4982,14 @@ async function convertCustomerTypeHandler(req, res, next) {
           .json({ error: "Agency name, email, and phone are required" });
       }
       agencyId = await store.createAgency({ name, email, phone, contactPerson });
+      try {
+        const agency = await store.getAgencyById(agencyId);
+        const { onboardAgencyZohoBilling } = require("../services/agencyZohoBilling");
+        newAgencyZoho = await onboardAgencyZohoBilling(agency);
+      } catch (e) {
+        console.warn("New agency Zoho onboarding during convert failed:", e.message);
+        newAgencyZoho = { ok: false, error: e.message };
+      }
     }
 
     const result = await store.convertCustomerType(id, targetType, agencyId);
@@ -4981,22 +5020,12 @@ async function convertCustomerTypeHandler(req, res, next) {
       }
     }
 
-    // B2B → C2B: stop agency recurring keyed to the old B2B account number.
+    // B2B → C2B: rebuild previous agency recurring without this house.
     if (result.previousType === "B2B" && result.newType === "C2B") {
       try {
         if (result.previousAgencyId) {
-          const previousAgency = await store.getAgencyById(result.previousAgencyId);
-          if (previousAgency?.name) {
-            const agencyContact = await getCustomerByCompanyName_JS(
-              previousAgency.name
-            );
-            if (agencyContact?.contact_id) {
-              await stopZohoRecurringForCustomer(
-                agencyContact.contact_id,
-                result.previousCustomerNumber
-              );
-            }
-          }
+          const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+          await refreshAgencyRecurring(result.previousAgencyId);
         }
       } catch (e) {
         console.warn(
@@ -5008,11 +5037,8 @@ async function convertCustomerTypeHandler(req, res, next) {
 
     if (result.newType === "B2B" && result.agencyId) {
       try {
-        const agency = await store.getAgencyById(result.agencyId);
-        if (agency) {
-          const { ensureZohoContactForAgency } = require("./agencies.controller");
-          await ensureZohoContactForAgency(agency);
-        }
+        const { syncAgencyBillingAfterManagedHouseAdded } = require("../services/agencyZohoBilling");
+        await syncAgencyBillingAfterManagedHouseAdded(result.agencyId, id);
       } catch (e) {
         console.warn("Agency Zoho provisioning after type conversion failed:", e.message);
       }

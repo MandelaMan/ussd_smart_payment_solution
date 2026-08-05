@@ -7,12 +7,13 @@ import {
   formatDate,
   type IntegrationEventDetail,
   type MpesaTransactionDetail,
+  type ZohoCustomerPaymentDetail,
 } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
 import { TransactionExpandSkeleton } from "./PageSkeletons";
 
 type Props = {
-  source: "mpesa" | "zoho" | "tisp";
+  source: "mpesa" | "zoho" | "zoho_invoice" | "tisp";
   id: number;
 };
 
@@ -24,6 +25,12 @@ const SOURCE_META = {
     accent: "brand.600",
   },
   zoho: {
+    title: "Zoho Books Payment",
+    color: "blue",
+    icon: FiFileText,
+    accent: "blue.600",
+  },
+  zoho_invoice: {
     title: "Zoho Books Invoice",
     color: "blue",
     icon: FiFileText,
@@ -42,14 +49,21 @@ export function TransactionExpandPanel({ source, id }: Props) {
   const [error, setError] = useState("");
   const [mpesa, setMpesa] = useState<MpesaTransactionDetail | null>(null);
   const [integration, setIntegration] = useState<IntegrationEventDetail | null>(null);
+  const [zohoPayment, setZohoPayment] = useState<ZohoCustomerPaymentDetail | null>(null);
 
   useEffect(() => {
     setLoading(true);
     setError("");
+    setMpesa(null);
+    setIntegration(null);
+    setZohoPayment(null);
+
     const load =
       source === "mpesa"
         ? api.getMpesaTransaction(id).then(setMpesa)
-        : api.getIntegrationEvent(id).then((r) => setIntegration(r.event));
+        : source === "zoho"
+          ? api.getZohoCustomerPayment(id).then((r) => setZohoPayment(r.payment))
+          : api.getIntegrationEvent(id).then((r) => setIntegration(r.event));
 
     load.catch((e) => setError(e.message)).finally(() => setLoading(false));
   }, [source, id]);
@@ -70,9 +84,13 @@ export function TransactionExpandPanel({ source, id }: Props) {
     return <MpesaPanel data={mpesa} />;
   }
 
+  if (source === "zoho" && zohoPayment) {
+    return <ZohoPaymentPanel payment={zohoPayment} />;
+  }
+
   if (integration) {
-    return source === "zoho" ? (
-      <ZohoPanel event={integration} />
+    return source === "zoho_invoice" || integration.source === "zoho" ? (
+      <ZohoInvoicePanel event={integration} />
     ) : (
       <TispPanel event={integration} />
     );
@@ -297,7 +315,34 @@ function MpesaPanel({ data }: { data: MpesaTransactionDetail }) {
   );
 }
 
-function ZohoPanel({ event }: { event: IntegrationEventDetail }) {
+function ZohoPaymentPanel({ payment }: { payment: ZohoCustomerPaymentDetail }) {
+  return (
+    <PanelShell
+      source="zoho"
+      amount={payment.amount}
+      status={payment.status}
+      subtitle={
+        payment.customerName || payment.customerNumber || payment.phone || undefined
+      }
+    >
+      <DetailGrid>
+        <DetailCard label="Customer" value={payment.customerNumber} highlight />
+        <DetailCard label="Name" value={payment.customerName} />
+        <DetailCard label="Amount" value={formatCurrency(payment.amount)} highlight />
+        <DetailCard label="Reference" value={payment.referenceId} mono highlight />
+        <DetailCard label="Payment #" value={payment.paymentNumber} mono />
+        <DetailCard label="Zoho payment ID" value={payment.paymentId} mono />
+        <DetailCard label="Invoice #" value={payment.invoiceNumbers} />
+        <DetailCard label="Mode" value={payment.channel} />
+        <DetailCard label="Account" value={payment.accountName} />
+        <DetailCard label="Phone" value={payment.phone} mono />
+        <DetailCard label="Date" value={formatDate(payment.paymentDate || payment.createdAt)} />
+      </DetailGrid>
+    </PanelShell>
+  );
+}
+
+function ZohoInvoicePanel({ event }: { event: IntegrationEventDetail }) {
   const result = event.payload?.result as Record<string, unknown> | undefined;
   const strategy = result?.strategy ? String(result.strategy) : "";
   const zohoAction =
@@ -310,7 +355,7 @@ function ZohoPanel({ event }: { event: IntegrationEventDetail }) {
 
   return (
     <PanelShell
-      source="zoho"
+      source="zoho_invoice"
       amount={event.amount}
       status={event.status}
       subtitle={event.customerNo || undefined}

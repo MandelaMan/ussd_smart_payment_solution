@@ -910,8 +910,49 @@ const UNIFIED_TX_SQL = `
     UNION ALL
 
     SELECT
+      zp.id,
+      'zoho' AS source,
+      CASE
+        WHEN LOWER(COALESCE(
+          JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.payment_status')),
+          'paid'
+        )) IN ('paid', 'success') THEN 'SUCCESS'
+        ELSE UPPER(COALESCE(
+          JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.payment_status')),
+          'PAID'
+        ))
+      END AS status,
+      zp.amount,
+      c.customer_number AS customer_ref,
+      c.phone,
+      COALESCE(
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.description')), ''),
+        NULLIF(zp.reference_number, ''),
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.payment_number')), ''),
+        zp.payment_id
+      ) AS reference_id,
+      COALESCE(
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.payment_mode_formatted')), ''),
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.payment_mode')), ''),
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.account_name')), ''),
+        'Zoho'
+      ) AS channel,
+      NULL AS checkout_request_id,
+      COALESCE(
+        NULLIF(zp.invoice_number, ''),
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(zp.raw_json, '$.invoice_numbers')), '')
+      ) AS detail,
+      'paid' AS outcome,
+      NULL AS zoho_action,
+      zp.payment_date AS created_at
+    FROM zoho_customer_payments zp
+    LEFT JOIN customers c ON c.id = zp.customer_id
+
+    UNION ALL
+
+    SELECT
       ie.id,
-      ie.source,
+      CASE WHEN ie.source = 'zoho' THEN 'zoho_invoice' ELSE ie.source END AS source,
       ie.status,
       ie.amount,
       ie.customer_no AS customer_ref,
@@ -1087,6 +1128,90 @@ async function getIntegrationEvent(req, res, next) {
         accountReference: row.mpesa_account,
         payload,
         createdAt: row.created_at,
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function getZohoCustomerPayment(req, res, next) {
+  try {
+    const rows = await query(
+      `SELECT zp.*,
+              c.customer_number,
+              c.phone AS customer_phone,
+              c.first_name,
+              c.last_name,
+              c.email
+       FROM zoho_customer_payments zp
+       LEFT JOIN customers c ON c.id = zp.customer_id
+       WHERE zp.id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Payment not found" });
+    }
+
+    const row = rows[0];
+    let payload = {};
+    try {
+      payload =
+        typeof row.raw_json === "string"
+          ? JSON.parse(row.raw_json)
+          : row.raw_json || {};
+    } catch {
+      payload = {};
+    }
+
+    const description =
+      payload.description != null ? String(payload.description).trim() : "";
+    const paymentNumber =
+      payload.payment_number != null ? String(payload.payment_number).trim() : "";
+    const paymentMode =
+      (payload.payment_mode_formatted != null &&
+        String(payload.payment_mode_formatted).trim()) ||
+      (payload.payment_mode != null && String(payload.payment_mode).trim()) ||
+      null;
+    const invoiceNumbers =
+      (row.invoice_number && String(row.invoice_number).trim()) ||
+      (payload.invoice_numbers != null && String(payload.invoice_numbers).trim()) ||
+      null;
+    const customerName = [row.first_name, row.last_name]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+
+    return res.json({
+      payment: {
+        id: row.id,
+        paymentId: row.payment_id,
+        paymentNumber: paymentNumber || null,
+        paymentDate: row.payment_date,
+        amount: row.amount != null ? Number(row.amount) : null,
+        status:
+          String(payload.payment_status || "paid").toLowerCase() === "paid" ||
+          String(payload.payment_status || "").toLowerCase() === "success"
+            ? "SUCCESS"
+            : String(payload.payment_status || "PAID").toUpperCase(),
+        referenceNumber: row.reference_number || null,
+        description: description || null,
+        referenceId:
+          description ||
+          (row.reference_number && String(row.reference_number).trim()) ||
+          paymentNumber ||
+          row.payment_id,
+        channel: paymentMode,
+        accountName:
+          payload.account_name != null ? String(payload.account_name) : null,
+        invoiceNumbers,
+        customerId: row.customer_id,
+        customerNumber: row.customer_number || null,
+        customerName: customerName || null,
+        phone: row.customer_phone || null,
+        email: row.email || null,
+        payload,
+        createdAt: row.payment_date,
       },
     });
   } catch (err) {
@@ -1281,6 +1406,7 @@ module.exports = {
   exportUnifiedTransactions,
   getMpesaTransaction,
   getIntegrationEvent,
+  getZohoCustomerPayment,
   listZohoEvents,
   listTispEvents,
   exportMpesaTransactions,

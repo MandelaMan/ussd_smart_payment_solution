@@ -18,6 +18,7 @@ const {
   computeTrialEndDate,
   computeServiceDueDate,
   computeRecurringStartBeforeDue,
+  resolveZohoPaymentTerms,
 } = require("../utils/billingPeriod");
 const {
   buildZohoInvoiceNumber,
@@ -264,6 +265,7 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     reference_number: referenceNumber,
     invoice_number: invoiceNumber,
     due_date: computeInvoiceDueDate(customer),
+    ...resolveZohoPaymentTerms(customer),
     customer,
   });
 
@@ -331,27 +333,41 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     return { ok: false, error: "Customer not found" };
   }
 
-  // B2B customers are not Zoho Books contacts — billing lives on the agency.
+  // B2B managed houses bill through the agency Zoho contact.
   if (isB2BCustomer({ customerType: ctx.customer_type })) {
-    try {
-      await customerStore.updateCustomerZohoBillingStatus(
-        customerId,
-        "completed",
-        null
-      );
-    } catch (persistErr) {
-      console.error("zoho billing status persist failed:", persistErr.message);
+    if (!ctx.agency_id) {
+      return {
+        ok: false,
+        error: "B2B customer has no agency linked",
+        invoice: null,
+        recurring: null,
+      };
     }
-    return {
-      ok: true,
-      skipped: true,
-      reason: "b2b_no_zoho",
-      linked: false,
-      zohoContactId: null,
-      invoice: null,
-      recurring: null,
-      trial: null,
-    };
+    try {
+      const {
+        syncAgencyBillingAfterManagedHouseAdded,
+      } = require("./agencyZohoBilling");
+      return await syncAgencyBillingAfterManagedHouseAdded(
+        ctx.agency_id,
+        customerId
+      );
+    } catch (e) {
+      try {
+        await customerStore.updateCustomerZohoBillingStatus(
+          customerId,
+          "failed",
+          e.message || "Agency Zoho billing failed"
+        );
+      } catch (persistErr) {
+        console.error("zoho billing status persist failed:", persistErr.message);
+      }
+      return {
+        ok: false,
+        error: e.message || "Agency Zoho billing failed",
+        invoice: null,
+        recurring: null,
+      };
+    }
   }
 
   const customer = mapContextToCustomer(ctx, null);

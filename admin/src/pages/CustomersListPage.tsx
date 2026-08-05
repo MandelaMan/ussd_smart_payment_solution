@@ -168,7 +168,6 @@ export function CustomersListPage() {
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const debouncedSearch = useDebouncedValue(searchInput, 450);
-  const [liveSyncing, setLiveSyncing] = useState(false);
   const loadRequestRef = useRef(0);
   const [buildingId, setBuildingId] = useState("");
   const [statusFilters, setStatusFilters] = useState<SubscriptionStatusLabel[]>(() =>
@@ -337,7 +336,6 @@ export function CustomersListPage() {
             .map((c) => c.id)
             .slice(0, 10);
           if (activeIds.length > 0) {
-            setLiveSyncing(true);
             void api
               .refreshCustomersBatch(activeIds, { force: true })
               .then((batch) => {
@@ -353,13 +351,8 @@ export function CustomersListPage() {
               })
               .catch(() => {
                 /* keep DB snapshot — expand/refresh still available */
-              })
-              .finally(() => {
-                if (requestId === loadRequestRef.current) setLiveSyncing(false);
               });
           }
-        } else {
-          setLiveSyncing(false);
         }
       } catch (e) {
         if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
@@ -1729,12 +1722,6 @@ export function CustomersListPage() {
         <MobileFAB to="/customers/new" aria-label="Add customer">
           <FiUserPlus size={24} />
         </MobileFAB>
-      ) : null}
-
-      {liveSyncing ? (
-        <Text fontSize="xs" color="fg.muted">
-          Updating live TISP status…
-        </Text>
       ) : null}
 
       {error && (

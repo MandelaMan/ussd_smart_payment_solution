@@ -70,6 +70,18 @@ function computeInvoiceDueDate(customer, anchorDate = new Date(), timeZone = DEF
   return moment.tz(anchorDate, timeZone).startOf("day").add(days, "days").format("YYYY-MM-DD");
 }
 
+/**
+ * Zoho Books payment terms (Net 7 / Net 30) for invoice + recurring payloads.
+ * Always pair with due_date from computeInvoiceDueDate when creating invoices.
+ */
+function resolveZohoPaymentTerms(customer) {
+  const days = isB2BCustomer(customer) ? INVOICE_DUE_DAYS.b2b : INVOICE_DUE_DAYS.c2b;
+  return {
+    payment_terms: days,
+    payment_terms_label: `Net ${days}`,
+  };
+}
+
 function buildPackageLabel(customer) {
   const product = String(customer.productName || "").trim();
   const plan = String(customer.planName || "").trim();
@@ -91,6 +103,49 @@ function buildPackageLabel(customer) {
 
 function buildSubscriptionInvoiceDescription(_customer, period) {
   return `Billing cycle: ${period.startLabel} to ${period.endLabel}`;
+}
+
+/**
+ * Zoho Books expands these placeholders when each recurring invoice is generated
+ * (relative to that invoice's date). Use only on recurring profiles — not one-off invoices.
+ * @see https://www.zoho.com/books/kb/invoices/add-date-recurring-invoice.html
+ */
+const ZOHO_RECURRING_DATE_START = "%(d)% %(m)% %(y)%";
+
+function buildZohoRecurringEndDatePlaceholder(
+  paymentFrequency = "monthly",
+  customPeriodDays = null
+) {
+  switch (String(paymentFrequency || "monthly").toLowerCase()) {
+    case "quarterly":
+      return "%(d)% %(m+3)% %(y)%";
+    case "yearly":
+      return "%(d)% %(m)% %(y+1)%";
+    case "custom": {
+      const days = Number(customPeriodDays);
+      const n = days > 0 ? days : 30;
+      // Combined placeholder so day overflow rolls month/year with the period length.
+      return `%(d+${n})(m)(y)%`;
+    }
+    case "monthly":
+    default:
+      return "%(d)% %(m+1)% %(y)%";
+  }
+}
+
+/**
+ * Dynamic line-item description for Zoho recurring invoices.
+ * Renders as e.g. "Billing cycle: 5 Aug 2026 to 5 Sep 2026" on each generated invoice.
+ */
+function buildRecurringSubscriptionInvoiceDescription(
+  paymentFrequency = "monthly",
+  customPeriodDays = null
+) {
+  const end = buildZohoRecurringEndDatePlaceholder(
+    paymentFrequency,
+    customPeriodDays
+  );
+  return `Billing cycle: ${ZOHO_RECURRING_DATE_START} to ${end}`;
 }
 
 /** Trial ends at start-of-day, TRIAL_PERIOD_DAYS after anchor (default: today). */
@@ -145,9 +200,13 @@ module.exports = {
   billingFrequencyLabel,
   computeBillingPeriod,
   computeInvoiceDueDate,
+  resolveZohoPaymentTerms,
   computeTrialEndDate,
   computeServiceDueDate,
   computeRecurringStartBeforeDue,
   buildPackageLabel,
   buildSubscriptionInvoiceDescription,
+  ZOHO_RECURRING_DATE_START,
+  buildZohoRecurringEndDatePlaceholder,
+  buildRecurringSubscriptionInvoiceDescription,
 };

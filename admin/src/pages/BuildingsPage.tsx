@@ -247,10 +247,6 @@ export function BuildingsPage() {
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
-    if (formIpSetup === "STATIC" && ipPrefixes.length === 0) {
-      toaster.create({ title: "Add at least one IP prefix for STATIC buildings", type: "error" });
-      return;
-    }
     setSubmitting(true);
     try {
       await api.createBuilding({
@@ -473,7 +469,6 @@ export function BuildingsPage() {
             addressZip={addressZip} setAddressZip={setAddressZip}
             addressCountry={addressCountry} setAddressCountry={setAddressCountry}
             onSubmit={handleCreate} submitting={submitting}
-            requireIpPrefixes
             onCancel={() => { setShowForm(false); resetForm(); }}
           />
         </Box>
@@ -635,7 +630,6 @@ export function BuildingsPage() {
             onSubmit={handleUpdate} submitting={editSubmitting}
             onCancel={closeEdit}
             submitLabel="Save changes"
-            requireIpPrefixes={false}
           />
         </Dialog.Body>
       </AppDialog>
@@ -656,7 +650,7 @@ function BuildingForm({
   addressZip, setAddressZip,
   addressCountry, setAddressCountry,
   onSubmit, submitting, onCancel,
-  submitLabel = "Save building", requireIpPrefixes = false,
+  submitLabel = "Save building",
 }: {
   name: string; setName: (v: string) => void;
   c2bCode: string; setC2bCode: (v: string) => void;
@@ -677,9 +671,7 @@ function BuildingForm({
   addressCountry: string; setAddressCountry: (v: string) => void;
   onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
   submitLabel?: string;
-  requireIpPrefixes?: boolean;
 }) {
-  const ipPrefixesRequired = requireIpPrefixes ?? false;
   return (
     <form onSubmit={onSubmit}>
       <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap={4}>
@@ -726,8 +718,11 @@ function BuildingForm({
         </Field.Root>
         {formIpSetup === "STATIC" && (
           <Box gridColumn={{ md: "span 2" }}>
-            <Field.Root required={ipPrefixesRequired}>
-              <Field.Label>IP prefixes</Field.Label>
+            <Field.Root>
+              <Field.Label>IP prefixes (optional)</Field.Label>
+              <Text fontSize="xs" color="fg.muted" mb={2}>
+                Optional — add now or update the building later before assigning static IPs.
+              </Text>
               <Flex gap={2} mb={2}>
                 <Input
                   value={prefixInput}

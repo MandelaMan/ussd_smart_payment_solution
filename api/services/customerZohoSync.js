@@ -70,6 +70,8 @@ function mapContextToCustomer(ctx, agencyName = null) {
 function buildRecurringLineItems(customer, period, options = {}) {
   return buildSubscriptionLineItems(customer, period, {
     includeOneTimeDstvFee: options.includeOneTimeDstvFee === true,
+    // Zoho expands %(d)% / %(m+1)% etc. when each child invoice is generated.
+    dynamicBillingCycleDates: true,
   });
 }
 
@@ -332,6 +334,9 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
       customPeriodDays: customer.customPeriodDays,
     });
 
+  const { resolveZohoPaymentTerms } = require("../utils/billingPeriod");
+  const terms = resolveZohoPaymentTerms(customer);
+
   const created = await createRecurringInvoice_JS({
     customer_id: zohoContact.contact_id,
     recurrence_name: recurrenceName,
@@ -341,6 +346,8 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     repeat_every: recurrence.repeat_every,
     line_items: lineItem,
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    payment_terms: terms.payment_terms,
+    payment_terms_label: terms.payment_terms_label,
     customer,
   });
 

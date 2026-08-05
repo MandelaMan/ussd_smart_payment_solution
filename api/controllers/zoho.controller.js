@@ -493,6 +493,8 @@ const createRecurringInvoice_JS = async ({
   repeat_every,
   line_items,
   is_inclusive_tax,
+  payment_terms,
+  payment_terms_label,
   billing_address,
   customer,
 }) => {
@@ -513,6 +515,12 @@ const createRecurringInvoice_JS = async ({
   };
   if (is_inclusive_tax != null) {
     payload.is_inclusive_tax = Boolean(is_inclusive_tax);
+  }
+  if (payment_terms != null && Number(payment_terms) >= 0) {
+    payload.payment_terms = Number(payment_terms);
+  }
+  if (payment_terms_label) {
+    payload.payment_terms_label = String(payment_terms_label);
   }
   if (resolvedBilling) {
     payload.billing_address = resolvedBilling;
@@ -1278,6 +1286,8 @@ const createInvoice_JS = async ({
   discount_type = "entity_level",
   is_discount_before_tax,
   due_date,
+  payment_terms,
+  payment_terms_label,
   billing_address,
   customer,
 }) => {
@@ -1298,6 +1308,12 @@ const createInvoice_JS = async ({
     };
     if (due_date) {
       invoiceData.due_date = String(due_date).slice(0, 10);
+    }
+    if (payment_terms != null && Number(payment_terms) >= 0) {
+      invoiceData.payment_terms = Number(payment_terms);
+    }
+    if (payment_terms_label) {
+      invoiceData.payment_terms_label = String(payment_terms_label);
     }
     if (is_inclusive_tax != null) {
       invoiceData.is_inclusive_tax = Boolean(is_inclusive_tax);

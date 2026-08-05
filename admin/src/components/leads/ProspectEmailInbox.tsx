@@ -40,7 +40,7 @@ import {
   isRichTextEmpty,
   sanitizeEmailHtml,
 } from "../ui/RichTextEditor";
-import { sanitizeHtml } from "../../lib/sanitizeHtml";
+import { EmailMessageBubble } from "../communication/EmailMessageBubble";
 
 type PendingAttachment = {
   fileName: string;
@@ -123,16 +123,6 @@ function fileToBase64(file: File): Promise<PendingAttachment> {
     reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
     reader.readAsDataURL(file);
   });
-}
-
-function messageBody(msg: CustomerEmailMessage): string {
-  if (msg.bodyHtml) return sanitizeHtml(msg.bodyHtml);
-  const text = msg.bodyText || msg.summary || "";
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\n/g, "<br/>");
 }
 
 function formatBytes(n: number): string {
@@ -612,78 +602,13 @@ export function ProspectEmailInbox({ initialLeadId = null }: Props) {
                     </Text>
                   ) : (
                     <Flex direction="column" gap={2.5}>
-                      {messages.map((msg) => {
-                        const outbound = msg.direction === "outbound";
-                        return (
-                          <Flex
-                            key={msg.id}
-                            justify={outbound ? "flex-end" : "flex-start"}
-                          >
-                            <Box
-                              maxW={{ base: "96%", md: "85%" }}
-                              bg={outbound ? "brand.600" : "bg.panel"}
-                              color={outbound ? "white" : "fg"}
-                              borderWidth={outbound ? 0 : "1px"}
-                              borderColor="border"
-                              borderRadius="xl"
-                              borderBottomRightRadius={outbound ? "sm" : "xl"}
-                              borderBottomLeftRadius={outbound ? "xl" : "sm"}
-                              px={3}
-                              py={2}
-                              boxShadow="sm"
-                            >
-                              <Text fontSize="xs" fontWeight="700" opacity={0.9} mb={1}>
-                                {msg.subject}
-                              </Text>
-                              <Box
-                                fontSize="sm"
-                                whiteSpace="normal"
-                                overflowWrap="anywhere"
-                                css={{
-                                  "& a": {
-                                    color: outbound
-                                      ? "white"
-                                      : "var(--chakra-colors-brand-600)",
-                                    textDecoration: "underline",
-                                  },
-                                  "& p": { margin: "0 0 0.35em" },
-                                  "& p:last-child": { marginBottom: 0 },
-                                  "& blockquote": {
-                                    margin: "0.5em 0",
-                                    paddingLeft: "0.75em",
-                                    borderLeft: outbound
-                                      ? "3px solid rgba(255,255,255,0.45)"
-                                      : "3px solid var(--chakra-colors-border)",
-                                    opacity: 0.92,
-                                  },
-                                  "& img": { maxWidth: "100%", height: "auto" },
-                                }}
-                                dangerouslySetInnerHTML={{
-                                  __html: messageBody(msg),
-                                }}
-                              />
-                              {msg.attachmentNames && msg.attachmentNames.length > 0 ? (
-                                <Flex gap={1} flexWrap="wrap" mt={1.5}>
-                                  {msg.attachmentNames.map((name) => (
-                                    <Badge
-                                      key={`${msg.id}-${name}`}
-                                      colorPalette="gray"
-                                      variant="subtle"
-                                      size="sm"
-                                    >
-                                      <FiPaperclip /> {name}
-                                    </Badge>
-                                  ))}
-                                </Flex>
-                              ) : null}
-                              <Text fontSize="2xs" opacity={0.75} mt={1.5}>
-                                {outbound ? mailboxName : msg.fromAddress || "Prospect"}{" "}
-                                · {formatMsgTime(msg.createdAt)}
-                              </Text>
-                            </Box>
-                          </Flex>
-                        );
-                      })}
+                      {messages.map((msg) => (
+                        <EmailMessageBubble
+                          key={msg.id}
+                          message={msg}
+                          outboundLabel={mailboxName}
+                        />
+                      ))}
                       <div ref={chatEndRef} />
                     </Flex>
                   )}

@@ -715,7 +715,7 @@ export type IntegrationEvent = {
 
 export type UnifiedTransaction = {
   id: number;
-  source: "mpesa" | "zoho" | "tisp";
+  source: "mpesa" | "zoho" | "zoho_invoice" | "tisp";
   status: string;
   amount: number | null;
   customerRef: string | null;
@@ -753,6 +753,28 @@ export type IntegrationEventDetail = {
   mpesaReceipt: string | null;
   phone: string | null;
   accountReference: string | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type ZohoCustomerPaymentDetail = {
+  id: number;
+  paymentId: string;
+  paymentNumber: string | null;
+  paymentDate: string;
+  amount: number | null;
+  status: string;
+  referenceNumber: string | null;
+  description: string | null;
+  referenceId: string | null;
+  channel: string | null;
+  accountName: string | null;
+  invoiceNumbers: string | null;
+  customerId: number | null;
+  customerNumber: string | null;
+  customerName: string | null;
+  phone: string | null;
+  email: string | null;
   payload: Record<string, unknown>;
   createdAt: string;
 };
@@ -1814,6 +1836,11 @@ export const api = {
 
   getIntegrationEvent: (id: number) =>
     request<{ event: IntegrationEventDetail }>(`/admin/transactions/integration/${id}`),
+
+  getZohoCustomerPayment: (id: number) =>
+    request<{ payment: ZohoCustomerPaymentDetail }>(
+      `/admin/transactions/zoho-payment/${id}`
+    ),
 
   getMpesaTransactions: (params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();

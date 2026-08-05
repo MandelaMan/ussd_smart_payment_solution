@@ -1,11 +1,13 @@
 const {
   buildPackageLabel,
   buildSubscriptionInvoiceDescription,
+  buildRecurringSubscriptionInvoiceDescription,
 } = require("./billingPeriod");
 const {
   isB2BCustomer,
   buildManagedHouseLineItemName,
   buildManagedHouseLineItemDescription,
+  buildManagedHouseRecurringLineItemDescription,
 } = require("./b2bBilling");
 
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
@@ -47,9 +49,18 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
   const lineName = b2b
     ? buildManagedHouseLineItemName(customer)
     : buildPackageLabel(customer);
-  const periodDescription = b2b
-    ? buildManagedHouseLineItemDescription(customer, period)
-    : buildSubscriptionInvoiceDescription(customer, period);
+  // Recurring profiles: Zoho placeholders so each generated invoice gets fresh dates.
+  // One-off invoices: concrete start/stop labels from `period`.
+  const periodDescription = options.dynamicBillingCycleDates
+    ? b2b
+      ? buildManagedHouseRecurringLineItemDescription(customer)
+      : buildRecurringSubscriptionInvoiceDescription(
+          customer.paymentFrequency || customer.payment_frequency,
+          customer.customPeriodDays ?? customer.custom_period_days
+        )
+    : b2b
+      ? buildManagedHouseLineItemDescription(customer, period)
+      : buildSubscriptionInvoiceDescription(customer, period);
 
   items.push(
     withTax({

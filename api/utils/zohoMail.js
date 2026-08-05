@@ -362,26 +362,78 @@ async function sendZohoMail({
   };
 }
 
+function parseZohoMessageRefs(row = {}) {
+  let messageId = row.messageId ?? row.messageid ?? null;
+  let folderId = row.folderId ?? row.folderid ?? null;
+  const uri = String(row.URI || row.uri || "");
+  const match = uri.match(/\/folders\/(\d+)\/messages\/(\d+)/i);
+  if (match) {
+    if (folderId == null || folderId === "") folderId = match[1];
+    if (messageId == null || messageId === "") messageId = match[2];
+  }
+  return {
+    messageId: messageId != null && messageId !== "" ? String(messageId) : null,
+    folderId: folderId != null && folderId !== "" ? String(folderId) : null,
+  };
+}
+
+function extractZohoHtmlContent(payload) {
+  const data =
+    payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  if (!data || typeof data !== "object") return null;
+
+  const content = data.content != null ? String(data.content) : "";
+  const block =
+    data.blockContent != null
+      ? String(data.blockContent)
+      : data.blockcontent != null
+        ? String(data.blockcontent)
+        : "";
+  const alt =
+    data.html != null
+      ? String(data.html)
+      : data.messageContent != null
+        ? String(data.messageContent)
+        : data.newContent != null
+          ? String(data.newContent)
+          : "";
+
+  // Thread replies often split new text vs quoted history across fields.
+  if (content.trim() && block.trim()) {
+    return `${content}<hr style="border:none;border-top:1px solid #ddd;margin:12px 0"/><blockquote>${block}</blockquote>`;
+  }
+  const picked = content.trim() || block.trim() || alt.trim();
+  return picked || null;
+}
+
+function normalizeMailboxAddress(value) {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  const angle = raw.match(/<([^>]+@[^>]+)>/);
+  if (angle) return angle[1].trim().toLowerCase();
+  return raw;
+}
+
 /**
  * Search mailbox for messages involving an address (sent or received).
  * Requires ZohoMail.messages.READ (or ALL). Failures return [].
  * Hydrates each hit with full HTML body (search only returns a short summary).
  */
 async function searchZohoMailConversation(email, { limit = 40 } = {}) {
-  const address = String(email || "")
-    .trim()
-    .toLowerCase();
+  const address = normalizeMailboxAddress(email);
   if (!address.includes("@") || !isZohoMailConfigured()) return [];
 
   try {
     const identity = await loadMailIdentity();
-    const searchKey = `sender:${address}::or:to:${address}`;
+    const searchKey = `sender:${address}::or:to:${address}::or:cc:${address}`;
     const response = await mailRequest("GET", "/messages/search", {
       params: {
         searchKey,
         start: 1,
         limit: Math.min(100, Math.max(1, limit)),
         includeto: true,
+        receivedTime: Date.now(),
       },
       timeout: 20000,
     });
@@ -390,45 +442,45 @@ async function searchZohoMailConversation(email, { limit = 40 } = {}) {
     if (code && Number(code) !== 200) return [];
 
     const rows = Array.isArray(response.data?.data) ? response.data.data : [];
-    const fromMailbox = String(identity.fromAddress || "").toLowerCase();
+    const fromMailbox = normalizeMailboxAddress(identity.fromAddress);
 
     const mapped = rows.map((row) => {
-      const from = String(row.fromAddress || "").toLowerCase();
-      const inbound = from === address || (from && from !== fromMailbox);
-      const messageId = row.messageId ?? row.messageid;
-      const folderId = row.folderId ?? row.folderid;
+      const from = normalizeMailboxAddress(row.fromAddress || row.sender);
+      const inbound =
+        from === address || (Boolean(from) && from !== fromMailbox);
+      const { messageId, folderId } = parseZohoMessageRefs(row);
+      const toRaw = Array.isArray(row.toAddress)
+        ? row.toAddress.join(", ")
+        : row.toAddress || null;
+      const received =
+        row.receivedtime ?? row.receivedTime ?? row.sentDateInGMT ?? null;
       return {
-        id: `zoho-${messageId}`,
+        id: `zoho-${messageId || Math.random().toString(36).slice(2)}`,
         source: "zoho",
         direction: inbound ? "inbound" : "outbound",
-        fromAddress: row.fromAddress || null,
-        toAddress: Array.isArray(row.toAddress)
-          ? row.toAddress.join(", ")
-          : row.toAddress || null,
+        fromAddress: row.fromAddress || row.sender || null,
+        toAddress: toRaw,
         subject: row.subject || "(no subject)",
         summary: row.summary || "",
         bodyHtml: null,
         bodyText: row.summary || "",
         attachmentNames: Number(row.hasAttachment) > 0 ? ["(attachment)"] : [],
-        zohoMessageId: messageId != null ? String(messageId) : null,
-        zohoFolderId: folderId != null ? String(folderId) : null,
-        createdAt: row.receivedtime
-          ? new Date(Number(row.receivedtime)).toISOString()
-          : row.sentDateInGMT
-            ? new Date(Number(row.sentDateInGMT)).toISOString()
-            : null,
+        zohoMessageId: messageId,
+        zohoFolderId: folderId,
+        createdAt: received ? new Date(Number(received)).toISOString() : null,
       };
     });
 
     return hydrateZohoMessageBodies(mapped);
-  } catch {
+  } catch (e) {
+    console.warn("Zoho Mail conversation search failed:", e.message || e);
     return [];
   }
 }
 
 /**
  * Fetch full HTML for a single Zoho message.
- * includeBlockContent=true keeps quoted reply history that Zoho otherwise omits.
+ * includeBlockContent keeps quoted reply history that Zoho otherwise omits.
  */
 async function fetchZohoMailContent(folderId, messageId) {
   if (!folderId || !messageId) return null;
@@ -437,15 +489,18 @@ async function fetchZohoMailContent(folderId, messageId) {
       "GET",
       `/folders/${folderId}/messages/${messageId}/content`,
       {
-        params: { includeBlockContent: true },
+        params: { includeBlockContent: "true" },
         timeout: 20000,
       }
     );
     const code = response.data?.status?.code ?? response.data?.code;
     if (code && Number(code) !== 200) return null;
-    const content = response.data?.data?.content;
-    return content != null ? String(content) : null;
-  } catch {
+    return extractZohoHtmlContent(response.data);
+  } catch (e) {
+    console.warn(
+      `Zoho Mail content fetch failed (${folderId}/${messageId}):`,
+      e.message || e
+    );
     return null;
   }
 }
@@ -486,7 +541,7 @@ async function hydrateZohoMessageBodies(messages) {
     const cacheKey = `${msg.zohoFolderId}:${msg.zohoMessageId}`;
     try {
       const cached = await getCache("zoho-mail-body", cacheKey);
-      if (cached?.bodyHtml) {
+      if (cached?.bodyHtml && String(cached.bodyHtml).trim()) {
         return {
           ...msg,
           bodyHtml: cached.bodyHtml,

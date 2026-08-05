@@ -39,12 +39,14 @@ import { TextStatus } from "../components/ui/TextStatus";
 const SOURCE_LABELS: Record<string, string> = {
   mpesa: "M-Pesa",
   zoho: "Zoho",
+  zoho_invoice: "Zoho Invoice",
   tisp: "TISP",
 };
 
 const SOURCE_COLORS: Record<string, string> = {
   mpesa: "brand",
   zoho: "blue",
+  zoho_invoice: "purple",
   tisp: "teal",
 };
 
@@ -450,7 +452,7 @@ export function TransactionsPage() {
                           >
                             {SOURCE_LABELS[row.source] || row.source}
                           </Badge>
-                          {row.source === "zoho" && row.zohoAction && (
+                          {row.source === "zoho_invoice" && row.zohoAction && (
                             <Badge
                               colorPalette={ZOHO_ACTION_COLORS[row.zohoAction]}
                               variant="outline"

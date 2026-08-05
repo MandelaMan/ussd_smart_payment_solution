@@ -190,6 +190,29 @@ function buildManagedHouseLineItemDescription(customer, period) {
 }
 
 /**
+ * B2B recurring profile description — Zoho expands date placeholders on each invoice.
+ */
+function buildManagedHouseRecurringLineItemDescription(customer) {
+  const {
+    buildRecurringSubscriptionInvoiceDescription,
+  } = require("./billingPeriod");
+  const parts = [];
+  const customerNumber = customer?.customerNumber || customer?.customer_number;
+  const residentName = resolveCustomerFullName(customer);
+
+  if (customerNumber) parts.push(customerNumber);
+  if (residentName) parts.push(residentName);
+  parts.push(
+    buildRecurringSubscriptionInvoiceDescription(
+      customer?.paymentFrequency || customer?.payment_frequency,
+      customer?.customPeriodDays ?? customer?.custom_period_days
+    )
+  );
+
+  return parts.join(" · ") || "B2B managed house subscription";
+}
+
+/**
  * Optional agency discount % from onboarding (e.g. 14.88).
  * Returns null when no discount applies.
  */
@@ -224,6 +247,7 @@ module.exports = {
   hasEffectiveCustomerPhone,
   buildManagedHouseLineItemName,
   buildManagedHouseLineItemDescription,
+  buildManagedHouseRecurringLineItemDescription,
   normalizeAgencyDiscountPercent,
   applyAgencyUnitDiscount,
 };

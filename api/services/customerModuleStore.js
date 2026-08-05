@@ -526,12 +526,10 @@ async function createBuilding(data) {
     throw new Error("Codes must be 2–10 alphanumeric characters");
   }
 
+  // Prefixes are optional on create — STATIC buildings can add them later.
   let ipPrefixes = [];
   if (ipSetup === "STATIC") {
     ipPrefixes = normalizeIpPrefixes(data.ipPrefixes || []);
-    if (!ipPrefixes.length) {
-      throw new Error("STATIC buildings require at least one IP prefix (e.g. 10.12.10.)");
-    }
   }
 
   const result = await query(

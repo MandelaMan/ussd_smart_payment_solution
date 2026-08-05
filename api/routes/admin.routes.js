@@ -13,6 +13,7 @@ const {
   listUnifiedTransactions,
   exportUnifiedTransactions,
   getIntegrationEvent,
+  getZohoCustomerPayment,
 } = require("../controllers/admin.controller");
 const { listUsers, createUser, updateUser, resetUserPassword } = require("../controllers/auth.controller");
 const { listBuildings, createBuilding, updateBuilding, listBuildingOlts, createBuildingOlt, updateBuildingOlt, deleteBuildingOlt } = require("../controllers/buildings.controller");
@@ -191,6 +192,7 @@ router.get("/reports/:id/download", requireReportsAccess, downloadReport);
 router.get("/transactions", requireFinance, listUnifiedTransactions);
 router.get("/transactions/export", requireFinance, exportUnifiedTransactions);
 router.get("/transactions/integration/:id", requireFinance, getIntegrationEvent);
+router.get("/transactions/zoho-payment/:id", requireFinance, getZohoCustomerPayment);
 router.get("/transactions/mpesa/export", requireFinance, exportMpesaTransactions);
 router.get("/transactions/mpesa", requireFinance, listMpesaTransactions);
 router.get("/transactions/mpesa/:id", requireFinance, getMpesaTransaction);

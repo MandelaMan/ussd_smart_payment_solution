@@ -272,10 +272,12 @@ async function sendWhatsAppToCustomer(req, res, next) {
   }
 }
 
-function longerText(a, b) {
+function preferRichText(a, b) {
   const left = a == null ? "" : String(a);
   const right = b == null ? "" : String(b);
-  return right.length > left.length ? right : left || null;
+  if (!left.trim()) return right || null;
+  if (!right.trim()) return left || null;
+  return right.length > left.length ? right : left;
 }
 
 function mergeEmailConversations(localMessages, zohoMessages) {
@@ -293,9 +295,9 @@ function mergeEmailConversations(localMessages, zohoMessages) {
       byKey.set(key, {
         ...msg,
         ...existing,
-        summary: longerText(existing.summary, msg.summary) || existing.summary,
-        bodyHtml: longerText(existing.bodyHtml, msg.bodyHtml),
-        bodyText: longerText(existing.bodyText, msg.bodyText),
+        summary: preferRichText(existing.summary, msg.summary) || existing.summary,
+        bodyHtml: preferRichText(existing.bodyHtml, msg.bodyHtml),
+        bodyText: preferRichText(existing.bodyText, msg.bodyText),
         attachmentNames:
           (msg.attachmentNames?.length || 0) >
           (existing.attachmentNames?.length || 0)
