@@ -14,6 +14,7 @@ import {
   FiXCircle,
 } from "react-icons/fi";
 import type { Customer } from "../../lib/api";
+import { FLOATING_MENU_Z_INDEX } from "../ui/floatingMenu";
 
 export type CustomerAction =
   | "edit"
@@ -59,7 +60,7 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
         </IconButton>
       </Menu.Trigger>
       <Portal>
-        <Menu.Positioner zIndex={1900}>
+        <Menu.Positioner zIndex={FLOATING_MENU_Z_INDEX}>
           <Menu.Content
             minW="220px"
             borderRadius="lg"
@@ -68,7 +69,7 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
             borderWidth="1px"
             borderColor="border"
             py={1}
-            zIndex={1900}
+            zIndex={FLOATING_MENU_Z_INDEX}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >

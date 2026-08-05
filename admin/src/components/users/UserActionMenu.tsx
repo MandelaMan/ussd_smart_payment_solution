@@ -8,6 +8,7 @@ import {
   FiUserCheck,
 } from "react-icons/fi";
 import type { AdminUser } from "../../lib/api";
+import { FLOATING_MENU_Z_INDEX } from "../ui/floatingMenu";
 
 export const USER_ROLE_OPTIONS = [
   { value: "admin", label: "Administrator" },
@@ -65,7 +66,7 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
         </IconButton>
       </Menu.Trigger>
       <Portal>
-        <Menu.Positioner zIndex={1900}>
+        <Menu.Positioner zIndex={FLOATING_MENU_Z_INDEX}>
           <Menu.Content
             minW="200px"
             borderRadius="lg"
@@ -74,7 +75,7 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
             borderWidth="1px"
             borderColor="border"
             py={1}
-            zIndex={1900}
+            zIndex={FLOATING_MENU_Z_INDEX}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >

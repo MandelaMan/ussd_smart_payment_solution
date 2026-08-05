@@ -2,7 +2,6 @@ import {
   Box,
   Flex,
   Input,
-  Portal,
   Text,
   type InputProps,
 } from "@chakra-ui/react";
@@ -10,7 +9,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -18,21 +16,19 @@ import {
 } from "react";
 import { FiChevronDown, FiSearch } from "react-icons/fi";
 import { embeddedFieldInputStyles, FILTER_CONTROL_HEIGHT } from "../../theme";
-import { MODAL_Z_INDEX } from "./ModalShell";
+import {
+  FLOATING_MENU_Z_INDEX,
+  renderFloatingMenuPortal,
+  useFloatingMenuPosition,
+} from "./floatingMenu";
 
-export const SEARCHABLE_SELECT_MENU_Z_INDEX = MODAL_Z_INDEX + 100;
+export const SEARCHABLE_SELECT_MENU_Z_INDEX = FLOATING_MENU_Z_INDEX;
 
 export type SearchableSelectOption = {
   value: string;
   label: string;
   description?: string;
   keywords?: string;
-};
-
-type DropdownRect = {
-  top: number;
-  left: number;
-  width: number;
 };
 
 type Props = {
@@ -47,6 +43,7 @@ type Props = {
   isLoading?: boolean;
   size?: InputProps["size"];
   menuZIndex?: number;
+  /** @deprecated Menus always portal to document.body to avoid modal clipping. */
   usePortal?: boolean;
 };
 
@@ -74,7 +71,7 @@ export function SearchableSelect({
   isLoading = false,
   size = "md",
   menuZIndex,
-  usePortal = true,
+  usePortal: _usePortal = true,
 }: Props) {
   const isDisabled = disabled || isLoading;
   const resolvedPlaceholder = isLoading ? "Loading…" : placeholder;
@@ -85,7 +82,7 @@ export function SearchableSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlightIndex, setHighlightIndex] = useState(0);
-  const [dropdownRect, setDropdownRect] = useState<DropdownRect | null>(null);
+  const placement = useFloatingMenuPosition(open && !isDisabled, rootRef, 240);
 
   const selected = options.find((option) => option.value === value);
   const resolvedMenuZIndex = menuZIndex ?? SEARCHABLE_SELECT_MENU_Z_INDEX;
@@ -95,16 +92,6 @@ export function SearchableSelect({
     if (!trimmed) return options;
     return options.filter((option) => matchesOption(option, trimmed));
   }, [options, query]);
-
-  const updateDropdownPosition = useCallback(() => {
-    if (!rootRef.current) return;
-    const rect = rootRef.current.getBoundingClientRect();
-    setDropdownRect({
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: rect.width,
-    });
-  }, []);
 
   const selectOption = useCallback(
     (option: SearchableSelectOption) => {
@@ -118,21 +105,6 @@ export function SearchableSelect({
   useEffect(() => {
     setHighlightIndex(0);
   }, [query, open]);
-
-  useLayoutEffect(() => {
-    if (!open || !usePortal) {
-      setDropdownRect(null);
-      return;
-    }
-    updateDropdownPosition();
-    const onScrollOrResize = () => updateDropdownPosition();
-    window.addEventListener("resize", onScrollOrResize);
-    document.addEventListener("scroll", onScrollOrResize, true);
-    return () => {
-      window.removeEventListener("resize", onScrollOrResize);
-      document.removeEventListener("scroll", onScrollOrResize, true);
-    };
-  }, [open, updateDropdownPosition, usePortal]);
 
   useEffect(() => {
     if (!open) return;
@@ -163,7 +135,9 @@ export function SearchableSelect({
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setHighlightIndex((index) => Math.min(index + 1, Math.max(filtered.length - 1, 0)));
+      setHighlightIndex((index) =>
+        Math.min(index + 1, Math.max(filtered.length - 1, 0))
+      );
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setHighlightIndex((index) => Math.max(index - 1, 0));
@@ -225,23 +199,25 @@ export function SearchableSelect({
       })
     );
 
-  const menuContent = (
-    <Box
-      ref={menuRef}
-      id={menuId}
-      role="listbox"
-      bg="bg.panel"
-      border="1px solid"
-      borderColor="border"
-      borderRadius="md"
-      boxShadow="lg"
-      maxH="240px"
-      overflowY="auto"
-      isolation="isolate"
-    >
-      {menuItems}
-    </Box>
-  );
+  const menuContent =
+    open && !isDisabled && placement ? (
+      <Box
+        ref={menuRef}
+        id={menuId}
+        role="listbox"
+        bg="bg.panel"
+        border="1px solid"
+        borderColor="border"
+        borderRadius="md"
+        boxShadow="lg"
+        maxH={`${placement.maxHeight}px`}
+        overflowY="auto"
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+      >
+        {menuItems}
+      </Box>
+    ) : null;
 
   return (
     <Box ref={rootRef} position="relative" w="100%" maxW="100%">
@@ -267,8 +243,6 @@ export function SearchableSelect({
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}
           aria-busy={isLoading || undefined}
-          // Chrome often ignores autocomplete=off; new-password reliably suppresses
-          // saved-form overlays on combobox search fields in PWA/browser.
           autoComplete="new-password"
           autoCorrect="off"
           autoCapitalize="off"
@@ -284,7 +258,9 @@ export function SearchableSelect({
           }}
           onFocus={openMenu}
           onKeyDown={handleKeyDown}
-          placeholder={open ? searchPlaceholder : selected ? undefined : resolvedPlaceholder}
+          placeholder={
+            open ? searchPlaceholder : selected ? undefined : resolvedPlaceholder
+          }
           disabled={isDisabled}
           size={size}
           flex="1"
@@ -317,35 +293,7 @@ export function SearchableSelect({
         </Flex>
       </Flex>
 
-      {open && !isDisabled ? (
-        usePortal && dropdownRect ? (
-          <Portal>
-            <Box
-              position="fixed"
-              top={`${dropdownRect.top}px`}
-              left={`${dropdownRect.left}px`}
-              width={`${dropdownRect.width}px`}
-              zIndex={resolvedMenuZIndex}
-              bg="bg.panel"
-              borderRadius="md"
-            >
-              {menuContent}
-            </Box>
-          </Portal>
-        ) : (
-          <Box
-            position="absolute"
-            top="calc(100% + 4px)"
-            left={0}
-            right={0}
-            zIndex={resolvedMenuZIndex}
-            bg="bg.panel"
-            borderRadius="md"
-          >
-            {menuContent}
-          </Box>
-        )
-      ) : null}
+      {renderFloatingMenuPortal(placement, menuContent, resolvedMenuZIndex)}
     </Box>
   );
 }

@@ -13,6 +13,11 @@ import {
   type SubscriptionStatusLabel,
 } from "../../lib/customerStatus";
 import { fieldControlStyles, FILTER_CONTROL_HEIGHT } from "../../theme";
+import {
+  FLOATING_MENU_Z_INDEX,
+  renderFloatingMenuPortal,
+  useFloatingMenuPosition,
+} from "./floatingMenu";
 
 type Props = {
   value: SubscriptionStatusLabel[];
@@ -34,10 +39,12 @@ export function StatusMultiSelect({
   const isDisabled = disabled || isLoading;
   const resolvedPlaceholder = isLoading ? "Loading…" : placeholder;
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const placement = useFloatingMenuPosition(open && !isDisabled, rootRef, 320);
 
   const shellHeight = size === "sm" ? FILTER_CONTROL_HEIGHT : "40px";
   /** More than two chips → wrap and grow the filter row (pushes table down). */
@@ -46,10 +53,11 @@ export function StatusMultiSelect({
   useEffect(() => {
     if (!open) return;
     function onPointerDown(event: MouseEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
+      setQuery("");
     }
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
@@ -211,79 +219,81 @@ export function StatusMultiSelect({
         </Flex>
       </Flex>
 
-      {open && !isDisabled ? (
-        <Box
-          id={menuId}
-          position="absolute"
-          top="calc(100% + 4px)"
-          left={0}
-          right={0}
-          zIndex={1500}
-          bg="bg.panel"
-          border="1px solid"
-          borderColor="border"
-          borderRadius="md"
-          boxShadow="lg"
-          py={1}
-          maxH="320px"
-          overflowY="auto"
-        >
-          <Box px={2} pb={1} pt={1}>
-            <Input
-              ref={searchRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              size="xs"
-              placeholder="Filter statuses…"
-              borderRadius="md"
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setOpen(false);
-                  setQuery("");
-                }
-              }}
-            />
-          </Box>
-          {filtered.length === 0 ? (
-            <Text px={3} py={2} fontSize="sm" color="fg.subtle">
-              No matches
-            </Text>
-          ) : (
-            filtered.map((option) => {
-              const selected = value.includes(option.value);
-              return (
-                <Box
-                  key={option.value}
-                  as="button"
-                  display="flex"
-                  w="full"
-                  alignItems="center"
-                  gap={2}
-                  px={3}
-                  py={2}
-                  textAlign="left"
-                  bg={selected ? "blue.50" : "transparent"}
-                  _hover={{ bg: selected ? "blue.50" : "gray.50" }}
-                  onClick={() => toggleOption(option.value)}
-                >
+      {renderFloatingMenuPortal(
+        placement,
+        open && !isDisabled && placement ? (
+          <Box
+            ref={menuRef}
+            id={menuId}
+            bg="bg.panel"
+            border="1px solid"
+            borderColor="border"
+            borderRadius="md"
+            boxShadow="lg"
+            py={1}
+            maxH={`${placement.maxHeight}px`}
+            overflowY="auto"
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+          >
+            <Box px={2} pb={1} pt={1}>
+              <Input
+                ref={searchRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                size="xs"
+                placeholder="Filter statuses…"
+                borderRadius="md"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setOpen(false);
+                    setQuery("");
+                  }
+                }}
+              />
+            </Box>
+            {filtered.length === 0 ? (
+              <Text px={3} py={2} fontSize="sm" color="fg.subtle">
+                No matches
+              </Text>
+            ) : (
+              filtered.map((option) => {
+                const selected = value.includes(option.value);
+                return (
                   <Box
-                    w="3px"
-                    alignSelf="stretch"
-                    borderRadius="full"
-                    bg={option.color}
-                    flexShrink={0}
-                    minH="18px"
-                  />
-                  <Text fontSize="sm" fontWeight="semibold" color="fg" minW={0}>
-                    {option.label}
-                  </Text>
-                </Box>
-              );
-            })
-          )}
-        </Box>
-      ) : null}
+                    key={option.value}
+                    as="button"
+                    display="flex"
+                    w="full"
+                    alignItems="center"
+                    gap={2}
+                    px={3}
+                    py={2}
+                    textAlign="left"
+                    bg={selected ? "blue.50" : "transparent"}
+                    _hover={{ bg: selected ? "blue.50" : "gray.50" }}
+                    onClick={() => toggleOption(option.value)}
+                  >
+                    <Box
+                      w="3px"
+                      alignSelf="stretch"
+                      borderRadius="full"
+                      bg={option.color}
+                      flexShrink={0}
+                      minH="18px"
+                    />
+                    <Text fontSize="sm" fontWeight="semibold" color="fg" minW={0}>
+                      {option.label}
+                    </Text>
+                  </Box>
+                );
+              })
+            )}
+          </Box>
+        ) : null,
+        FLOATING_MENU_Z_INDEX
+      )}
     </Box>
   );
 }

@@ -1,11 +1,10 @@
-import { Box, Portal, Text, type BoxProps } from "@chakra-ui/react";
+import { Box, Text, type BoxProps } from "@chakra-ui/react";
 import {
   Children,
   isValidElement,
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,10 +14,13 @@ import {
 } from "react";
 import { FiChevronDown } from "react-icons/fi";
 import { fieldControlStyles, FILTER_CONTROL_HEIGHT } from "../../theme";
-import { APP_DIALOG_Z_INDEX } from "./AppDialog";
-import { MODAL_Z_INDEX } from "./ModalShell";
+import {
+  FLOATING_MENU_Z_INDEX,
+  renderFloatingMenuPortal,
+  useFloatingMenuPosition,
+} from "./floatingMenu";
 
-export const SELECT_FIELD_MENU_Z_INDEX = Math.max(MODAL_Z_INDEX, APP_DIALOG_Z_INDEX) + 100;
+export const SELECT_FIELD_MENU_Z_INDEX = FLOATING_MENU_Z_INDEX;
 
 type SelectOption = {
   value: string;
@@ -41,6 +43,7 @@ type Props = Omit<BoxProps, "children" | "onChange" | "value"> & {
   isLoading?: boolean;
   size?: "sm" | "md" | "lg";
   menuZIndex?: number;
+  /** @deprecated Menus always portal to document.body to avoid modal clipping. */
   usePortal?: boolean;
 };
 
@@ -107,7 +110,7 @@ export function SelectField({
   isLoading = false,
   disabled,
   menuZIndex,
-  usePortal = true,
+  usePortal: _usePortal = true,
   width,
   w,
   ...rootProps
@@ -125,11 +128,7 @@ export function SelectField({
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(0);
-  const [dropdownRect, setDropdownRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
+  const placement = useFloatingMenuPosition(open && !isDisabled, rootRef);
 
   const resolvedMenuZIndex = menuZIndex ?? SELECT_FIELD_MENU_Z_INDEX;
   const controlHeight =
@@ -144,16 +143,6 @@ export function SelectField({
         .map(({ index }) => index),
     [options]
   );
-
-  const updateDropdownPosition = useCallback(() => {
-    if (!rootRef.current) return;
-    const rect = rootRef.current.getBoundingClientRect();
-    setDropdownRect({
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: rect.width,
-    });
-  }, []);
 
   const selectOption = useCallback(
     (option: SelectOption) => {
@@ -170,21 +159,6 @@ export function SelectField({
     const fallback = selectableIndexes[0] ?? 0;
     setHighlightIndex(selectedIndex >= 0 ? selectedIndex : fallback);
   }, [open, options, selectableIndexes, value]);
-
-  useLayoutEffect(() => {
-    if (!open || !usePortal) {
-      setDropdownRect(null);
-      return;
-    }
-    updateDropdownPosition();
-    const onScrollOrResize = () => updateDropdownPosition();
-    window.addEventListener("resize", onScrollOrResize);
-    document.addEventListener("scroll", onScrollOrResize, true);
-    return () => {
-      window.removeEventListener("resize", onScrollOrResize);
-      document.removeEventListener("scroll", onScrollOrResize, true);
-    };
-  }, [open, updateDropdownPosition, usePortal]);
 
   useEffect(() => {
     if (!open) return;
@@ -286,30 +260,28 @@ export function SelectField({
     );
   });
 
-  const menuContent = (
-    <Box
-      ref={menuRef}
-      id={menuId}
-      role="listbox"
-      w="100%"
-      bg="bg.panel"
-      border="1px solid"
-      borderColor="border"
-      borderRadius="md"
-      boxShadow="lg"
-      maxH="280px"
-      overflowY="auto"
-      overflowX="hidden"
-      isolation="isolate"
-      py={1}
-      // Keep wheel/touch scrolling on the menu instead of a parent overflow container
-      // (e.g. AppDialog body), which otherwise steals scroll and makes options unusable.
-      onWheel={(e) => e.stopPropagation()}
-      onTouchMove={(e) => e.stopPropagation()}
-    >
-      {menuItems}
-    </Box>
-  );
+  const menuContent =
+    open && !isDisabled && placement ? (
+      <Box
+        ref={menuRef}
+        id={menuId}
+        role="listbox"
+        w="100%"
+        bg="bg.panel"
+        border="1px solid"
+        borderColor="border"
+        borderRadius="md"
+        boxShadow="lg"
+        maxH={`${placement.maxHeight}px`}
+        overflowY="auto"
+        overflowX="hidden"
+        py={1}
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+      >
+        {menuItems}
+      </Box>
+    ) : null;
 
   return (
     <Box
@@ -379,31 +351,7 @@ export function SelectField({
         </Box>
       </Box>
 
-      {open && !isDisabled ? (
-        usePortal && dropdownRect ? (
-          <Portal>
-            <Box
-              position="fixed"
-              top={`${dropdownRect.top}px`}
-              left={`${dropdownRect.left}px`}
-              w={`${dropdownRect.width}px`}
-              zIndex={resolvedMenuZIndex}
-            >
-              {menuContent}
-            </Box>
-          </Portal>
-        ) : (
-          <Box
-            position="absolute"
-            top="calc(100% + 4px)"
-            left={0}
-            right={0}
-            zIndex={resolvedMenuZIndex}
-          >
-            {menuContent}
-          </Box>
-        )
-      ) : null}
+      {renderFloatingMenuPortal(placement, menuContent, resolvedMenuZIndex)}
     </Box>
   );
 }
