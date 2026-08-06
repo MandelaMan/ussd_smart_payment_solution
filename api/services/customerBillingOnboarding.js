@@ -11,7 +11,7 @@ const {
   isB2BCustomer,
   resolveEffectiveCustomerEmail,
 } = require("../utils/b2bBilling");
-const { buildSubscriptionLineItems } = require("../utils/zohoInvoiceLineItems");
+const { buildSubscriptionLineItems, buildDstvDecoderFeeLineItem } = require("../utils/zohoInvoiceLineItems");
 const {
   computeBillingPeriod,
   computeInvoiceDueDate,
@@ -196,6 +196,58 @@ function buildSignupLineItems(customer, period) {
   return buildSubscriptionLineItems(customer, period, {
     includeOneTimeDstvFee: true,
   });
+}
+
+/**
+ * One-off decoder invoice for trial signups (package billing starts at trial end).
+ * Recurring must not carry the decoder line — it would repeat every cycle.
+ */
+async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) {
+  const decoderLine = buildDstvDecoderFeeLineItem(customer, {
+    name: "Decoder charge",
+  });
+  if (!decoderLine) {
+    return { created: false, reason: "no_decoder_fee", invoiceId: null };
+  }
+
+  const invoiceNumber = await buildZohoInvoiceNumber({
+    customerId: customer.id,
+    customerNumber: customer.customerNumber,
+    buildingCode: customer.buildingCode,
+  });
+
+  const invoice = await createInvoice_JS({
+    customer_id: zohoContact.contact_id,
+    items: [decoderLine],
+    is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    reference_number: customer.customerNumber,
+    invoice_number: invoiceNumber,
+    due_date: computeInvoiceDueDate(customer),
+    ...resolveZohoPaymentTerms(customer),
+    customer,
+  });
+
+  if (!invoice?.invoice_id) {
+    throw new Error("Zoho DSTV decoder fee invoice creation failed");
+  }
+
+  const tracking = await customerStore.getCustomerById(customer.id);
+  const emailResult = await emailSignupInvoiceOnce(
+    invoice,
+    customer,
+    tracking,
+    options
+  );
+
+  return {
+    created: true,
+    invoiceId: String(invoice.invoice_id),
+    invoiceNumber: invoice.invoice_number || null,
+    total: Number(invoice.total || decoderLine.rate),
+    emailed: emailResult.emailed,
+    emailReason: emailResult.reason,
+    decoderOnly: true,
+  };
 }
 
 /**
@@ -425,10 +477,34 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         invoiceNumber: null,
         emailed: false,
       };
+      // Decoder is one-time — bill it now on a separate invoice when the package
+      // is DSTV. Do not put it on the recurring profile (would repeat monthly).
+      try {
+        const decoderInvoice = await createDstvDecoderFeeInvoice(
+          customer,
+          zohoContact,
+          { forceEmail, skipEmail }
+        );
+        if (decoderInvoice?.created) {
+          invoice = {
+            ...invoice,
+            skipped: false,
+            created: true,
+            decoderOnly: true,
+            invoiceId: decoderInvoice.invoiceId,
+            invoiceNumber: decoderInvoice.invoiceNumber,
+            total: decoderInvoice.total,
+            emailed: decoderInvoice.emailed,
+            emailReason: decoderInvoice.emailReason,
+          };
+        }
+      } catch (e) {
+        console.error("trial DSTV decoder invoice failed:", e.message);
+        throw e;
+      }
       try {
         recurring = await ensureRecurringSubscription(customer, zohoContact, {
           startDate: trialEndsAt,
-          includeOneTimeDstvFee: true,
         });
       } catch (e) {
         console.error("trial recurring invoice setup failed:", e.message);
@@ -1257,4 +1333,5 @@ async function emailAdvancePaymentReceipt({
 module.exports = {
   onboardNewCustomerBilling,
   createSignupInvoice,
+  createDstvDecoderFeeInvoice,
 };

@@ -24,23 +24,60 @@ function customerHasDstv(customer) {
   return Boolean(
     customer?.hasDstv ||
       customer?.productHasDstv ||
-      customer?.product_has_dstv
+      customer?.product_has_dstv ||
+      customer?.has_dstv
   );
 }
 
 function resolveDstvOneTimeFee(customer) {
-  const fromCustomer = Number(customer.decoderFeeAmount);
+  const fromCustomer = Number(customer?.decoderFeeAmount);
   if (fromCustomer > 0) return fromCustomer;
+  const fromSnake = Number(customer?.decoder_fee_amount);
+  if (fromSnake > 0) return fromSnake;
   return DSTV_ONE_TIME_FEE;
 }
 
 function shouldIncludeDstvOneTimeFee(customer) {
-  return customerHasDstv(customer) || Boolean(customer.decoderFeeRequired);
+  return (
+    customerHasDstv(customer) ||
+    Boolean(customer?.decoderFeeRequired) ||
+    Boolean(customer?.decoder_fee_required)
+  );
+}
+
+/**
+ * One-time decoder / DSTV charge line item, or null when not applicable.
+ * options.name — override line name (e.g. include customer number on agency invoices)
+ */
+function buildDstvDecoderFeeLineItem(customer, options = {}) {
+  if (!shouldIncludeDstvOneTimeFee(customer)) return null;
+  const fee = resolveDstvOneTimeFee(customer);
+  if (!(fee > 0)) return null;
+
+  const serial = String(
+    customer?.dstvDecoderSerial || customer?.dstv_decoder_serial || ""
+  ).trim();
+  const customerNumber = String(
+    customer?.customerNumber || customer?.customer_number || ""
+  ).trim();
+  const name =
+    options.name ||
+    (customerNumber ? `Decoder charge — ${customerNumber}` : "Decoder charge");
+
+  return withTax({
+    name,
+    rate: fee,
+    quantity: 1,
+    description: serial
+      ? `One-time DSTV decoder charge (serial: ${serial})`
+      : "One-time DSTV decoder charge",
+  });
 }
 
 /**
  * Build Zoho invoice line items for a subscription period.
- * DSTV (KES 2,900 one-time) is only added when includeOneTimeDstvFee is true (first signup invoice).
+ * Decoder charge is added when includeOneTimeDstvFee is true (signup / first invoice).
+ * Recurring profiles must pass includeOneTimeDstvFee: false (default).
  */
 function buildSubscriptionLineItems(customer, period, options = {}) {
   const items = [];
@@ -71,26 +108,12 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
     })
   );
 
-  if (
-    options.includeOneTimeDstvFee === true &&
-    shouldIncludeDstvOneTimeFee(customer)
-  ) {
-    const fee = resolveDstvOneTimeFee(customer);
-    if (fee > 0) {
-      const serial = customer.dstvDecoderSerial
-        ? String(customer.dstvDecoderSerial).trim()
-        : "";
-      items.push(
-        withTax({
-          name: "DSTV one-time fee",
-          rate: fee,
-          quantity: 1,
-          description: serial
-            ? `One-time DSTV charge (decoder serial: ${serial})`
-            : "One-time DSTV charge (lifetime)",
-        })
-      );
-    }
+  if (options.includeOneTimeDstvFee === true) {
+    const decoderLine = buildDstvDecoderFeeLineItem(customer, {
+      // C2B signup: short name; B2B managed-house line already identifies the house.
+      name: b2b ? undefined : "Decoder charge",
+    });
+    if (decoderLine) items.push(decoderLine);
   }
 
   return items;
@@ -98,7 +121,9 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
 
 module.exports = {
   buildSubscriptionLineItems,
+  buildDstvDecoderFeeLineItem,
   customerHasDstv,
   resolveDstvOneTimeFee,
   shouldIncludeDstvOneTimeFee,
+  DSTV_ONE_TIME_FEE,
 };

@@ -324,6 +324,8 @@ export type AgencyZohoStatus = {
   unpaidCount: number;
   totalBalanceDue: number;
   zohoError?: string;
+  /** True when agency detail skipped live Zoho (load via invoices endpoint). */
+  deferred?: boolean;
 };
 
 export type ApiCallLog = {

@@ -1,4 +1,4 @@
-import { Fragment, type FormEvent, useCallback, useEffect, useState } from "react";
+import { Fragment, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
@@ -19,6 +19,14 @@ import { api, type Agency, type ListPagination } from "../lib/api";
 import { useAuth } from "../lib/authContext";
 import { canMutateAgencies } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
+import { cacheKeyFromParams } from "../lib/moduleDataCache";
+import {
+  beginListLoad,
+  endListLoad,
+  seedListState,
+  storeListState,
+} from "../lib/listLoad";
+import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { AppDialog } from "../components/ui/AppDialog";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
@@ -51,19 +59,31 @@ const PAGE_SIZE = 30;
 
 type AgencySortKey = "name" | "contactPerson" | "phone" | "email" | "activeCustomers";
 
+function agenciesListCacheKey(params: Record<string, string>) {
+  return cacheKeyFromParams("agencies:list", params);
+}
+
+const DEFAULT_AGENCIES_CACHE_KEY = agenciesListCacheKey({
+  page: "1",
+  limit: String(PAGE_SIZE),
+  sortBy: "name",
+  sortDir: "asc",
+});
+
 export function AgenciesPage() {
   const { user } = useAuth();
   const isMobile = useMobileViewport();
   const canMutate = canMutateAgencies(user);
-  const [agencies, setAgencies] = useState<Agency[]>([]);
-  const [pagination, setPagination] = useState<ListPagination>({
-    page: 1,
-    limit: PAGE_SIZE,
-    total: 0,
-    pages: 1,
+  const seeded = seedListState<Agency>(DEFAULT_AGENCIES_CACHE_KEY);
+  const [agencies, setAgencies] = useState<Agency[]>(() => seeded.rows);
+  const [pagination, setPagination] = useState<ListPagination>(() => {
+    const p = seeded.pagination as ListPagination | null;
+    return p || { page: 1, limit: PAGE_SIZE, total: 0, pages: 1 };
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !seeded.hasCache);
   const [loadingMore, setLoadingMore] = useState(false);
+  const agenciesRef = useRef(agencies);
+  agenciesRef.current = agencies;
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -86,10 +106,15 @@ export function AgenciesPage() {
     sortDir: "asc",
   });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;
-    if (append) setLoadingMore(true);
-    else setLoading(true);
+    beginListLoad({
+      hasRows: agenciesRef.current.length > 0,
+      append,
+      silent: opts?.silent,
+      setLoading,
+      setLoadingMore,
+    });
     setError("");
     try {
       const params: Record<string, string> = { page: String(page), limit: String(PAGE_SIZE) };
@@ -97,15 +122,24 @@ export function AgenciesPage() {
       params.sortBy = sortQuery.sortBy;
       params.sortDir = sortQuery.sortDir;
       const res = await api.listAgencies(params);
-      setAgencies((prev) =>
-        mergeInfinitePage(prev, res.agencies, page, isMobile, (a) => a.id)
+      const nextRows = mergeInfinitePage(
+        agenciesRef.current,
+        res.agencies,
+        page,
+        isMobile,
+        (a) => a.id
       );
+      setAgencies(nextRows);
       setPagination(res.pagination);
+      if (!append) {
+        storeListState(agenciesListCacheKey(params), nextRows, res.pagination);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load agencies");
+      if (!opts?.silent) {
+        setError(e instanceof Error ? e.message : "Failed to load agencies");
+      }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      endListLoad({ setLoading, setLoadingMore });
     }
   }, [search, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
@@ -128,8 +162,12 @@ export function AgenciesPage() {
   }, [debouncedSearchInput, search]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
+
+  useVisibilityRefresh(() => {
+    void load({ silent: true });
+  });
 
   function resetForm() {
     setName("");

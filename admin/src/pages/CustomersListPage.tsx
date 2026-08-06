@@ -37,6 +37,19 @@ import {
 } from "../lib/api";
 import { toaster } from "../components/ui/toaster";
 import { startSyncCooldown } from "../hooks/useSyncCooldown";
+import {
+  cacheKeyFromParams,
+} from "../lib/moduleDataCache";
+import {
+  getCachedBuildings,
+  getCachedPackageCatalog,
+} from "../lib/sharedLookups";
+import {
+  beginListLoad,
+  endListLoad,
+  seedListState,
+  storeListState,
+} from "../lib/listLoad";
 import { CustomerEditDialog } from "../components/customers/CustomerEditDialog";
 import { DstvSerialMissingBadge } from "../components/customers/DstvSerialMissingBadge";
 import { CatalogPackageMissingBadge } from "../components/customers/CatalogPackageMissingBadge";
@@ -108,6 +121,21 @@ import { FILTER_CONTROL_HEIGHT } from "../theme";
 
 const PAGE_SIZE = 30;
 
+function customersListCacheKey(params: Record<string, string>) {
+  return cacheKeyFromParams("customers:list", params);
+}
+
+function defaultCustomersCacheKey(statusFromUrl: string | null) {
+  const params: Record<string, string> = {
+    page: "1",
+    limit: String(PAGE_SIZE),
+    sortBy: "customerNumber",
+    sortDir: "asc",
+  };
+  if (statusFromUrl) params.subscriptionStatus = statusFromUrl;
+  return customersListCacheKey(params);
+}
+
 function todayDateInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -153,18 +181,31 @@ export function CustomersListPage() {
   const allowPermanentDelete = canDeleteCustomer(user);
   const hidePrices = hidePricing(user);
   const hideFinancials = !canSeeCustomerFinancials(user);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [pagination, setPagination] = useState<ListPagination>({
-    page: 1,
-    limit: PAGE_SIZE,
-    total: 0,
-    pages: 1,
+  const seededCustomers = useMemo(
+    () => seedListState<Customer>(defaultCustomersCacheKey(searchParams.get("status"))),
+    // Seed once from URL status on mount — intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount seed only
+    []
+  );
+  const [customers, setCustomers] = useState<Customer[]>(() => seededCustomers.rows);
+  const [pagination, setPagination] = useState<ListPagination>(() => {
+    const p = seededCustomers.pagination as ListPagination | null;
+    return (
+      p || {
+        page: 1,
+        limit: PAGE_SIZE,
+        total: 0,
+        pages: 1,
+      }
+    );
   });
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [categories, setCategories] = useState<PackageCategory[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(true);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !seededCustomers.hasCache);
   const [loadingMore, setLoadingMore] = useState(false);
+  const customersRef = useRef(customers);
+  customersRef.current = customers;
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const debouncedSearch = useDebouncedValue(searchInput, 450);
@@ -240,17 +281,23 @@ export function CustomersListPage() {
   });
 
   useEffect(() => {
-    setLookupsLoading(true);
-    Promise.all([
-      api.listBuildings({ limit: "100" }),
-      api.getPackageCatalog(),
-    ])
+    let cancelled = false;
+    const hasLookups = buildings.length > 0 && categories.length > 0;
+    if (!hasLookups) setLookupsLoading(true);
+    Promise.all([getCachedBuildings(), getCachedPackageCatalog()])
       .then(([b, c]) => {
+        if (cancelled) return;
         setBuildings(b.buildings);
         setCategories(c.categories);
       })
       .catch(() => {})
-      .finally(() => setLookupsLoading(false));
+      .finally(() => {
+        if (!cancelled) setLookupsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount lookups
   }, []);
 
   const buildingFilterOptions = useMemo(
@@ -300,10 +347,16 @@ export function CustomersListPage() {
         try {
           const { params } = buildParams();
           const res = await api.listCustomers(params);
-          setCustomers((prev) =>
-            mergeInfinitePage(prev, res.data, page, isMobile && page > 1, (c) => c.id)
+          const nextRows = mergeInfinitePage(
+            customersRef.current,
+            res.data,
+            page,
+            isMobile && page > 1,
+            (c) => c.id
           );
+          setCustomers(nextRows);
           setPagination(res.pagination);
+          storeListState(customersListCacheKey(params), nextRows, res.pagination);
         } catch {
           /* keep current rows */
         }
@@ -316,18 +369,31 @@ export function CustomersListPage() {
       loadAbortRef.current = controller;
 
       const append = isMobile && page > 1 && !refresh;
-      if (append) setLoadingMore(true);
-      else setLoading(true);
+      beginListLoad({
+        hasRows: customersRef.current.length > 0 && !refresh,
+        append,
+        silent: false,
+        setLoading,
+        setLoadingMore,
+      });
       setError("");
       try {
         const { params, query } = buildParams();
         const res = await api.listCustomers(params, { signal: controller.signal });
         if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
-        setCustomers((prev) =>
-          mergeInfinitePage(prev, res.data, page, isMobile && !refresh, (c) => c.id)
+        const nextRows = mergeInfinitePage(
+          customersRef.current,
+          res.data,
+          page,
+          isMobile && !refresh,
+          (c) => c.id
         );
+        setCustomers(nextRows);
         setPagination(res.pagination);
-        if (!append) setSelectedIds(new Set());
+        if (!append) {
+          storeListState(customersListCacheKey(params), nextRows, res.pagination);
+          setSelectedIds(new Set());
+        }
 
         // After search: show DB rows immediately, then patch with live TISP status/due date.
         if (query.length >= 2 && res.data.length > 0) {
@@ -368,8 +434,7 @@ export function CustomersListPage() {
         toaster.create({ title: message, type: "error" });
       } finally {
         if (requestId === loadRequestRef.current) {
-          setLoading(false);
-          setLoadingMore(false);
+          endListLoad({ setLoading, setLoadingMore });
         }
       }
     },

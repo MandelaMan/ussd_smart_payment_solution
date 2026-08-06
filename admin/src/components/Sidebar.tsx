@@ -25,6 +25,7 @@ import {
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/authContext";
+import { routePrefetchHandlers } from "../lib/routePrefetch";
 import {
   canAccessConfig,
   canAccessFinance,
@@ -159,7 +160,13 @@ export function Sidebar({ open, onClose }: Props) {
           lg: "none",
         }}
       >
-        <NavLink to="/" end onClick={onClose} style={{ textDecoration: "none", flexShrink: 0 }}>
+        <NavLink
+          to="/"
+          end
+          onClick={onClose}
+          style={{ textDecoration: "none", flexShrink: 0 }}
+          {...routePrefetchHandlers("/")}
+        >
           <Flex
             align="center"
             gap={2.5}
@@ -202,6 +209,7 @@ export function Sidebar({ open, onClose }: Props) {
                   end={link.end}
                   onClick={onClose}
                   style={{ textDecoration: "none" }}
+                  {...routePrefetchHandlers(link.to)}
                 >
                   {({ isActive }) => (
                     <Flex

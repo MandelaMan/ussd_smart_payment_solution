@@ -24,6 +24,7 @@ const {
   calculateUpgradeQuote,
   calculateDowngradeQuote,
   estimateDueDateFromLastPayment,
+  recommendPaymentMethod,
 } = require("../utils/upgradeQuote");
 const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
 const {
@@ -2747,9 +2748,35 @@ async function buildUpgradeQuote(customerId, productId, billingOverrides = {}) {
     customerType: current.customer_type,
   });
 
+  // First-time DSTV on this account → include one-time decoder charge in the top-up.
+  const addingDstv =
+    !Boolean(current.product_has_dstv) && Boolean(newProduct.has_dstv);
+  let decoderFee = 0;
+  if (addingDstv) {
+    const fromCustomer =
+      customerRow.decoderFeeAmount != null
+        ? Number(customerRow.decoderFeeAmount)
+        : 0;
+    decoderFee =
+      fromCustomer > 0
+        ? fromCustomer
+        : Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
+    if (decoderFee > 0) {
+      quote.topUpAmount = Math.round(Number(quote.topUpAmount || 0) + decoderFee);
+      quote.paymentRequired = quote.topUpAmount > 0;
+      quote.recommendedPaymentMethod = recommendPaymentMethod({
+        customerType: current.customer_type,
+        daysUntilDue: quote.daysUntilDue,
+        topUpAmount: quote.topUpAmount,
+      });
+    }
+  }
+
   return {
     quote: {
       ...quote,
+      decoderFee: addingDstv ? decoderFee : 0,
+      addingDstv,
       customerNumber: customerRow.customerNumber,
       currentMbps: current.product_mbps,
       newMbps: newProduct.mbps,
@@ -2935,14 +2962,39 @@ async function createUpgradeInvoice(customer, quote) {
   const description = isB2BCustomer(customer)
     ? `Package upgrade (B2B via ${customer.agencyName}): ${quote.currentMbps} → ${quote.newMbps} Mbps (${customer.customerNumber})`
     : `Package upgrade top-up: ${quote.currentMbps} → ${quote.newMbps} Mbps (${customer.customerNumber})`;
-  const lineItem = {
-    name: `Package upgrade — ${quote.newMbps} Mbps`,
-    rate: quote.topUpAmount,
-    quantity: 1,
-    description,
-  };
-  if (ZOHO_VAT_TAX_ID) {
-    lineItem.tax_id = ZOHO_VAT_TAX_ID;
+  const packageTopUp = Math.max(
+    0,
+    Math.round(Number(quote.topUpAmount || 0) - Number(quote.decoderFee || 0))
+  );
+  const items = [];
+  if (packageTopUp > 0) {
+    const lineItem = {
+      name: `Package upgrade — ${quote.newMbps} Mbps`,
+      rate: packageTopUp,
+      quantity: 1,
+      description,
+    };
+    if (ZOHO_VAT_TAX_ID) {
+      lineItem.tax_id = ZOHO_VAT_TAX_ID;
+    }
+    items.push(lineItem);
+  }
+
+  if (quote.addingDstv && Number(quote.decoderFee) > 0) {
+    const { buildDstvDecoderFeeLineItem } = require("../utils/zohoInvoiceLineItems");
+    const decoderLine = buildDstvDecoderFeeLineItem(
+      {
+        ...customer,
+        hasDstv: true,
+        decoderFeeAmount: quote.decoderFee,
+      },
+      { name: "Decoder charge" }
+    );
+    if (decoderLine) items.push(decoderLine);
+  }
+
+  if (!items.length) {
+    throw new Error("Upgrade invoice has no billable line items");
   }
 
   const { buildZohoInvoiceNumber } = require("../utils/zohoInvoiceNumber");
@@ -2951,7 +3003,7 @@ async function createUpgradeInvoice(customer, quote) {
 
   const invoice = await createInvoice_JS({
     customer_id: zohoContact.contact_id,
-    items: [lineItem],
+    items,
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
     reference_number: referenceNumber,
     invoice_number: await buildZohoInvoiceNumber({

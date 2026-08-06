@@ -2209,14 +2209,21 @@ async function createCustomer(data) {
 
   let decoderFeeRequired = 0;
   let decoderFeeAmount = null;
+  const productHasDstv = Boolean(product.has_dstv || product.hasDstv);
   if (product.plan_variant_id) {
     const variant = await catalogStore.getPlanVariantDetails(
       product.plan_variant_id
     );
-    if (variant?.requiresDecoderFee) {
+    if (variant?.requiresDecoderFee || variant?.hasDstv || productHasDstv) {
       decoderFeeRequired = 1;
-      decoderFeeAmount = variant.decoderFeeAmount;
+      decoderFeeAmount =
+        variant.decoderFeeAmount != null
+          ? variant.decoderFeeAmount
+          : Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
     }
+  } else if (productHasDstv) {
+    decoderFeeRequired = 1;
+    decoderFeeAmount = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
   }
 
   const freqForProduct =
@@ -2383,11 +2390,29 @@ async function changeCustomerProduct(customerId, newProductId, eventType) {
     customer.custom_period_days
   );
 
-  await query(`UPDATE customers SET product_id = ?, package_price = ? WHERE id = ?`, [
-    newProductId,
-    packagePrice,
-    customerId,
-  ]);
+  const addingDstv =
+    !Boolean(customer.product_has_dstv) && Boolean(newProduct.has_dstv);
+  let decoderFeeSql = "product_id = ?, package_price = ?";
+  const decoderParams = [newProductId, packagePrice];
+  if (addingDstv) {
+    let feeAmount = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
+    if (newProduct.plan_variant_id) {
+      const variant = await catalogStore.getPlanVariantDetails(
+        newProduct.plan_variant_id
+      );
+      if (variant?.decoderFeeAmount != null) {
+        feeAmount = Number(variant.decoderFeeAmount);
+      }
+    }
+    decoderFeeSql =
+      "product_id = ?, package_price = ?, decoder_fee_required = 1, decoder_fee_amount = ?";
+    decoderParams.push(feeAmount);
+  }
+
+  await query(
+    `UPDATE customers SET ${decoderFeeSql} WHERE id = ?`,
+    [...decoderParams, customerId]
+  );
 
   await query(
     `INSERT INTO customer_events (customer_id, event_type, old_product_id, new_product_id, notes)

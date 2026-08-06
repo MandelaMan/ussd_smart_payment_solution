@@ -16,6 +16,8 @@ import {
 } from "./api";
 import { AuthContext } from "./authContext";
 import { getSessionCache, setSessionCache } from "./authSessionCache";
+import { warmSharedLookups } from "./sharedLookups";
+import { cacheInvalidate } from "./moduleDataCache";
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -181,6 +183,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user, applySession, handleSessionExpired]);
 
+  useEffect(() => {
+    if (!user) return;
+    warmSharedLookups();
+  }, [user]);
+
   const login = useCallback(
     async (email: string, password: string) => {
       const session = await api.login(email, password);
@@ -193,6 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearSessionTimer();
     resetSessionState();
     setSessionCache(null);
+    cacheInvalidate();
     await api.logout();
     setUser(null);
   }, [clearSessionTimer, resetSessionState]);

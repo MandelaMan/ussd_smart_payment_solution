@@ -20,6 +20,7 @@ const {
   normalizeAgencyDiscountPercent,
   applyAgencyUnitDiscount,
 } = require("../utils/b2bBilling");
+const { buildDstvDecoderFeeLineItem } = require("../utils/zohoInvoiceLineItems");
 const { computeRecurringStartDate } = require("../utils/zohoRecurrence");
 const {
   createInvoice_JS,
@@ -76,6 +77,16 @@ function buildAgencyHouseLineItem(customer, discountPercent, { recurring = false
     quantity: 1,
     description,
   });
+}
+
+/** Signup invoices only — decoder is one-time, never on agency recurring. */
+function withAgencyDecoderFeeItems(houseLineItems, houses) {
+  const items = [...houseLineItems];
+  for (const house of houses || []) {
+    const decoder = buildDstvDecoderFeeLineItem(house);
+    if (decoder) items.push(decoder);
+  }
+  return items;
 }
 
 function b2bPaymentTerms() {
@@ -239,9 +250,10 @@ async function createAgencyInitialInvoice(agency, zohoContact, customers = null)
   }
 
   const discountPercent = normalizeAgencyDiscountPercent(agency.discountPercent);
-  const lineItems = houses.map((c) =>
+  const houseItems = houses.map((c) =>
     buildAgencyHouseLineItem(c, discountPercent, { recurring: false })
   );
+  const lineItems = withAgencyDecoderFeeItems(houseItems, houses);
   const terms = b2bPaymentTerms();
   const total = lineItems.reduce((s, i) => s + Number(i.rate || 0), 0);
 
@@ -281,14 +293,20 @@ async function createManagedHouseSignupInvoice(agency, zohoContact, customer) {
   }
 
   const discountPercent = normalizeAgencyDiscountPercent(agency.discountPercent);
-  const lineItem = buildAgencyHouseLineItem(customer, discountPercent, {
-    recurring: false,
-  });
+  const lineItems = withAgencyDecoderFeeItems(
+    [
+      buildAgencyHouseLineItem(customer, discountPercent, {
+        recurring: false,
+      }),
+    ],
+    [customer]
+  );
   const terms = b2bPaymentTerms();
+  const itemsTotal = lineItems.reduce((s, i) => s + Number(i.rate || 0), 0);
 
   const invoice = await createInvoice_JS({
     customer_id: zohoContact.contact_id,
-    items: [lineItem],
+    items: lineItems,
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
     reference_number: customer.customerNumber || agencyRecurringReference(agency),
     due_date: computeInvoiceDueDate({ customerType: "B2B" }),
@@ -304,7 +322,7 @@ async function createManagedHouseSignupInvoice(agency, zohoContact, customer) {
     created: true,
     invoiceId: String(invoice.invoice_id),
     invoiceNumber: invoice.invoice_number || null,
-    total: Number(invoice.total || lineItem.rate),
+    total: Number(invoice.total || itemsTotal),
   };
 }
 

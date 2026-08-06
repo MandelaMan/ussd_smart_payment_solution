@@ -154,11 +154,11 @@ export function AgencyDetailPage() {
     load();
   }, [load]);
 
+  // Zoho status + invoices load in parallel after the DB agency payload paints.
   useEffect(() => {
-    if (zoho?.linked) {
-      loadInvoices();
-    }
-  }, [zoho?.linked, loadInvoices]);
+    if (!id) return;
+    void loadInvoices();
+  }, [id, loadInvoices]);
 
   async function handleCreateInvoice(request: AgencyInvoicePayload) {
     if (!id) return;

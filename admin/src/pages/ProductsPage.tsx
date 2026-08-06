@@ -1,4 +1,4 @@
-import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
@@ -27,6 +27,17 @@ import {
 import { useAuth } from "../lib/authContext";
 import { canMutateConfig } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
+import { cacheKeyFromParams } from "../lib/moduleDataCache";
+import {
+  getCachedBuildings,
+  getCachedPackageCatalog,
+} from "../lib/sharedLookups";
+import {
+  beginListLoad,
+  endListLoad,
+  seedListState,
+  storeListState,
+} from "../lib/listLoad";
 import { SelectField } from "../components/ui/SelectField";
 import { AppDialog } from "../components/ui/AppDialog";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
@@ -76,22 +87,35 @@ type ProductSortKey =
   | "isActive"
   | "paymentFrequency";
 
+function productsListCacheKey(params: Record<string, string>) {
+  return cacheKeyFromParams("products:list", params);
+}
+
+const DEFAULT_PRODUCTS_CACHE_KEY = productsListCacheKey({
+  page: "1",
+  limit: String(PAGE_SIZE),
+  activeOnly: "false",
+  sortBy: "buildingName",
+  sortDir: "asc",
+});
+
 export function ProductsPage() {
   const { user } = useAuth();
   const isMobile = useMobileViewport();
   const canMutate = canMutateConfig(user);
-  const [products, setProducts] = useState<Product[]>([]);
+  const seeded = seedListState<Product>(DEFAULT_PRODUCTS_CACHE_KEY);
+  const [products, setProducts] = useState<Product[]>(() => seeded.rows);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [catalog, setCatalog] = useState<PackageCategory[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(true);
-  const [pagination, setPagination] = useState<ListPagination>({
-    page: 1,
-    limit: PAGE_SIZE,
-    total: 0,
-    pages: 1,
+  const [pagination, setPagination] = useState<ListPagination>(() => {
+    const p = seeded.pagination as ListPagination | null;
+    return p || { page: 1, limit: PAGE_SIZE, total: 0, pages: 1 };
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !seeded.hasCache);
   const [loadingMore, setLoadingMore] = useState(false);
+  const productsRef = useRef(products);
+  productsRef.current = products;
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -124,24 +148,41 @@ export function ProductsPage() {
   ]);
 
   const selectedCategory = catalog.find((c) => String(c.id) === categoryId);
+  const isDstvOnly = selectedCategory?.code === "dstv_only";
   const selectedPlan = selectedCategory?.plans.find((p) => String(p.id) === planId);
   const selectedVariant = selectedPlan?.variants.find(
     (v) => v.paymentFrequency === paymentFrequency
   );
 
   useEffect(() => {
+    if (!isDstvOnly || !selectedCategory?.plans?.length) return;
+    const firstPlan = selectedCategory.plans[0];
+    if (!planId || !selectedCategory.plans.some((p) => String(p.id) === planId)) {
+      setPlanId(String(firstPlan.id));
+    }
+    setExtraBandwidth("0");
+  }, [isDstvOnly, selectedCategory, planId]);
+
+  useEffect(() => {
     if (!selectedVariant) return;
+    if (isDstvOnly) {
+      setMbps(String(selectedVariant.defaultMbps));
+      return;
+    }
     if (!mbps.trim()) {
       setMbps(String(selectedVariant.defaultMbps));
     }
-  }, [selectedVariant, mbps]);
+  }, [selectedVariant, mbps, isDstvOnly]);
 
   const load = useCallback(async (options?: { bustCache?: boolean; silent?: boolean }) => {
     const append = isMobile && page > 1 && !options?.bustCache;
-    if (!options?.silent) {
-      if (append) setLoadingMore(true);
-      else setLoading(true);
-    }
+    beginListLoad({
+      hasRows: productsRef.current.length > 0 && !options?.bustCache,
+      append,
+      silent: options?.silent,
+      setLoading,
+      setLoadingMore,
+    });
     setError("");
     try {
       const params: Record<string, string> = {
@@ -156,23 +197,26 @@ export function ProductsPage() {
       params.sortDir = sortQuery.sortDir;
       if (options?.bustCache) params._ts = String(Date.now());
       const res = await api.listProducts(params);
-      setProducts((prev) =>
-        mergeInfinitePage(
-          prev,
-          res.products,
-          page,
-          isMobile && !options?.bustCache && !options?.silent,
-          (p) => p.id
-        )
+      const nextRows = mergeInfinitePage(
+        productsRef.current,
+        res.products,
+        page,
+        isMobile && !options?.bustCache && !options?.silent,
+        (p) => p.id
       );
+      setProducts(nextRows);
       setPagination(res.pagination);
+      if (!append && !options?.bustCache) {
+        const cacheParams = { ...params };
+        delete cacheParams._ts;
+        storeListState(productsListCacheKey(cacheParams), nextRows, res.pagination);
+      }
     } catch (e) {
       if (!options?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load packages");
       }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      endListLoad({ setLoading, setLoadingMore });
     }
   }, [search, filterBuildingId, filterPaymentFrequency, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
@@ -199,17 +243,23 @@ export function ProductsPage() {
   }, [load]);
 
   useEffect(() => {
-    setLookupsLoading(true);
-    Promise.all([
-      api.listBuildings({ limit: "100" }),
-      api.getPackageCatalog(),
-    ])
+    let cancelled = false;
+    const hasLookups = buildings.length > 0 && catalog.length > 0;
+    if (!hasLookups) setLookupsLoading(true);
+    Promise.all([getCachedBuildings(), getCachedPackageCatalog()])
       .then(([b, c]) => {
+        if (cancelled) return;
         setBuildings(b.buildings);
         setCatalog(c.categories);
       })
       .catch(() => {})
-      .finally(() => setLookupsLoading(false));
+      .finally(() => {
+        if (!cancelled) setLookupsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount lookups
   }, []);
 
   useVisibilityRefresh(() => {
@@ -516,6 +566,7 @@ export function ProductsPage() {
             extraBandwidth={extraBandwidth} setExtraBandwidth={setExtraBandwidth}
             buildings={buildings} isActive={isActive} setIsActive={setIsActive}
             selectedCategory={selectedCategory} selectedPlan={selectedPlan} selectedVariant={selectedVariant}
+            isDstvOnly={isDstvOnly}
             readOnlyStructure={false} showStatus={false}
             onSubmit={handleCreate} submitting={submitting}
             onCancel={() => { setShowForm(false); resetForm(); }}
@@ -670,6 +721,7 @@ export function ProductsPage() {
             extraBandwidth={extraBandwidth} setExtraBandwidth={setExtraBandwidth}
             buildings={buildings} isActive={isActive} setIsActive={setIsActive}
             selectedCategory={selectedCategory} selectedPlan={selectedPlan} selectedVariant={selectedVariant}
+            isDstvOnly={isDstvOnly}
             readOnlyStructure={false} showStatus
             onSubmit={handleUpdate} submitting={editSubmitting} onCancel={closeEdit}
             submitLabel="Save changes"
@@ -738,6 +790,7 @@ function ProductForm({
   extraBandwidth, setExtraBandwidth,
   buildings, isActive, setIsActive,
   selectedCategory, selectedPlan, selectedVariant,
+  isDstvOnly = false,
   readOnlyStructure, showStatus,
   onSubmit, submitting, onCancel, submitLabel = "Save price",
 }: {
@@ -756,12 +809,14 @@ function ProductForm({
   selectedCategory?: PackageCategory;
   selectedPlan?: PackageCategory["plans"][number];
   selectedVariant?: PackageCategory["plans"][number]["variants"][number];
+  isDstvOnly?: boolean;
   readOnlyStructure: boolean;
   showStatus: boolean;
   onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
   submitLabel?: string;
 }) {
   const fieldsDisabled = submitting || lookupsLoading;
+  const internetFieldsDisabled = fieldsDisabled || isDstvOnly;
   const examplePrice = useMemo(() => {
     if (!selectedCategory || !selectedPlan || !selectedVariant) return null;
     if (selectedCategory.code === "internet_apartonet" && selectedPlan.code === "basic") {
@@ -805,21 +860,31 @@ function ProductForm({
             ))}
           </SelectField>
         </Field.Root>
-        <Field.Root required>
+        <Field.Root required={!isDstvOnly}>
           <Field.Label>Plan</Field.Label>
           <SelectField
-            disabled={readOnlyStructure || !categoryId || fieldsDisabled}
+            disabled={readOnlyStructure || !categoryId || internetFieldsDisabled}
             isLoading={lookupsLoading}
             fieldProps={{
               value: planId,
               onChange: (e) => setPlanId(e.target.value),
+              bg: isDstvOnly ? "bg.subtle" : undefined,
             }}
           >
-            <option value="">{lookupsLoading ? "Loading…" : "Select plan"}</option>
+            <option value="">
+              {lookupsLoading
+                ? "Loading…"
+                : isDstvOnly
+                  ? "Not applicable (DSTV Only)"
+                  : "Select plan"}
+            </option>
             {(selectedCategory?.plans || []).map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </SelectField>
+          {isDstvOnly ? (
+            <Field.HelperText>Plan is not used for DSTV Only pricing.</Field.HelperText>
+          ) : null}
         </Field.Root>
         <Field.Root required>
           <Field.Label>Billing frequency</Field.Label>
@@ -835,16 +900,26 @@ function ProductForm({
             ))}
           </SelectField>
         </Field.Root>
-        <Field.Root required>
+        <Field.Root required={!isDstvOnly}>
           <Field.Label>Speed (Mbps)</Field.Label>
           <Input
             type="number"
             min={1}
-            value={mbps}
+            value={isDstvOnly ? "" : mbps}
             onChange={(e) => setMbps(e.target.value)}
-            placeholder={selectedVariant ? String(selectedVariant.defaultMbps) : "e.g. 30"}
-            disabled={fieldsDisabled}
+            placeholder={
+              isDstvOnly
+                ? "Not applicable"
+                : selectedVariant
+                  ? String(selectedVariant.defaultMbps)
+                  : "e.g. 30"
+            }
+            disabled={internetFieldsDisabled}
+            bg={isDstvOnly ? "bg.subtle" : undefined}
           />
+          {isDstvOnly ? (
+            <Field.HelperText>Speed is not used for DSTV Only.</Field.HelperText>
+          ) : null}
         </Field.Root>
         {!readOnlyStructure && (
           <Field.Root required>
@@ -883,11 +958,15 @@ function ProductForm({
           <Input
             type="number"
             min={0}
-            value={extraBandwidth}
+            value={isDstvOnly ? "0" : extraBandwidth}
             onChange={(e) => setExtraBandwidth(e.target.value)}
             placeholder="0"
-            disabled={fieldsDisabled}
+            disabled={internetFieldsDisabled}
+            bg={isDstvOnly ? "bg.subtle" : undefined}
           />
+          {isDstvOnly ? (
+            <Field.HelperText>Extra bandwidth is not used for DSTV Only.</Field.HelperText>
+          ) : null}
         </Field.Root>
         {selectedCategory?.requiresDecoderFee && (
           <Box gridColumn={{ md: "1 / -1" }} bg="orange.50" borderRadius="md" px={3} py={2}>

@@ -1,4 +1,4 @@
-import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
@@ -27,6 +27,14 @@ import { api, formatDate, type Building, type ListPagination, type Pop } from ".
 import { useAuth } from "../lib/authContext";
 import { canMutateConfig } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
+import { cacheKeyFromParams } from "../lib/moduleDataCache";
+import { getCachedPops, invalidateSharedLookups } from "../lib/sharedLookups";
+import {
+  beginListLoad,
+  endListLoad,
+  seedListState,
+  storeListState,
+} from "../lib/listLoad";
 import { SelectField } from "../components/ui/SelectField";
 import { DisplayText } from "../components/ui/DisplayText";
 import { AppDialog } from "../components/ui/AppDialog";
@@ -63,6 +71,17 @@ const TABLE_COL_SPAN = 9;
 
 type BuildingSortKey = "name" | "popName" | "c2bCode" | "b2bCode" | "ipSetup" | "createdAt";
 
+function buildingsListCacheKey(params: Record<string, string>) {
+  return cacheKeyFromParams("buildings:list", params);
+}
+
+const DEFAULT_BUILDINGS_CACHE_KEY = buildingsListCacheKey({
+  page: "1",
+  limit: String(PAGE_SIZE),
+  sortBy: "name",
+  sortDir: "asc",
+});
+
 function normalizePrefix(value: string) {
   return value.trim().replace(/\.+$/, "");
 }
@@ -71,16 +90,17 @@ export function BuildingsPage() {
   const { user } = useAuth();
   const isMobile = useMobileViewport();
   const canMutate = canMutateConfig(user);
-  const [buildings, setBuildings] = useState<Building[]>([]);
+  const seeded = seedListState<Building>(DEFAULT_BUILDINGS_CACHE_KEY);
+  const [buildings, setBuildings] = useState<Building[]>(() => seeded.rows);
   const [pops, setPops] = useState<Pop[]>([]);
-  const [pagination, setPagination] = useState<ListPagination>({
-    page: 1,
-    limit: PAGE_SIZE,
-    total: 0,
-    pages: 1,
+  const [pagination, setPagination] = useState<ListPagination>(() => {
+    const p = seeded.pagination as ListPagination | null;
+    return p || { page: 1, limit: PAGE_SIZE, total: 0, pages: 1 };
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !seeded.hasCache);
   const [loadingMore, setLoadingMore] = useState(false);
+  const buildingsRef = useRef(buildings);
+  buildingsRef.current = buildings;
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -139,10 +159,10 @@ export function BuildingsPage() {
     };
   }
 
-  const loadPops = useCallback(async () => {
+  const loadPops = useCallback(async (opts?: { force?: boolean }) => {
     try {
-      const res = await api.listPops();
-      setPops(res.pops || res.data || []);
+      const res = await getCachedPops(opts);
+      setPops(res.pops || []);
     } catch (e) {
       toaster.create({
         title: e instanceof Error ? e.message : "Failed to load POPs",
@@ -153,10 +173,13 @@ export function BuildingsPage() {
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;
-    if (!opts?.silent) {
-      if (append) setLoadingMore(true);
-      else setLoading(true);
-    }
+    beginListLoad({
+      hasRows: buildingsRef.current.length > 0,
+      append,
+      silent: opts?.silent,
+      setLoading,
+      setLoadingMore,
+    });
     setError("");
     try {
       const params: Record<string, string> = {
@@ -168,17 +191,24 @@ export function BuildingsPage() {
       params.sortBy = sortQuery.sortBy;
       params.sortDir = sortQuery.sortDir;
       const res = await api.listBuildings(params);
-      setBuildings((prev) =>
-        mergeInfinitePage(prev, res.buildings, page, isMobile && !opts?.silent, (b) => b.id)
+      const nextRows = mergeInfinitePage(
+        buildingsRef.current,
+        res.buildings,
+        page,
+        isMobile && !opts?.silent,
+        (b) => b.id
       );
+      setBuildings(nextRows);
       setPagination(res.pagination);
+      if (!append) {
+        storeListState(buildingsListCacheKey(params), nextRows, res.pagination);
+      }
     } catch (e) {
       if (!opts?.silent) {
         setError(e instanceof Error ? e.message : "Failed to load buildings");
       }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      endListLoad({ setLoading, setLoadingMore });
     }
   }, [search, ipSetup, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
@@ -210,7 +240,7 @@ export function BuildingsPage() {
 
   useVisibilityRefresh(() => {
     void load({ silent: true });
-    void loadPops();
+    void loadPops({ force: true });
   });
 
   function setFormPopAndFilterPrefixes(nextPopId: number | "") {
@@ -292,7 +322,8 @@ export function BuildingsPage() {
       toaster.create({ title: "Building created", type: "success" });
       resetForm();
       setShowForm(false);
-      load();
+      invalidateSharedLookups();
+      void load();
     } catch (err) {
       toaster.create({
         title: err instanceof Error ? err.message : "Failed to create building",
@@ -323,7 +354,8 @@ export function BuildingsPage() {
       toaster.create({ title: "Building updated", type: "success" });
       closeEdit();
       setExpanded(null);
-      load();
+      invalidateSharedLookups();
+      void load();
     } catch (err) {
       toaster.create({
         title: err instanceof Error ? err.message : "Failed to update building",
@@ -688,7 +720,8 @@ export function BuildingsPage() {
           open={showManagePops}
           onOpenChange={setShowManagePops}
           onChanged={() => {
-            void loadPops();
+            invalidateSharedLookups();
+            void loadPops({ force: true });
             void load({ silent: true });
           }}
         />

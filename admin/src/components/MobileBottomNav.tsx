@@ -6,6 +6,7 @@ import {
   isMobileNavTabActive,
   MOBILE_BOTTOM_NAV_H,
 } from "../lib/mobileNav";
+import { routePrefetchHandlers } from "../lib/routePrefetch";
 
 export { MOBILE_BOTTOM_NAV_H };
 
@@ -116,6 +117,7 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
               end={tab.end}
               style={{ flex: 1, textDecoration: "none", minWidth: 0 }}
               aria-current={active ? "page" : undefined}
+              {...routePrefetchHandlers(tab.to!)}
             >
               <Flex
                 align="center"

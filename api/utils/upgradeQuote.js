@@ -324,4 +324,5 @@ module.exports = {
   calculateUpgradeQuote,
   calculateDowngradeQuote,
   estimateDueDateFromLastPayment,
+  recommendPaymentMethod,
 };

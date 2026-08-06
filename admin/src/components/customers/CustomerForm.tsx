@@ -428,6 +428,16 @@ export function CustomerForm({
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b2bAgencyEmail);
 
   const selectedCategory = catalog.find((c) => String(c.id) === categoryId);
+  const isDstvOnly = selectedCategory?.code === "dstv_only";
+
+  useEffect(() => {
+    if (!isDstvOnly || !selectedCategory?.plans?.length) return;
+    const firstPlan = selectedCategory.plans[0];
+    if (!planId || !selectedCategory.plans.some((p) => String(p.id) === planId)) {
+      setPlanId(String(firstPlan.id));
+      setProductId("");
+    }
+  }, [isDstvOnly, selectedCategory, planId]);
 
   useEffect(() => {
     if (isEdit && !canEditPackage) return;
@@ -1483,20 +1493,25 @@ export function CustomerForm({
               ))}
             </SelectField>
           </Field.Root>
-          <Field.Root required>
+          <Field.Root required={!isDstvOnly}>
             <Field.Label>Plan</Field.Label>
             <SelectField
-              disabled={fieldsDisabled || !categoryId || !isActive}
+              disabled={fieldsDisabled || !categoryId || !isActive || isDstvOnly}
               fieldProps={{
                 value: planId,
                 onChange: (e) => {
                   setPlanId(e.target.value);
                   setProductId("");
                 },
+                bg: isDstvOnly ? "bg.subtle" : undefined,
               }}
             >
               <option value="">
-                {!categoryId ? "Select a category first" : "Select plan"}
+                {!categoryId
+                  ? "Select a category first"
+                  : isDstvOnly
+                    ? "Not applicable (DSTV Only)"
+                    : "Select plan"}
               </option>
               {(selectedCategory?.plans || []).map((p) => (
                 <option key={p.id} value={p.id}>
@@ -1508,7 +1523,12 @@ export function CustomerForm({
           <Field.Root required>
             <Field.Label>Building price</Field.Label>
             <SelectField
-              disabled={fieldsDisabled || !buildingId || !planId || !isActive}
+              disabled={
+                fieldsDisabled ||
+                !buildingId ||
+                (!isDstvOnly && !planId) ||
+                !isActive
+              }
               isLoading={packagesLoading}
               fieldProps={{
                 value: productId,
@@ -1520,7 +1540,7 @@ export function CustomerForm({
                   ? "Loading prices…"
                   : !buildingId
                   ? "Select a building first"
-                  : !planId
+                  : !planId && !isDstvOnly
                     ? "Select category and plan first"
                     : packages.length === 0
                       ? "No price set for this building — add it under Packages"
@@ -1528,7 +1548,9 @@ export function CustomerForm({
               </option>
               {packages.map((p) => (
                 <option key={p.id} value={p.id} title={p.name}>
-                  {p.mbps} Mbps · {formatCurrency(p.price)}
+                  {isDstvOnly
+                    ? formatCurrency(p.price)
+                    : `${p.mbps} Mbps · ${formatCurrency(p.price)}`}
                 </option>
               ))}
             </SelectField>

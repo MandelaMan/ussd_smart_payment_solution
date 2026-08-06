@@ -332,25 +332,16 @@ async function getAgency(req, res, next) {
     const customers = await store.listCustomersByAgency(agency.id);
     const billing = computeAgencyBilling(customers, agency.discountPercent);
 
-    let zoho = {
+    // Return DB payload immediately. Live Zoho is loaded via GET /invoices
+    // so the agency detail page can paint without waiting on Zoho Books.
+    const zoho = {
       linked: false,
       zohoContactId: null,
       invoiceCount: 0,
       unpaidCount: 0,
       totalBalanceDue: 0,
+      deferred: true,
     };
-    try {
-      const status = await fetchAgencyZohoStatus(agency);
-      zoho = {
-        linked: status.linked,
-        zohoContactId: status.zohoContactId,
-        invoiceCount: status.invoiceCount,
-        unpaidCount: status.unpaidCount,
-        totalBalanceDue: status.totalBalanceDue,
-      };
-    } catch (e) {
-      zoho.zohoError = e.message || "Could not load Zoho status";
-    }
 
     return res.json({ agency, customers, billing, zoho });
   } catch (err) {

@@ -28,6 +28,19 @@ type SelectOption = {
   disabled?: boolean;
 };
 
+/** Flatten option label text — never use String(children); arrays join with commas. */
+function optionLabelText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(optionLabelText).join("");
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode; label?: string };
+    if (props.label != null && props.label !== "") return String(props.label);
+    return optionLabelText(props.children);
+  }
+  return "";
+}
+
 type FieldProps = Omit<BoxProps, "onChange" | "value" | "children"> & {
   value?: string | number | readonly string[];
   onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
@@ -70,7 +83,10 @@ function flattenOptions(nodes: ReactNode): SelectOption[] {
       props.value !== undefined && props.value !== null
         ? String(props.value)
         : "";
-    const label = String(props.children ?? props.label ?? value);
+    const label =
+      props.label != null && String(props.label) !== ""
+        ? String(props.label)
+        : optionLabelText(props.children) || value;
     options.push({
       value,
       label,
