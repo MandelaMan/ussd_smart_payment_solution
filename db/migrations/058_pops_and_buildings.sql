@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS pops (
   UNIQUE KEY uk_pop_name (name),
   UNIQUE KEY uk_pop_c2b (c2b_code),
   UNIQUE KEY uk_pop_b2b (b2b_code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- Match buildings collation (avoids utf8mb4_0900_ai_ci vs utf8mb4_general_ci on '=')
+ALTER TABLE pops CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 
 -- Seed POPs from buildings that still have legacy config columns
 SET @has_building_c2b := (
@@ -31,7 +34,7 @@ SET @sql := IF(
   @has_building_c2b > 0,
   'INSERT INTO pops (name, c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes)
    SELECT
-     CASE WHEN b.name = ''Azalea Heights'' THEN ''Azalea'' ELSE b.name END,
+     CASE WHEN b.name COLLATE utf8mb4_general_ci = ''Azalea Heights'' THEN ''Azalea'' ELSE b.name END,
      b.c2b_code,
      b.b2b_code,
      b.ip_setup,
@@ -40,7 +43,8 @@ SET @sql := IF(
    FROM buildings b
    WHERE NOT EXISTS (
      SELECT 1 FROM pops p
-     WHERE p.name = CASE WHEN b.name = ''Azalea Heights'' THEN ''Azalea'' ELSE b.name END
+     WHERE p.name COLLATE utf8mb4_general_ci =
+       CASE WHEN b.name COLLATE utf8mb4_general_ci = ''Azalea Heights'' THEN ''Azalea'' ELSE b.name END
    )',
   'SELECT 1'
 );
@@ -66,8 +70,8 @@ DEALLOCATE PREPARE stmt;
 
 -- Link buildings to pops by name (Azalea Heights → Azalea POP)
 UPDATE buildings b
-JOIN pops p ON p.name = CASE
-  WHEN b.name IN ('Azalea', 'Azalea Heights') THEN 'Azalea'
+JOIN pops p ON p.name COLLATE utf8mb4_general_ci = CASE
+  WHEN b.name COLLATE utf8mb4_general_ci IN ('Azalea', 'Azalea Heights') THEN 'Azalea'
   ELSE b.name
 END
 SET b.pop_id = p.id
@@ -76,7 +80,7 @@ WHERE b.pop_id IS NULL;
 -- Rename Azalea building → Azalea Heights
 UPDATE buildings
 SET name = 'Azalea Heights'
-WHERE name = 'Azalea' AND pop_id IS NOT NULL;
+WHERE name COLLATE utf8mb4_general_ci = 'Azalea' AND pop_id IS NOT NULL;
 
 -- Ensure pop_id is NOT NULL + FK
 UPDATE buildings SET pop_id = pop_id WHERE pop_id IS NOT NULL;
@@ -118,7 +122,9 @@ CREATE TABLE IF NOT EXISTS pop_olts (
   KEY idx_pop_olts_pop (pop_id),
   CONSTRAINT fk_pop_olts_pop
     FOREIGN KEY (pop_id) REFERENCES pops (id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+ALTER TABLE pop_olts CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 
 -- Move OLTs from buildings → their POP (preserve IDs so customer FKs stay valid)
 SET @has_building_olts := (
@@ -237,7 +243,8 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 INSERT INTO buildings (pop_id, name, ip_prefixes)
 SELECT p.id, 'Brookside Terraces', JSON_ARRAY()
 FROM pops p
-WHERE p.name = 'Azalea'
+WHERE p.name COLLATE utf8mb4_general_ci = 'Azalea'
   AND NOT EXISTS (
-    SELECT 1 FROM buildings b WHERE b.name = 'Brookside Terraces'
+    SELECT 1 FROM buildings b
+    WHERE b.name COLLATE utf8mb4_general_ci = 'Brookside Terraces'
   );
