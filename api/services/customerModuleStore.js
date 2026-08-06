@@ -3331,6 +3331,18 @@ async function convertCustomerType(customerId, targetType, agencyId = null) {
   if (currentType === nextType) {
     throw new Error(`Customer is already ${nextType}`);
   }
+  const [pendingUpgrade] = await query(
+    `SELECT id
+     FROM pending_upgrades
+     WHERE customer_id = ? AND status = 'payment_pending'
+     LIMIT 1`,
+    [customerId]
+  );
+  if (pendingUpgrade?.id) {
+    throw new Error(
+      "Customer has a pending upgrade payment. Resolve/cancel it before changing billing type."
+    );
+  }
 
   let resolvedAgencyId = null;
   if (nextType === "B2B") {
@@ -3378,29 +3390,65 @@ async function convertCustomerType(customerId, targetType, agencyId = null) {
       ? (await getAgencyById(resolvedAgencyId))?.name || null
       : null;
 
-  await query(
-    `UPDATE customers
-     SET customer_type = ?, agency_id = ?, customer_number = ?, ppoe_username = ?
-     WHERE id = ?`,
-    [nextType, resolvedAgencyId, newCustomerNumber, nextPpoeUsername, customerId]
-  );
+  const pool = getPool();
+  const conn = await pool.getConnection();
+  let movedPaymentReferences = 0;
+  let movedIntegrationReferences = 0;
+  try {
+    await conn.beginTransaction();
 
-  await query(
-    `UPDATE apartment_history SET customer_number = ?
-     WHERE customer_id = ? AND moved_out_at IS NULL`,
-    [newCustomerNumber, customerId]
-  );
+    await conn.query(
+      `UPDATE customers
+       SET customer_type = ?, agency_id = ?, customer_number = ?, ppoe_username = ?
+       WHERE id = ?`,
+      [nextType, resolvedAgencyId, newCustomerNumber, nextPpoeUsername, customerId]
+    );
 
-  await query(
-    `INSERT INTO customer_events (customer_id, event_type, notes)
-     VALUES (?, 'type_change', ?)`,
-    [
-      customerId,
-      `Converted from ${currentType} to ${nextType}${
-        agencyName ? ` · agency: ${agencyName}` : ""
-      } · ${oldNumber} → ${newCustomerNumber}`,
-    ]
-  );
+    await conn.query(
+      `UPDATE apartment_history SET customer_number = ?
+       WHERE customer_id = ? AND moved_out_at IS NULL`,
+      [newCustomerNumber, customerId]
+    );
+
+    // Keep payment/integration lookups consistent after account renumbering.
+    const [txUpdate] = await conn.query(
+      `UPDATE payment_transactions
+       SET account_reference = ?
+       WHERE UPPER(TRIM(COALESCE(account_reference, ''))) = UPPER(?)`,
+      [newCustomerNumber, oldNumber]
+    );
+    movedPaymentReferences = Number(txUpdate?.affectedRows || 0);
+
+    const [ieUpdate] = await conn.query(
+      `UPDATE integration_events
+       SET customer_no = ?
+       WHERE UPPER(TRIM(COALESCE(customer_no, ''))) = UPPER(?)`,
+      [newCustomerNumber, oldNumber]
+    );
+    movedIntegrationReferences = Number(ieUpdate?.affectedRows || 0);
+
+    await conn.query(
+      `INSERT INTO customer_events (customer_id, event_type, notes)
+       VALUES (?, 'type_change', ?)`,
+      [
+        customerId,
+        `Converted from ${currentType} to ${nextType}${
+          agencyName ? ` · agency: ${agencyName}` : ""
+        } · ${oldNumber} → ${newCustomerNumber}`,
+      ]
+    );
+
+    await conn.commit();
+  } catch (error) {
+    try {
+      await conn.rollback();
+    } catch {
+      /* ignore rollback errors */
+    }
+    throw error;
+  } finally {
+    conn.release();
+  }
 
   return {
     customer: await getCustomerById(customerId),
@@ -3412,6 +3460,8 @@ async function convertCustomerType(customerId, targetType, agencyId = null) {
     newCustomerNumber,
     agencyId: resolvedAgencyId,
     agencyName,
+    movedPaymentReferences,
+    movedIntegrationReferences,
   };
 }
 

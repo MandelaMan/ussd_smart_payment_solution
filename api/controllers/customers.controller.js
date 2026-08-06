@@ -29,7 +29,6 @@ const {
 const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
 const {
   DEFAULT_TZ,
-  computeServiceDueDate,
   computeTrialEndDate,
   computeInvoiceDueDate,
   resolveZohoPaymentTerms,
@@ -2442,23 +2441,20 @@ async function createCustomer(req, res, next) {
     const created = await store.createCustomer(body);
 
     // TISP BillingCycle stays Monthly.
-    // Unpaid (no advance): DueDate = today (service pending payment).
-    // Advance paid: DueDate = payment/signup + billing frequency
-    //   (monthly +1 month, quarterly +3 months, yearly +1 year, custom +N days).
-    // Trial: DueDate = trial end.
+    // Signup due-date policy:
+    // - Trial: due at trial end.
+    // - Prior payment made: due = today + 7 days.
+    // - No payment made: due = today.
     const paymentAnchor = new Date();
-    const customPeriodDays =
-      body.customPeriodDays ||
-      (body.customPeriodMonths ? Number(body.customPeriodMonths) * 30 : null);
     let serviceDueDate;
     if (body.trialPeriod) {
       serviceDueDate = computeTrialEndDate(paymentAnchor);
     } else if (paymentAlreadyMade) {
-      serviceDueDate = computeServiceDueDate({
-        anchorDate: paymentAnchor,
-        paymentFrequency: body.paymentFrequency,
-        customPeriodDays,
-      });
+      serviceDueDate = moment
+        .tz(DEFAULT_TZ)
+        .startOf("day")
+        .add(7, "days")
+        .format("YYYY-MM-DD");
     } else {
       serviceDueDate = moment.tz(DEFAULT_TZ).startOf("day").format("YYYY-MM-DD");
     }
@@ -2493,38 +2489,7 @@ async function createCustomer(req, res, next) {
         serviceDueDate,
       });
 
-      // If advance payment carried a Zoho payment date, re-anchor TISP due from it.
-      const zohoPayDate =
-        zoho?.invoice?.payment?.date ||
-        zoho?.invoice?.payment?.payment_date ||
-        null;
-      if (
-        paymentAlreadyMade &&
-        zohoPayDate &&
-        !body.trialPeriod &&
-        String(body.customerType).toUpperCase() === "C2B"
-      ) {
-        const revisedDue = computeServiceDueDate({
-          anchorDate: zohoPayDate,
-          paymentFrequency: body.paymentFrequency,
-          customPeriodDays,
-        });
-        if (revisedDue && revisedDue !== serviceDueDate) {
-          serviceDueDate = revisedDue;
-          try {
-            await syncNewCustomerToTisp(
-              created.customerId,
-              created.customerNumber,
-              { dueDate: serviceDueDate }
-            );
-          } catch (e) {
-            console.warn(
-              "TISP due-date refresh after Zoho payment date failed:",
-              e.message
-            );
-          }
-        }
-      }
+      // Keep signup due-date policy deterministic; do not re-anchor from Zoho payment date.
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho billing setup failed" };
     }
@@ -5116,8 +5081,39 @@ async function convertCustomerTypeHandler(req, res, next) {
         });
         await store.updateCustomerTispSync(id, "synced", null);
       } catch (e) {
-        tispError = formatTispError(e);
-        await store.updateCustomerTispSync(id, "failed", tispError);
+        // Recovery: some TISP environments return stale/missing presence checks
+        // during account-number conversion. If UPDATE says "account missing",
+        // retry once with a create-biased sync on the new number.
+        const firstError = formatTispError(e);
+        const missing =
+          isTispAccountMissingError(e) ||
+          /account does not exist/i.test(firstError || "");
+        if (missing) {
+          try {
+            const freshCtx = await store.getCustomerContext(id);
+            await pushCustomerToTisp(
+              {
+                ...freshCtx,
+                // Prevent update-only preference on this recovery attempt.
+                tisp_sync_status: "pending",
+                tisp_due_date: null,
+              },
+              {
+                dueDate:
+                  freshCtx?.tisp_due_date || dueForMigrate || TISP_STANDARD_DUE_DATE,
+                skipCooldown: true,
+                allowCreate: true,
+              }
+            );
+            await store.updateCustomerTispSync(id, "synced", null);
+          } catch (retryErr) {
+            tispError = formatTispError(retryErr);
+            await store.updateCustomerTispSync(id, "failed", tispError);
+          }
+        } else {
+          tispError = firstError;
+          await store.updateCustomerTispSync(id, "failed", tispError);
+        }
       }
     }
     const zoho =
