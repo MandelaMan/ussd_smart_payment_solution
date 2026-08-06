@@ -196,7 +196,10 @@ async function main() {
   console.log(execute ? "Mode: EXECUTE (will delete)" : "Mode: DRY-RUN (no deletes)");
 
   const buildings = await query(
-    `SELECT id, name, ip_setup FROM buildings WHERE LOWER(name) = LOWER(?) LIMIT 1`,
+    `SELECT b.id, b.name, p.ip_setup
+     FROM buildings b
+     JOIN pops p ON p.id = b.pop_id
+     WHERE LOWER(b.name) = LOWER(?) LIMIT 1`,
     [BUILDING_NAME]
   );
   const building = buildings[0];

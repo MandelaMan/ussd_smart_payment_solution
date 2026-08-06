@@ -105,7 +105,8 @@ export type AdminUser = User & {
 
 export type BuildingOlt = {
   id: number;
-  buildingId: number;
+  popId?: number | null;
+  buildingId?: number | null;
   name: string | null;
   host: string;
   port: number;
@@ -118,9 +119,27 @@ export type BuildingOlt = {
   updatedAt?: string;
 };
 
-export type Building = {
+export type Pop = {
   id: number;
   name: string;
+  c2bCode: string;
+  b2bCode: string;
+  ipSetup: "STATIC" | "PPOE";
+  dstvSetup: "headend_coax" | "decoder";
+  ipPrefixes: string[];
+  olts?: BuildingOlt[];
+  oltCount?: number;
+  buildingCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type Building = {
+  id: number;
+  popId: number;
+  popName?: string | null;
+  name: string;
+  buildingCode?: string | null;
   c2bCode: string;
   b2bCode: string;
   ipSetup: "STATIC" | "PPOE";
@@ -128,6 +147,7 @@ export type Building = {
   olts?: BuildingOlt[];
   oltCount?: number;
   ipPrefixes: string[];
+  popIpPrefixes?: string[];
   addressAttention?: string | null;
   addressStreet?: string | null;
   addressStreet2?: string | null;
@@ -1981,6 +2001,87 @@ export const api = {
       body: JSON.stringify({ password }),
     }),
 
+  listPops: (params: Record<string, string | undefined> = {}) =>
+    request<{ pops: Pop[]; data: Pop[] }>(
+      `/admin/pops${buildQueryString(params)}`
+    ),
+
+  createPop: (data: {
+    name: string;
+    c2bCode: string;
+    b2bCode: string;
+    ipSetup: "STATIC" | "PPOE";
+    dstvSetup: "headend_coax" | "decoder";
+    ipPrefixes?: string[];
+  }) =>
+    request<{ ok: boolean; id: number; pop: Pop }>("/admin/pops", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updatePop: (
+    id: number,
+    data: Partial<{
+      name: string;
+      c2bCode: string;
+      b2bCode: string;
+      ipSetup: "STATIC" | "PPOE";
+      dstvSetup: "headend_coax" | "decoder";
+      ipPrefixes: string[];
+    }>
+  ) =>
+    request<{ ok: boolean; pop: Pop }>(`/admin/pops/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  listPopOlts: (popId: number) =>
+    request<{ ok: boolean; olts: BuildingOlt[] }>(`/admin/pops/${popId}/olts`),
+
+  createPopOlt: (
+    popId: number,
+    data: {
+      name?: string | null;
+      host: string;
+      port?: number;
+      mac: string;
+      username: string;
+      password: string;
+      tenantId?: string;
+    }
+  ) =>
+    request<{ ok: boolean; olt: BuildingOlt }>(`/admin/pops/${popId}/olts`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updatePopOlt: (
+    popId: number,
+    oltId: number,
+    data: Partial<{
+      name: string | null;
+      host: string;
+      port: number;
+      mac: string;
+      username: string;
+      password: string;
+      tenantId: string;
+      isActive: boolean;
+    }>
+  ) =>
+    request<{ ok: boolean; olt: BuildingOlt }>(
+      `/admin/pops/${popId}/olts/${oltId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }
+    ),
+
+  deletePopOlt: (popId: number, oltId: number) =>
+    request<{ ok: boolean }>(`/admin/pops/${popId}/olts/${oltId}`, {
+      method: "DELETE",
+    }),
+
   listBuildings: (params: Record<string, string | undefined> = {}) =>
     request<{ buildings: Building[]; data: Building[]; pagination: ListPagination }>(
       `/admin/buildings${buildQueryString(params)}`
@@ -1988,10 +2089,8 @@ export const api = {
 
   createBuilding: (data: {
     name: string;
-    c2bCode: string;
-    b2bCode: string;
-    ipSetup: "STATIC" | "PPOE";
-    dstvSetup: "headend_coax" | "decoder";
+    popId: number;
+    buildingCode?: string | null;
     ipPrefixes?: string[];
     addressAttention?: string;
     addressStreet?: string;
@@ -2011,10 +2110,8 @@ export const api = {
     id: number,
     data: Partial<{
       name: string;
-      c2bCode: string;
-      b2bCode: string;
-      ipSetup: "STATIC" | "PPOE";
-      dstvSetup: "headend_coax" | "decoder";
+      popId: number;
+      buildingCode: string | null;
       ipPrefixes: string[];
       addressAttention: string;
       addressStreet: string;

@@ -35,6 +35,7 @@ import {
   buildingToBillingAddress,
   isBillingAddressEmpty,
 } from "../../lib/buildingBillingAddress";
+import { buildCustomerNumberPreview } from "../../lib/customerNumber";
 import { embeddedFieldInputStyles } from "../../theme";
 import { FormSection } from "./FormSection";
 import { AppDialog, NESTED_APP_DIALOG_Z_INDEX } from "../ui/AppDialog";
@@ -391,8 +392,8 @@ export function CustomerForm({
       buildings.map((b) => ({
         value: String(b.id),
         label: b.name,
-        description: `${b.ipSetup} · C2B ${b.c2bCode} · B2B ${b.b2bCode}`,
-        keywords: `${b.c2bCode} ${b.b2bCode}`,
+        description: `${b.popName || "POP"}${b.buildingCode ? ` · ${b.buildingCode}` : ""} · ${b.ipSetup} · C2B ${b.c2bCode} · B2B ${b.b2bCode}`,
+        keywords: `${b.popName || ""} ${b.buildingCode || ""} ${b.c2bCode} ${b.b2bCode}`,
       })),
     [buildings]
   );
@@ -489,12 +490,15 @@ export function CustomerForm({
   const needsIp = ipRules?.ipSetup === "STATIC";
   const isPpoe = selectedBuilding?.ipSetup === "PPOE";
 
-  const previewCustomerNumber = useMemo(() => {
-    if (!selectedBuilding || !apartmentNumber.trim()) return "";
-    const code =
-      customerType === "B2B" ? selectedBuilding.b2bCode : selectedBuilding.c2bCode;
-    return `${code}-${apartmentNumber.trim().toUpperCase()}`;
-  }, [selectedBuilding, apartmentNumber, customerType]);
+  const previewCustomerNumber = useMemo(
+    () =>
+      buildCustomerNumberPreview(
+        selectedBuilding,
+        customerType,
+        apartmentNumber
+      ),
+    [selectedBuilding, apartmentNumber, customerType]
+  );
 
   useEffect(() => {
     if (!selectedBuilding) {
@@ -561,12 +565,11 @@ export function CustomerForm({
   const displayPrice =
     packageAmount != null ? packageAmount + decoderFee : undefined;
 
-  const previewCode = (() => {
-    const b = buildings.find((x) => String(x.id) === buildingId);
-    if (!b || !apartmentNumber) return "";
-    const code = customerType === "B2B" ? b.b2bCode : b.c2bCode;
-    return `${code}-${apartmentNumber.trim().toUpperCase()}`;
-  })();
+  const previewCode = buildCustomerNumberPreview(
+    buildings.find((x) => String(x.id) === buildingId),
+    customerType,
+    apartmentNumber
+  );
 
   const previewIpResult = validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
   const previewIp = previewIpResult.ok ? previewIpResult.ip : null;

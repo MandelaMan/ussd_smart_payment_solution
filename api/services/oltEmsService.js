@@ -43,7 +43,7 @@ function pickField(record, keys) {
 }
 
 /**
- * Resolve EMS connection from a building_olts row or customer+OLT join row.
+ * Resolve EMS connection from a pop_olts row or customer+OLT join row.
  */
 function resolveEmsTarget(record = {}) {
   const buildingHost = pickField(record, [

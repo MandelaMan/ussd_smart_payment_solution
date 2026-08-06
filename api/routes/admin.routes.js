@@ -18,6 +18,15 @@ const {
 const { listUsers, createUser, updateUser, resetUserPassword } = require("../controllers/auth.controller");
 const { listBuildings, createBuilding, updateBuilding, listBuildingOlts, createBuildingOlt, updateBuildingOlt, deleteBuildingOlt } = require("../controllers/buildings.controller");
 const {
+  listPops,
+  createPop,
+  updatePop,
+  listPopOlts,
+  createPopOlt,
+  updatePopOlt,
+  deletePopOlt,
+} = require("../controllers/pops.controller");
+const {
   listProducts,
   createProduct,
   updateProduct,
@@ -251,6 +260,14 @@ router.get("/users", requireAdmin, listUsers);
 router.post("/users", requireAdmin, createUser);
 router.patch("/users/:id", requireAdmin, updateUser);
 router.post("/users/:id/reset-password", requireAdmin, resetUserPassword);
+
+router.get("/pops", requireConfigRead, listPops);
+router.post("/pops", requireConfigWrite, createPop);
+router.patch("/pops/:id", requireConfigWrite, updatePop);
+router.get("/pops/:id/olts", requireConfigRead, listPopOlts);
+router.post("/pops/:id/olts", requireConfigWrite, createPopOlt);
+router.patch("/pops/:id/olts/:oltId", requireConfigWrite, updatePopOlt);
+router.delete("/pops/:id/olts/:oltId", requireConfigWrite, deletePopOlt);
 
 router.get("/buildings", requireConfigRead, listBuildings);
 router.post("/buildings", requireConfigWrite, createBuilding);

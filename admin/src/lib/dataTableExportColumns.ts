@@ -18,6 +18,8 @@ import type { ExportColumn } from "./tableExport";
 
 export const buildingExportColumns: ExportColumn<Building>[] = [
   { header: "Name", value: (row) => row.name },
+  { header: "POP", value: (row) => row.popName },
+  { header: "Building Code", value: (row) => row.buildingCode },
   { header: "C2B Code", value: (row) => row.c2bCode },
   { header: "B2B Code", value: (row) => row.b2bCode },
   { header: "IP Setup", value: (row) => row.ipSetup },

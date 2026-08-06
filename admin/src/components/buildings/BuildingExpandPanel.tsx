@@ -147,7 +147,7 @@ export function BuildingExpandPanel({
     <EntityExpandShell
       icon={FiHome}
       title={formatTitleCase(building.name)}
-      subtitle={`${building.c2bCode} / ${building.b2bCode}`}
+      subtitle={`${building.popName || "POP"} · ${building.c2bCode} / ${building.b2bCode}`}
       badge={
         <StatusPill
           label={building.ipSetup}
@@ -165,25 +165,27 @@ export function BuildingExpandPanel({
       accent="brand.600"
     >
       <DetailGrid>
-        <DetailCard label="C2B code" value={building.c2bCode} mono highlight />
-        <DetailCard label="B2B code" value={building.b2bCode} mono />
-        <DetailCard label="IP setup" value={building.ipSetup} />
+        <DetailCard label="POP" value={building.popName || null} highlight />
+        <DetailCard label="Building code" value={building.buildingCode || "— (uses POP code only)"} mono />
+        <DetailCard label="C2B code (POP)" value={building.c2bCode} mono />
+        <DetailCard label="B2B code (POP)" value={building.b2bCode} mono />
+        <DetailCard label="IP setup (POP)" value={building.ipSetup} />
         <DetailCard
-          label="DSTV setup"
+          label="DSTV setup (POP)"
           value={building.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder"}
         />
         <DetailCard
-          label="IP prefixes"
+          label="Assigned IP prefixes"
           value={
             building.ipSetup === "PPOE"
               ? "Not applicable (PPOE)"
               : building.ipPrefixes?.length
                 ? ipRulesHint(building)
-                : "None configured"
+                : "None assigned"
           }
         />
         <DetailCard
-          label="OLTs"
+          label="OLTs (POP)"
           value={olts.length ? `${olts.length} configured` : "None configured"}
           highlight={olts.length > 0}
         />
@@ -216,7 +218,7 @@ export function BuildingExpandPanel({
       <Box mt={4}>
         <Flex align="center" justify="space-between" mb={2}>
           <Text fontWeight="semibold" fontSize="sm">
-            OLT EMS devices
+            OLT EMS devices (POP)
           </Text>
           {canEdit && !showForm ? (
             <Button size="xs" variant="outline" onClick={openCreate}>
@@ -228,7 +230,7 @@ export function BuildingExpandPanel({
 
         {olts.length === 0 && !showForm ? (
           <Text fontSize="sm" color="fg.muted">
-            No OLTs yet. A building can have multiple OLTs — add one to enable ONU control.
+            No OLTs yet. OLTs belong to the POP and are shared by all buildings under it.
           </Text>
         ) : (
           <Stack gap={2}>

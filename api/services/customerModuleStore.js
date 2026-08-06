@@ -164,9 +164,27 @@ function splitFullName(fullName) {
 }
 
 function buildCustomerNumber(building, customerType, apartmentNumber) {
-  const code =
-    customerType === "B2B" ? building.b2b_code : building.c2b_code;
-  return `${code}-${String(apartmentNumber).trim().toUpperCase()}`;
+  const popCode = String(
+    customerType === "B2B"
+      ? building.b2b_code || building.b2bCode
+      : building.c2b_code || building.c2bCode
+  )
+    .trim()
+    .toUpperCase();
+  const buildingCode = String(
+    building.building_code || building.buildingCode || ""
+  )
+    .trim()
+    .toUpperCase();
+  const apt = String(apartmentNumber || "")
+    .trim()
+    .toUpperCase();
+  // Multi-building POPs: POP-BUILDING-APT (e.g. AZE-TGA-401A).
+  // Single-building POPs leave building_code empty → POP-APT (e.g. ET-401A).
+  if (buildingCode && buildingCode !== popCode) {
+    return `${popCode}-${buildingCode}-${apt}`;
+  }
+  return `${popCode}-${apt}`;
 }
 
 const DAYS_PER_MONTH = 30;
@@ -215,6 +233,10 @@ function mapCustomerRow(row) {
     customPeriodDays: row.custom_period_days,
     buildingId: row.building_id,
     buildingName: row.building_name,
+    popId: row.pop_id != null ? Number(row.pop_id) : null,
+    popName: row.pop_name || null,
+    c2bCode: row.c2b_code || null,
+    b2bCode: row.b2b_code || null,
     productId: row.product_id,
     productName: row.product_name,
     productMbps: row.product_mbps,
@@ -305,8 +327,12 @@ const LAST_PAYMENT_SORT_EXPR = `COALESCE(c.last_payment_date, '1000-01-01')`;
 const CUSTOMER_SELECT = `
   SELECT c.*,
          b.name AS building_name,
-         b.ip_setup AS ip_setup,
-         b.dstv_setup AS building_dstv_setup,
+         b.pop_id AS pop_id,
+         pop.name AS pop_name,
+         pop.c2b_code AS c2b_code,
+         pop.b2b_code AS b2b_code,
+         pop.ip_setup AS ip_setup,
+         pop.dstv_setup AS building_dstv_setup,
          bo.id AS linked_building_olt_id,
          bo.name AS building_olt_name,
          bo.host AS building_olt_host,
@@ -332,8 +358,9 @@ const CUSTOMER_SELECT = `
          ts.due_date AS tisp_due_date
   FROM customers c
   JOIN buildings b ON b.id = c.building_id
+  JOIN pops pop ON pop.id = b.pop_id
   JOIN products p ON p.id = c.product_id
-  LEFT JOIN building_olts bo ON bo.id = c.building_olt_id
+  LEFT JOIN pop_olts bo ON bo.id = c.building_olt_id
   LEFT JOIN agencies a ON a.id = c.agency_id
   LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
   LEFT JOIN package_plans pl ON pl.id = v.plan_id
@@ -346,12 +373,18 @@ async function listBuildings(filters = {}) {
   const params = [];
   if (filters.search) {
     const q = `%${String(filters.search).trim()}%`;
-    clauses.push("(name LIKE ? OR c2b_code LIKE ? OR b2b_code LIKE ?)");
-    params.push(q, q, q);
+    clauses.push(
+      "(b.name LIKE ? OR b.building_code LIKE ? OR p.name LIKE ? OR p.c2b_code LIKE ? OR p.b2b_code LIKE ?)"
+    );
+    params.push(q, q, q, q, q);
   }
   if (filters.ipSetup) {
-    clauses.push("ip_setup = ?");
+    clauses.push("p.ip_setup = ?");
     params.push(filters.ipSetup);
+  }
+  if (filters.popId) {
+    clauses.push("b.pop_id = ?");
+    params.push(Number(filters.popId));
   }
 
   const page = Math.max(1, Number(filters.page) || 1);
@@ -361,49 +394,58 @@ async function listBuildings(filters = {}) {
   const { resolveListSort } = require("../utils/listSort");
   const sort = resolveListSort(filters, {
     allowed: [
-      { key: "name", sql: "name" },
-      { key: "c2bCode", sql: "c2b_code" },
-      { key: "b2bCode", sql: "b2b_code" },
-      { key: "ipSetup", sql: "ip_setup" },
-      { key: "createdAt", sql: "created_at" },
+      { key: "name", sql: "b.name" },
+      { key: "popName", sql: "p.name" },
+      { key: "c2bCode", sql: "p.c2b_code" },
+      { key: "b2bCode", sql: "p.b2b_code" },
+      { key: "ipSetup", sql: "p.ip_setup" },
+      { key: "createdAt", sql: "b.created_at" },
     ],
     defaultSort: { sortBy: "name", sortDir: "asc" },
   });
 
   const [countRow] = await query(
-    `SELECT COUNT(*) AS total FROM buildings WHERE ${clauses.join(" AND ")}`,
+    `SELECT COUNT(*) AS total
+     FROM buildings b
+     JOIN pops p ON p.id = b.pop_id
+     WHERE ${clauses.join(" AND ")}`,
     params
   );
 
   const rows = await query(
-    `SELECT id, name,
-            address_attention, address_street, address_street2, address_po_box,
-            address_city, address_state, address_zip, address_country,
-            c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes, created_at
-     FROM buildings WHERE ${clauses.join(" AND ")}
+    `SELECT b.id, b.pop_id, b.name,
+            b.address_attention, b.address_street, b.address_street2, b.address_po_box,
+            b.address_city, b.address_state, b.address_zip, b.address_country,
+            b.building_code, b.ip_prefixes, b.created_at,
+            p.name AS pop_name,
+            p.c2b_code, p.b2b_code, p.ip_setup, p.dstv_setup,
+            p.ip_prefixes AS pop_ip_prefixes
+     FROM buildings b
+     JOIN pops p ON p.id = b.pop_id
+     WHERE ${clauses.join(" AND ")}
      ORDER BY ${sort.orderClause} LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
 
-  const buildingIds = rows.map((r) => r.id);
-  let oltsByBuilding = new Map();
-  if (buildingIds.length) {
-    const placeholders = buildingIds.map(() => "?").join(",");
+  const popIds = [...new Set(rows.map((r) => r.pop_id).filter(Boolean))];
+  let oltsByPop = new Map();
+  if (popIds.length) {
+    const placeholders = popIds.map(() => "?").join(",");
     const oltRows = await query(
-      `SELECT * FROM building_olts
-       WHERE building_id IN (${placeholders})
-       ORDER BY building_id, id`,
-      buildingIds
+      `SELECT * FROM pop_olts
+       WHERE pop_id IN (${placeholders})
+       ORDER BY pop_id, id`,
+      popIds
     );
     for (const row of oltRows) {
-      const list = oltsByBuilding.get(row.building_id) || [];
-      list.push(mapBuildingOltRow(row));
-      oltsByBuilding.set(row.building_id, list);
+      const list = oltsByPop.get(row.pop_id) || [];
+      list.push(mapPopOltRow(row));
+      oltsByPop.set(row.pop_id, list);
     }
   }
 
   const buildings = rows.map((r) =>
-    mapBuildingRow(r, oltsByBuilding.get(r.id) || [])
+    mapBuildingRow(r, oltsByPop.get(r.pop_id) || [])
   );
   return {
     buildings,
@@ -435,11 +477,13 @@ function normalizeOltHost(value) {
   return host || null;
 }
 
-function mapBuildingOltRow(row) {
+function mapPopOltRow(row) {
   if (!row) return null;
   return {
     id: row.id,
-    buildingId: row.building_id,
+    popId: row.pop_id != null ? Number(row.pop_id) : null,
+    // Legacy alias — OLT belongs to POP, not building
+    buildingId: row.pop_id != null ? Number(row.pop_id) : null,
     name: row.name || null,
     host: row.host,
     port: row.port != null ? Number(row.port) : 38881,
@@ -453,10 +497,16 @@ function mapBuildingOltRow(row) {
   };
 }
 
+/** @deprecated Use mapPopOltRow */
+const mapBuildingOltRow = mapPopOltRow;
+
 function mapBuildingRow(row, olts = []) {
   return {
     id: row.id,
+    popId: row.pop_id != null ? Number(row.pop_id) : null,
+    popName: row.pop_name || null,
     name: row.name,
+    buildingCode: row.building_code || null,
     c2bCode: row.c2b_code,
     b2bCode: row.b2b_code,
     ipSetup: row.ip_setup,
@@ -464,6 +514,7 @@ function mapBuildingRow(row, olts = []) {
     olts: Array.isArray(olts) ? olts : [],
     oltCount: Array.isArray(olts) ? olts.length : 0,
     ipPrefixes: parseBuildingPrefixes(row.ip_prefixes),
+    popIpPrefixes: parseBuildingPrefixes(row.pop_ip_prefixes),
     addressAttention: row.address_attention || null,
     addressStreet: row.address_street || null,
     addressStreet2: row.address_street2 || null,
@@ -473,6 +524,24 @@ function mapBuildingRow(row, olts = []) {
     addressZip: row.address_zip || null,
     addressCountry: row.address_country || null,
     createdAt: row.created_at,
+  };
+}
+
+function mapPopRow(row, olts = []) {
+  return {
+    id: row.id,
+    name: row.name,
+    c2bCode: row.c2b_code,
+    b2bCode: row.b2b_code,
+    ipSetup: row.ip_setup,
+    dstvSetup: row.dstv_setup || "decoder",
+    ipPrefixes: parseBuildingPrefixes(row.ip_prefixes),
+    olts: Array.isArray(olts) ? olts : [],
+    oltCount: Array.isArray(olts) ? olts.length : 0,
+    buildingCount:
+      row.building_count != null ? Number(row.building_count) : undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -490,28 +559,95 @@ function parseBuildingPrefixes(raw) {
   return [];
 }
 
-async function createBuilding(data) {
+function assertPrefixesSubsetOfPop(assigned, popPrefixes, popName) {
+  const pool = new Set(popPrefixes || []);
+  for (const prefix of assigned || []) {
+    if (!pool.has(prefix)) {
+      throw new Error(
+        `Prefix ${prefix} is not in the ${popName || "POP"} IP pool`
+      );
+    }
+  }
+}
+
+function normalizeBuildingCode(raw) {
+  const code = String(raw || "")
+    .trim()
+    .toUpperCase();
+  if (!code) return null;
+  if (!/^[A-Z0-9]{1,10}$/.test(code)) {
+    throw new Error("Building code must be 1–10 alphanumeric characters");
+  }
+  return code;
+}
+
+async function listPops(filters = {}) {
+  const clauses = ["1=1"];
+  const params = [];
+  if (filters.search) {
+    const q = `%${String(filters.search).trim()}%`;
+    clauses.push("(name LIKE ? OR c2b_code LIKE ? OR b2b_code LIKE ?)");
+    params.push(q, q, q);
+  }
+  if (filters.ipSetup) {
+    clauses.push("ip_setup = ?");
+    params.push(filters.ipSetup);
+  }
+
+  const rows = await query(
+    `SELECT p.*,
+            (SELECT COUNT(*) FROM buildings b WHERE b.pop_id = p.id) AS building_count
+     FROM pops p
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY p.name ASC`,
+    params
+  );
+
+  const popIds = rows.map((r) => r.id);
+  let oltsByPop = new Map();
+  if (popIds.length) {
+    const placeholders = popIds.map(() => "?").join(",");
+    const oltRows = await query(
+      `SELECT * FROM pop_olts WHERE pop_id IN (${placeholders}) ORDER BY pop_id, id`,
+      popIds
+    );
+    for (const row of oltRows) {
+      const list = oltsByPop.get(row.pop_id) || [];
+      list.push(mapPopOltRow(row));
+      oltsByPop.set(row.pop_id, list);
+    }
+  }
+
+  const pops = rows.map((r) => mapPopRow(r, oltsByPop.get(r.id) || []));
+  return { pops, data: pops };
+}
+
+async function getPopById(id) {
+  const rows = await query(`SELECT * FROM pops WHERE id = ? LIMIT 1`, [id]);
+  return rows[0] || null;
+}
+
+async function getPopMapped(id) {
+  const row = await getPopById(id);
+  if (!row) return null;
+  const olts = await listPopOlts(id);
+  const [countRow] = await query(
+    `SELECT COUNT(*) AS building_count FROM buildings WHERE pop_id = ?`,
+    [id]
+  );
+  return mapPopRow(
+    { ...row, building_count: countRow?.building_count || 0 },
+    olts
+  );
+}
+
+async function createPop(data) {
   const { normalizeIpPrefixes } = require("../config/buildingIpRules");
-  const {
-    normalizeBuildingAddressFields,
-  } = require("../utils/buildingBillingAddress");
   const name = String(data.name || "").trim();
   const c2bCode = String(data.c2bCode || "").trim().toUpperCase();
   const b2bCode = String(data.b2bCode || "").trim().toUpperCase();
   const ipSetup = data.ipSetup;
   const dstvSetup = data.dstvSetup || "decoder";
-  const address = normalizeBuildingAddressFields(data);
-  const addressCountry =
-    address.addressAttention ||
-    address.addressStreet ||
-    address.addressStreet2 ||
-    address.addressPoBox ||
-    address.addressCity ||
-    address.addressState ||
-    address.addressZip ||
-    address.addressCountry
-      ? address.addressCountry || "Kenya"
-      : null;
 
   if (!name || !c2bCode || !b2bCode) {
     throw new Error("Name, C2B code, and B2B code are required");
@@ -526,20 +662,139 @@ async function createBuilding(data) {
     throw new Error("Codes must be 2–10 alphanumeric characters");
   }
 
-  // Prefixes are optional on create — STATIC buildings can add them later.
   let ipPrefixes = [];
   if (ipSetup === "STATIC") {
     ipPrefixes = normalizeIpPrefixes(data.ipPrefixes || []);
   }
 
   const result = await query(
+    `INSERT INTO pops (name, c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, c2bCode, b2bCode, ipSetup, dstvSetup, JSON.stringify(ipPrefixes)]
+  );
+  return result.insertId;
+}
+
+async function updatePop(id, data) {
+  const { normalizeIpPrefixes } = require("../config/buildingIpRules");
+  const existing = await getPopById(id);
+  if (!existing) throw new Error("POP not found");
+
+  const name = data.name !== undefined ? String(data.name).trim() : existing.name;
+  const c2bCode =
+    data.c2bCode !== undefined
+      ? String(data.c2bCode).trim().toUpperCase()
+      : existing.c2b_code;
+  const b2bCode =
+    data.b2bCode !== undefined
+      ? String(data.b2bCode).trim().toUpperCase()
+      : existing.b2b_code;
+  const ipSetup = data.ipSetup !== undefined ? data.ipSetup : existing.ip_setup;
+  const dstvSetup =
+    data.dstvSetup !== undefined ? data.dstvSetup : existing.dstv_setup || "decoder";
+
+  if (!name || !c2bCode || !b2bCode) {
+    throw new Error("Name, C2B code, and B2B code are required");
+  }
+  if (!["STATIC", "PPOE"].includes(ipSetup)) {
+    throw new Error("IP setup must be STATIC or PPOE");
+  }
+  if (!["headend_coax", "decoder"].includes(dstvSetup)) {
+    throw new Error("DSTV setup must be headend_coax or decoder");
+  }
+  if (!/^[A-Z0-9]{2,10}$/.test(c2bCode) || !/^[A-Z0-9]{2,10}$/.test(b2bCode)) {
+    throw new Error("Codes must be 2–10 alphanumeric characters");
+  }
+
+  let ipPrefixes = parseBuildingPrefixes(existing.ip_prefixes);
+  if (data.ipPrefixes !== undefined) {
+    if (ipSetup === "PPOE") {
+      ipPrefixes = [];
+    } else {
+      const normalized = normalizeIpPrefixes(data.ipPrefixes || []);
+      if (normalized.length > 0 || Array.isArray(data.ipPrefixes)) {
+        ipPrefixes = normalized;
+      }
+    }
+  } else if (ipSetup === "PPOE") {
+    ipPrefixes = [];
+  }
+
+  // Ensure building assignments remain a subset of the POP pool
+  const buildings = await query(
+    `SELECT id, name, ip_prefixes FROM buildings WHERE pop_id = ?`,
+    [id]
+  );
+  const pool = new Set(ipPrefixes);
+  for (const b of buildings) {
+    const assigned = parseBuildingPrefixes(b.ip_prefixes);
+    const nextAssigned = assigned.filter((p) => pool.has(p));
+    if (nextAssigned.length !== assigned.length || ipSetup === "PPOE") {
+      await query(`UPDATE buildings SET ip_prefixes = ? WHERE id = ?`, [
+        JSON.stringify(ipSetup === "PPOE" ? [] : nextAssigned),
+        b.id,
+      ]);
+    }
+  }
+
+  await query(
+    `UPDATE pops
+     SET name = ?, c2b_code = ?, b2b_code = ?, ip_setup = ?, dstv_setup = ?, ip_prefixes = ?
+     WHERE id = ?`,
+    [name, c2bCode, b2bCode, ipSetup, dstvSetup, JSON.stringify(ipPrefixes), id]
+  );
+}
+
+async function createBuilding(data) {
+  const { normalizeIpPrefixes } = require("../config/buildingIpRules");
+  const {
+    normalizeBuildingAddressFields,
+  } = require("../utils/buildingBillingAddress");
+  const name = String(data.name || "").trim();
+  const popId = Number(data.popId);
+  const address = normalizeBuildingAddressFields(data);
+  const addressCountry =
+    address.addressAttention ||
+    address.addressStreet ||
+    address.addressStreet2 ||
+    address.addressPoBox ||
+    address.addressCity ||
+    address.addressState ||
+    address.addressZip ||
+    address.addressCountry
+      ? address.addressCountry || "Kenya"
+      : null;
+
+  if (!name) throw new Error("Building name is required");
+  if (!popId) throw new Error("POP is required");
+
+  const pop = await getPopById(popId);
+  if (!pop) throw new Error("POP not found");
+
+  const buildingCode =
+    data.buildingCode !== undefined
+      ? normalizeBuildingCode(data.buildingCode)
+      : null;
+
+  let ipPrefixes = [];
+  if (String(pop.ip_setup).toUpperCase() === "STATIC") {
+    ipPrefixes = normalizeIpPrefixes(data.ipPrefixes || []);
+    assertPrefixesSubsetOfPop(
+      ipPrefixes,
+      parseBuildingPrefixes(pop.ip_prefixes),
+      pop.name
+    );
+  }
+
+  const result = await query(
     `INSERT INTO buildings (
-       name, address_attention, address_street, address_street2, address_po_box,
-       address_city, address_state, address_zip, address_country,
-       c2b_code, b2b_code, ip_setup, dstv_setup, ip_prefixes
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       pop_id, name, building_code, address_attention, address_street, address_street2, address_po_box,
+       address_city, address_state, address_zip, address_country, ip_prefixes
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      popId,
       name,
+      buildingCode,
       address.addressAttention,
       address.addressStreet,
       address.addressStreet2,
@@ -548,10 +803,6 @@ async function createBuilding(data) {
       address.addressState,
       address.addressZip,
       addressCountry,
-      c2bCode,
-      b2bCode,
-      ipSetup,
-      dstvSetup,
       JSON.stringify(ipPrefixes),
     ]
   );
@@ -568,17 +819,19 @@ async function updateBuilding(id, data) {
   if (!existing) throw new Error("Building not found");
 
   const name = data.name !== undefined ? String(data.name).trim() : existing.name;
-  const c2bCode =
-    data.c2bCode !== undefined
-      ? String(data.c2bCode).trim().toUpperCase()
-      : existing.c2b_code;
-  const b2bCode =
-    data.b2bCode !== undefined
-      ? String(data.b2bCode).trim().toUpperCase()
-      : existing.b2b_code;
-  const ipSetup = data.ipSetup !== undefined ? data.ipSetup : existing.ip_setup;
-  const dstvSetup =
-    data.dstvSetup !== undefined ? data.dstvSetup : existing.dstv_setup || "decoder";
+  const popId =
+    data.popId !== undefined ? Number(data.popId) : Number(existing.pop_id);
+
+  if (!name) throw new Error("Building name is required");
+  if (!popId) throw new Error("POP is required");
+
+  const pop = await getPopById(popId);
+  if (!pop) throw new Error("POP not found");
+
+  const buildingCode =
+    data.buildingCode !== undefined
+      ? normalizeBuildingCode(data.buildingCode)
+      : existing.building_code || null;
 
   const addressIncoming = normalizeBuildingAddressFields(data);
   const pickAddress = (key, column) =>
@@ -607,43 +860,33 @@ async function updateBuilding(id, data) {
       : existing.address_country || "Kenya"
     : null;
 
-  if (!name || !c2bCode || !b2bCode) {
-    throw new Error("Name, C2B code, and B2B code are required");
-  }
-  if (!["STATIC", "PPOE"].includes(ipSetup)) {
-    throw new Error("IP setup must be STATIC or PPOE");
-  }
-  if (!["headend_coax", "decoder"].includes(dstvSetup)) {
-    throw new Error("DSTV setup must be headend_coax or decoder");
-  }
-  if (!/^[A-Z0-9]{2,10}$/.test(c2bCode) || !/^[A-Z0-9]{2,10}$/.test(b2bCode)) {
-    throw new Error("Codes must be 2–10 alphanumeric characters");
-  }
-
   let ipPrefixes = parseBuildingPrefixes(existing.ip_prefixes);
-  if (data.ipPrefixes !== undefined) {
-    if (ipSetup === "PPOE") {
-      ipPrefixes = [];
-    } else {
-      const normalized = normalizeIpPrefixes(data.ipPrefixes || []);
-      if (normalized.length > 0) {
-        ipPrefixes = normalized;
-      }
-    }
-  } else if (ipSetup === "PPOE") {
+  if (String(pop.ip_setup).toUpperCase() === "PPOE") {
     ipPrefixes = [];
+  } else if (data.ipPrefixes !== undefined) {
+    ipPrefixes = normalizeIpPrefixes(data.ipPrefixes || []);
+    assertPrefixesSubsetOfPop(
+      ipPrefixes,
+      parseBuildingPrefixes(pop.ip_prefixes),
+      pop.name
+    );
+  } else if (Number(popId) !== Number(existing.pop_id)) {
+    // Moving POP: drop assignments that aren't in the new pool
+    const pool = new Set(parseBuildingPrefixes(pop.ip_prefixes));
+    ipPrefixes = ipPrefixes.filter((p) => pool.has(p));
   }
 
   await query(
     `UPDATE buildings
-     SET name = ?,
+     SET pop_id = ?, name = ?, building_code = ?,
          address_attention = ?, address_street = ?, address_street2 = ?,
          address_po_box = ?, address_city = ?, address_state = ?,
-         address_zip = ?, address_country = ?,
-         c2b_code = ?, b2b_code = ?, ip_setup = ?, dstv_setup = ?, ip_prefixes = ?
+         address_zip = ?, address_country = ?, ip_prefixes = ?
      WHERE id = ?`,
     [
+      popId,
       name,
+      buildingCode,
       addressAttention,
       addressStreet,
       addressStreet2,
@@ -652,10 +895,6 @@ async function updateBuilding(id, data) {
       addressState,
       addressZip,
       addressCountry,
-      c2bCode,
-      b2bCode,
-      ipSetup,
-      dstvSetup,
       JSON.stringify(ipPrefixes),
       id,
     ]
@@ -663,30 +902,46 @@ async function updateBuilding(id, data) {
 }
 
 async function getBuildingById(id) {
-  const rows = await query(`SELECT * FROM buildings WHERE id = ? LIMIT 1`, [
-    id,
-  ]);
+  const rows = await query(
+    `SELECT b.*,
+            p.name AS pop_name,
+            p.c2b_code, p.b2b_code, p.ip_setup, p.dstv_setup,
+            p.ip_prefixes AS pop_ip_prefixes
+     FROM buildings b
+     JOIN pops p ON p.id = b.pop_id
+     WHERE b.id = ? LIMIT 1`,
+    [id]
+  );
   return rows[0] || null;
+}
+
+async function listPopOlts(popId) {
+  const rows = await query(
+    `SELECT * FROM pop_olts WHERE pop_id = ? ORDER BY id`,
+    [popId]
+  );
+  return rows.map(mapPopOltRow);
 }
 
 async function listBuildingOlts(buildingId) {
-  const rows = await query(
-    `SELECT * FROM building_olts WHERE building_id = ? ORDER BY id`,
-    [buildingId]
-  );
-  return rows.map(mapBuildingOltRow);
+  const building = await getBuildingById(buildingId);
+  if (!building) return [];
+  return listPopOlts(building.pop_id);
 }
 
-async function getBuildingOltById(id) {
-  const rows = await query(`SELECT * FROM building_olts WHERE id = ? LIMIT 1`, [
-    id,
-  ]);
+async function getPopOltById(id) {
+  const rows = await query(`SELECT * FROM pop_olts WHERE id = ? LIMIT 1`, [id]);
   return rows[0] || null;
 }
 
-async function createBuildingOlt(buildingId, data) {
-  const building = await getBuildingById(buildingId);
-  if (!building) throw new Error("Building not found");
+/** @deprecated Use getPopOltById */
+async function getBuildingOltById(id) {
+  return getPopOltById(id);
+}
+
+async function createPopOlt(popId, data) {
+  const pop = await getPopById(popId);
+  if (!pop) throw new Error("POP not found");
 
   const host = normalizeOltHost(data.host ?? data.oltHost);
   const mac = normalizeOltMac(data.mac ?? data.oltMac);
@@ -710,22 +965,28 @@ async function createBuildingOlt(buildingId, data) {
 
   try {
     const result = await query(
-      `INSERT INTO building_olts
-        (building_id, name, host, port, mac, username, password, tenant_id)
+      `INSERT INTO pop_olts
+        (pop_id, name, host, port, mac, username, password, tenant_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [buildingId, name, host, port, mac, username, password, tenantId]
+      [popId, name, host, port, mac, username, password, tenantId]
     );
-    return getBuildingOltById(result.insertId);
+    return getPopOltById(result.insertId);
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
-      throw new Error("An OLT with this MAC already exists on this building");
+      throw new Error("An OLT with this MAC already exists on this POP");
     }
     throw err;
   }
 }
 
-async function updateBuildingOlt(id, data) {
-  const existing = await getBuildingOltById(id);
+async function createBuildingOlt(buildingId, data) {
+  const building = await getBuildingById(buildingId);
+  if (!building) throw new Error("Building not found");
+  return createPopOlt(building.pop_id, data);
+}
+
+async function updatePopOlt(id, data) {
+  const existing = await getPopOltById(id);
   if (!existing) throw new Error("OLT not found");
 
   const host =
@@ -772,7 +1033,7 @@ async function updateBuildingOlt(id, data) {
 
   try {
     await query(
-      `UPDATE building_olts
+      `UPDATE pop_olts
        SET name = ?, host = ?, port = ?, mac = ?, username = ?, password = ?,
            tenant_id = ?, is_active = ?
        WHERE id = ?`,
@@ -780,19 +1041,27 @@ async function updateBuildingOlt(id, data) {
     );
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
-      throw new Error("An OLT with this MAC already exists on this building");
+      throw new Error("An OLT with this MAC already exists on this POP");
     }
     throw err;
   }
 
-  return getBuildingOltById(id);
+  return getPopOltById(id);
+}
+
+async function updateBuildingOlt(id, data) {
+  return updatePopOlt(id, data);
+}
+
+async function deletePopOlt(id) {
+  const existing = await getPopOltById(id);
+  if (!existing) throw new Error("OLT not found");
+  await query(`DELETE FROM pop_olts WHERE id = ?`, [id]);
+  return true;
 }
 
 async function deleteBuildingOlt(id) {
-  const existing = await getBuildingOltById(id);
-  if (!existing) throw new Error("OLT not found");
-  await query(`DELETE FROM building_olts WHERE id = ?`, [id]);
-  return true;
+  return deletePopOlt(id);
 }
 
 async function listProducts(filters = {}) {
@@ -906,10 +1175,12 @@ async function getProductListRow(id) {
 
 async function getProductById(id) {
   const rows = await query(
-    `SELECT p.*, b.name AS building_name, b.c2b_code, b.b2b_code, b.ip_setup,
+    `SELECT p.*, b.name AS building_name,
+            pop.c2b_code, pop.b2b_code, pop.ip_setup,
             pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order
      FROM products p
      JOIN buildings b ON b.id = p.building_id
+     JOIN pops pop ON pop.id = b.pop_id
      LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
      LEFT JOIN package_plans pl ON pl.id = v.plan_id
      WHERE p.id = ? LIMIT 1`,
@@ -1360,7 +1631,9 @@ async function getCustomerById(id) {
 
 async function getCustomerContext(id) {
   const rows = await query(
-    `SELECT c.*, b.name AS building_name, b.c2b_code, b.b2b_code, b.ip_setup, b.dstv_setup,
+    `SELECT c.*, b.name AS building_name, b.pop_id,
+            pop.name AS pop_name,
+            pop.c2b_code, pop.b2b_code, pop.ip_setup, pop.dstv_setup,
             bo.id AS linked_building_olt_id,
             bo.name AS building_olt_name,
             bo.host AS building_olt_host, bo.port AS building_olt_port,
@@ -1380,8 +1653,9 @@ async function getCustomerContext(id) {
             ts.due_date AS tisp_due_date
      FROM customers c
      JOIN buildings b ON b.id = c.building_id
+     JOIN pops pop ON pop.id = b.pop_id
      JOIN products p ON p.id = c.product_id
-     LEFT JOIN building_olts bo ON bo.id = c.building_olt_id
+     LEFT JOIN pop_olts bo ON bo.id = c.building_olt_id
      LEFT JOIN agencies a ON a.id = c.agency_id
      LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
      LEFT JOIN package_plans pl ON pl.id = v.plan_id
@@ -2961,24 +3235,28 @@ async function updateCustomerOltMapping(
   if (oltId) {
     const olt = await getBuildingOltById(oltId);
     if (!olt) throw new Error("Building OLT not found");
-    if (Number(olt.building_id) !== Number(customer.buildingId)) {
-      throw new Error("OLT does not belong to this customer's building");
+    const customerPopId = Number(customer.popId || customer.pop_id);
+    if (Number(olt.pop_id) !== customerPopId) {
+      throw new Error("OLT does not belong to this customer's POP");
     }
     mac = String(olt.mac || "").trim();
   } else {
     mac = mac || String(customer.buildingOltMac || "").trim();
     if (mac) {
-      const buildingOlts = await query(
-        `SELECT id FROM building_olts
-         WHERE building_id = ? AND LOWER(mac) = LOWER(?) LIMIT 1`,
-        [customer.buildingId, mac]
-      );
-      if (buildingOlts[0]) oltId = buildingOlts[0].id;
+      const building = await getBuildingById(customer.buildingId);
+      if (building) {
+        const popOlts = await query(
+          `SELECT id FROM pop_olts
+           WHERE pop_id = ? AND LOWER(mac) = LOWER(?) LIMIT 1`,
+          [building.pop_id, mac]
+        );
+        if (popOlts[0]) oltId = popOlts[0].id;
+      }
     }
   }
 
   if (!mac) {
-    throw new Error("OLT MAC is required — select a building OLT");
+    throw new Error("OLT MAC is required — select a POP OLT");
   }
 
   const sn = onuSn ? String(onuSn).trim() : null;
@@ -3282,7 +3560,13 @@ async function getCustomerEvents(customerId) {
 
 async function getBuildingByName(name) {
   const rows = await query(
-    `SELECT * FROM buildings WHERE LOWER(name) = LOWER(?) LIMIT 1`,
+    `SELECT b.*,
+            p.name AS pop_name,
+            p.c2b_code, p.b2b_code, p.ip_setup, p.dstv_setup,
+            p.ip_prefixes AS pop_ip_prefixes
+     FROM buildings b
+     JOIN pops p ON p.id = b.pop_id
+     WHERE LOWER(b.name) = LOWER(?) LIMIT 1`,
     [String(name || "").trim()]
   );
   return rows[0] || null;
@@ -3641,6 +3925,7 @@ async function listApartments(filters = {}) {
       GROUP BY building_id, apartment_number
     ) units
     JOIN buildings b ON b.id = units.building_id
+    JOIN pops pop ON pop.id = b.pop_id
     LEFT JOIN apartment_history open_h
       ON open_h.building_id = units.building_id
      AND open_h.apartment_number = units.apartment_number
@@ -3711,10 +3996,10 @@ async function listApartments(filters = {}) {
   const rows = await query(
     `SELECT b.id AS buildingId,
             b.name AS buildingName,
-            b.c2b_code AS c2bCode,
-            b.b2b_code AS b2bCode,
-            b.ip_setup AS ipSetup,
-            b.dstv_setup AS dstvSetup,
+            pop.c2b_code AS c2bCode,
+            pop.b2b_code AS b2bCode,
+            pop.ip_setup AS ipSetup,
+            pop.dstv_setup AS dstvSetup,
             units.apartment_number AS apartmentNumber,
             units.tenure_count AS tenureCount,
             units.first_occupied_at AS firstOccupiedAt,
@@ -3810,18 +4095,30 @@ module.exports = {
   splitFullName,
   buildCustomerNumber,
   resolvePackagePrice,
+  listPops,
+  getPopById,
+  getPopMapped,
+  createPop,
+  updatePop,
   listBuildings,
   createBuilding,
   updateBuilding,
   mapBuildingRow,
   mapBuildingOltRow,
+  mapPopOltRow,
+  mapPopRow,
   getBuildingById,
   getBuildingMapped,
   listBuildingOlts,
+  listPopOlts,
   getBuildingOltById,
+  getPopOltById,
   createBuildingOlt,
+  createPopOlt,
   updateBuildingOlt,
+  updatePopOlt,
   deleteBuildingOlt,
+  deletePopOlt,
   listProducts,
   getProductById,
   createProduct,

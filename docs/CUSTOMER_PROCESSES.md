@@ -100,7 +100,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 ## 5. Move apartment
 
-**Purpose:** Same building, new unit → new customer number (`{c2b\|b2b}_code`-apartment).
+**Purpose:** Same building, new unit → new customer number (`{pop_c2b|b2b}[-{building_code}]-{apartment}`, e.g. `ET-401A` or `AZE-TGA-401A`).
 
 **Outcomes**
 
@@ -113,7 +113,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 ## 6. Convert to C2B / B2B
 
-**Purpose:** Flip billing type and renumber using the building’s other code (`CL-A10` ↔ `CLB-A10`).
+**Purpose:** Flip billing type and renumber using the POP’s other code (`CL-A10` ↔ `CLB-A10`, or `AZE-TGA-401A` ↔ `AZEB-TGA-401A`).
 
 **Outcomes**
 

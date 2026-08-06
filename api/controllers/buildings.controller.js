@@ -4,10 +4,11 @@ const { logActivitySafe } = require("../services/activityLogStore");
 
 async function listBuildings(req, res, next) {
   try {
-    const { search, ipSetup, page, limit, sortBy, sortDir } = req.query;
+    const { search, ipSetup, popId, page, limit, sortBy, sortDir } = req.query;
     const result = await store.listBuildings({
       search,
       ipSetup,
+      popId,
       page,
       limit,
       sortBy,
@@ -23,10 +24,8 @@ async function createBuilding(req, res, next) {
   try {
     const {
       name,
-      c2bCode,
-      b2bCode,
-      ipSetup,
-      dstvSetup,
+      popId,
+      buildingCode,
       ipPrefixes,
       addressAttention,
       addressStreet,
@@ -39,10 +38,8 @@ async function createBuilding(req, res, next) {
     } = req.body || {};
     const id = await store.createBuilding({
       name,
-      c2bCode,
-      b2bCode,
-      ipSetup,
-      dstvSetup,
+      popId,
+      buildingCode,
       ipPrefixes,
       addressAttention,
       addressStreet,
@@ -61,7 +58,7 @@ async function createBuilding(req, res, next) {
       message: building?.name || `Building #${id}`,
       source: "admin",
       referenceId: String(id),
-      metadata: { buildingId: id },
+      metadata: { buildingId: id, popId: building?.popId },
     });
     return res.status(201).json({ ok: true, id, building });
   } catch (err) {
@@ -70,11 +67,8 @@ async function createBuilding(req, res, next) {
       if (msg.includes("uk_building_name")) {
         return res.status(409).json({ error: "A building with this name already exists" });
       }
-      if (msg.includes("uk_building_c2b")) {
-        return res.status(409).json({ error: "C2B code is already in use" });
-      }
-      if (msg.includes("uk_building_b2b")) {
-        return res.status(409).json({ error: "B2B code is already in use" });
+      if (msg.includes("uk_building_pop_code")) {
+        return res.status(409).json({ error: "Building code is already used under this POP" });
       }
       return res.status(409).json({ error: "Duplicate building record" });
     }
@@ -90,10 +84,8 @@ async function updateBuilding(req, res, next) {
     const id = Number(req.params.id);
     const {
       name,
-      c2bCode,
-      b2bCode,
-      ipSetup,
-      dstvSetup,
+      popId,
+      buildingCode,
       ipPrefixes,
       addressAttention,
       addressStreet,
@@ -106,10 +98,8 @@ async function updateBuilding(req, res, next) {
     } = req.body || {};
     await store.updateBuilding(id, {
       name,
-      c2bCode,
-      b2bCode,
-      ipSetup,
-      dstvSetup,
+      popId,
+      buildingCode,
       ipPrefixes,
       addressAttention,
       addressStreet,
@@ -128,11 +118,15 @@ async function updateBuilding(req, res, next) {
       message: building?.name || `Building #${id}`,
       source: "admin",
       referenceId: String(id),
-      metadata: { buildingId: id },
+      metadata: { buildingId: id, popId: building?.popId },
     });
     return res.json({ ok: true, building });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
+      const msg = String(err.message || "");
+      if (msg.includes("uk_building_pop_code")) {
+        return res.status(409).json({ error: "Building code is already used under this POP" });
+      }
       return res.status(409).json({ error: "Duplicate building record" });
     }
     if (err.message) {
@@ -150,7 +144,7 @@ async function listBuildingOlts(req, res, next) {
       return res.status(404).json({ error: "Building not found" });
     }
     const olts = await store.listBuildingOlts(buildingId);
-    return res.json({ ok: true, olts });
+    return res.json({ ok: true, olts, popId: building.pop_id });
   } catch (err) {
     return next(err);
   }
@@ -160,11 +154,11 @@ async function createBuildingOlt(req, res, next) {
   try {
     const buildingId = Number(req.params.id);
     const row = await store.createBuildingOlt(buildingId, req.body || {});
-    const olt = store.mapBuildingOltRow(row);
+    const olt = store.mapPopOltRow(row);
     emitAdminUpdate("buildings", { action: "olt_created", buildingId });
     return res.status(201).json({ ok: true, olt });
   } catch (err) {
-    if (err.message === "Building not found") {
+    if (err.message === "Building not found" || err.message === "POP not found") {
       return res.status(404).json({ error: err.message });
     }
     if (err.message) {
@@ -178,12 +172,16 @@ async function updateBuildingOlt(req, res, next) {
   try {
     const buildingId = Number(req.params.id);
     const oltId = Number(req.params.oltId);
-    const existing = await store.getBuildingOltById(oltId);
-    if (!existing || Number(existing.building_id) !== buildingId) {
+    const building = await store.getBuildingById(buildingId);
+    if (!building) {
+      return res.status(404).json({ error: "Building not found" });
+    }
+    const existing = await store.getPopOltById(oltId);
+    if (!existing || Number(existing.pop_id) !== Number(building.pop_id)) {
       return res.status(404).json({ error: "OLT not found" });
     }
     const row = await store.updateBuildingOlt(oltId, req.body || {});
-    const olt = store.mapBuildingOltRow(row);
+    const olt = store.mapPopOltRow(row);
     emitAdminUpdate("buildings", { action: "olt_updated", buildingId, oltId });
     return res.json({ ok: true, olt });
   } catch (err) {
@@ -201,17 +199,18 @@ async function deleteBuildingOlt(req, res, next) {
   try {
     const buildingId = Number(req.params.id);
     const oltId = Number(req.params.oltId);
-    const existing = await store.getBuildingOltById(oltId);
-    if (!existing || Number(existing.building_id) !== buildingId) {
+    const building = await store.getBuildingById(buildingId);
+    if (!building) {
+      return res.status(404).json({ error: "Building not found" });
+    }
+    const existing = await store.getPopOltById(oltId);
+    if (!existing || Number(existing.pop_id) !== Number(building.pop_id)) {
       return res.status(404).json({ error: "OLT not found" });
     }
     await store.deleteBuildingOlt(oltId);
     emitAdminUpdate("buildings", { action: "olt_deleted", buildingId, oltId });
     return res.json({ ok: true });
   } catch (err) {
-    if (err.message === "OLT not found") {
-      return res.status(404).json({ error: err.message });
-    }
     if (err.message) {
       return res.status(400).json({ error: err.message });
     }

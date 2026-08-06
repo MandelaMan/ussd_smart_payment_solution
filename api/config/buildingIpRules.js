@@ -1,6 +1,6 @@
 /**
- * Per-building static IP prefix rules. Prefixes are stored on the building record;
- * legacy name-based rules remain as fallback for unmigrated rows.
+ * Static IP rules: POP defines ip_setup; building holds assigned prefixes
+ * (subset of the POP pool). Legacy name-based rules remain as fallback.
  */
 const LEGACY_BUILDING_IP_RULES = {
   Enaki: {

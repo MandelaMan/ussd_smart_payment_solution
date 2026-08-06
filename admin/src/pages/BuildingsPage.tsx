@@ -1,4 +1,4 @@
-import { Fragment, type FormEvent, useCallback, useEffect, useState } from "react";
+import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
@@ -12,7 +12,6 @@ import {
   Flex,
   Grid,
   Heading,
-  IconButton,
   Input,
   Stack,
   Table,
@@ -22,10 +21,9 @@ import {
   FiChevronDown,
   FiChevronRight,
   FiHome,
-  FiPlus,
-  FiTrash2,
+  FiServer,
 } from "react-icons/fi";
-import { api, formatDate, type Building, type ListPagination } from "../lib/api";
+import { api, formatDate, type Building, type ListPagination, type Pop } from "../lib/api";
 import { useAuth } from "../lib/authContext";
 import { canMutateConfig } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
@@ -40,6 +38,7 @@ import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../componen
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { BuildingExpandPanel } from "../components/buildings/BuildingExpandPanel";
+import { PopManageDialog } from "../components/buildings/PopManageDialog";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
 import { buildingExportColumns } from "../lib/dataTableExportColumns";
 import {
@@ -60,14 +59,20 @@ import {
 } from "../components/ui/DataTable";
 
 const PAGE_SIZE = 30;
+const TABLE_COL_SPAN = 9;
 
-type BuildingSortKey = "name" | "c2bCode" | "b2bCode" | "ipSetup" | "createdAt";
+type BuildingSortKey = "name" | "popName" | "c2bCode" | "b2bCode" | "ipSetup" | "createdAt";
+
+function normalizePrefix(value: string) {
+  return value.trim().replace(/\.+$/, "");
+}
 
 export function BuildingsPage() {
   const { user } = useAuth();
   const isMobile = useMobileViewport();
   const canMutate = canMutateConfig(user);
   const [buildings, setBuildings] = useState<Building[]>([]);
+  const [pops, setPops] = useState<Pop[]>([]);
   const [pagination, setPagination] = useState<ListPagination>({
     page: 1,
     limit: PAGE_SIZE,
@@ -84,17 +89,15 @@ export function BuildingsPage() {
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showManagePops, setShowManagePops] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editing, setEditing] = useState<Building | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  const [formPopId, setFormPopId] = useState<number | "">("");
   const [name, setName] = useState("");
-  const [c2bCode, setC2bCode] = useState("");
-  const [b2bCode, setB2bCode] = useState("");
-  const [formIpSetup, setFormIpSetup] = useState<"STATIC" | "PPOE">("STATIC");
-  const [formDstvSetup, setFormDstvSetup] = useState<"headend_coax" | "decoder">("decoder");
-  const [prefixInput, setPrefixInput] = useState("");
+  const [buildingCode, setBuildingCode] = useState("");
   const [ipPrefixes, setIpPrefixes] = useState<string[]>([]);
   const [addressAttention, setAddressAttention] = useState("");
   const [addressStreet, setAddressStreet] = useState("");
@@ -108,6 +111,11 @@ export function BuildingsPage() {
     sortBy: "name",
     sortDir: "asc",
   });
+
+  const selectedPop = useMemo(
+    () => (formPopId === "" ? undefined : pops.find((p) => p.id === formPopId)),
+    [formPopId, pops]
+  );
 
   function buildingAddressPayload() {
     const hasAny =
@@ -130,6 +138,18 @@ export function BuildingsPage() {
       addressCountry: hasAny ? addressCountry.trim() || "Kenya" : "",
     };
   }
+
+  const loadPops = useCallback(async () => {
+    try {
+      const res = await api.listPops();
+      setPops(res.pops || res.data || []);
+    } catch (e) {
+      toaster.create({
+        title: e instanceof Error ? e.message : "Failed to load POPs",
+        type: "error",
+      });
+    }
+  }, []);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;
@@ -181,22 +201,39 @@ export function BuildingsPage() {
   }, [debouncedSearchInput, search]);
 
   useEffect(() => {
+    void loadPops();
+  }, [loadPops]);
+
+  useEffect(() => {
     load();
   }, [load]);
 
   useVisibilityRefresh(() => {
     void load({ silent: true });
+    void loadPops();
   });
+
+  function setFormPopAndFilterPrefixes(nextPopId: number | "") {
+    setFormPopId(nextPopId);
+    if (nextPopId === "") {
+      setIpPrefixes([]);
+      return;
+    }
+    const pop = pops.find((p) => p.id === nextPopId);
+    const pool = new Set((pop?.ipPrefixes || []).map(normalizePrefix));
+    if (pop?.ipSetup !== "STATIC") {
+      setIpPrefixes([]);
+      return;
+    }
+    setIpPrefixes((prev) => prev.filter((p) => pool.has(normalizePrefix(p))));
+  }
 
   function openEdit(building: Building) {
     setEditing(building);
+    setFormPopId(building.popId);
     setName(building.name);
-    setC2bCode(building.c2bCode);
-    setB2bCode(building.b2bCode);
-    setFormIpSetup(building.ipSetup);
-    setFormDstvSetup(building.dstvSetup || "decoder");
+    setBuildingCode(building.buildingCode || "");
     setIpPrefixes(building.ipPrefixes || []);
-    setPrefixInput("");
     setAddressAttention(building.addressAttention || "");
     setAddressStreet(building.addressStreet || "");
     setAddressStreet2(building.addressStreet2 || "");
@@ -213,13 +250,10 @@ export function BuildingsPage() {
   }
 
   function resetForm() {
+    setFormPopId("");
     setName("");
-    setC2bCode("");
-    setB2bCode("");
-    setFormIpSetup("STATIC");
-    setFormDstvSetup("decoder");
+    setBuildingCode("");
     setIpPrefixes([]);
-    setPrefixInput("");
     setAddressAttention("");
     setAddressStreet("");
     setAddressStreet2("");
@@ -230,32 +264,29 @@ export function BuildingsPage() {
     setAddressCountry("Kenya");
   }
 
-  function addPrefix() {
-    const value = prefixInput.trim();
-    if (!value) return;
-    if (ipPrefixes.includes(value)) {
-      toaster.create({ title: "Prefix already added", type: "warning" });
-      return;
-    }
-    setIpPrefixes([...ipPrefixes, value]);
-    setPrefixInput("");
-  }
-
-  function removePrefix(index: number) {
-    setIpPrefixes(ipPrefixes.filter((_, i) => i !== index));
+  function togglePrefix(prefix: string) {
+    const key = normalizePrefix(prefix);
+    setIpPrefixes((prev) => {
+      const has = prev.some((p) => normalizePrefix(p) === key);
+      if (has) return prev.filter((p) => normalizePrefix(p) !== key);
+      return [...prev, prefix];
+    });
   }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
+    if (formPopId === "") {
+      toaster.create({ title: "Select a POP", type: "warning" });
+      return;
+    }
     setSubmitting(true);
     try {
+      const popIsStatic = selectedPop?.ipSetup === "STATIC";
       await api.createBuilding({
         name,
-        c2bCode: c2bCode.toUpperCase(),
-        b2bCode: b2bCode.toUpperCase(),
-        ipSetup: formIpSetup,
-        dstvSetup: formDstvSetup,
-        ipPrefixes: formIpSetup === "STATIC" ? ipPrefixes : [],
+        popId: formPopId,
+        buildingCode: buildingCode.trim() || null,
+        ipPrefixes: popIsStatic ? ipPrefixes : [],
         ...buildingAddressPayload(),
       });
       toaster.create({ title: "Building created", type: "success" });
@@ -275,19 +306,18 @@ export function BuildingsPage() {
   async function handleUpdate(e: FormEvent) {
     e.preventDefault();
     if (!editing) return;
+    if (formPopId === "") {
+      toaster.create({ title: "Select a POP", type: "warning" });
+      return;
+    }
     setEditSubmitting(true);
     try {
+      const popIsStatic = selectedPop?.ipSetup === "STATIC";
       await api.updateBuilding(editing.id, {
         name,
-        c2bCode: c2bCode.toUpperCase(),
-        b2bCode: b2bCode.toUpperCase(),
-        ipSetup: formIpSetup,
-        dstvSetup: formDstvSetup,
-        ...(formIpSetup === "PPOE"
-          ? { ipPrefixes: [] }
-          : ipPrefixes.length > 0
-            ? { ipPrefixes }
-            : {}),
+        popId: formPopId,
+        buildingCode: buildingCode.trim() || null,
+        ipPrefixes: popIsStatic ? ipPrefixes : [],
         ...buildingAddressPayload(),
       });
       toaster.create({ title: "Building updated", type: "success" });
@@ -380,6 +410,13 @@ export function BuildingsPage() {
             onClick: () => handleSort("name"),
           },
           {
+            key: "popName",
+            label: "POP",
+            active: sorts[0]?.sortBy === "popName",
+            direction: sorts[0]?.sortBy === "popName" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("popName"),
+          },
+          {
             key: "c2bCode",
             label: "C2B code",
             active: sorts[0]?.sortBy === "c2bCode",
@@ -411,10 +448,16 @@ export function BuildingsPage() {
               onExport={handleExport}
             />
             {canMutate ? (
-              <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
-                <FiHome />
-                Add Building
-              </Button>
+              <>
+                <Button variant="outline" onClick={() => setShowManagePops(true)}>
+                  <FiServer />
+                  Manage POPs
+                </Button>
+                <Button colorPalette="brand" onClick={() => { setShowForm(!showForm); resetForm(); }}>
+                  <FiHome />
+                  Add Building
+                </Button>
+              </>
             ) : null}
           </Flex>
         }
@@ -453,13 +496,13 @@ export function BuildingsPage() {
         <Box bg="bg.panel" borderRadius="lg" border="1px solid" borderColor="border.muted" p={5}>
           <Heading size="sm" mb={4}>New building</Heading>
           <BuildingForm
+            pops={pops}
+            formPopId={formPopId}
+            setFormPopId={setFormPopAndFilterPrefixes}
+            selectedPop={selectedPop}
             name={name} setName={setName}
-            c2bCode={c2bCode} setC2bCode={setC2bCode}
-            b2bCode={b2bCode} setB2bCode={setB2bCode}
-            formIpSetup={formIpSetup} setFormIpSetup={setFormIpSetup} setIpPrefixes={setIpPrefixes}
-            formDstvSetup={formDstvSetup} setFormDstvSetup={setFormDstvSetup}
-            prefixInput={prefixInput} setPrefixInput={setPrefixInput}
-            ipPrefixes={ipPrefixes} addPrefix={addPrefix} removePrefix={removePrefix}
+            buildingCode={buildingCode} setBuildingCode={setBuildingCode}
+            ipPrefixes={ipPrefixes} togglePrefix={togglePrefix}
             addressAttention={addressAttention} setAddressAttention={setAddressAttention}
             addressStreet={addressStreet} setAddressStreet={setAddressStreet}
             addressStreet2={addressStreet2} setAddressStreet2={setAddressStreet2}
@@ -492,8 +535,8 @@ export function BuildingsPage() {
         {loading ? (
           <ResponsiveListViews
             fill
-            mobile={<MobileCardListSkeleton fill variant="card" fieldCount={3} />}
-            desktop={<DataTableLoadingSkeleton columns={8} fill />}
+            mobile={<MobileCardListSkeleton fill variant="card" fieldCount={4} />}
+            desktop={<DataTableLoadingSkeleton columns={TABLE_COL_SPAN} fill />}
           />
         ) : buildings.length === 0 ? (
           <EmptyState>No buildings found</EmptyState>
@@ -515,6 +558,8 @@ export function BuildingsPage() {
                     isOpen={isOpen}
                     onClick={() => setExpanded(isOpen ? null : b.id)}
                     fields={[
+                      { label: "POP", value: b.popName || "—" },
+                      { label: "Bldg code", value: b.buildingCode || "—" },
                       { label: "C2B", value: b.c2bCode },
                       { label: "B2B", value: b.b2bCode },
                       { label: "DSTV", value: b.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder" },
@@ -539,10 +584,11 @@ export function BuildingsPage() {
               <Table.Row>
                 <Table.ColumnHeader {...dataTableTitleColumnHeaderProps} w={DATA_TABLE_LEADING_COL_WIDTH} />
                 <DataTableSortHeader label="Building" column="name" sorts={sorts} onSort={handleSort} />
+                <DataTableSortHeader label="POP" column="popName" sorts={sorts} onSort={handleSort} />
                 <DataTableSortHeader label="C2B" column="c2bCode" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataCodeColumnHeaderProps} />
                 <DataTableSortHeader label="B2B" column="b2bCode" sorts={sorts} onSort={handleSort} headerProps={dataTableEqualDataCodeColumnHeaderProps} />
                 <DataTableSortHeader label="IP setup" column="ipSetup" sorts={sorts} onSort={handleSort} />
-                <Table.ColumnHeader>DSTV setup</Table.ColumnHeader>
+                <Table.ColumnHeader>DSTV</Table.ColumnHeader>
                 <Table.ColumnHeader>OLTs</Table.ColumnHeader>
                 <DataTableSortHeader label="Added" column="createdAt" sorts={sorts} onSort={handleSort} defaultDir="desc" />
               </Table.Row>
@@ -563,6 +609,9 @@ export function BuildingsPage() {
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontWeight="semibold">
                         <DisplayText value={b.name} />
+                      </Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        <DisplayText value={b.popName || "—"} />
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontFamily="mono" textTransform="uppercase">{b.c2bCode}</Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontFamily="mono" textTransform="uppercase">{b.b2bCode}</Table.Cell>
@@ -585,7 +634,7 @@ export function BuildingsPage() {
                     </Table.Row>
                     {isOpen && (
                       <Table.Row {...dataTableExpandRowProps}>
-                        <Table.Cell colSpan={8} p={3} bg="surface.50" borderBottom="none">
+                        <Table.Cell colSpan={TABLE_COL_SPAN} p={3} bg="surface.50" borderBottom="none">
                           <BuildingExpandPanel
                             building={b}
                             onEdit={openEdit}
@@ -612,13 +661,13 @@ export function BuildingsPage() {
         </Dialog.Header>
         <Dialog.Body overflowY="auto" flex="1" minH={0} maxH="min(75vh, 720px)">
           <BuildingForm
+            pops={pops}
+            formPopId={formPopId}
+            setFormPopId={setFormPopAndFilterPrefixes}
+            selectedPop={selectedPop}
             name={name} setName={setName}
-            c2bCode={c2bCode} setC2bCode={setC2bCode}
-            b2bCode={b2bCode} setB2bCode={setB2bCode}
-            formIpSetup={formIpSetup} setFormIpSetup={setFormIpSetup} setIpPrefixes={setIpPrefixes}
-            formDstvSetup={formDstvSetup} setFormDstvSetup={setFormDstvSetup}
-            prefixInput={prefixInput} setPrefixInput={setPrefixInput}
-            ipPrefixes={ipPrefixes} addPrefix={addPrefix} removePrefix={removePrefix}
+            buildingCode={buildingCode} setBuildingCode={setBuildingCode}
+            ipPrefixes={ipPrefixes} togglePrefix={togglePrefix}
             addressAttention={addressAttention} setAddressAttention={setAddressAttention}
             addressStreet={addressStreet} setAddressStreet={setAddressStreet}
             addressStreet2={addressStreet2} setAddressStreet2={setAddressStreet2}
@@ -633,14 +682,29 @@ export function BuildingsPage() {
           />
         </Dialog.Body>
       </AppDialog>
+
+      {canMutate ? (
+        <PopManageDialog
+          open={showManagePops}
+          onOpenChange={setShowManagePops}
+          onChanged={() => {
+            void loadPops();
+            void load({ silent: true });
+          }}
+        />
+      ) : null}
     </ListPageStack>
   );
 }
 
 function BuildingForm({
-  name, setName, c2bCode, setC2bCode, b2bCode, setB2bCode,
-  formIpSetup, setFormIpSetup, formDstvSetup, setFormDstvSetup, setIpPrefixes, prefixInput, setPrefixInput,
-  ipPrefixes, addPrefix, removePrefix,
+  pops,
+  formPopId,
+  setFormPopId,
+  selectedPop,
+  name, setName,
+  buildingCode, setBuildingCode,
+  ipPrefixes, togglePrefix,
   addressAttention, setAddressAttention,
   addressStreet, setAddressStreet,
   addressStreet2, setAddressStreet2,
@@ -652,15 +716,14 @@ function BuildingForm({
   onSubmit, submitting, onCancel,
   submitLabel = "Save building",
 }: {
+  pops: Pop[];
+  formPopId: number | "";
+  setFormPopId: (v: number | "") => void;
+  selectedPop?: Pop;
   name: string; setName: (v: string) => void;
-  c2bCode: string; setC2bCode: (v: string) => void;
-  b2bCode: string; setB2bCode: (v: string) => void;
-  formIpSetup: "STATIC" | "PPOE"; setFormIpSetup: (v: "STATIC" | "PPOE") => void;
-  formDstvSetup: "headend_coax" | "decoder";
-  setFormDstvSetup: (v: "headend_coax" | "decoder") => void;
-  setIpPrefixes: (v: string[]) => void;
-  prefixInput: string; setPrefixInput: (v: string) => void;
-  ipPrefixes: string[]; addPrefix: () => void; removePrefix: (i: number) => void;
+  buildingCode: string; setBuildingCode: (v: string) => void;
+  ipPrefixes: string[];
+  togglePrefix: (prefix: string) => void;
   addressAttention: string; setAddressAttention: (v: string) => void;
   addressStreet: string; setAddressStreet: (v: string) => void;
   addressStreet2: string; setAddressStreet2: (v: string) => void;
@@ -672,79 +735,116 @@ function BuildingForm({
   onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
   submitLabel?: string;
 }) {
+  const pool = selectedPop?.ipPrefixes || [];
+  const showPrefixPicker = selectedPop?.ipSetup === "STATIC";
+  const selectedKeys = new Set(ipPrefixes.map(normalizePrefix));
+  const exampleApt = "401A";
+  const popC2b = selectedPop?.c2bCode || "POP";
+  const codePreview =
+    buildingCode.trim() &&
+    buildingCode.trim().toUpperCase() !== popC2b.toUpperCase()
+      ? `${popC2b}-${buildingCode.trim().toUpperCase()}-${exampleApt}`
+      : `${popC2b}-${exampleApt}`;
+
   return (
     <form onSubmit={onSubmit}>
       <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap={4}>
         <Field.Root required>
-          <Field.Label>Building name</Field.Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field.Root>
-        <Field.Root required>
-          <Field.Label>IP setup</Field.Label>
+          <Field.Label>POP</Field.Label>
           <SelectField
             fieldProps={{
-              value: formIpSetup,
+              value: formPopId === "" ? "" : String(formPopId),
               onChange: (e) => {
-                const v = e.target.value as "STATIC" | "PPOE";
-                setFormIpSetup(v);
-                if (v === "PPOE") setIpPrefixes([]);
+                const raw = e.target.value;
+                setFormPopId(raw === "" ? "" : Number(raw));
               },
             }}
           >
-            <option value="STATIC">STATIC</option>
-            <option value="PPOE">PPOE</option>
+            <option value="">Select POP…</option>
+            {pops.map((pop) => (
+              <option key={pop.id} value={pop.id}>
+                {pop.name} ({pop.ipSetup})
+              </option>
+            ))}
           </SelectField>
         </Field.Root>
         <Field.Root required>
-          <Field.Label>DSTV setup</Field.Label>
-          <SelectField
-            fieldProps={{
-              value: formDstvSetup,
-              onChange: (e) =>
-                setFormDstvSetup(e.target.value as "headend_coax" | "decoder"),
-            }}
-          >
-            <option value="headend_coax">Headend coax</option>
-            <option value="decoder">Decoder</option>
-          </SelectField>
+          <Field.Label>Building name</Field.Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field.Root>
-        <Field.Root required>
-          <Field.Label>C2B code</Field.Label>
-          <Input value={c2bCode} onChange={(e) => setC2bCode(e.target.value.toUpperCase())} maxLength={10} />
+        <Field.Root>
+          <Field.Label>Building code</Field.Label>
+          <Input
+            value={buildingCode}
+            onChange={(e) => setBuildingCode(e.target.value.toUpperCase())}
+            maxLength={10}
+            placeholder="e.g. TGA (optional for 1:1 POPs)"
+            fontFamily="mono"
+          />
+          <Text fontSize="xs" color="fg.muted" mt={1}>
+            Customer numbers: <Text as="span" fontFamily="mono">{codePreview}</Text>
+            {" "}— leave blank for Enaki/Colosseum/Skynest-style POP-APT numbers.
+          </Text>
         </Field.Root>
-        <Field.Root required>
-          <Field.Label>B2B code</Field.Label>
-          <Input value={b2bCode} onChange={(e) => setB2bCode(e.target.value.toUpperCase())} maxLength={10} />
-        </Field.Root>
-        {formIpSetup === "STATIC" && (
+        {selectedPop ? (
+          <Box>
+            <Text fontSize="sm" color="fg.muted" mt={{ base: 0, md: 8 }}>
+              Inherited from POP: C2B <Text as="span" fontFamily="mono">{selectedPop.c2bCode}</Text>
+              {" · "}B2B <Text as="span" fontFamily="mono">{selectedPop.b2bCode}</Text>
+              {" · "}{selectedPop.ipSetup}
+              {" · "}{selectedPop.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder"}
+            </Text>
+          </Box>
+        ) : null}
+        {showPrefixPicker ? (
           <Box gridColumn={{ md: "span 2" }}>
             <Field.Root>
-              <Field.Label>IP prefixes (optional)</Field.Label>
+              <Field.Label>Assigned IP prefixes</Field.Label>
               <Text fontSize="xs" color="fg.muted" mb={2}>
-                Optional — add now or update the building later before assigning static IPs.
+                Select from this POP&apos;s prefix pool. Optional — assign now or update later.
               </Text>
-              <Flex gap={2} mb={2}>
-                <Input
-                  value={prefixInput}
-                  onChange={(e) => setPrefixInput(e.target.value)}
-                  placeholder="e.g. 10.12.10."
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPrefix(); } }}
-                />
-                <Button type="button" variant="outline" onClick={addPrefix}><FiPlus /> Add</Button>
-              </Flex>
-              <Stack gap={1}>
-                {ipPrefixes.map((p, i) => (
-                  <Flex key={p} align="center" justify="space-between" bg="bg.subtle" px={3} py={1.5} borderRadius="md" fontSize="sm">
-                    <Text fontFamily="mono">{p.endsWith(".") ? p : `${p}.`}x</Text>
-                    <IconButton aria-label="Remove" size="xs" variant="ghost" colorPalette="red" onClick={() => removePrefix(i)}>
-                      <FiTrash2 />
-                    </IconButton>
-                  </Flex>
-                ))}
-              </Stack>
+              {pool.length === 0 ? (
+                <Text fontSize="sm" color="fg.muted">
+                  This POP has no prefixes yet. Add them under Manage POPs.
+                </Text>
+              ) : (
+                <Flex gap={2} flexWrap="wrap">
+                  {pool.map((prefix) => {
+                    const key = normalizePrefix(prefix);
+                    const active = selectedKeys.has(key);
+                    const display = prefix.endsWith(".") ? prefix : `${prefix}.`;
+                    return (
+                      <Button
+                        key={key}
+                        type="button"
+                        size="sm"
+                        variant={active ? "solid" : "outline"}
+                        colorPalette={active ? "brand" : "gray"}
+                        fontFamily="mono"
+                        onClick={() => togglePrefix(prefix)}
+                      >
+                        {display}x
+                      </Button>
+                    );
+                  })}
+                </Flex>
+              )}
+              {ipPrefixes.length > 0 ? (
+                <Stack gap={1} mt={3}>
+                  <Text fontSize="xs" color="fg.muted">
+                    {ipPrefixes.length} selected
+                  </Text>
+                </Stack>
+              ) : null}
             </Field.Root>
           </Box>
-        )}
+        ) : selectedPop?.ipSetup === "PPOE" ? (
+          <Box gridColumn={{ md: "span 2" }}>
+            <Text fontSize="sm" color="fg.muted">
+              PPOE POP — no static IP prefixes are assigned to buildings.
+            </Text>
+          </Box>
+        ) : null}
       </Grid>
 
       <Box mt={6}>
