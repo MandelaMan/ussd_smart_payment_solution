@@ -25,6 +25,13 @@ const ZOHO_INVOICE_TAX_INCLUSIVE =
   "false";
 
 function mapContextToCustomer(ctx, agencyName = null) {
+  const {
+    isDstvOnlyCategory,
+    DSTV_ONLY_PRODUCT_NAME,
+  } = require("./packageCatalogStore");
+  const dstvOnly =
+    isDstvOnlyCategory(ctx.category_code) ||
+    isDstvOnlyCategory(ctx.category_name);
   return {
     id: ctx.id,
     firstName: ctx.first_name,
@@ -48,10 +55,10 @@ function mapContextToCustomer(ctx, agencyName = null) {
     paymentFrequency: ctx.payment_frequency,
     customPeriodDays: ctx.custom_period_days,
     buildingName: ctx.building_name,
-    productName: ctx.product_name,
-    productMbps: ctx.product_mbps,
-    productExtraBandwidth: ctx.product_extra_bandwidth,
-    planName: ctx.plan_name,
+    productName: dstvOnly ? DSTV_ONLY_PRODUCT_NAME : ctx.product_name,
+    productMbps: dstvOnly ? 0 : ctx.product_mbps,
+    productExtraBandwidth: dstvOnly ? 0 : ctx.product_extra_bandwidth,
+    planName: dstvOnly ? DSTV_ONLY_PRODUCT_NAME : ctx.plan_name,
     packagePrice: Number(ctx.package_price || 0),
     agencyId: ctx.agency_id,
     agencyName: agencyName || ctx.agency_name || null,

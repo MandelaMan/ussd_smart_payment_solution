@@ -238,14 +238,23 @@ function mapCustomerRow(row) {
     c2bCode: row.c2b_code || null,
     b2bCode: row.b2b_code || null,
     productId: row.product_id,
-    productName: row.product_name,
-    productMbps: row.product_mbps,
-    productExtraBandwidth: row.product_extra_bandwidth,
+    productName: catalogStore.isDstvOnlyCategory(row.category_code)
+      ? catalogStore.DSTV_ONLY_PRODUCT_NAME
+      : row.product_name,
+    productMbps: catalogStore.isDstvOnlyCategory(row.category_code)
+      ? 0
+      : row.product_mbps,
+    productExtraBandwidth: catalogStore.isDstvOnlyCategory(row.category_code)
+      ? 0
+      : row.product_extra_bandwidth,
     planId: row.plan_id != null ? Number(row.plan_id) : null,
-    planName: row.plan_name || null,
+    planName: catalogStore.isDstvOnlyCategory(row.category_code)
+      ? catalogStore.DSTV_ONLY_PRODUCT_NAME
+      : row.plan_name || null,
     planSortOrder: row.plan_sort_order != null ? Number(row.plan_sort_order) : null,
     planVariantId: row.plan_variant_id != null ? Number(row.plan_variant_id) : null,
     categoryId: row.category_id != null ? Number(row.category_id) : null,
+    categoryCode: row.category_code || null,
     categoryName: row.category_name || null,
     /** Product is not linked to the current package catalog (plan + category). */
     catalogPackageMissing: !(
@@ -350,6 +359,7 @@ const CUSTOMER_SELECT = `
          pl.name AS plan_name,
          pl.sort_order AS plan_sort_order,
          cat.id AS category_id,
+         cat.code AS category_code,
          cat.name AS category_name,
          a.name AS agency_name,
          a.email AS agency_email,
@@ -1177,12 +1187,14 @@ async function getProductById(id) {
   const rows = await query(
     `SELECT p.*, b.name AS building_name,
             pop.c2b_code, pop.b2b_code, pop.ip_setup,
-            pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order
+            pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order,
+            c.code AS category_code, c.name AS category_name
      FROM products p
      JOIN buildings b ON b.id = p.building_id
      JOIN pops pop ON pop.id = b.pop_id
      LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
      LEFT JOIN package_plans pl ON pl.id = v.plan_id
+     LEFT JOIN package_categories c ON c.id = pl.category_id
      WHERE p.id = ? LIMIT 1`,
     [id]
   );
@@ -1219,9 +1231,18 @@ async function createProduct(data) {
   const building = await getBuildingById(buildingId);
   if (!building) throw new Error("Building not found");
   await assertUniquePriceInBuilding(buildingId, price);
-  const resolvedMbps = mbps != null ? Number(mbps) : Number(variant.defaultMbps);
-  if (!Number.isFinite(resolvedMbps) || resolvedMbps <= 0) {
-    throw new Error("Bandwidth (Mbps) must be greater than 0");
+
+  const dstvOnly = Boolean(variant.isDstvOnly);
+  let resolvedMbps;
+  let resolvedExtra = Math.max(0, Number(extraBandwidth) || 0);
+  if (dstvOnly) {
+    resolvedMbps = 0;
+    resolvedExtra = 0;
+  } else {
+    resolvedMbps = mbps != null ? Number(mbps) : Number(variant.defaultMbps);
+    if (!Number.isFinite(resolvedMbps) || resolvedMbps <= 0) {
+      throw new Error("Bandwidth (Mbps) must be greater than 0");
+    }
   }
 
   let monthly = monthlyPrice != null ? Number(monthlyPrice) : null;
@@ -1250,7 +1271,7 @@ async function createProduct(data) {
       planVariantId,
       variant.displayName,
       resolvedMbps,
-      Math.max(0, Number(extraBandwidth) || 0),
+      resolvedExtra,
       variant.paymentFrequency,
       variant.hasDstv ? 1 : 0,
       buildingId,
@@ -1278,12 +1299,15 @@ async function updateProduct(id, data) {
   }
 
   let nextMbps = Number(existing.mbps);
+  let dstvOnly = catalogStore.isDstvOnlyCategory(existing.category_code);
+  let resolvedVariant = null;
   if (data.planVariantId != null) {
-    const variant = await catalogStore.getPlanVariantDetails(
+    resolvedVariant = await catalogStore.getPlanVariantDetails(
       Number(data.planVariantId)
     );
-    if (!variant) throw new Error("Invalid plan variant");
-    nextMbps = Number(variant.defaultMbps);
+    if (!resolvedVariant) throw new Error("Invalid plan variant");
+    dstvOnly = Boolean(resolvedVariant.isDstvOnly);
+    nextMbps = dstvOnly ? 0 : Number(resolvedVariant.defaultMbps);
     fields.push(
       "plan_variant_id = ?",
       "name = ?",
@@ -1291,16 +1315,17 @@ async function updateProduct(id, data) {
       "has_dstv = ?"
     );
     params.push(
-      variant.id,
-      variant.displayName,
-      variant.paymentFrequency,
-      variant.hasDstv ? 1 : 0
+      resolvedVariant.id,
+      resolvedVariant.displayName,
+      resolvedVariant.paymentFrequency,
+      resolvedVariant.hasDstv ? 1 : 0
     );
   }
 
   const allowed = {
     mbps: (v) => {
       const n = Number(v);
+      if (dstvOnly) return 0;
       if (!Number.isFinite(n) || n <= 0) {
         throw new Error("Bandwidth (Mbps) must be greater than 0");
       }
@@ -1308,9 +1333,12 @@ async function updateProduct(id, data) {
     },
     price: (v) => Number(v),
     monthly_price: (v) => Number(v),
-    extra_bandwidth: (v) => Math.max(0, Number(v) || 0),
+    extra_bandwidth: (v) => (dstvOnly ? 0 : Math.max(0, Number(v) || 0)),
     is_active: (v) => (v ? 1 : 0),
-    name: (v) => String(v).trim(),
+    name: (v) =>
+      dstvOnly
+        ? catalogStore.DSTV_ONLY_PRODUCT_NAME
+        : String(v).trim(),
     payment_frequency: (v) => v,
     has_dstv: (v) => (v ? 1 : 0),
   };
@@ -1329,7 +1357,23 @@ async function updateProduct(id, data) {
   // Apply resolved Mbps once after plan-variant defaults so custom speed wins.
   if (data.planVariantId != null && data.mbps === undefined) {
     fields.push("mbps = ?");
-    params.push(nextMbps);
+    params.push(dstvOnly ? 0 : nextMbps);
+  }
+
+  if (dstvOnly) {
+    // Force zero bandwidth + DSTV Only label even when only price/active changed.
+    if (!fields.some((f) => f.startsWith("mbps"))) {
+      fields.push("mbps = ?");
+      params.push(0);
+    }
+    if (!fields.some((f) => f.startsWith("extra_bandwidth"))) {
+      fields.push("extra_bandwidth = ?");
+      params.push(0);
+    }
+    if (!fields.some((f) => f.startsWith("name"))) {
+      fields.push("name = ?");
+      params.push(catalogStore.DSTV_ONLY_PRODUCT_NAME);
+    }
   }
 
   const nextPrice =
@@ -1647,6 +1691,7 @@ async function getCustomerContext(id) {
             p.plan_variant_id AS plan_variant_id,
             pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order,
             cat.id AS category_id,
+            cat.code AS category_code,
             cat.name AS category_name,
             a.name AS agency_name, a.email AS agency_email,
             a.phone AS agency_phone, a.contact_person AS agency_contact_person,

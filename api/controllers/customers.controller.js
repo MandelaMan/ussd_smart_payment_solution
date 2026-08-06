@@ -33,6 +33,9 @@ const {
   computeInvoiceDueDate,
   resolveZohoPaymentTerms,
 } = require("../utils/billingPeriod");
+const {
+  isDstvOnlyCategory,
+} = require("../services/packageCatalogStore");
 const moment = require("moment-timezone");
 const {
   classifyPackageChangeByPrice,
@@ -1417,6 +1420,18 @@ function alternateTypeAccountNumber(ctx) {
 }
 
 async function pushCustomerToTisp(ctx, meta = {}) {
+  // DSTV Only customers receive no bandwidth — never provision on TISP.
+  if (
+    isDstvOnlyCategory(ctx.category_code ?? ctx.categoryCode) ||
+    isDstvOnlyCategory(ctx.category_name ?? ctx.categoryName)
+  ) {
+    const customerId = ctx.id ?? ctx.customerId;
+    if (customerId) {
+      await store.updateCustomerTispSync(customerId, "skipped", null);
+    }
+    return { ok: true, skipped: true, reason: "dstv_only" };
+  }
+
   const skipCooldown = meta.skipCooldown === true;
   if (!skipCooldown) {
     syncCooldown.assertSyncAllowed(ctx.id);
@@ -1803,8 +1818,15 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
 
   const presence = await resolveCustomerIntegrationPresence(customerId);
   const isB2B = Boolean(presence?.isB2B);
+  const dstvOnly =
+    isDstvOnlyCategory(ctx.category_code) ||
+    isDstvOnlyCategory(ctx.category_name);
 
   let tisp = { ok: true };
+  if (dstvOnly) {
+    await store.updateCustomerTispSync(customerId, "skipped", null);
+    tisp = { ok: true, skipped: true, reason: "dstv_only" };
+  } else {
   try {
     // Always update-first on edit. Never INSERT just because Client Status
     // reported onTisp=false (that caused "Duplicate Account Exists" on phone edits).
@@ -1845,6 +1867,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     const message = formatTispError(e);
     await store.updateCustomerTispSync(customerId, "failed", message);
     tisp = { ok: false, error: message };
+  }
   }
 
   let zoho = { ok: true, skipped: true };
@@ -1995,6 +2018,14 @@ async function syncNewCustomerToTisp(customerId, customerNumber, meta = {}) {
   try {
     const ctx = await store.getCustomerContext(customerId);
     if (!ctx) throw new Error("Customer not found");
+
+    if (
+      isDstvOnlyCategory(ctx.category_code) ||
+      isDstvOnlyCategory(ctx.category_name)
+    ) {
+      await store.updateCustomerTispSync(customerId, "skipped", null);
+      return null;
+    }
 
     const number = String(
       customerNumber || ctx.customer_number || ""

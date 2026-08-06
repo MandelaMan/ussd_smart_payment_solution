@@ -71,11 +71,21 @@ function testJwtAlgorithmPinning() {
   });
 
   try {
-    verifyToken(token);
+    const decoded = verifyToken(token);
     pass("verify valid HS256 token");
+    assert("JWT includes session jti", typeof decoded.jti === "string" && decoded.jti.length > 0);
   } catch (e) {
     fail("verify valid HS256 token", e);
   }
+
+  const {
+    maxActiveSessions,
+    DEFAULT_MAX_ACTIVE_SESSIONS,
+  } = require("../api/services/adminSessionStore");
+  assert(
+    "default max admin sessions is 2",
+    DEFAULT_MAX_ACTIVE_SESSIONS === 2 && maxActiveSessions() === 2
+  );
 
   const parts = token.split(".");
   const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());

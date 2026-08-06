@@ -456,6 +456,7 @@ export type Customer = {
   planSortOrder?: number | null;
   planVariantId?: number | null;
   categoryId?: number | null;
+  categoryCode?: string | null;
   categoryName?: string | null;
   /** True when the customer's product is not linked to the current package catalog. */
   catalogPackageMissing?: boolean;
@@ -485,7 +486,7 @@ export type Customer = {
   dstvSerialMissing: boolean;
   buildingDstvSetup?: "headend_coax" | "decoder";
   subscriptionStatus: string | null;
-  tispSyncStatus: "pending" | "synced" | "failed";
+  tispSyncStatus: "pending" | "synced" | "failed" | "skipped";
   tispSyncError: string | null;
   zohoBillingStatus: "pending" | "completed" | "failed";
   zohoBillingError: string | null;

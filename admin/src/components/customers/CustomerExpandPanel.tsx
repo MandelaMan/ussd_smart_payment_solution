@@ -222,6 +222,21 @@ function buildTispNarration(
   customer: Customer,
   integrations: CustomerIntegrationsSummary | null
 ): StatusNarration {
+  // DSTV Only has no ISP bandwidth — never expected on TISP.
+  if (
+    customer.categoryCode === "dstv_only" ||
+    customer.tispSyncStatus === "skipped" ||
+    String(customer.productName || "")
+      .toLowerCase()
+      .includes("dstv only")
+  ) {
+    return {
+      label: "TISP",
+      text: "Not applicable — DSTV Only (no bandwidth). Billed in Zoho Books only.",
+      tone: "ok",
+    };
+  }
+
   // "Internet expires" must be driven by the latest TISP-derived due date
   // (integration snapshot / TISP sync), not by any locally-estimated customer field.
   const due = integrations?.tispDueDate

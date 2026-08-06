@@ -73,9 +73,14 @@ async function handleSubscriptionPaymentReceived({
 
   const customerRow = await customerStore.findCustomerByNumber(accountRef);
   let subscriptionStatus = null;
+  let skipTispForDstvOnly = false;
   if (customerRow?.id) {
     const ctx = await customerStore.getCustomerContext(customerRow.id);
     subscriptionStatus = ctx?.subscription_status;
+    const { isDstvOnlyCategory } = require("./packageCatalogStore");
+    skipTispForDstvOnly =
+      isDstvOnlyCategory(ctx?.category_code) ||
+      isDstvOnlyCategory(ctx?.category_name);
   }
 
   await customerStore.recordCustomerLastPayment(accountRef, paidOn);
@@ -84,7 +89,8 @@ async function handleSubscriptionPaymentReceived({
   let tispError = null;
   let olt = { ok: true, skipped: true, reason: "not_checked" };
 
-  if (!skipTisp && Number(amount) > 0) {
+  const effectiveSkipTisp = skipTisp || skipTispForDstvOnly;
+  if (!effectiveSkipTisp && Number(amount) > 0) {
     const payload = buildExternalTispPaymentPayload({
       customerNumber: accountRef,
       amount,
@@ -104,11 +110,14 @@ async function handleSubscriptionPaymentReceived({
     } catch (e) {
       tispError = e.message || "TISP payment notification failed";
     }
+  } else if (skipTispForDstvOnly) {
+    tispOk = true;
   }
 
   if (
     customerRow?.id &&
     tispOk &&
+    !skipTispForDstvOnly &&
     oltEmsService.shouldActivateOnPayment(subscriptionStatus)
   ) {
     const ctx = await customerStore.getCustomerContext(customerRow.id);
@@ -121,9 +130,15 @@ async function handleSubscriptionPaymentReceived({
   try {
     await logActivity({
       eventType: tispOk ? "subscription_payment_reconciled" : "subscription_payment_partial",
-      title: tispOk ? "Subscription payment reconciled" : "Payment recorded (TISP sync failed)",
+      title: tispOk
+        ? skipTispForDstvOnly
+          ? "DSTV Only payment recorded (Zoho)"
+          : "Subscription payment reconciled"
+        : "Payment recorded (TISP sync failed)",
       message: tispOk
-        ? `${accountRef}: ${source} payment applied — service extended`
+        ? skipTispForDstvOnly
+          ? `${accountRef}: ${source} payment applied — DSTV Only (no TISP)`
+          : `${accountRef}: ${source} payment applied — service extended`
         : `${accountRef}: ${tispError || "TISP update pending"}`,
       source: source.toLowerCase().includes("zoho") ? "zoho" : "mpesa",
       status: tispOk && (olt.ok || olt.skipped) ? "success" : "failed",
@@ -136,7 +151,7 @@ async function handleSubscriptionPaymentReceived({
   }
 
   return {
-    ok: (tispOk || skipTisp) && (olt.ok || olt.skipped),
+    ok: (tispOk || effectiveSkipTisp) && (olt.ok || olt.skipped),
     tispOk,
     tispError,
     olt,

@@ -33,6 +33,7 @@ export function ProductExpandPanel({
   const { exclVat, vat } = splitVatInclusive(product.price);
   const extraBandwidth = Number(product.extraBandwidth || 0);
   const totalBandwidth = Number(product.mbps || 0) + extraBandwidth;
+  const isDstvOnly = product.categoryCode === "dstv_only";
   const showMonthlyEquivalent =
     product.paymentFrequency !== "monthly" &&
     Number(product.monthlyPrice) !== Number(product.price);
@@ -49,12 +50,18 @@ export function ProductExpandPanel({
     <EntityExpandShell
       icon={FiPackage}
       title={
-        product.planName
-          ? `${formatTitleCase(product.planName)} · ${formatTitleCase(product.categoryName)}`
-          : formatTitleCase(product.name)
+        isDstvOnly
+          ? "DSTV Only"
+          : product.planName
+            ? `${formatTitleCase(product.planName)} · ${formatTitleCase(product.categoryName)}`
+            : formatTitleCase(product.name)
       }
-      subtitle={`${formatTitleCase(product.buildingName)} · ${totalBandwidth} Mbps${
-        extraBandwidth > 0 ? ` (${product.mbps} + ${extraBandwidth} extra bandwidth)` : ""
+      subtitle={`${formatTitleCase(product.buildingName)} · ${
+        isDstvOnly ? "No bandwidth" : `${totalBandwidth} Mbps`
+      }${
+        !isDstvOnly && extraBandwidth > 0
+          ? ` (${product.mbps} + ${extraBandwidth} extra bandwidth)`
+          : ""
       } · ${formatTitleCase(product.paymentFrequency)}`}
       value={
         canEdit ? (

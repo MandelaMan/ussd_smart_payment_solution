@@ -1,9 +1,14 @@
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { query } = require("../config/db");
 const {
   runWithActivityActor,
   actorFromUser,
 } = require("../lib/activityActorContext");
+const {
+  isSessionActive,
+  revokeAllSessionsForUser,
+} = require("../services/adminSessionStore");
 
 const COOKIE_NAME = "admin_token";
 const JWT_ALGORITHM = "HS256";
@@ -26,7 +31,8 @@ function getCookieOptions() {
   };
 }
 
-function signToken(user) {
+function signToken(user, options = {}) {
+  const jti = options.jti || crypto.randomUUID();
   return jwt.sign(
     {
       sub: user.id,
@@ -34,6 +40,7 @@ function signToken(user) {
       role: user.role,
       name: user.name,
       tv: user.token_version ?? 0,
+      jti,
     },
     getJwtSecret(),
     {
@@ -64,6 +71,8 @@ function verifyToken(token) {
 }
 
 async function loadUserFromToken(decoded) {
+  if (!decoded?.jti) return null;
+
   const rows = await query(
     `SELECT id, name, email, role, is_active, token_version
      FROM admin_users WHERE id = ? LIMIT 1`,
@@ -73,6 +82,10 @@ async function loadUserFromToken(decoded) {
   if (!user || !user.is_active) return null;
   const tokenVersion = decoded.tv ?? 0;
   if (Number(user.token_version ?? 0) !== Number(tokenVersion)) return null;
+
+  const sessionOk = await isSessionActive(decoded.jti, user.id);
+  if (!sessionOk) return null;
+
   return user;
 }
 
@@ -81,6 +94,7 @@ async function invalidateUserTokens(userId) {
     `UPDATE admin_users SET token_version = token_version + 1 WHERE id = ?`,
     [userId]
   );
+  await revokeAllSessionsForUser(userId);
 }
 
 async function authenticate(req, res, next) {
@@ -91,6 +105,7 @@ async function authenticate(req, res, next) {
     }
     const decoded = verifyToken(token);
     req.tokenExp = decoded.exp;
+    req.sessionJti = decoded.jti || null;
     const user = await loadUserFromToken(decoded);
     if (!user) {
       clearAuthCookie(res);

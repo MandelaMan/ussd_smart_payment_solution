@@ -18,6 +18,12 @@ const {
   lockoutMessage,
 } = require("../utils/accountLockout");
 const { logActivitySafe } = require("../services/activityLogStore");
+const {
+  newSessionId,
+  createSession,
+  enforceSessionLimit,
+  revokeSession,
+} = require("../services/adminSessionStore");
 
 const VALID_ROLES = ["admin", "support", "cfo", "partner", "ceo"];
 
@@ -110,9 +116,23 @@ async function login(req, res, next) {
 
     await resetFailedLogins(user.id);
 
-    const token = signToken(user);
-    setAuthCookie(res, token);
+    const jti = newSessionId();
+    const token = signToken(user, { jti });
     const decoded = jwt.decode(token);
+    const expiresAt = decoded?.exp
+      ? new Date(decoded.exp * 1000)
+      : new Date(Date.now() + 8 * 60 * 60 * 1000);
+
+    await createSession({
+      jti,
+      userId: user.id,
+      expiresAt,
+      req,
+    });
+    // New login counts toward the cap; oldest sessions are revoked first.
+    await enforceSessionLimit(user.id);
+
+    setAuthCookie(res, token);
 
     await logAuthEvent({
       email: user.email,
@@ -141,7 +161,10 @@ async function logout(req, res) {
     if (token) {
       try {
         const decoded = verifyToken(token);
-        await invalidateUserTokens(decoded.sub);
+        // Revoke only this device/session so the other allowed session stays valid.
+        if (decoded.jti) {
+          await revokeSession(decoded.jti, decoded.sub);
+        }
         await logAuthEvent({
           email: decoded.email,
           userId: decoded.sub,
@@ -342,10 +365,12 @@ async function resetUserPassword(req, res, next) {
     }
 
     const hash = await bcrypt.hash(String(password), 12);
-    await query(
-      `UPDATE admin_users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?`,
-      [hash, id]
-    );
+    await query(`UPDATE admin_users SET password_hash = ? WHERE id = ?`, [
+      hash,
+      id,
+    ]);
+    // Password change must invalidate every device session.
+    await invalidateUserTokens(id);
     return res.json({ ok: true });
   } catch (err) {
     return next(err);

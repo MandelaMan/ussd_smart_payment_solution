@@ -161,12 +161,13 @@ export function ProductsPage() {
       setPlanId(String(firstPlan.id));
     }
     setExtraBandwidth("0");
+    setMbps("0");
   }, [isDstvOnly, selectedCategory, planId]);
 
   useEffect(() => {
     if (!selectedVariant) return;
     if (isDstvOnly) {
-      setMbps(String(selectedVariant.defaultMbps));
+      setMbps("0");
       return;
     }
     if (!mbps.trim()) {
@@ -320,10 +321,14 @@ export function ProductsPage() {
       await api.createProduct({
         planVariantId: selectedVariant.id,
         buildingId: Number(buildingId),
-        mbps: mbps ? Number(mbps) : Number(selectedVariant.defaultMbps),
+        mbps: isDstvOnly
+          ? 0
+          : mbps
+            ? Number(mbps)
+            : Number(selectedVariant.defaultMbps),
         price: Number(price),
         monthlyPrice: monthlyPrice ? Number(monthlyPrice) : undefined,
-        extraBandwidth: extraBandwidth ? Number(extraBandwidth) : 0,
+        extraBandwidth: isDstvOnly ? 0 : extraBandwidth ? Number(extraBandwidth) : 0,
       });
       toaster.create({ title: "Building price saved", type: "success" });
       resetForm();
@@ -356,10 +361,10 @@ export function ProductsPage() {
       const res = await api.updateProduct(editing.id, {
         planVariantId: selectedVariant.id,
         buildingId: Number(buildingId),
-        mbps: Number(mbps),
+        mbps: isDstvOnly ? 0 : Number(mbps),
         price: Number(price),
         monthlyPrice: monthlyPrice ? Number(monthlyPrice) : Number(price),
-        extraBandwidth: extraBandwidth ? Number(extraBandwidth) : 0,
+        extraBandwidth: isDstvOnly ? 0 : extraBandwidth ? Number(extraBandwidth) : 0,
         isActive,
       });
       if (res.product) {
@@ -616,11 +621,14 @@ export function ProductsPage() {
                       { label: "Building", value: p.buildingName },
                       {
                         label: "Speed",
-                        value: `${p.mbps + Number(p.extraBandwidth || 0)} Mbps${
-                          Number(p.extraBandwidth || 0) > 0
-                            ? ` (${p.mbps} + ${Number(p.extraBandwidth || 0)} extra)`
-                            : ""
-                        }`,
+                        value:
+                          p.categoryCode === "dstv_only"
+                            ? "—"
+                            : `${p.mbps + Number(p.extraBandwidth || 0)} Mbps${
+                                Number(p.extraBandwidth || 0) > 0
+                                  ? ` (${p.mbps} + ${Number(p.extraBandwidth || 0)} extra)`
+                                  : ""
+                              }`,
                       },
                       { label: "Price", value: formatCurrency(p.price) },
                       { label: "Billing", value: p.paymentFrequency },
@@ -656,6 +664,7 @@ export function ProductsPage() {
             <Table.Body>
               {products.map((p) => {
                 const isOpen = expanded === p.id;
+                const isDstvOnlyRow = p.categoryCode === "dstv_only";
                 return (
                   <Fragment key={p.id}>
                     <Table.Row bg={isOpen ? "brand.50" : undefined} cursor="pointer" onClick={() => setExpanded(isOpen ? null : p.id)} _hover={{ bg: isOpen ? "brand.50" : "gray.50" }}>
@@ -669,9 +678,13 @@ export function ProductsPage() {
                       <Table.Cell {...dataTableCellProps}>
                         <DisplayText value={p.buildingName} />
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps}>{p.mbps + Number(p.extraBandwidth || 0)} Mbps</Table.Cell>
                       <Table.Cell {...dataTableCellProps}>
-                        {Number(p.extraBandwidth || 0)} Mbps
+                        {isDstvOnlyRow
+                          ? "—"
+                          : `${p.mbps + Number(p.extraBandwidth || 0)} Mbps`}
+                      </Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        {isDstvOnlyRow ? "—" : `${Number(p.extraBandwidth || 0)} Mbps`}
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontWeight="semibold" whiteSpace="nowrap">{formatCurrency(p.price)}</Table.Cell>
                       <Table.Cell {...dataTableCellProps}>
@@ -875,7 +888,7 @@ function ProductForm({
               {lookupsLoading
                 ? "Loading…"
                 : isDstvOnly
-                  ? "Not applicable (DSTV Only)"
+                  ? "DSTV Only"
                   : "Select plan"}
             </option>
             {(selectedCategory?.plans || []).map((p) => (
@@ -883,7 +896,7 @@ function ProductForm({
             ))}
           </SelectField>
           {isDstvOnly ? (
-            <Field.HelperText>Plan is not used for DSTV Only pricing.</Field.HelperText>
+            <Field.HelperText>DSTV Only has no internet plan tiers.</Field.HelperText>
           ) : null}
         </Field.Root>
         <Field.Root required>

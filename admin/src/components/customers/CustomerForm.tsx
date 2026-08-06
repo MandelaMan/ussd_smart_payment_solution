@@ -762,9 +762,14 @@ export function CustomerForm({
     ];
 
     if (selectedPackage) {
+      const dstvOnlyPkg =
+        selectedCategory?.code === "dstv_only" ||
+        Number(selectedPackage.mbps || 0) <= 0;
       items.push({
         label: "Package",
-        value: `${selectedPackage.planName || selectedPackage.name} · ${selectedPackage.mbps} Mbps`,
+        value: dstvOnlyPkg
+          ? "DSTV Only"
+          : `${selectedPackage.planName || selectedPackage.name} · ${selectedPackage.mbps} Mbps`,
       });
     } else if (isEdit && customer) {
       items.push({
@@ -814,13 +819,15 @@ export function CustomerForm({
     if (isEdit && isActive) {
       items.push({
         label: "TISP",
-        value: onTisp
-          ? tispDueDate
-            ? `Update · due ${tispDueDate}`
-            : "Update existing"
-          : tispDueDate
-            ? `Create · due ${tispDueDate}`
-            : "Create (due date required)",
+        value: isDstvOnly
+          ? "Not applicable (DSTV Only — Zoho only)"
+          : onTisp
+            ? tispDueDate
+              ? `Update · due ${tispDueDate}`
+              : "Update existing"
+            : tispDueDate
+              ? `Create · due ${tispDueDate}`
+              : "Create (due date required)",
       });
       if (customerType === "C2B") {
         if (!onZoho) {
@@ -894,6 +901,8 @@ export function CustomerForm({
     showDstvSerialField,
     selectedBuilding?.name,
     selectedPackage,
+    selectedCategory?.code,
+    isDstvOnly,
     trialPeriod,
     paymentAlreadyMade,
     advancePaymentMethod,
@@ -985,7 +994,7 @@ export function CustomerForm({
         return false;
       }
     }
-    if (isEdit && isActive && !onTisp && !tispDueDate.trim()) {
+    if (isEdit && isActive && !isDstvOnly && !onTisp && !tispDueDate.trim()) {
       toaster.create({
         title: "TISP due date required",
         description: "Enter the customer due date to create them on TISP.",
@@ -1510,7 +1519,7 @@ export function CustomerForm({
                 {!categoryId
                   ? "Select a category first"
                   : isDstvOnly
-                    ? "Not applicable (DSTV Only)"
+                    ? "DSTV Only"
                     : "Select plan"}
               </option>
               {(selectedCategory?.plans || []).map((p) => (
@@ -1664,7 +1673,7 @@ export function CustomerForm({
           )}
         </FormSection>
 
-        {isEdit && isActive ? (
+        {isEdit && isActive && !isDstvOnly ? (
           <FormSection title="TISP">
             <Box gridColumn={{ md: "span 2" }}>
               <Flex align="center" gap={2}>
@@ -1702,6 +1711,16 @@ export function CustomerForm({
                 </Field.HelperText>
               ) : null}
             </Field.Root>
+          </FormSection>
+        ) : null}
+
+        {isEdit && isActive && isDstvOnly ? (
+          <FormSection title="TISP">
+            <Box gridColumn={{ md: "span 2" }}>
+              <Text fontSize="sm" color="fg.muted">
+                DSTV Only customers are not added on TISP (no bandwidth). Billing is handled in Zoho Books.
+              </Text>
+            </Box>
           </FormSection>
         ) : null}
 

@@ -81,6 +81,7 @@ export function formatCustomerPackageLabel(
 ): string {
   const name = formatProductNameForDisplay(productName);
   if (!name) return "";
-  if (mbps == null || !Number.isFinite(mbps)) return name;
-  return `${name} (${mbps} Mbps)`;
+  const speed = Number(mbps);
+  if (!Number.isFinite(speed) || speed <= 0) return name;
+  return `${name} (${speed} Mbps)`;
 }

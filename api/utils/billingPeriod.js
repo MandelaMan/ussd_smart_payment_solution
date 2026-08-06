@@ -85,6 +85,17 @@ function resolveZohoPaymentTerms(customer) {
 function buildPackageLabel(customer) {
   const product = String(customer.productName || "").trim();
   const plan = String(customer.planName || "").trim();
+  const categoryCode = customer.categoryCode || customer.category_code || "";
+  const categoryName = customer.categoryName || customer.category_name || "";
+  const { isDstvOnlyCategory, DSTV_ONLY_PRODUCT_NAME } = require("../services/packageCatalogStore");
+  if (
+    isDstvOnlyCategory(categoryCode) ||
+    isDstvOnlyCategory(categoryName) ||
+    isDstvOnlyCategory(product) ||
+    String(product).toLowerCase() === "dstv only"
+  ) {
+    return DSTV_ONLY_PRODUCT_NAME;
+  }
   const mbps = Number(customer.productMbps ?? customer.mbps ?? 0);
   const extraBandwidth = Number(customer.productExtraBandwidth ?? customer.extraBandwidth ?? 0);
   const totalBandwidth = mbps + (extraBandwidth > 0 ? extraBandwidth : 0);
