@@ -29,7 +29,7 @@ import { BRAND } from "../theme";
 
 const BRAND_NAME = "SUL Bix";
 const COPYRIGHT = "© 2026 SUL Solutions. All rights reserved.";
-const HERO_HEADLINE = "A unified hub for customer management and billing";
+const HERO_HEADLINE = "A unified hub for customer service management and billing";
 const HERO_SUBCOPY =
   "Manage subscribers, packages, and buildings; track collections; and keep integrations in sync — all in one place.";
 
@@ -786,14 +786,11 @@ export function LoginPage() {
               <Text
                 fontWeight="bold"
                 color="white"
-                fontSize="lg"
+                fontSize="xl"
                 letterSpacing="-0.01em"
                 lineHeight="1.2"
               >
                 {BRAND_NAME}
-              </Text>
-              <Text fontSize="sm" color="whiteAlpha.800" lineHeight="1.3" mt={1}>
-                Customer & payment operations
               </Text>
             </Box>
           </Flex>
@@ -914,11 +911,8 @@ export function LoginPage() {
             />
           </Flex>
           <Box>
-            <Text fontWeight="bold" color="white" fontSize="2xl" letterSpacing="-0.01em" lineHeight="1.15">
+            <Text fontWeight="bold" color="white" fontSize="3xl" letterSpacing="-0.01em" lineHeight="1.15">
               {BRAND_NAME}
-            </Text>
-            <Text fontSize="md" color="whiteAlpha.800" mt={1}>
-              Customer & payment operations
             </Text>
           </Box>
         </Flex>

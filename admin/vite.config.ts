@@ -15,7 +15,7 @@ export default defineConfig({
       manifest: {
         name: "SUL Bix",
         short_name: "SUL Bix",
-        description: "A unified hub for customer management and billing",
+        description: "A unified hub for customer service management and billing",
         start_url: "/admin/",
         scope: "/admin/",
         display: "standalone",
