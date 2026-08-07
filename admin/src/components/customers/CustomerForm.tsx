@@ -1579,7 +1579,7 @@ export function CustomerForm({
               ))}
             </SelectField>
           </Field.Root>
-          {!isEdit && packageHasDstv && decoderFee > 0 && (
+          {!isEdit && packageHasDstv && decoderFee > 0 && packageAmount != null && (
             <Box gridColumn={{ md: "span 2" }} bg="orange.50" borderRadius="md" px={3} py={2}>
               <Text fontSize="sm" color="orange.800" fontWeight="medium">
                 First invoice: {formatCurrency(packageAmount + decoderFee)}
