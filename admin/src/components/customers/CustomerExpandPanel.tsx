@@ -608,6 +608,20 @@ export function CustomerExpandPanel({
     [zohoStatus?.invoices, invoiceSorts]
   );
 
+  /** Invoices on the linked Zoho contact that predate this BIX customer (former tenant). */
+  const hasFormerTenantInvoices = useMemo(() => {
+    const createdAt = customer?.createdAt;
+    const invoices = zohoStatus?.invoices || [];
+    if (!createdAt || !invoices.length) return false;
+    const createdMs = new Date(createdAt).getTime();
+    if (Number.isNaN(createdMs)) return false;
+    return invoices.some((inv) => {
+      if (!inv.date) return false;
+      const invMs = new Date(inv.date).getTime();
+      return !Number.isNaN(invMs) && invMs < createdMs - 120_000;
+    });
+  }, [customer?.createdAt, zohoStatus?.invoices]);
+
   const sortedPayments = useMemo(
     () =>
       sortRows(payments, paymentSorts, {
@@ -847,10 +861,20 @@ export function CustomerExpandPanel({
     !readOnly &&
     customer?.customerType !== "B2B" &&
     customer?.status === "active" &&
+    !zohoLoading &&
     (customer.zohoBillingStatus === "pending" ||
-      customer.zohoBillingStatus === "failed") &&
-    !(zohoStatus?.linked && (zohoStatus.invoiceCount ?? 0) > 0) &&
-    !zohoLoading;
+      customer.zohoBillingStatus === "failed" ||
+      hasFormerTenantInvoices ||
+      // Linked in Zoho but no invoices yet (signup invoice never created/sent)
+      (Boolean(zohoStatus?.linked) &&
+        (zohoStatus?.invoiceCount ?? 0) === 0 &&
+        !customer.trialPeriodEnabled) ||
+      // Not linked at all
+      (!zohoStatus?.linked && customer.zohoBillingStatus !== "completed"));
+
+  const retryBillingLabel = hasFormerTenantInvoices
+    ? "Replace former Zoho contact"
+    : "Retry billing setup";
 
   async function handleRetryBilling() {
     if (inCooldown) {
@@ -1361,6 +1385,34 @@ export function CustomerExpandPanel({
                 {zohoStatus.cacheFresh ? " (cached)" : ""}
               </Text>
             ) : null}
+            {hasFormerTenantInvoices && canRetryBilling ? (
+              <Box
+                mb={2}
+                px={2.5}
+                py={2}
+                bg="orange.50"
+                border="1px solid"
+                borderColor="orange.100"
+                borderRadius="md"
+              >
+                <Text fontSize="xs" color="orange.900" fontWeight="medium">
+                  These invoices belong to the previous tenant on this apartment’s Zoho contact.
+                </Text>
+                <Text fontSize="xs" color="orange.800" mt={0.5}>
+                  Replace the former Zoho contact to archive it as {customer.customerNumber?.replace(/-CXL-\d+$/i, "") || "the apartment number"}-CXL-… and create a fresh contact + signup invoice for this customer.
+                </Text>
+                <Button
+                  mt={2}
+                  size="sm"
+                  colorPalette="orange"
+                  loading={retryingBilling}
+                  disabled={inCooldown}
+                  onClick={() => void handleRetryBilling()}
+                >
+                  {retryBillingLabel}
+                </Button>
+              </Box>
+            ) : null}
             {customer.trialPeriodEnabled && customer.trialEndsAt ? (
               <Box
                 mb={2}
@@ -1417,7 +1469,7 @@ export function CustomerExpandPanel({
                     disabled={inCooldown}
                     onClick={() => void handleRetryBilling()}
                   >
-                    Retry billing setup
+                    {retryBillingLabel}
                   </Button>
                 ) : null}
               </Box>
@@ -1441,7 +1493,7 @@ export function CustomerExpandPanel({
                     disabled={inCooldown}
                     onClick={() => void handleRetryBilling()}
                   >
-                    Retry billing setup
+                    {retryBillingLabel}
                   </Button>
                 ) : null}
               </Box>
