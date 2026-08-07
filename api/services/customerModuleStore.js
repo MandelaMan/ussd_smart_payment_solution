@@ -191,7 +191,7 @@ function buildCustomerNumber(building, customerType, apartmentNumber) {
  * Archive a cancelled customer's live account number so the next tenant can
  * reuse the apartment-based number. Keeps the row for history/reporting.
  * VARCHAR(50) — keep archived form short: {number}-CXL-{id}
- * Also used for Zoho company_name when retiring a former tenant contact.
+ * e.g. ET-H302 → ET-H302-CXL-237 (same value used as Zoho company_name for old tenants).
  */
 function archiveCancelledCustomerNumber(customerNumber, customerId) {
   const base = String(customerNumber || "")

@@ -2901,11 +2901,14 @@ export const api = {
       customerId: number;
       customerNumber: string;
       customerType: string;
+      status?: string;
       onTisp: boolean;
       onZoho: boolean;
       zohoContactId: string | null;
       zohoContactStatus?: string | null;
+      zohoCompanyName?: string | null;
       zohoInactive?: boolean;
+      formerTenantArchived?: boolean;
       tispDueDate: string | null;
       isB2B: boolean;
       invoiceCount: number;

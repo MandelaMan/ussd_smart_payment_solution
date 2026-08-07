@@ -188,6 +188,26 @@ async function upsertZohoContact(customerId, contact) {
   );
 }
 
+/** Clear the Zoho contact link for a dashboard customer (e.g. former tenant handoff). */
+async function clearZohoContact(customerId) {
+  if (!customerId) return;
+  await query(`DELETE FROM zoho_customer_contacts WHERE customer_id = ?`, [
+    Number(customerId),
+  ]);
+}
+
+/** All dashboard customers currently linked to this Zoho contact id. */
+async function listCustomerIdsByZohoContactId(zohoContactId) {
+  if (!zohoContactId) return [];
+  const rows = await query(
+    `SELECT customer_id FROM zoho_customer_contacts WHERE zoho_contact_id = ?`,
+    [String(zohoContactId)]
+  );
+  return (rows || [])
+    .map((r) => Number(r.customer_id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
+
 async function listInvoicesForCustomer(customerId, options = {}) {
   const contactRow = options.contactRow || (await getZohoContact(customerId));
   const contactId = contactRow?.zoho_contact_id
@@ -533,6 +553,8 @@ module.exports = {
   getZohoContact,
   getStoredZohoContactId,
   upsertZohoContact,
+  clearZohoContact,
+  listCustomerIdsByZohoContactId,
   listInvoicesForCustomer,
   replaceZohoInvoices,
   replaceZohoPayments,

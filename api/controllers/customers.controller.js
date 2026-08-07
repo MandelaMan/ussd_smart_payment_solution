@@ -390,8 +390,9 @@ function isZohoContactOlderThanCustomer(contact, customer, skewMs = 120_000) {
 }
 
 /**
- * Rename Zoho company_name to {number}-CXL-{formerId}, stop recurring, mark
- * inactive. Frees the live apartment number for a new Zoho customer + invoices.
+ * Rename Zoho company_name to the cancelled BIX number ({POP}-{APT}-CXL-{id},
+ * e.g. ET-H302-CXL-237), stop recurring, mark inactive. Frees the live
+ * apartment number for a new Zoho customer + invoices.
  */
 async function retireFormerZohoTenantContact(contact, options = {}) {
   if (!contact?.contact_id) return null;
@@ -400,6 +401,7 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
     updateContact_JS,
     getContactFull_JS,
   } = require("./zoho.controller");
+  const { normalizeCustomerRef } = require("../utils/zohoCustomerScope");
 
   const liveNumber = String(
     options.customerNumber || contact.company_name || ""
@@ -421,10 +423,32 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
     formerId = Number(String(Date.now()).slice(-8));
   }
 
-  const archivedCompany = store.archiveCancelledCustomerNumber(
-    liveNumber,
-    formerId
-  );
+  // Prefer the cancelled row's actual BIX number (already ET-H302-CXL-237 after
+  // the new tenant claimed the apartment) so Zoho matches BIX exactly.
+  let archivedCompany = options.archivedCompanyName
+    ? String(options.archivedCompanyName).trim().toUpperCase()
+    : null;
+  if (!archivedCompany && formerId) {
+    try {
+      const former = await store.getCustomerById(formerId);
+      const formerNumber = String(former?.customerNumber || "").trim().toUpperCase();
+      if (formerNumber && /-CXL-\d+$/i.test(formerNumber)) {
+        archivedCompany = formerNumber;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!archivedCompany) {
+    archivedCompany = store.archiveCancelledCustomerNumber(
+      liveNumber,
+      formerId
+    );
+  }
+
+  const linkedCustomerIds = await integrationSnapshot
+    .listCustomerIdsByZohoContactId(contact.contact_id)
+    .catch(() => []);
 
   try {
     await stopZohoRecurringForCustomer(contact.contact_id, liveNumber);
@@ -435,6 +459,7 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
     );
   }
 
+  let updatedContact = null;
   try {
     const full = (await getContactFull_JS(contact.contact_id)) || contact;
     const displayName = String(
@@ -448,6 +473,7 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
         ? displayName
         : `${displayName} (former)`.slice(0, 200),
     });
+    updatedContact = await getContactFull_JS(contact.contact_id);
   } catch (e) {
     console.warn(
       `retire Zoho tenant: rename ${liveNumber} → ${archivedCompany} failed:`,
@@ -457,6 +483,8 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
 
   try {
     await markContactInactive_JS(contact.contact_id);
+    updatedContact =
+      (await getContactFull_JS(contact.contact_id)) || updatedContact;
   } catch (e) {
     console.warn(
       `retire Zoho tenant: mark inactive failed for ${contact.contact_id}:`,
@@ -467,6 +495,58 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
   invalidateZohoContactLookupCache(liveNumber);
   invalidateZohoContactLookupCache(contact.company_name);
   invalidateZohoContactLookupCache(archivedCompany);
+
+  // Keep cancelled tenants linked to the archived inactive contact; clear the
+  // link for any other (active) dashboard customer so they get a fresh Zoho contact.
+  const archivePayload = {
+    ...(updatedContact && typeof updatedContact === "object"
+      ? updatedContact
+      : { contact_id: contact.contact_id }),
+    contact_id: contact.contact_id,
+    company_name: archivedCompany,
+    status: "inactive",
+  };
+
+  for (const linkedId of linkedCustomerIds) {
+    try {
+      if (
+        options.excludeCustomerId &&
+        Number(linkedId) === Number(options.excludeCustomerId)
+      ) {
+        await integrationSnapshot.clearZohoContact(linkedId);
+        invalidateCustomerZoho(linkedId);
+        continue;
+      }
+      const linked = await store.getCustomerById(linkedId);
+      if (String(linked?.status || "").toLowerCase() === "cancelled") {
+        await integrationSnapshot.upsertZohoContact(linkedId, archivePayload);
+      } else if (
+        normalizeCustomerRef(linked?.customerNumber) ===
+        normalizeCustomerRef(liveNumber)
+      ) {
+        // Active tenant who was wrongly sharing this contact — clear so onboard creates new.
+        await integrationSnapshot.clearZohoContact(linkedId);
+      } else {
+        await integrationSnapshot.upsertZohoContact(linkedId, archivePayload);
+      }
+      invalidateCustomerZoho(linkedId);
+    } catch (e) {
+      console.warn(
+        `retire Zoho tenant: snapshot update failed for customer ${linkedId}:`,
+        e.message || e
+      );
+    }
+  }
+
+  // Ensure the cancelled former row is snapshotted even if it was not linked yet.
+  if (formerId && !linkedCustomerIds.includes(Number(formerId))) {
+    try {
+      await integrationSnapshot.upsertZohoContact(formerId, archivePayload);
+      invalidateCustomerZoho(formerId);
+    } catch {
+      /* best-effort */
+    }
+  }
 
   return {
     contactId: String(contact.contact_id),
@@ -1710,6 +1790,9 @@ async function resolveCustomerIntegrationPresence(customerId) {
   if (!ctx) return null;
 
   const customerNumber = String(ctx.customer_number || "").trim();
+  const isCancelled = String(ctx.status || "").toLowerCase() === "cancelled";
+  const { normalizeCustomerRef } = require("../utils/zohoCustomerScope");
+
   let onTisp = false;
   let tispDueDate = null;
   try {
@@ -1739,6 +1822,8 @@ async function resolveCustomerIntegrationPresence(customerId) {
   let onZoho = false;
   let zohoContactId = null;
   let zohoContactStatus = null;
+  let zohoCompanyName = null;
+  let formerTenantArchived = false;
 
   if (isB2B) {
     onZoho = true;
@@ -1752,6 +1837,7 @@ async function resolveCustomerIntegrationPresence(customerId) {
     if (storedContactId) {
       onZoho = true;
       zohoContactId = storedContactId;
+      zohoCompanyName = snap?.company_name ? String(snap.company_name) : null;
       const raw =
         typeof snap.raw_json === "string"
           ? (() => {
@@ -1763,6 +1849,7 @@ async function resolveCustomerIntegrationPresence(customerId) {
             })()
           : snap.raw_json;
       if (raw?.status) zohoContactStatus = String(raw.status);
+      if (raw?.company_name) zohoCompanyName = String(raw.company_name);
     }
     if (!onZoho) {
       try {
@@ -1772,6 +1859,9 @@ async function resolveCustomerIntegrationPresence(customerId) {
           zohoContactId = String(contact.contact_id);
           zohoContactStatus = contact.status
             ? String(contact.status)
+            : null;
+          zohoCompanyName = contact.company_name
+            ? String(contact.company_name)
             : null;
           try {
             const { getContactFull_JS } = require("./zoho.controller");
@@ -1795,10 +1885,42 @@ async function resolveCustomerIntegrationPresence(customerId) {
         const live = await getContactFull_JS(zohoContactId);
         if (live && typeof live === "object" && live.contact_id) {
           if (live.status) zohoContactStatus = String(live.status);
-          try {
-            await integrationSnapshot.upsertZohoContact(customerId, live);
-          } catch {
-            /* ignore */
+          if (live.company_name) zohoCompanyName = String(live.company_name);
+
+          const liveCompanyNorm = normalizeCustomerRef(live.company_name);
+          const ourNumberNorm = normalizeCustomerRef(customerNumber);
+          const ourLiveBaseNorm = normalizeCustomerRef(
+            String(customerNumber).replace(/-CXL-\d+$/i, "")
+          );
+
+          // Cancelled tenant still pointing at the live apartment Zoho contact
+          // (taken over by the new tenant) — do not show that as "their" active Books.
+          if (
+            isCancelled &&
+            liveCompanyNorm &&
+            liveCompanyNorm === ourLiveBaseNorm &&
+            ourNumberNorm !== ourLiveBaseNorm
+          ) {
+            onZoho = false;
+            zohoContactId = null;
+            zohoContactStatus = null;
+            zohoCompanyName = null;
+            formerTenantArchived = false;
+            try {
+              await integrationSnapshot.clearZohoContact(customerId);
+            } catch {
+              /* ignore */
+            }
+          } else {
+            formerTenantArchived =
+              isCancelled &&
+              (/CXL/i.test(String(live.company_name || "")) ||
+                String(live.status || "").toLowerCase() === "inactive");
+            try {
+              await integrationSnapshot.upsertZohoContact(customerId, live);
+            } catch {
+              /* ignore */
+            }
           }
         }
       } catch {
@@ -1814,11 +1936,14 @@ async function resolveCustomerIntegrationPresence(customerId) {
     customerId: ctx.id,
     customerNumber,
     customerType: ctx.customer_type,
+    status: ctx.status,
     onTisp,
     onZoho,
     zohoContactId,
     zohoContactStatus,
+    zohoCompanyName,
     zohoInactive,
+    formerTenantArchived,
     tispDueDate,
     isB2B,
   };
@@ -1852,7 +1977,10 @@ async function getCustomerIntegrations(req, res, next) {
       paymentsInSync = true;
       hasActiveRecurring = true;
       recurringStatus = "agency_billing";
-    } else if (presence.onZoho) {
+    } else if (
+      presence.onZoho &&
+      String(presence.status || "").toLowerCase() !== "cancelled"
+    ) {
       try {
         const [invoices, payments] = await Promise.all([
           integrationSnapshot.listInvoicesForCustomer(id),
@@ -4226,6 +4354,10 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
         const retired = await retireFormerZohoTenantContact(contact, {
           customerNumber: ctx.customer_number,
           formerCustomerId: ctx.id,
+          archivedCompanyName: store.archiveCancelledCustomerNumber(
+            ctx.customer_number,
+            ctx.id
+          ),
         });
         invalidateCustomerZoho(customerId);
         result.zoho = {

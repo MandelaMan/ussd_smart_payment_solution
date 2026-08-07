@@ -245,6 +245,15 @@ function buildTispNarration(
   const dueLabel = due && due !== "—" ? due : null;
   const service = displayCustomerStatus(customer);
 
+  // Cancelled first — archived numbers (ET-H302-CXL-237) are never on TISP.
+  if (customer.status === "cancelled" || service.toLowerCase().includes("cancel")) {
+    return {
+      label: "Status",
+      text: "Cancelled — churned and no longer counted as a current customer. TISP keeps the live apartment account for the new tenant.",
+      tone: "bad",
+    };
+  }
+
   if (integrations && !integrations.onTisp) {
     return {
       label: "TISP",
@@ -254,13 +263,6 @@ function buildTispNarration(
   }
 
   const statusLower = service.toLowerCase();
-  if (customer.status === "cancelled" || statusLower.includes("cancel")) {
-    return {
-      label: "Status",
-      text: "Cancelled — churned and no longer counted as a current customer.",
-      tone: "bad",
-    };
-  }
   if (statusLower.includes("pause")) {
     const pauseRange =
       customer.pauseStartDate && customer.pauseEndDate
@@ -333,6 +335,34 @@ function buildZohoNarrations(
         label: "Zoho",
         text: "B2B customer — billing goes through the agency Zoho contact, not an individual contact.",
         tone: "ok",
+      },
+    ];
+  }
+
+  // Cancelled / former tenant — never show the live apartment contact as theirs.
+  if (customer.status === "cancelled") {
+    const archivedAs =
+      integrations?.zohoCompanyName ||
+      customer.customerNumber ||
+      null;
+    if (integrations?.formerTenantArchived || integrations?.zohoInactive) {
+      return [
+        {
+          label: "Zoho",
+          text: archivedAs
+            ? `Former tenant — Zoho contact archived as ${archivedAs} (inactive). Invoices stay on that old contact.`
+            : "Former tenant — Zoho contact is inactive/archived.",
+          tone: "warn",
+        },
+      ];
+    }
+    return [
+      {
+        label: "Zoho",
+        text: archivedAs
+          ? `Cancelled in BIX as ${archivedAs}. Open the new active tenant and use Retry billing setup so Zoho renames this old contact and creates a fresh one for the new customer.`
+          : "Cancelled in BIX. Open the new active tenant and use Retry billing setup to archive the old Zoho contact and create a new one.",
+        tone: "warn",
       },
     ];
   }
