@@ -1,47 +1,55 @@
 #!/usr/bin/env node
 /**
- * Seed test users for each role (development only).
+ * Seed test users (development only).
  * Usage: yarn db:seed
- * Env: see .env.dist — ADMIN_*, SUPPORT_*, CFO_*, CEO_*, PARTNER_*
+ * Env: see .env.dist — ADMIN_*, SUPPORT_* (mapped to User + Support group), etc.
  */
 require("dotenv").config();
 const bcrypt = require("bcrypt");
 const { query } = require("../api/config/db");
+const {
+  initializeRbac,
+} = require("../api/rbac/permissionService");
 
 const TEST_USERS = [
   {
     role: "admin",
+    groupSlugs: [],
     name: process.env.ADMIN_NAME || "Admin",
     email: process.env.ADMIN_EMAIL || "admin@sulsolutions.biz",
     password: process.env.ADMIN_PASSWORD || "Admin@12345",
   },
   {
-    role: "support",
+    role: "user",
+    groupSlugs: ["support"],
     name: process.env.SUPPORT_NAME || "Support User",
     email: process.env.SUPPORT_EMAIL || "support@sulsolutions.biz",
     password: process.env.SUPPORT_PASSWORD || "Support@12345",
   },
   {
-    role: "cfo",
+    role: "user",
+    groupSlugs: ["finance"],
     name: process.env.CFO_NAME || "CFO User",
     email: process.env.CFO_EMAIL || "cfo@sulsolutions.biz",
     password: process.env.CFO_PASSWORD || "Cfo@12345",
   },
   {
-    role: "ceo",
+    role: "user",
+    groupSlugs: ["management"],
     name: process.env.CEO_NAME || "CEO User",
     email: process.env.CEO_EMAIL || "ceo@sulsolutions.biz",
     password: process.env.CEO_PASSWORD || "Ceo@12345",
   },
   {
-    role: "partner",
+    role: "user",
+    groupSlugs: ["customer-relations"],
     name: process.env.PARTNER_NAME || "Partner User",
     email: process.env.PARTNER_EMAIL || "partner@sulsolutions.biz",
     password: process.env.PARTNER_PASSWORD || "Partner@12345",
   },
 ];
 
-async function seedUser({ role, name, email, password }) {
+async function seedUser({ role, groupSlugs, name, email, password }) {
   const normalizedEmail = String(email).trim().toLowerCase();
   const existing = await query(
     `SELECT id, role FROM admin_users WHERE email = ? LIMIT 1`,
@@ -49,18 +57,36 @@ async function seedUser({ role, name, email, password }) {
   );
   if (existing.length) {
     console.log(`  ↷ ${role}: ${normalizedEmail} (already exists)`);
-    return;
+    return existing[0].id;
   }
 
   const hash = await bcrypt.hash(password, 12);
-  await query(
-    `INSERT INTO admin_users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
+  const result = await query(
+    `INSERT INTO admin_users (name, email, password_hash, role, must_change_password)
+     VALUES (?, ?, ?, ?, 0)`,
     [String(name).trim(), normalizedEmail, hash, role]
   );
+  const userId = result.insertId;
   console.log(`  ✔ ${role}: ${normalizedEmail}`);
+
+  for (const slug of groupSlugs || []) {
+    const groups = await query(
+      `SELECT id FROM rbac_groups WHERE slug = ? LIMIT 1`,
+      [slug]
+    );
+    if (!groups[0]) continue;
+    await query(
+      `INSERT IGNORE INTO rbac_user_groups (user_id, group_id) VALUES (?, ?)`,
+      [userId, groups[0].id]
+    );
+    console.log(`    → group ${slug}`);
+  }
+  return userId;
 }
 
 async function main() {
+  console.log("Seeding RBAC catalog & groups...");
+  await initializeRbac();
   console.log("Seeding test users (yarn db:seed)...\n");
   for (const user of TEST_USERS) {
     await seedUser(user);

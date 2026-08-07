@@ -1,5 +1,10 @@
 const express = require("express");
-const { login, logout, me } = require("../controllers/auth.controller");
+const {
+  login,
+  logout,
+  me,
+  changePassword,
+} = require("../controllers/auth.controller");
 const { authenticate } = require("../middleware/auth");
 const {
   loginLimiter,
@@ -31,5 +36,6 @@ router.post("/login", authApiLimiter, loginLimiter, login);
 router.post("/logout", authApiLimiter, logout);
 // Session probes run on focus/visibility — allow more headroom than mutations.
 router.get("/me", authMeLimiter, authenticate, me);
+router.post("/change-password", authApiLimiter, authenticate, changePassword);
 
 module.exports = router;

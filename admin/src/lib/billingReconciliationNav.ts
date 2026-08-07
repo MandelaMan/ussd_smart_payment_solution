@@ -1,10 +1,6 @@
 import type { ReconciliationSummary } from "./api";
 
-export type BillingModuleId =
-  | "unallocated-mpesa"
-  | "billing-gaps"
-  | "manual-review"
-  | "customer-communications";
+export type BillingModuleId = "billing-gaps" | "manual-review";
 
 export type BillingModuleDef = {
   id: BillingModuleId;
@@ -18,7 +14,6 @@ export type BillingModuleDef = {
   summaryKey?: keyof ReconciliationSummary;
   /** Sum several summary fields for combined module counts */
   summaryKeys?: (keyof ReconciliationSummary)[];
-  mpesaTable?: boolean;
 };
 
 export const BILLING_GAP_STATUSES = [
@@ -49,15 +44,6 @@ export const BILLING_NAV_LABEL = "Billing";
 
 export const BILLING_MODULES: BillingModuleDef[] = [
   {
-    id: "unallocated-mpesa",
-    path: "unallocated-mpesa",
-    label: "Unallocated M-Pesa",
-    description: "Paybill payments not on Zoho invoices",
-    statusFilter: "unmatched_payment",
-    summaryKey: "unmatchedMpesaPayments",
-    mpesaTable: true,
-  },
-  {
     id: "billing-gaps",
     path: "billing-gaps",
     label: "Billing Gaps",
@@ -81,37 +67,23 @@ export const BILLING_MODULES: BillingModuleDef[] = [
     statusFilter: "manual_review_required",
     summaryKey: "manualReviewsRequired",
   },
-  {
-    id: "customer-communications",
-    path: "communications",
-    label: "Customer Communications",
-    description: "Zoho Mail notices for billing gaps",
-    summaryKey: "communicationsEligible",
-  },
 ];
 
-/** @deprecated — use billing-gaps */
+/** @deprecated — use billing-gaps / billing home */
 export const LEGACY_BILLING_MODULE_REDIRECTS: Record<string, string> = {
   "zoho-billing-gaps": "billing-gaps",
   "no-zoho-link": "billing-gaps",
   "recurring-invoices": "billing-gaps",
   "missing-invoices": "billing-gaps",
   "disconnected-not-invoiced": "billing-gaps",
+  "unallocated-mpesa": "",
+  communications: "",
 };
 
 export const BILLING_GAPS_MODULE = BILLING_MODULES.find((m) => m.id === "billing-gaps")!;
 
-export const BILLING_COMMUNICATIONS_MODULE = BILLING_MODULES.find(
-  (m) => m.id === "customer-communications",
-)!;
-
-/** Issue modules shown on the billing overview (excludes communications workflow). */
-export const BILLING_ISSUE_MODULES = BILLING_MODULES.filter(
-  (m) => m.id !== "customer-communications",
-);
-
-/** @deprecated — use BILLING_ISSUE_MODULES */
-export const BILLING_STANDARD_MODULES = BILLING_ISSUE_MODULES;
+/** Issue modules shown on the billing overview / sidebar. */
+export const BILLING_ISSUE_MODULES = BILLING_MODULES;
 
 export function billingModulePath(module: BillingModuleDef) {
   return `${BILLING_BASE_PATH}/${module.path}`;
@@ -121,8 +93,9 @@ export function getBillingModuleFromPath(pathname: string): BillingModuleDef | n
   const normalized = pathname.replace(/\/+$/, "");
   if (normalized === BILLING_BASE_PATH) return null;
   const segment = normalized.replace(`${BILLING_BASE_PATH}/`, "");
-  const legacy = LEGACY_BILLING_MODULE_REDIRECTS[segment];
-  if (legacy) {
+  if (segment in LEGACY_BILLING_MODULE_REDIRECTS) {
+    const legacy = LEGACY_BILLING_MODULE_REDIRECTS[segment];
+    if (!legacy) return null;
     return BILLING_MODULES.find((m) => m.path === legacy) ?? null;
   }
   return BILLING_MODULES.find((m) => m.path === segment) ?? null;

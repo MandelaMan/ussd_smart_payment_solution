@@ -205,29 +205,6 @@ export function ActivityPanelSkeleton() {
   );
 }
 
-export function TableSkeleton({
-  rows = 14,
-  columns = 6,
-  fill: _fill = false,
-  showHeader = true,
-  narrowLeading = 1,
-}: {
-  rows?: number;
-  columns?: number;
-  fill?: boolean;
-  showHeader?: boolean;
-  narrowLeading?: number;
-}) {
-  return (
-    <DataTableFillSkeleton
-      columns={columns}
-      rows={rows}
-      narrowLeading={narrowLeading}
-      showHeader={showHeader}
-    />
-  );
-}
-
 /** Full-height table placeholder for list pages inside DataTableCard. */
 export function DataTableLoadingSkeleton({
   columns = 6,
@@ -522,5 +499,74 @@ export function TransactionExpandSkeleton() {
         </Grid>
       </Box>
     </Box>
+  );
+}
+
+/** Generic content placeholder while lazy route chunks load. */
+export function RouteContentSkeleton() {
+  return (
+    <Stack gap={4} minH="40vh" py={1} opacity={0.9}>
+      <Box>
+        <SkeletonBlock height="28px" width="180px" mb={2} />
+        <SkeletonBlock height="14px" width="260px" />
+      </Box>
+      <SkeletonBlock height="96px" borderRadius="lg" />
+      <SkeletonBlock height="220px" borderRadius="lg" />
+      <SkeletonBlock height="160px" borderRadius="lg" />
+    </Stack>
+  );
+}
+
+/** Apartment detail shell (header already rendered) while unit loads. */
+export function ApartmentDetailSkeleton() {
+  return (
+    <Stack gap={4} minH="30vh">
+      <Flex gap={2} wrap="wrap">
+        <SkeletonBlock height="36px" width="100px" borderRadius="md" />
+        <SkeletonBlock height="36px" width="100px" borderRadius="md" />
+      </Flex>
+      <Grid templateColumns={{ base: "1fr", md: "repeat(3, 1fr)" }} gap={3}>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <SkeletonBlock key={i} height="88px" borderRadius="lg" />
+        ))}
+      </Grid>
+      <SkeletonBlock height="200px" borderRadius="lg" />
+    </Stack>
+  );
+}
+
+/** Settings form / panel while app settings fetch. */
+export function SettingsPanelSkeleton() {
+  return (
+    <Stack gap={4}>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Box key={i}>
+          <SkeletonBlock height="12px" width="28%" mb={2} />
+          <SkeletonBlock height="40px" borderRadius="md" />
+        </Box>
+      ))}
+      <SkeletonBlock height="120px" borderRadius="md" />
+      <Flex gap={2}>
+        <SkeletonBlock height="36px" width="100px" borderRadius="md" />
+        <SkeletonBlock height="36px" width="88px" borderRadius="md" />
+      </Flex>
+    </Stack>
+  );
+}
+
+/** Contact / prospect list in communication & lead inboxes. */
+export function InboxListSkeleton({ rows = 8 }: { rows?: number }) {
+  return (
+    <Stack gap={0} divideY="1px" divideColor="gray.100">
+      {Array.from({ length: rows }).map((_, i) => (
+        <Flex key={i} align="center" gap={3} px={3} py={3}>
+          <SkeletonBlock boxSize="40px" borderRadius="full" flexShrink={0} />
+          <Box flex={1} minW={0}>
+            <SkeletonBlock height="14px" width="62%" mb={1.5} borderRadius="sm" />
+            <SkeletonBlock height="12px" width="44%" borderRadius="sm" />
+          </Box>
+        </Flex>
+      ))}
+    </Stack>
   );
 }

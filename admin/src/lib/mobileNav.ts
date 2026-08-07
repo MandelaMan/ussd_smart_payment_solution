@@ -15,8 +15,10 @@ import {
   canAccessConfig,
   canAccessFinance,
   canAccessReports,
+  hasPermission,
   isPartner,
-  normalizeRole,
+  useCeoDashboard,
+  useSupportDashboard,
 } from "./rbac";
 import { BILLING_BASE_PATH } from "./billingReconciliationNav";
 
@@ -60,7 +62,7 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
         icon: FiCheckCircle,
       }
     );
-  } else if (normalizeRole(user?.role) === "ceo") {
+  } else if (useCeoDashboard(user)) {
     tabs.push(
       { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },
       { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 }
@@ -70,7 +72,7 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
       { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },
       { key: "billing", to: BILLING_BASE_PATH, label: "Billing", icon: FiGitMerge }
     );
-  } else if (normalizeRole(user?.role) === "support") {
+  } else if (useSupportDashboard(user) || hasPermission(user, "dashboard.support")) {
     tabs.push(
       { key: "activity", to: "/activity", label: "Activity", icon: FiActivity },
       { key: "packages", to: "/products", label: "Packages", icon: FiPackage }

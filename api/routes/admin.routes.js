@@ -15,7 +15,13 @@ const {
   getIntegrationEvent,
   getZohoCustomerPayment,
 } = require("../controllers/admin.controller");
-const { listUsers, createUser, updateUser, resetUserPassword } = require("../controllers/auth.controller");
+const {
+  listUsers,
+  createUser,
+  updateUser,
+  resetUserPassword,
+  emailTemporaryPassword,
+} = require("../controllers/auth.controller");
 const { listBuildings, createBuilding, updateBuilding, listBuildingOlts, createBuildingOlt, updateBuildingOlt, deleteBuildingOlt } = require("../controllers/buildings.controller");
 const {
   listPops,
@@ -148,236 +154,254 @@ const {
 } = require("../controllers/communication.controller");
 
 const { authenticate } = require("../middleware/auth");
+const { attachPermissions, requirePermission } = require("../middleware/permissions");
 const {
-  requireAdmin,
-  requireFinance,
-  requireFinanceWrite,
-  requireCustomerRead,
-  requireCustomerWrite,
-  requireCustomerFinancialRead,
-  requireAgencyWrite,
-  requireConfigRead,
-  requireConfigWrite,
-  requireOps,
-  requirePartnerDashboard,
-  requireReportsAccess,
-} = require("../middleware/rbac");
+  listPermissionCatalog,
+  listGroups,
+  getGroup,
+  createGroup,
+  updateGroup,
+  deleteGroup,
+  getUserEffectivePermissions,
+  setUserPermissionOverrides,
+  listPermissionAudit,
+} = require("../controllers/rbac.controller");
 
 const router = express.Router();
 
 router.use(authenticate);
+router.use(attachPermissions);
 
-router.post("/export/table", exportTableReport);
+router.post(
+  "/export/table",
+  requirePermission("reports.export", "customers.export", "transactions.export"),
+  exportTableReport
+);
 
-router.get("/stats", requireFinance, getStats);
-router.get("/support-stats", requireCustomerRead, getSupportStats);
-router.get("/partner/dashboard", requirePartnerDashboard, getPartnerDashboard);
-router.get("/revenue-chart", requireFinance, getRevenueChart);
-router.get("/activity", requireFinance, getActivityFeed);
-router.get("/reports", requireReportsAccess, listReports);
-router.get("/reports/analytics", requireFinance, getAnalytics);
-router.get("/reports/kpis", requireFinance, getKpis);
+router.get("/stats", requirePermission("dashboard.finance"), getStats);
+router.get("/support-stats", requirePermission("dashboard.support", "customers.view"), getSupportStats);
+router.get("/partner/dashboard", requirePermission("dashboard.partner"), getPartnerDashboard);
+router.get("/revenue-chart", requirePermission("dashboard.finance"), getRevenueChart);
+router.get("/activity", requirePermission("dashboard.activity"), getActivityFeed);
+router.get("/reports", requirePermission("reports.view"), listReports);
+router.get("/reports/analytics", requirePermission("analytics.view", "reports.view"), getAnalytics);
+router.get("/reports/kpis", requirePermission("analytics.view", "dashboard.finance"), getKpis);
 router.get(
   "/reports/monthly-payment-churn/summary",
-  requireReportsAccess,
+  requirePermission("reports.view"),
   getMonthlyPaymentChurnSummary
 );
 router.get(
   "/reports/invoices-vs-payments/summary",
-  requireReportsAccess,
+  requirePermission("reports.view"),
   getInvoicesVsPaymentsSummary
 );
-router.get("/bi/dashboard", requireFinance, getBiDashboard);
-router.get("/bi/forecast", requireFinance, getBiForecast);
-router.get("/bi/export", requireFinance, exportBiSection);
-router.get("/reports/schedules", requireReportsAccess, listReportSchedules);
-router.post("/reports/schedules", requireReportsAccess, createReportSchedule);
-router.patch("/reports/schedules/:id", requireReportsAccess, updateReportScheduleActive);
-router.delete("/reports/schedules/:id", requireReportsAccess, deleteReportSchedule);
-router.post("/reports/schedules/:id/run", requireReportsAccess, runReportSchedule);
-router.get("/reports/schedules/:id/runs", requireReportsAccess, listReportScheduleRuns);
-router.get("/reports/:id/preview", requireReportsAccess, previewReport);
-router.get("/reports/:id/download", requireReportsAccess, downloadReport);
-router.get("/transactions", requireFinance, listUnifiedTransactions);
-router.get("/transactions/export", requireFinance, exportUnifiedTransactions);
-router.get("/transactions/integration/:id", requireFinance, getIntegrationEvent);
-router.get("/transactions/zoho-payment/:id", requireFinance, getZohoCustomerPayment);
-router.get("/transactions/mpesa/export", requireFinance, exportMpesaTransactions);
-router.get("/transactions/mpesa", requireFinance, listMpesaTransactions);
-router.get("/transactions/mpesa/:id", requireFinance, getMpesaTransaction);
-router.get("/transactions/zoho/export", requireFinance, (req, res, next) => {
+router.get("/bi/dashboard", requirePermission("analytics.view"), getBiDashboard);
+router.get("/bi/forecast", requirePermission("analytics.view"), getBiForecast);
+router.get("/bi/export", requirePermission("analytics.export"), exportBiSection);
+router.get("/reports/schedules", requirePermission("reports.schedule", "reports.view"), listReportSchedules);
+router.post("/reports/schedules", requirePermission("reports.schedule"), createReportSchedule);
+router.patch("/reports/schedules/:id", requirePermission("reports.schedule"), updateReportScheduleActive);
+router.delete("/reports/schedules/:id", requirePermission("reports.schedule"), deleteReportSchedule);
+router.post("/reports/schedules/:id/run", requirePermission("reports.schedule"), runReportSchedule);
+router.get("/reports/schedules/:id/runs", requirePermission("reports.schedule", "reports.view"), listReportScheduleRuns);
+router.get("/reports/:id/preview", requirePermission("reports.view"), previewReport);
+router.get("/reports/:id/download", requirePermission("reports.export"), downloadReport);
+router.get("/transactions", requirePermission("transactions.view"), listUnifiedTransactions);
+router.get("/transactions/export", requirePermission("transactions.export"), exportUnifiedTransactions);
+router.get("/transactions/integration/:id", requirePermission("transactions.view"), getIntegrationEvent);
+router.get("/transactions/zoho-payment/:id", requirePermission("transactions.view"), getZohoCustomerPayment);
+router.get("/transactions/mpesa/export", requirePermission("transactions.export"), exportMpesaTransactions);
+router.get("/transactions/mpesa", requirePermission("transactions.view"), listMpesaTransactions);
+router.get("/transactions/mpesa/:id", requirePermission("transactions.view"), getMpesaTransaction);
+router.get("/transactions/zoho/export", requirePermission("transactions.export"), (req, res, next) => {
   req.params.source = "zoho";
   return exportIntegrationEvents(req, res, next);
 });
-router.get("/transactions/zoho", requireFinance, listZohoEvents);
-router.get("/transactions/tisp/export", requireFinance, (req, res, next) => {
+router.get("/transactions/zoho", requirePermission("transactions.view"), listZohoEvents);
+router.get("/transactions/tisp/export", requirePermission("transactions.export"), (req, res, next) => {
   req.params.source = "tisp";
   return exportIntegrationEvents(req, res, next);
 });
-router.get("/transactions/tisp", requireFinance, listTispEvents);
+router.get("/transactions/tisp", requirePermission("transactions.view"), listTispEvents);
 
-router.get("/reconciliation/summary", requireFinance, getReconciliationSummary);
-router.get("/reconciliation/sync-status", requireFinance, getReconciliationSyncStatus);
-router.post("/reconciliation/sync", requireFinanceWrite, runReconciliationSync);
-router.get("/reconciliation/statuses", requireFinance, listReconciliationStatuses);
-router.get("/reconciliation/unmatched-mpesa", requireFinance, listReconciliationUnmatchedMpesa);
-router.get("/reconciliation/unmatched-mpesa/:id", requireFinance, getReconciliationUnmatchedMpesaDetail);
-router.post("/reconciliation/unmatched-mpesa/:id/allocate", requireFinanceWrite, allocateReconciliationUnmatchedMpesa);
-router.get("/reconciliation/export", requireFinance, exportReconciliation);
-router.get("/reconciliation/customers", requireFinance, listReconciliationCustomers);
-router.get("/reconciliation/customers/:id", requireFinance, getReconciliationCustomerDetail);
-router.post("/reconciliation/customers/:id/actions", requireFinanceWrite, executeReconciliationAction);
-router.get("/reconciliation/communications/templates", requireFinance, getReconciliationCommunicationTemplates);
+router.get("/reconciliation/summary", requirePermission("billing.view"), getReconciliationSummary);
+router.get("/reconciliation/sync-status", requirePermission("billing.view"), getReconciliationSyncStatus);
+router.post("/reconciliation/sync", requirePermission("billing.sync"), runReconciliationSync);
+router.get("/reconciliation/statuses", requirePermission("billing.view"), listReconciliationStatuses);
+router.get("/reconciliation/unmatched-mpesa", requirePermission("billing.view"), listReconciliationUnmatchedMpesa);
+router.get("/reconciliation/unmatched-mpesa/:id", requirePermission("billing.view"), getReconciliationUnmatchedMpesaDetail);
+router.post("/reconciliation/unmatched-mpesa/:id/allocate", requirePermission("billing.allocate"), allocateReconciliationUnmatchedMpesa);
+router.get("/reconciliation/export", requirePermission("billing.export"), exportReconciliation);
+router.get("/reconciliation/customers", requirePermission("billing.view"), listReconciliationCustomers);
+router.get("/reconciliation/customers/:id", requirePermission("billing.view"), getReconciliationCustomerDetail);
+router.post("/reconciliation/customers/:id/actions", requirePermission("billing.actions"), executeReconciliationAction);
+router.get("/reconciliation/communications/templates", requirePermission("billing.view"), getReconciliationCommunicationTemplates);
 
 router.use("/sync", require("./sync.routes"));
-router.get("/reconciliation/communications", requireFinance, listReconciliationCommunications);
-router.get("/reconciliation/communications/:customerId/preview", requireFinance, previewReconciliationCommunication);
-router.post("/reconciliation/communications/:customerId/send", requireFinanceWrite, sendReconciliationCommunication);
-router.post("/reconciliation/communications/bulk-send", requireFinanceWrite, sendReconciliationBulkCommunications);
+router.get("/reconciliation/communications", requirePermission("billing.view"), listReconciliationCommunications);
+router.get("/reconciliation/communications/:customerId/preview", requirePermission("billing.view"), previewReconciliationCommunication);
+router.post("/reconciliation/communications/:customerId/send", requirePermission("billing.communicate"), sendReconciliationCommunication);
+router.post("/reconciliation/communications/bulk-send", requirePermission("billing.communicate"), sendReconciliationBulkCommunications);
 
-router.get("/logs", requireOps, listLogs);
-router.get("/logs/:id", requireOps, getLog);
-router.post("/logs/:id/retry", requireOps, retryLog);
+router.get("/logs", requirePermission("system_logs.view"), listLogs);
+router.get("/logs/:id", requirePermission("system_logs.view"), getLog);
+router.post("/logs/:id/retry", requirePermission("system_logs.retry"), retryLog);
 
-router.get("/settings", requireAdmin, getSettings);
+router.get("/settings", requirePermission("settings.view", "users.view", "settings.sync"), getSettings);
 router.put(
   "/settings/communication/email",
-  requireAdmin,
+  requirePermission("communication.settings", "settings.edit"),
   updateCommunicationEmailSettings
 );
 router.put(
   "/settings/customer-email",
-  requireAdmin,
+  requirePermission("communication.settings", "settings.edit"),
   updateCustomerEmailSettings
 );
 router.put(
   "/settings/communication/whatsapp",
-  requireAdmin,
+  requirePermission("communication.settings", "settings.edit"),
   updateCommunicationWhatsAppSettings
 );
 
-router.get("/users", requireAdmin, listUsers);
-router.post("/users", requireAdmin, createUser);
-router.patch("/users/:id", requireAdmin, updateUser);
-router.post("/users/:id/reset-password", requireAdmin, resetUserPassword);
+router.get("/users", requirePermission("users.view"), listUsers);
+router.post("/users", requirePermission("users.create"), createUser);
+router.patch("/users/:id", requirePermission("users.edit"), updateUser);
+router.post("/users/:id/reset-password", requirePermission("users.reset_password"), resetUserPassword);
+router.post(
+  "/users/:id/email-temporary-password",
+  requirePermission("users.reset_password"),
+  emailTemporaryPassword
+);
 
-router.get("/pops", requireConfigRead, listPops);
-router.post("/pops", requireConfigWrite, createPop);
-router.patch("/pops/:id", requireConfigWrite, updatePop);
-router.get("/pops/:id/olts", requireConfigRead, listPopOlts);
-router.post("/pops/:id/olts", requireConfigWrite, createPopOlt);
-router.patch("/pops/:id/olts/:oltId", requireConfigWrite, updatePopOlt);
-router.delete("/pops/:id/olts/:oltId", requireConfigWrite, deletePopOlt);
+router.get("/rbac/catalog", requirePermission("users.view", "users.manage_permissions"), listPermissionCatalog);
+router.get("/rbac/groups", requirePermission("users.view", "users.manage_groups"), listGroups);
+router.get("/rbac/groups/:id", requirePermission("users.view", "users.manage_groups"), getGroup);
+router.post("/rbac/groups", requirePermission("users.manage_groups"), createGroup);
+router.patch("/rbac/groups/:id", requirePermission("users.manage_groups"), updateGroup);
+router.delete("/rbac/groups/:id", requirePermission("users.manage_groups"), deleteGroup);
+router.get("/rbac/users/:id/permissions", requirePermission("users.manage_permissions"), getUserEffectivePermissions);
+router.put("/rbac/users/:id/permissions", requirePermission("users.manage_permissions"), setUserPermissionOverrides);
+router.get("/rbac/audit", requirePermission("users.manage_permissions"), listPermissionAudit);
 
-router.get("/buildings", requireConfigRead, listBuildings);
-router.post("/buildings", requireConfigWrite, createBuilding);
-router.patch("/buildings/:id", requireConfigWrite, updateBuilding);
-router.get("/buildings/:id/olts", requireConfigRead, listBuildingOlts);
-router.post("/buildings/:id/olts", requireConfigWrite, createBuildingOlt);
-router.patch("/buildings/:id/olts/:oltId", requireConfigWrite, updateBuildingOlt);
-router.delete("/buildings/:id/olts/:oltId", requireConfigWrite, deleteBuildingOlt);
+router.get("/pops", requirePermission("pops.view"), listPops);
+router.post("/pops", requirePermission("pops.create"), createPop);
+router.patch("/pops/:id", requirePermission("pops.edit"), updatePop);
+router.get("/pops/:id/olts", requirePermission("pops.view"), listPopOlts);
+router.post("/pops/:id/olts", requirePermission("pops.create"), createPopOlt);
+router.patch("/pops/:id/olts/:oltId", requirePermission("pops.edit"), updatePopOlt);
+router.delete("/pops/:id/olts/:oltId", requirePermission("pops.delete"), deletePopOlt);
 
-router.get("/package-catalog", requireConfigRead, getPackageCatalog);
-router.get("/products", requireConfigRead, listProducts);
-router.post("/products", requireConfigWrite, createProduct);
-router.patch("/products/:id", requireConfigWrite, updateProduct);
-router.delete("/products/:id", requireConfigWrite, deleteProduct);
+router.get("/buildings", requirePermission("buildings.view"), listBuildings);
+router.post("/buildings", requirePermission("buildings.create"), createBuilding);
+router.patch("/buildings/:id", requirePermission("buildings.edit"), updateBuilding);
+router.get("/buildings/:id/olts", requirePermission("buildings.view"), listBuildingOlts);
+router.post("/buildings/:id/olts", requirePermission("buildings.create"), createBuildingOlt);
+router.patch("/buildings/:id/olts/:oltId", requirePermission("buildings.edit"), updateBuildingOlt);
+router.delete("/buildings/:id/olts/:oltId", requirePermission("buildings.delete"), deleteBuildingOlt);
 
-router.get("/agencies", requireConfigRead, listAgencies);
-router.post("/agencies", requireAgencyWrite, createAgency);
-router.patch("/agencies/:id", requireAgencyWrite, updateAgency);
-router.get("/agencies/:id", requireConfigRead, getAgency);
-router.get("/agencies/:id/invoices", requireConfigRead, getAgencyInvoices);
-router.post("/agencies/:id/invoices", requireAgencyWrite, createAgencyInvoice);
+router.get("/package-catalog", requirePermission("packages.view"), getPackageCatalog);
+router.get("/products", requirePermission("packages.view"), listProducts);
+router.post("/products", requirePermission("packages.create"), createProduct);
+router.patch("/products/:id", requirePermission("packages.edit"), updateProduct);
+router.delete("/products/:id", requirePermission("packages.delete"), deleteProduct);
 
-router.get("/apartments/history", requireConfigRead, listApartmentHistoryRecords);
-router.get("/apartments/check", requireConfigRead, checkApartmentOccupancy);
-router.get("/apartments", requireConfigRead, listApartments);
+router.get("/agencies", requirePermission("agencies.view"), listAgencies);
+router.post("/agencies", requirePermission("agencies.create"), createAgency);
+router.patch("/agencies/:id", requirePermission("agencies.edit"), updateAgency);
+router.get("/agencies/:id", requirePermission("agencies.view"), getAgency);
+router.get("/agencies/:id/invoices", requirePermission("agencies.view"), getAgencyInvoices);
+router.post("/agencies/:id/invoices", requirePermission("agencies.create"), createAgencyInvoice);
+
+router.get("/apartments/history", requirePermission("apartments.view"), listApartmentHistoryRecords);
+router.get("/apartments/check", requirePermission("apartments.view"), checkApartmentOccupancy);
+router.get("/apartments", requirePermission("apartments.view"), listApartments);
 router.get(
   "/apartments/:buildingId/:apartmentNumber/history",
-  requireConfigRead,
+  requirePermission("apartments.view"),
   getApartmentUnitHistory
 );
 router.get(
   "/apartments/:buildingId/:apartmentNumber",
-  requireConfigRead,
+  requirePermission("apartments.view"),
   getApartment
 );
 
-router.get("/customers/import/template", requireCustomerWrite, downloadImportTemplate);
+router.get("/customers/import/template", requirePermission("customers.import"), downloadImportTemplate);
 router.post(
   "/customers/import",
-  requireCustomerWrite,
+  requirePermission("customers.import"),
   express.text({ type: "*/*", limit: "5mb" }),
   importCustomers
 );
-router.get("/customers", requireCustomerRead, listCustomers);
-router.get("/customers/export", requireCustomerRead, exportCustomers);
-router.post("/customers", requireCustomerWrite, createCustomer);
-router.post("/customers/refresh-batch", requireCustomerRead, refreshCustomersBatch);
-router.patch("/customers/:id", requireCustomerWrite, updateCustomer);
-router.post("/customers/:id/convert-type", requireCustomerWrite, convertCustomerType);
-router.post("/customers/bulk-cancel", requireCustomerWrite, bulkCancelSubscriptions);
-router.get("/customers/:id/transactions", requireCustomerFinancialRead, getCustomerTransactions);
-router.get("/customers/:id/invoices", requireCustomerFinancialRead, getCustomerInvoices);
-router.get("/customers/:id/payments", requireCustomerFinancialRead, getCustomerPayments);
-router.post("/customers/:id/refresh", requireCustomerWrite, refreshCustomerStatus);
+router.get("/customers", requirePermission("customers.view"), listCustomers);
+router.get("/customers/export", requirePermission("customers.export"), exportCustomers);
+router.post("/customers", requirePermission("customers.create"), createCustomer);
+router.post("/customers/refresh-batch", requirePermission("customers.view"), refreshCustomersBatch);
+router.patch("/customers/:id", requirePermission("customers.edit"), updateCustomer);
+router.post("/customers/:id/convert-type", requirePermission("customers.edit"), convertCustomerType);
+router.post("/customers/bulk-cancel", requirePermission("customers.cancel"), bulkCancelSubscriptions);
+router.get("/customers/:id/transactions", requirePermission("customers.financials"), getCustomerTransactions);
+router.get("/customers/:id/invoices", requirePermission("customers.financials"), getCustomerInvoices);
+router.get("/customers/:id/payments", requirePermission("customers.financials"), getCustomerPayments);
+router.post("/customers/:id/refresh", requirePermission("customers.edit"), refreshCustomerStatus);
 router.post(
   "/customers/:id/retry-billing-onboarding",
-  requireCustomerWrite,
+  requirePermission("customers.edit"),
   retryBillingOnboarding
 );
-router.get("/customers/:id/upgrade-quote", requireCustomerWrite, getUpgradeQuote);
-router.get("/customers/:id/downgrade-quote", requireCustomerWrite, getDowngradeQuote);
-router.get("/customers/:id", requireCustomerRead, getCustomer);
-router.get("/customers/:id/integrations", requireCustomerWrite, getCustomerIntegrations);
-router.post("/customers/:id/upgrade", requireCustomerWrite, upgradePackage);
-router.post("/customers/:id/upgrade/cancel", requireCustomerWrite, cancelPendingUpgrade);
-router.post("/customers/:id/downgrade", requireCustomerWrite, downgradePackage);
+router.get("/customers/:id/upgrade-quote", requirePermission("customers.edit"), getUpgradeQuote);
+router.get("/customers/:id/downgrade-quote", requirePermission("customers.edit"), getDowngradeQuote);
+router.get("/customers/:id", requirePermission("customers.view"), getCustomer);
+router.get("/customers/:id/integrations", requirePermission("customers.edit"), getCustomerIntegrations);
+router.post("/customers/:id/upgrade", requirePermission("customers.edit"), upgradePackage);
+router.post("/customers/:id/upgrade/cancel", requirePermission("customers.edit"), cancelPendingUpgrade);
+router.post("/customers/:id/downgrade", requirePermission("customers.edit"), downgradePackage);
 router.post(
   "/customers/:id/change-payment-frequency",
-  requireCustomerWrite,
+  requirePermission("customers.edit"),
   changePaymentFrequency
 );
-router.post("/customers/:id/switch-apartment", requireCustomerWrite, switchApartment);
-router.post("/customers/:id/cancel", requireCustomerWrite, cancelSubscription);
-router.get("/olt/onu-list", requireCustomerRead, listOnus);
-router.get("/olt/onu-ability", requireCustomerRead, getOnuAbility);
-router.get("/customers/:id/olt-status", requireCustomerRead, getCustomerOltStatus);
-router.post("/customers/:id/olt-link", requireCustomerWrite, linkCustomerOlt);
-router.post("/customers/:id/disconnect", requireCustomerWrite, disconnectCustomer);
-router.post("/customers/:id/pause", requireCustomerWrite, pauseCustomer);
-router.delete("/customers/:id", requireAdmin, deleteCustomerPermanently);
+router.post("/customers/:id/switch-apartment", requirePermission("customers.edit"), switchApartment);
+router.post("/customers/:id/cancel", requirePermission("customers.cancel"), cancelSubscription);
+router.get("/olt/onu-list", requirePermission("customers.olt"), listOnus);
+router.get("/olt/onu-ability", requirePermission("customers.olt"), getOnuAbility);
+router.get("/customers/:id/olt-status", requirePermission("customers.olt"), getCustomerOltStatus);
+router.post("/customers/:id/olt-link", requirePermission("customers.olt"), linkCustomerOlt);
+router.post("/customers/:id/disconnect", requirePermission("customers.disconnect"), disconnectCustomer);
+router.post("/customers/:id/pause", requirePermission("customers.pause"), pauseCustomer);
+router.delete("/customers/:id", requirePermission("customers.delete"), deleteCustomerPermanently);
 router.get(
   "/buildings/:buildingId/apartments/:apartmentNumber/history",
-  requireConfigRead,
+  requirePermission("apartments.view"),
   apartmentHistory
 );
 
-router.get("/leads/stats", requireCustomerRead, getLeadStats);
-router.get("/leads/whatsapp-by-phone", requireCustomerRead, getWhatsAppLeadByPhone);
-router.post("/leads/prospects", requireCustomerWrite, createProspect);
-router.post("/leads/email-prospects", requireCustomerWrite, createEmailProspect);
-router.post("/leads/whatsapp-send", requireCustomerWrite, sendWhatsAppToCustomer);
-router.post("/leads/email-send", requireCustomerWrite, sendLeadEmail);
-router.get("/leads", requireCustomerRead, listLeads);
-router.get("/leads/:id", requireCustomerRead, getLead);
-router.patch("/leads/:id", requireCustomerWrite, updateLead);
-router.post("/leads/:id/notes", requireCustomerWrite, addLeadNote);
-router.post("/leads/:id/whatsapp-reply", requireCustomerWrite, sendWhatsAppReply);
-router.get("/leads/:id/email", requireCustomerRead, listLeadEmailConversation);
-router.post("/leads/:id/email", requireCustomerWrite, sendLeadEmail);
+router.get("/leads/stats", requirePermission("leads.view"), getLeadStats);
+router.get("/leads/whatsapp-by-phone", requirePermission("leads.view"), getWhatsAppLeadByPhone);
+router.post("/leads/prospects", requirePermission("leads.create"), createProspect);
+router.post("/leads/email-prospects", requirePermission("leads.create"), createEmailProspect);
+router.post("/leads/whatsapp-send", requirePermission("leads.message"), sendWhatsAppToCustomer);
+router.post("/leads/email-send", requirePermission("leads.message"), sendLeadEmail);
+router.get("/leads", requirePermission("leads.view"), listLeads);
+router.get("/leads/:id", requirePermission("leads.view"), getLead);
+router.patch("/leads/:id", requirePermission("leads.edit"), updateLead);
+router.post("/leads/:id/notes", requirePermission("leads.edit"), addLeadNote);
+router.post("/leads/:id/whatsapp-reply", requirePermission("leads.message"), sendWhatsAppReply);
+router.get("/leads/:id/email", requirePermission("leads.view"), listLeadEmailConversation);
+router.post("/leads/:id/email", requirePermission("leads.message"), sendLeadEmail);
 
-router.get("/communication/status", requireCustomerRead, getChannelStatus);
+router.get("/communication/status", requirePermission("communication.view"), getChannelStatus);
 router.get(
   "/communication/email/:customerId",
-  requireCustomerRead,
+  requirePermission("communication.view"),
   listCustomerEmailConversation
 );
-router.post("/communication/email", requireCustomerWrite, sendCustomerEmail);
+router.post("/communication/email", requirePermission("communication.send"), sendCustomerEmail);
 router.put(
   "/communication/email-settings",
-  requireAdmin,
+  requirePermission("communication.settings"),
   updateCommunicationEmailSettings
 );
 

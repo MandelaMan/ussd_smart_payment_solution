@@ -9,6 +9,8 @@ import {
 } from "../../lib/billingReconciliationNav";
 import { ReconciliationFinancialStrip } from "../reconciliation/ReconciliationFinancialStrip";
 import { MobilePageChrome } from "../ui/MobilePageChrome";
+import { BillingMetricsSkeleton } from "../PageSkeletons";
+import { SkeletonBlock } from "../ui/SkeletonBlock";
 import { BillingIssueAlerts } from "./BillingIssueAlerts";
 import { UpcomingInvoicesForecastStrip } from "./UpcomingInvoicesForecastStrip";
 import { BillingModuleCard } from "./BillingModuleCard";
@@ -70,7 +72,19 @@ export function BillingReconciliationOverview({ summary, summaryLoading }: Props
         />
       </Box>
 
-      {summary && !summaryLoading && (
+      {summaryLoading ? (
+        <>
+          <Box display={{ base: "none", lg: "block" }}>
+            <BillingMetricsSkeleton />
+          </Box>
+          <Box display={{ base: "block", lg: "none" }}>
+            <Grid templateColumns="1fr 1fr" gap={2}>
+              <SkeletonBlock height="72px" borderRadius="md" />
+              <SkeletonBlock height="72px" borderRadius="md" />
+            </Grid>
+          </Box>
+        </>
+      ) : summary ? (
         <>
           <Box display={{ base: "none", lg: "block" }}>
             <ReconciliationFinancialStrip summary={summary} />
@@ -85,7 +99,7 @@ export function BillingReconciliationOverview({ summary, summaryLoading }: Props
           </Box>
           <BillingIssueAlerts summary={summary} />
         </>
-      )}
+      ) : null}
 
       <Box>
         <Heading size="sm" color="brand.800" mb={2} whiteSpace="nowrap">
@@ -94,7 +108,7 @@ export function BillingReconciliationOverview({ summary, summaryLoading }: Props
         {summaryLoading ? (
           <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)", xl: "repeat(3, 1fr)" }} gap={2}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <Box key={i} h="56px" bg="bg.muted" borderRadius="md" />
+              <SkeletonBlock key={i} height="56px" borderRadius="md" />
             ))}
           </Grid>
         ) : (

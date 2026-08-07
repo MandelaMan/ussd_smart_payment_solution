@@ -74,7 +74,7 @@ async function loadUserFromToken(decoded) {
   if (!decoded?.jti) return null;
 
   const rows = await query(
-    `SELECT id, name, email, role, is_active, token_version
+    `SELECT id, name, email, role, job_title, is_active, token_version, must_change_password
      FROM admin_users WHERE id = ? LIMIT 1`,
     [decoded.sub]
   );
@@ -125,8 +125,16 @@ function requireRole(...roles) {
     if (!req.user) {
       return res.status(401).json({ error: "Authentication required" });
     }
-    const role = req.user.role === "viewer" ? "support" : req.user.role;
-    if (!roles.includes(role)) {
+    const raw = req.user.role === "viewer" ? "user" : req.user.role;
+    const normalized = raw === "admin" ? "admin" : "user";
+    // Accept either the normalized system role or legacy role strings still
+    // present on unmigrated JWTs until the user re-authenticates.
+    const allowed = new Set(roles.flatMap((r) => {
+      if (r === "admin") return ["admin"];
+      if (r === "user") return ["user", "support", "cfo", "partner", "ceo", "viewer"];
+      return [r, normalized];
+    }));
+    if (!allowed.has(raw) && !allowed.has(normalized)) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
     return next();

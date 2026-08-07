@@ -24,6 +24,7 @@ import {
 import { canMutateCustomers } from "../../lib/rbac";
 import { useAuth } from "../../lib/authContext";
 import { toaster } from "../ui/toaster";
+import { InboxListSkeleton } from "../PageSkeletons";
 import { BRAND, fieldControlStyles } from "../../theme";
 
 function customerName(customer: Customer): string {
@@ -284,9 +285,7 @@ export function CustomerWhatsAppChannel({ initialLeadId = null }: Props) {
           </Box>
           <Box flex="1" overflowY="auto" minH={0} WebkitOverflowScrolling="touch">
             {loading ? (
-              <Flex justify="center" py={10}>
-                <Spinner color="brand.600" />
-              </Flex>
+              <InboxListSkeleton />
             ) : customers.length === 0 ? (
               <Text px={4} py={8} fontSize="sm" color="fg.muted" textAlign="center">
                 {search.trim()

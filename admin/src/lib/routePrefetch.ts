@@ -22,10 +22,8 @@ const prefetchers: Record<string, Prefetcher> = {
   "/activity": () => import("../pages/ActivityPage"),
   "/billing": () => import("../pages/billing/BillingReconciliationLayout"),
   "/billing/overview": () => import("../pages/billing/BillingOverviewPage"),
-  "/billing/unallocated-mpesa": () =>
-    import("../pages/billing/BillingUnallocatedMpesaPage"),
-  "/billing/communications": () =>
-    import("../pages/billing/BillingCommunicationsPage"),
+  "/billing/billing-gaps": () => import("../pages/billing/BillingModulePage"),
+  "/billing/manual-review": () => import("../pages/billing/BillingModulePage"),
 };
 
 const warmed = new Set<string>();

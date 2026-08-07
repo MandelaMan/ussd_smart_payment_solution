@@ -32,6 +32,7 @@ import {
 import { canMutateCustomers } from "../../lib/rbac";
 import { useAuth } from "../../lib/authContext";
 import { toaster } from "../ui/toaster";
+import { InboxListSkeleton } from "../PageSkeletons";
 import { SelectField } from "../ui/SelectField";
 import { AppDialog } from "../ui/AppDialog";
 import { fieldControlStyles } from "../../theme";
@@ -433,9 +434,7 @@ export function ProspectEmailInbox({ initialLeadId = null }: Props) {
             </Box>
             <Box flex="1" overflowY="auto" minH={0}>
               {loading ? (
-                <Flex justify="center" py={10}>
-                  <Spinner color="brand.600" />
-                </Flex>
+                <InboxListSkeleton />
               ) : prospects.length === 0 ? (
                 <Text px={4} py={8} fontSize="sm" color="fg.muted" textAlign="center">
                   {search.trim()

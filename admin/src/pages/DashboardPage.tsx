@@ -321,13 +321,10 @@ export function DashboardPage() {
     subscribers: p.subscribers,
   }));
 
-  const revenueByBuildingData = (stats.revenueByBuilding ?? [])
-    .filter((b) => b.revenue > 0)
-    .slice(0, 10)
-    .map((b) => ({
-      building: b.building,
-      revenue: b.revenue,
-    }));
+  const revenueByBuildingData = (stats.revenueByBuilding ?? []).map((b) => ({
+    building: b.building,
+    revenue: b.revenue,
+  }));
 
   const trendChartHeight = { base: "240px", md: "200px" };
 
@@ -867,7 +864,7 @@ export function DashboardPage() {
 
         <Box display={{ base: "none", lg: "block" }}>
           <Card title="Revenue by Building" subtitle="Last 30 days" accent="cerulean">
-            <Box h={trendChartHeight} minH={trendChartHeight} mt={1}>
+            <Box h={trendChartHeight} minH={trendChartHeight} mt={1} pb={3}>
               {revenueByBuildingData.length === 0 ? (
                 <Flex h="100%" align="center" justify="center">
                   <Text fontSize="sm" color="fg.subtle">No building revenue data yet</Text>
@@ -876,7 +873,7 @@ export function DashboardPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={revenueByBuildingData}
-                    margin={{ left: 4, right: 8, top: 8, bottom: 28 }}
+                    margin={{ left: 4, right: 8, top: 8, bottom: 48 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
                     <XAxis
@@ -887,7 +884,7 @@ export function DashboardPage() {
                       interval={0}
                       angle={-24}
                       textAnchor="end"
-                      height={48}
+                      height={64}
                     />
                     <YAxis
                       tick={{ fontSize: 11, fill: "#64748b" }}

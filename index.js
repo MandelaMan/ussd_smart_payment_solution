@@ -34,6 +34,9 @@ app.use(
     // CSP disabled — admin SPA is built separately; configure at reverse proxy if needed.
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    // Module scripts use crossorigin; CORP same-origin can blank the SPA when
+    // Origin is localhost vs 127.0.0.1 (or after a proxy hop).
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
 
@@ -41,16 +44,21 @@ const allowedOrigins = [
   env.ADMIN_ORIGIN,
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  // Built SPA is also served from the API origin; module scripts send Origin.
+  "http://localhost:4000",
+  "http://127.0.0.1:4000",
+  `http://localhost:${env.PORT}`,
+  `http://127.0.0.1:${env.PORT}`,
   "https://app.sulsolutions.biz",
   "https://staging-app.sulsolutions.biz",
 ].filter(Boolean);
 
 app.use(
   cors((req, callback) => {
-    const path = req.path || "";
+    const reqPath = req.path || "";
     const isPublicLead =
-      path.startsWith("/api/public/leads") ||
-      path === "/api/public/whatsapp/status";
+      reqPath.startsWith("/api/public/leads") ||
+      reqPath === "/api/public/whatsapp/status";
 
     if (isPublicLead) {
       return callback(null, {
@@ -65,6 +73,12 @@ app.use(
       });
     }
 
+    // Admin static assets are same-origin; Vite may still send Origin because of
+    // crossorigin on module scripts. Never CORS-block the SPA shell.
+    if (reqPath === "/admin" || reqPath.startsWith("/admin/")) {
+      return callback(null, { origin: true, credentials: true });
+    }
+
     const origin = req.header("Origin");
     // Same-origin browser navigations (e.g. GET /admin/login) often send no Origin.
     // Only enforce the allowlist when Origin is present (cross-origin / XHR / fetch).
@@ -73,6 +87,15 @@ app.use(
     }
     if (allowedOrigins.includes(origin)) {
       return callback(null, { origin: true, credentials: true });
+    }
+    // Reflect Origin when it matches this server's host (API serving admin SPA).
+    try {
+      const host = req.headers.host;
+      if (host && new URL(origin).host === host) {
+        return callback(null, { origin: true, credentials: true });
+      }
+    } catch {
+      /* ignore bad Origin */
     }
     return callback(new Error("Not allowed by CORS"));
   })
@@ -137,6 +160,8 @@ app.get("/leads/embed", (_req, res) => {
 });
 
 const adminDist = path.join(__dirname, "admin", "dist");
+const adminIndex = path.join(adminDist, "index.html");
+const fs = require("fs");
 app.use(
   "/admin",
   express.static(adminDist, {
@@ -152,7 +177,18 @@ app.use(
 );
 app.get(/^\/admin(\/.*)?$/, (_req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.sendFile(path.join(adminDist, "index.html"));
+  if (!fs.existsSync(adminIndex)) {
+    return res
+      .status(503)
+      .type("html")
+      .send(
+        `<!doctype html><meta charset="utf-8" /><title>Admin UI not built</title>
+         <p>Admin SPA is missing. For local development open
+         <a href="http://127.0.0.1:5173/admin/">http://127.0.0.1:5173/admin/</a>
+         or run <code>cd admin && yarn build</code>.</p>`
+      );
+  }
+  return res.sendFile(adminIndex);
 });
 
 app.get("/", (_req, res) => {
@@ -235,6 +271,13 @@ server.listen(env.PORT, () => {
   bootstrapSync().catch((e) => {
     console.warn("[sync] bootstrap error:", e.message);
   });
+  // Sync permission catalog + map legacy roles → groups (idempotent).
+  Promise.resolve()
+    .then(() => require("./api/rbac/permissionService").initializeRbac())
+    .then(() => syncLog.info("rbac_initialized"))
+    .catch((e) => {
+      console.warn("[rbac] initialize error:", e.message);
+    });
 });
 
 module.exports = { app, server };

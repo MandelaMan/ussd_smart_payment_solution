@@ -27,12 +27,10 @@ import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/authContext";
 import { routePrefetchHandlers } from "../lib/routePrefetch";
 import {
-  canAccessConfig,
   canAccessFinance,
   canAccessReports,
-  canOperateFinance,
-  canManageUsers,
-  normalizeRole,
+  canAccessSettings,
+  hasPermission,
   roleLabel,
 } from "../lib/rbac";
 
@@ -48,7 +46,6 @@ type Props = { open: boolean; onClose: () => void };
 
 export function Sidebar({ open, onClose }: Props) {
   const { user, logout } = useAuth();
-  const role = normalizeRole(user?.role);
 
   const links: NavLinkDef[] = [
     { to: "/", label: "Dashboard", icon: FiGrid, end: true, visible: true },
@@ -62,37 +59,37 @@ export function Sidebar({ open, onClose }: Props) {
       to: "/leads",
       label: "Leads",
       icon: FiMessageSquare,
-      visible: true,
+      visible: hasPermission(user, "leads.view"),
     },
     {
       to: "/communication",
       label: "Communication",
       icon: FiSend,
-      visible: true,
+      visible: hasPermission(user, "communication.view"),
     },
     {
       to: "/products",
       label: "Packages",
       icon: FiPackage,
-      visible: canAccessConfig(user),
+      visible: hasPermission(user, "packages.view"),
     },
     {
       to: "/buildings",
       label: "Buildings",
       icon: FiHome,
-      visible: canAccessConfig(user),
+      visible: hasPermission(user, "buildings.view"),
     },
     {
       to: "/agencies",
       label: "Agencies",
       icon: FiBriefcase,
-      visible: canAccessConfig(user),
+      visible: hasPermission(user, "agencies.view"),
     },
     {
       to: "/apartments",
       label: "Apartments",
       icon: FiLayers,
-      visible: canAccessConfig(user),
+      visible: hasPermission(user, "apartments.view"),
     },
     {
       to: "/transactions",
@@ -116,7 +113,7 @@ export function Sidebar({ open, onClose }: Props) {
       to: "/settings",
       label: "Settings",
       icon: FiSettings,
-      visible: canManageUsers(user) || canOperateFinance(user),
+      visible: canAccessSettings(user),
     },
   ];
 
@@ -271,7 +268,7 @@ export function Sidebar({ open, onClose }: Props) {
             fontWeight="medium"
             mt={0.5}
           >
-            {roleLabel(role)}
+            {roleLabel(user?.role)}
           </Text>
           <Button
             size="sm"

@@ -17,6 +17,7 @@ import {
 import { AuthContext } from "./authContext";
 import { getSessionCache, setSessionCache } from "./authSessionCache";
 import { warmSharedLookups } from "./sharedLookups";
+import { canAccessConfig } from "./rbac";
 import { cacheInvalidate } from "./moduleDataCache";
 
 function sleep(ms: number) {
@@ -28,7 +29,15 @@ async function fetchMeWithRetry(attempts = 4) {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
-      return await api.me();
+      return await Promise.race([
+        api.me(),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(
+            () => reject(new Error("Session check timed out")),
+            8000
+          );
+        }),
+      ]);
     } catch (err) {
       lastErr = err;
       if (isUnauthorizedError(err)) throw err;
@@ -98,8 +107,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const applySession = useCallback(
     (nextUser: User, expiresAt: number | null | undefined) => {
       resetSessionState();
-      setSessionCache({ user: nextUser, expiresAt: expiresAt ?? null });
-      setUser(nextUser);
+      // Drop pre-RBAC cache shapes so capability checks do not run on stale users.
+      const normalized: User = {
+        ...nextUser,
+        role: nextUser.role === "admin" ? "admin" : nextUser.role === "user" ? "user" : nextUser.role,
+        permissions: Array.isArray(nextUser.permissions)
+          ? nextUser.permissions
+          : undefined,
+        mustChangePassword: Boolean(nextUser.mustChangePassword),
+      };
+      setSessionCache({ user: normalized, expiresAt: expiresAt ?? null });
+      setUser(normalized);
       setLoading(false);
       scheduleSessionExpiry(expiresAt);
     },
@@ -185,7 +203,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
-    warmSharedLookups();
+    // Only warm config lookups when the user can access them — otherwise these
+    // fire 403s and compete with table list requests for DB/Redis.
+    if (canAccessConfig(user)) {
+      warmSharedLookups(user);
+    }
   }, [user]);
 
   const login = useCallback(

@@ -18,6 +18,9 @@ function buildRedisOptions() {
     enableReadyCheck: true,
     lazyConnect: true,
     connectTimeout: 5000,
+    // Prevent cache / session helpers from hanging the HTTP request forever
+    // while Redis is reconnecting (BullMQ still needs maxRetriesPerRequest: null).
+    commandTimeout: 3000,
     retryStrategy(times) {
       if (times > 5) return null;
       return Math.min(times * 300, 3000);
@@ -48,7 +51,12 @@ function getRedisSubscriber() {
 async function connectRedis() {
   const redis = getRedis();
   if (redis.status === "wait") {
-    await redis.connect();
+    await Promise.race([
+      redis.connect(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("redis_connect_timeout")), 5000)
+      ),
+    ]);
   }
   return redis;
 }

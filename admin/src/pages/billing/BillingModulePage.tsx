@@ -47,7 +47,7 @@ export function BillingModulePage() {
   const { summary, syncing, runSync, reloadKey } = useBillingReconciliation();
   const [exporting, setExporting] = useState(false);
 
-  if (!module || module.mpesaTable) {
+  if (!module) {
     return <Navigate to="/billing" replace />;
   }
 

@@ -1,9 +1,10 @@
-import { api, type Building, type PackageCategory, type Pop } from "./api";
+import { api, type Building, type PackageCategory, type Pop, type User } from "./api";
 import {
   LOOKUP_CACHE_TTL_MS,
   cachedFetch,
   cacheInvalidate,
 } from "./moduleDataCache";
+import { hasPermission } from "./rbac";
 
 const BUILDINGS_KEY = "lookups:buildings";
 const CATALOG_KEY = "lookups:catalog";
@@ -54,11 +55,21 @@ export function getCachedPops(options?: { force?: boolean }) {
   );
 }
 
-/** Warm shared lookups after login so the first module switch is already hot. */
-export function warmSharedLookups() {
-  void getCachedBuildings().catch(() => {});
-  void getCachedPackageCatalog().catch(() => {});
-  void getCachedPops().catch(() => {});
+/**
+ * Warm only lookups the user is allowed to fetch — avoids 403 toaster spam
+ * when someone has buildings.view but not pops.view / packages.view.
+ */
+export function warmSharedLookups(user?: User | null) {
+  if (!user) return;
+  if (hasPermission(user, "buildings.view")) {
+    void getCachedBuildings().catch(() => {});
+  }
+  if (hasPermission(user, "packages.view")) {
+    void getCachedPackageCatalog().catch(() => {});
+  }
+  if (hasPermission(user, "pops.view")) {
+    void getCachedPops().catch(() => {});
+  }
 }
 
 export function invalidateSharedLookups() {

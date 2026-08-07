@@ -22,7 +22,8 @@ import { UsersPage } from "./UsersPage";
 import { LogsPage } from "./LogsPage";
 import { SynchronizationPage } from "./SynchronizationPage";
 import { toaster } from "../components/ui/toaster";
-import { PAGE_STACK_GAP, PageHeader } from "../components/ui/pageLayout";
+import { PAGE_STACK_GAP, PageErrorBanner, PageHeader } from "../components/ui/pageLayout";
+import { SettingsPanelSkeleton } from "../components/PageSkeletons";
 import { useAuth } from "../lib/authContext";
 import {
   canAccessOps,
@@ -1220,6 +1221,17 @@ export function SettingsPage() {
       .finally(() => setLoading(false));
   }
 
+  if (!tabs.length) {
+    return (
+      <Stack gap={PAGE_STACK_GAP}>
+        <PageHeader title="Settings" />
+        <PageErrorBanner>
+          You do not have permission to view any settings sections.
+        </PageErrorBanner>
+      </Stack>
+    );
+  }
+
   return (
     <Stack gap={PAGE_STACK_GAP}>
       <PageHeader title="Settings" />
@@ -1246,9 +1258,7 @@ export function SettingsPage() {
                   <RolesPanel settings={settings} />
                 </SettingsAccordionSection>
               ) : showSettingsLoading ? (
-                <Text fontSize="sm" color="fg.muted">
-                  Loading role definitions…
-                </Text>
+                <SettingsPanelSkeleton />
               ) : (
                 <Stack gap={2}>
                   <Text fontSize="sm" color="red.600">
@@ -1274,9 +1284,7 @@ export function SettingsPage() {
             settings ? (
               <WebhooksPanel settings={settings} />
             ) : showSettingsLoading ? (
-              <Text fontSize="sm" color="fg.muted">
-                Loading webhook configuration…
-              </Text>
+              <SettingsPanelSkeleton />
             ) : (
               <Stack gap={2}>
                 <Text fontSize="sm" color="red.600">
@@ -1301,9 +1309,7 @@ export function SettingsPage() {
                 onUpdated={setSettings}
               />
             ) : showSettingsLoading ? (
-              <Text fontSize="sm" color="fg.muted">
-                Loading communication settings…
-              </Text>
+              <SettingsPanelSkeleton />
             ) : (
               <Stack gap={2}>
                 <Text fontSize="sm" color="red.600">

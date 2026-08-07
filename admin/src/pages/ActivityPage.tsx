@@ -6,7 +6,7 @@ import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { PageErrorBanner } from "../components/ui/pageLayout";
 import { api, type ActivityItem } from "../lib/api";
 import { useAuth } from "../lib/authContext";
-import { canAccessFinance, normalizeRole } from "../lib/rbac";
+import { canAccessFinance, isPartner } from "../lib/rbac";
 import { useActivitySocket } from "../hooks/useActivitySocket";
 import {
   SUPPORT_ACTIVITY_EVENT_TYPES,
@@ -23,8 +23,8 @@ export function ActivityPage() {
   // Activity is a mobile module only — desktop keeps it on the homepage rail.
   const isDesktop = useBreakpointValue({ base: false, lg: true }, { ssr: false });
   const finance = canAccessFinance(user);
-  const role = normalizeRole(user?.role);
-  const liveEnabled = !isDesktop && role !== "partner";
+  const partner = isPartner(user);
+  const liveEnabled = !isDesktop && !partner;
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +68,7 @@ export function ActivityPage() {
     return <Navigate to="/" replace />;
   }
 
-  if (role === "partner") {
+  if (partner) {
     return (
       <Box>
         <MobilePageChrome title="Activity" />

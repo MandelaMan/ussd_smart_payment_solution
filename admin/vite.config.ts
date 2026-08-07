@@ -74,14 +74,24 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:4000",
         changeOrigin: true,
-        timeout: 15000,
-        proxyTimeout: 15000,
+        ws: true,
+        timeout: 60000,
+        proxyTimeout: 60000,
       },
       "/leads": {
         target: "http://127.0.0.1:4000",
         changeOrigin: true,
       },
     },
+  },
+  optimizeDeps: {
+    include: [
+      "recharts",
+      "echarts",
+      "socket.io-client",
+      "@chakra-ui/react",
+      "framer-motion",
+    ],
   },
   build: {
     target: "es2020",

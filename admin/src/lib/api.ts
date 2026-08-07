@@ -33,6 +33,10 @@ export class ApiError extends Error {
   }
 }
 
+export function isForbiddenError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 403;
+}
+
 export function isUnauthorizedError(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401;
 }
@@ -86,11 +90,21 @@ function rejectApiResponse(res: Response, body: Record<string, unknown>, path: s
   throw new ApiError(message, res.status, path);
 }
 
+export type UserGroupRef = {
+  id: number;
+  slug: string;
+  name: string;
+};
+
 export type User = {
   id: number;
   name: string;
   email: string;
-  role: "admin" | "support" | "cfo" | "viewer" | "partner" | "ceo";
+  role: "admin" | "user" | "support" | "cfo" | "viewer" | "partner" | "ceo";
+  jobTitle?: string | null;
+  mustChangePassword?: boolean;
+  permissions?: string[];
+  groups?: UserGroupRef[];
 };
 
 export type AuthSession = {
@@ -101,6 +115,8 @@ export type AuthSession = {
 export type AdminUser = User & {
   is_active: number;
   created_at: string;
+  notes?: string | null;
+  legacyRole?: string | null;
 };
 
 export type BuildingOlt = {
@@ -958,40 +974,6 @@ export type ReconciliationSummary = {
   };
 };
 
-export type BillingCommunicationCandidate = {
-  customerId: number;
-  customerNumber: string;
-  customerName: string;
-  primaryStatus: string;
-  statuses: string[];
-  outstandingBalance: number;
-  expectedAmount: number;
-  subscriptionStatus: string | null;
-  issueBasis: string | null;
-  email: string | null;
-  emailSource: string | null;
-  canSend: boolean;
-  templateKey: string | null;
-  templateLabel: string | null;
-  lastSentAt: string | null;
-  sendCount: number;
-};
-
-export type BillingCommunicationPreview = {
-  customerId: number;
-  customerNumber: string;
-  customerName: string;
-  email: string | null;
-  emailSource: string | null;
-  canSend: boolean;
-  templateKey: string;
-  templateLabel: string;
-  subject: string;
-  html: string;
-  text: string;
-  mailConfig?: ReconciliationSummary["mailConfig"];
-};
-
 export type ReconciliationSyncStatus = {
   status: string;
   lastSyncAt: string | null;
@@ -1095,50 +1077,6 @@ export type SyncProgressEvent = {
     updated?: number;
     failed?: number;
     phase?: string;
-  };
-};
-
-export type UnmatchedMpesaPayment = {
-  id: number;
-  amount: number | null;
-  referenceId: string | null;
-  phone: string | null;
-  accountReference: string | null;
-  channel: string | null;
-  paidAt: string;
-  suggestedCustomerNumber: string | null;
-  customerId?: number | null;
-  customerName?: string | null;
-};
-
-export type UnmatchedMpesaDetail = {
-  payment: UnmatchedMpesaPayment;
-  customer: {
-    id: number;
-    customerNumber: string;
-    customerName: string;
-    customerType: string;
-    subscriptionStatus: string | null;
-  } | null;
-  openInvoices: ZohoInvoice[];
-  zohoLinked: boolean;
-  plannedAction: string;
-  canAllocate: boolean;
-  alreadyAllocated: boolean;
-};
-
-export type AllocateUnmatchedMpesaResult = {
-  ok: boolean;
-  message: string;
-  tispPosted?: boolean;
-  tispError?: string | null;
-  customerId?: number | null;
-  customerNumber?: string;
-  zoho?: {
-    paid?: boolean;
-    strategy?: string;
-    invoice_id?: string;
-    invoice_number?: string;
   };
 };
 
@@ -1826,7 +1764,7 @@ export const api = {
     }>("/public/login-stats"),
 
   getStats: (period = "30d") =>
-    request<Stats>(`/admin/stats?period=${period}`),
+    requestWithRetry<Stats>(`/admin/stats?period=${period}`, {}, 1),
 
   getSupportStats: (period = "30d") =>
     request<SupportStats>(`/admin/support-stats?period=${period}`),
@@ -1912,6 +1850,111 @@ export const api = {
 
   listUsers: () => request<{ users: AdminUser[] }>("/admin/users"),
 
+  getPermissionCatalog: () =>
+    request<{
+      modules: Array<{
+        key: string;
+        label: string;
+        description: string | null;
+        permissions: Array<{
+          key: string;
+          label: string;
+          description: string | null;
+          dangerous: boolean;
+        }>;
+      }>;
+    }>("/admin/rbac/catalog"),
+
+  listGroups: () =>
+    request<{
+      groups: Array<{
+        id: number;
+        slug: string;
+        name: string;
+        description: string | null;
+        isSystem: boolean;
+        isActive: boolean;
+        memberCount: number;
+        permissions: string[];
+      }>;
+    }>("/admin/rbac/groups"),
+
+  createGroup: (data: {
+    name: string;
+    description?: string;
+    slug?: string;
+    permissions?: string[];
+  }) =>
+    request<{ ok: boolean; id: number }>("/admin/rbac/groups", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateGroup: (
+    id: number,
+    data: {
+      name?: string;
+      description?: string | null;
+      permissions?: string[];
+      is_active?: boolean;
+    }
+  ) =>
+    request<{ ok: boolean }>(`/admin/rbac/groups/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteGroup: (id: number) =>
+    request<{ ok: boolean }>(`/admin/rbac/groups/${id}`, {
+      method: "DELETE",
+    }),
+
+  getUserPermissions: (id: number) =>
+    request<{
+      userId: number;
+      role: string;
+      groups: UserGroupRef[];
+      permissions: string[];
+      sources: Record<string, string[]>;
+      overrides: Array<{ key: string; effect: "grant" | "deny" }>;
+      catalog: Array<{
+        key: string;
+        label: string;
+        description: string | null;
+        permissions: Array<{
+          key: string;
+          label: string;
+          description: string | null;
+          dangerous: boolean;
+        }>;
+      }>;
+    }>(`/admin/rbac/users/${id}/permissions`),
+
+  setUserPermissions: (
+    id: number,
+    data: { grants: string[]; denies: string[] }
+  ) =>
+    request<{
+      ok: boolean;
+      permissions: string[];
+      sources: Record<string, string[]>;
+    }>(`/admin/rbac/users/${id}/permissions`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  changePassword: (data: {
+    currentPassword?: string;
+    newPassword: string;
+  }) =>
+    request<{ ok: boolean; user: User; expiresAt: number | null }>(
+      "/auth/change-password",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    ),
+
   getSettings: () => request<AppSettings>("/admin/settings"),
 
   updateCommunicationEmailSettings: (data: {
@@ -1981,28 +2024,65 @@ export const api = {
   createUser: (data: {
     name: string;
     email: string;
-    password: string;
     role: string;
+    jobTitle?: string;
+    notes?: string;
+    is_active?: boolean;
+    groupIds?: number[];
+    password?: string;
   }) =>
-    request<{ ok: boolean }>("/admin/users", {
+    request<{
+      ok: boolean;
+      id: number;
+      temporaryPassword: string;
+      mustChangePassword: boolean;
+    }>("/admin/users", {
       method: "POST",
       body: JSON.stringify(data),
     }),
 
   updateUser: (
     id: number,
-    data: { role?: string; is_active?: boolean; name?: string }
+    data: {
+      role?: string;
+      is_active?: boolean;
+      name?: string;
+      jobTitle?: string | null;
+      notes?: string | null;
+      groupIds?: number[];
+    }
   ) =>
     request<{ ok: boolean }>(`/admin/users/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
 
-  resetUserPassword: (id: number, password: string) =>
-    request<{ ok: boolean }>(`/admin/users/${id}/reset-password`, {
+  resetUserPassword: (
+    id: number,
+    options?: { password?: string; sendEmail?: boolean }
+  ) =>
+    request<{
+      ok: boolean;
+      temporaryPassword?: string;
+      mustChangePassword: boolean;
+      emailed?: boolean;
+      email?: string;
+    }>(`/admin/users/${id}/reset-password`, {
       method: "POST",
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({
+        ...(options?.password ? { password: options.password } : {}),
+        ...(options?.sendEmail ? { sendEmail: true } : {}),
+      }),
     }),
+
+  emailTemporaryPassword: (id: number, temporaryPassword: string) =>
+    request<{ ok: boolean; emailed: boolean; email: string }>(
+      `/admin/users/${id}/email-temporary-password`,
+      {
+        method: "POST",
+        body: JSON.stringify({ temporaryPassword }),
+      }
+    ),
 
   listPops: (params: Record<string, string | undefined> = {}) =>
     request<{ pops: Pop[]; data: Pop[] }>(
@@ -3345,18 +3425,6 @@ export const api = {
       `/admin/reconciliation/customers/${id}${refresh ? "?refresh=true" : ""}`
     ),
 
-  listReconciliationUnmatchedMpesa: () =>
-    request<{ data: UnmatchedMpesaPayment[] }>("/admin/reconciliation/unmatched-mpesa"),
-
-  getUnmatchedMpesaDetail: (id: number) =>
-    request<UnmatchedMpesaDetail>(`/admin/reconciliation/unmatched-mpesa/${id}`),
-
-  allocateUnmatchedMpesa: (id: number) =>
-    request<AllocateUnmatchedMpesaResult>(
-      `/admin/reconciliation/unmatched-mpesa/${id}/allocate`,
-      { method: "POST" }
-    ),
-
   executeReconciliationAction: (
     customerId: number,
     action: string,
@@ -3378,45 +3446,10 @@ export const api = {
     );
   },
 
-  listReconciliationStatuses: () =>
-    request<{ statuses: string[] }>("/admin/reconciliation/statuses"),
-
-  listBillingCommunications: (params: Record<string, string | undefined> = {}) =>
-    request<{
-      data: BillingCommunicationCandidate[];
-      pagination: ListPagination;
-      mailConfig: ReconciliationSummary["mailConfig"];
-    }>(`/admin/reconciliation/communications${buildQueryString(params)}`),
-
-  previewBillingCommunication: (customerId: number, template?: string) =>
-    request<BillingCommunicationPreview>(
-      `/admin/reconciliation/communications/${customerId}/preview${template ? `?template=${encodeURIComponent(template)}` : ""}`
-    ),
-
-  sendBillingCommunication: (customerId: number, templateKey?: string) =>
-    request<{ ok: boolean; message: string }>(
-      `/admin/reconciliation/communications/${customerId}/send`,
-      {
-        method: "POST",
-        body: JSON.stringify(templateKey ? { templateKey } : {}),
-      }
-    ),
-
-  sendBulkBillingCommunications: (customerIds: number[]) =>
-    request<{ ok: boolean; sent: number; failed: number; results: Array<{ customerId: number; ok: boolean; message?: string; error?: string }> }>(
-      "/admin/reconciliation/communications/bulk-send",
-      { method: "POST", body: JSON.stringify({ customerIds }) }
-    ),
-
   getSyncOverview: () => request<SyncOverview>("/admin/sync/overview"),
 
   listSyncJobs: (params: Record<string, string> = {}) =>
     request<{ data: SyncJobRow[] }>(`/admin/sync/jobs${buildQueryString(params)}`),
-
-  getSyncJob: (id: number) => request<SyncJobRow>(`/admin/sync/jobs/${id}`),
-
-  getRunningSyncJobs: () =>
-    request<{ data: SyncJobRow[] }>("/admin/sync/running"),
 
   triggerSync: (integration: string, body: { fullZoho?: boolean; incremental?: boolean } = {}) =>
     request<{ ok: boolean; jobId?: string; error?: string; status?: string }>(

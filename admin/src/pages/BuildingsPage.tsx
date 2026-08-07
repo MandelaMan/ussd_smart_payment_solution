@@ -23,9 +23,9 @@ import {
   FiHome,
   FiServer,
 } from "react-icons/fi";
-import { api, formatDate, type Building, type ListPagination, type Pop } from "../lib/api";
+import { api, formatDate, isForbiddenError, type Building, type ListPagination, type Pop } from "../lib/api";
 import { useAuth } from "../lib/authContext";
-import { canMutateConfig } from "../lib/rbac";
+import { canMutateConfig, hasPermission } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
 import { cacheKeyFromParams } from "../lib/moduleDataCache";
 import { getCachedPops, invalidateSharedLookups } from "../lib/sharedLookups";
@@ -90,6 +90,7 @@ export function BuildingsPage() {
   const { user } = useAuth();
   const isMobile = useMobileViewport();
   const canMutate = canMutateConfig(user);
+  const canViewPops = hasPermission(user, "pops.view");
   const seeded = seedListState<Building>(DEFAULT_BUILDINGS_CACHE_KEY);
   const [buildings, setBuildings] = useState<Building[]>(() => seeded.rows);
   const [pops, setPops] = useState<Pop[]>([]);
@@ -160,16 +161,25 @@ export function BuildingsPage() {
   }
 
   const loadPops = useCallback(async (opts?: { force?: boolean }) => {
+    if (!canViewPops) {
+      setPops([]);
+      return;
+    }
     try {
       const res = await getCachedPops(opts);
       setPops(res.pops || []);
     } catch (e) {
+      // Missing POP access is expected for read-only building viewers (e.g. Finance).
+      if (isForbiddenError(e)) {
+        setPops([]);
+        return;
+      }
       toaster.create({
         title: e instanceof Error ? e.message : "Failed to load POPs",
         type: "error",
       });
     }
-  }, []);
+  }, [canViewPops]);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;

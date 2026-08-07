@@ -6,7 +6,7 @@ function getBullConnection() {
   return {
     host: opts.host,
     port: opts.port,
-    password: opts.password,
+    ...(opts.password ? { password: opts.password } : {}),
     db: opts.db,
     maxRetriesPerRequest: null,
   };

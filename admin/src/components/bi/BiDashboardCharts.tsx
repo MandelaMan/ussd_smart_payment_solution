@@ -452,63 +452,6 @@ export function BiFinancialCharts({ data }: Pick<Props, "data">) {
   );
 }
 
-export function BiOperationsCharts({ data }: Pick<Props, "data">) {
-  return (
-    <Grid templateColumns={{ base: "1fr", xl: "repeat(2, 1fr)" }} gap={4}>
-      <BiChartCard
-        title="Installation Requests"
-        empty
-        emptyMessage={
-          data.operations?.installations.message || "Installation requests not connected."
-        }
-      />
-      <BiChartCard title="Average Installation Time" empty emptyMessage="Installation timing not tracked yet." />
-      <BiChartCard
-        title="Support Tickets"
-        empty
-        emptyMessage={
-          data.operations?.supportTickets.message || "Support tickets not connected."
-        }
-      />
-    </Grid>
-  );
-}
-
-export function BiNetworkCharts({ data }: Pick<Props, "data">) {
-  const uptimeMonthly = data.network?.uptime.monthly;
-  const gaugeOption = useMemo(
-    () => ({
-      series: [
-        {
-          type: "gauge",
-          min: 0,
-          max: 100,
-          detail: { formatter: "{value}%", fontSize: 18 },
-          data: [{ value: uptimeMonthly ?? 0, name: "Uptime" }],
-        },
-      ],
-    }),
-    [uptimeMonthly]
-  );
-
-  return (
-    <Grid templateColumns={{ base: "1fr", xl: "repeat(2, 1fr)" }} gap={4}>
-      <BiChartCard
-        title="Network Uptime"
-        empty={uptimeMonthly == null}
-        emptyMessage={
-          data.network?.uptime.message || "Network monitoring not connected."
-        }
-      >
-        <LazyEChart option={gaugeOption} />
-      </BiChartCard>
-      <BiChartCard title="Bandwidth Utilization" empty emptyMessage="Bandwidth metrics not connected." />
-      <BiChartCard title="Internet Speed Complaints" empty emptyMessage="Complaint tracking not connected." />
-      <BiChartCard title="Outages by Area" empty emptyMessage="Outage data not available." />
-    </Grid>
-  );
-}
-
 export function BiInsightsCharts({ data }: Pick<Props, "data">) {
   const upgradeOption = useMemo(
     () => ({

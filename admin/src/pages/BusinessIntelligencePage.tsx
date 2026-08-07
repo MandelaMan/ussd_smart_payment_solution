@@ -184,7 +184,7 @@ export function BusinessIntelligencePage() {
       {tab === "pulse" && (
         <Stack gap={4}>
           {loading && !data ? (
-            <ChartSkeleton />
+            <ChartSkeleton height="280px" />
           ) : (
             <Grid
               templateColumns={{
@@ -221,9 +221,12 @@ export function BusinessIntelligencePage() {
         </Stack>
       )}
 
-      {tab === "revenue" && data && (
-        <BiRevenueCharts data={data} onExportCsv={handleExportCsv} />
-      )}
+      {tab === "revenue" &&
+        (loading && !data ? (
+          <ChartSkeleton height="320px" />
+        ) : data ? (
+          <BiRevenueCharts data={data} onExportCsv={handleExportCsv} />
+        ) : null)}
 
       {tab === "forecast" && (
         forecastLoading && !forecast ? (
@@ -237,18 +240,29 @@ export function BusinessIntelligencePage() {
         )
       )}
 
-      {tab === "customers" && data && (
-        <BiCustomerCharts data={data} onExportCsv={handleExportCsv} />
-      )}
+      {tab === "customers" &&
+        (loading && !data ? (
+          <ChartSkeleton height="320px" />
+        ) : data ? (
+          <BiCustomerCharts data={data} onExportCsv={handleExportCsv} />
+        ) : null)}
 
-      {tab === "billing" && data && <BiFinancialCharts data={data} />}
+      {tab === "billing" &&
+        (loading && !data ? (
+          <ChartSkeleton height="320px" />
+        ) : data ? (
+          <BiFinancialCharts data={data} />
+        ) : null)}
 
-      {tab === "sales" && data && (
-        <Stack gap={4}>
-          <BiSalesCharts data={data} onExportCsv={handleExportCsv} />
-          <BiInsightsCharts data={data} />
-        </Stack>
-      )}
+      {tab === "sales" &&
+        (loading && !data ? (
+          <ChartSkeleton height="320px" />
+        ) : data ? (
+          <Stack gap={4}>
+            <BiSalesCharts data={data} onExportCsv={handleExportCsv} />
+            <BiInsightsCharts data={data} />
+          </Stack>
+        ) : null)}
 
       {tab === "network" && (
         <Box borderWidth="1px" borderColor="border" borderRadius="lg" p={6}>

@@ -1,7 +1,7 @@
 import { Suspense, lazy, type ComponentType, type ReactNode } from "react";
-import { ChakraProvider, Flex, Spinner } from "@chakra-ui/react";
+import { ChakraProvider } from "@chakra-ui/react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { system, BRAND } from "./theme";
+import { system } from "./theme";
 import { AuthProvider } from "./lib/AuthProvider";
 import { Layout } from "./components/Layout";
 import { ScrollToTop } from "./components/ScrollToTop";
@@ -20,7 +20,9 @@ import { BootSplashGate } from "./components/BootSplashGate";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AppToaster } from "./components/ui/AppToaster";
 import { AppUpdateBanner } from "./components/ui/AppUpdateBanner";
+import { RouteContentSkeleton } from "./components/PageSkeletons";
 import { LoginPage } from "./pages/LoginPage";
+import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 
 function lazyPage<T extends Record<string, unknown>>(
   loader: () => Promise<T>,
@@ -56,14 +58,6 @@ const BillingModulePage = lazyPage(
   () => import("./pages/billing/BillingModulePage"),
   "BillingModulePage"
 );
-const BillingUnallocatedMpesaPage = lazyPage(
-  () => import("./pages/billing/BillingUnallocatedMpesaPage"),
-  "BillingUnallocatedMpesaPage"
-);
-const BillingCommunicationsPage = lazyPage(
-  () => import("./pages/billing/BillingCommunicationsPage"),
-  "BillingCommunicationsPage"
-);
 const ReportsPage = lazyPage(() => import("./pages/ReportsPage"), "ReportsPage");
 const SettingsPage = lazyPage(() => import("./pages/SettingsPage"), "SettingsPage");
 const CustomersListPage = lazyPage(
@@ -97,18 +91,7 @@ const AgencyDetailPage = lazyPage(
 );
 
 function RouteFallback() {
-  return (
-    <Flex
-      minH="40vh"
-      align="center"
-      justify="center"
-      py={10}
-      opacity={0.85}
-      transition="opacity 0.2s ease"
-    >
-      <Spinner color={BRAND.cerulean} size="lg" borderWidth="3px" />
-    </Flex>
-  );
+  return <RouteContentSkeleton />;
 }
 
 function LazyRoute({ children }: { children: ReactNode }) {
@@ -126,6 +109,10 @@ export default function App() {
             <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route element={<ProtectedRoute />}>
+              <Route
+                path="change-password"
+                element={<ChangePasswordPage />}
+              />
               <Route element={<Layout />}>
                 <Route
                   index
@@ -184,11 +171,7 @@ export default function App() {
                     />
                     <Route
                       path="unallocated-mpesa"
-                      element={
-                        <LazyRoute>
-                          <BillingUnallocatedMpesaPage />
-                        </LazyRoute>
-                      }
+                      element={<Navigate to="/billing" replace />}
                     />
                     <Route
                       path="billing-gaps"
@@ -228,11 +211,7 @@ export default function App() {
                     />
                     <Route
                       path="communications"
-                      element={
-                        <LazyRoute>
-                          <BillingCommunicationsPage />
-                        </LazyRoute>
-                      }
+                      element={<Navigate to="/billing" replace />}
                     />
                   </Route>
                 </Route>

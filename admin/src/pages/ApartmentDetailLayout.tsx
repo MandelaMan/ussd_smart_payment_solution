@@ -11,7 +11,6 @@ import {
   Button,
   Flex,
   Heading,
-  Spinner,
   Stack,
   Text,
 } from "@chakra-ui/react";
@@ -19,6 +18,7 @@ import { FiArrowLeft, FiClock, FiHome } from "react-icons/fi";
 import { api, type ApartmentUnit } from "../lib/api";
 import { PAGE_STACK_GAP, PageErrorBanner } from "../components/ui/pageLayout";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { ApartmentDetailSkeleton } from "../components/PageSkeletons";
 import { BRAND } from "../theme";
 
 type ApartmentDetailContextValue = {
@@ -183,9 +183,7 @@ export function ApartmentDetailLayout() {
       {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       {loading ? (
-        <Flex minH="30vh" align="center" justify="center">
-          <Spinner color={BRAND.cerulean} />
-        </Flex>
+        <ApartmentDetailSkeleton />
       ) : value ? (
         <ApartmentDetailContext.Provider value={value}>
           <Outlet />

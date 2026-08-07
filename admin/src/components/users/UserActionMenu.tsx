@@ -4,6 +4,7 @@ import {
   FiEdit3,
   FiKey,
   FiMoreVertical,
+  FiShield,
   FiSlash,
   FiUserCheck,
 } from "react-icons/fi";
@@ -12,14 +13,13 @@ import { FLOATING_MENU_Z_INDEX } from "../ui/floatingMenu";
 
 export const USER_ROLE_OPTIONS = [
   { value: "admin", label: "Administrator" },
-  { value: "support", label: "Customer Support" },
-  { value: "cfo", label: "CFO" },
-  { value: "ceo", label: "CEO" },
-  { value: "partner", label: "Partner" },
+  { value: "user", label: "User" },
 ] as const;
 
 export type UserAction =
   | { type: "editName" }
+  | { type: "editUser" }
+  | { type: "permissions" }
   | { type: "role"; role: string }
   | { type: "resetPassword" }
   | { type: "toggleActive" };
@@ -31,7 +31,7 @@ type Props = {
 };
 
 export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
-  const currentRole = user.role === "viewer" ? "support" : user.role;
+  const currentRole = user.role === "admin" ? "admin" : "user";
 
   return (
     <Menu.Root
@@ -41,6 +41,14 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
         window.setTimeout(() => {
           if (value === "editName") {
             onAction({ type: "editName" });
+            return;
+          }
+          if (value === "editUser") {
+            onAction({ type: "editUser" });
+            return;
+          }
+          if (value === "permissions") {
+            onAction({ type: "permissions" });
             return;
           }
           if (value.startsWith("role:")) {
@@ -79,14 +87,18 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            <Menu.Item value="editName">
+            <Menu.Item value="editUser">
               <FiEdit3 />
-              Edit name
+              Edit user
+            </Menu.Item>
+            <Menu.Item value="permissions">
+              <FiShield />
+              Permissions
             </Menu.Item>
             <Menu.Separator />
             <Menu.ItemGroup>
               <Menu.ItemGroupLabel fontSize="xs" color="fg.muted" px={3} py={1}>
-                Role
+                System role
               </Menu.ItemGroupLabel>
               {USER_ROLE_OPTIONS.map((opt) => (
                 <Menu.Item key={opt.value} value={`role:${opt.value}`}>
@@ -114,7 +126,7 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
               }
             >
               {user.is_active ? <FiSlash /> : <FiUserCheck />}
-              {user.is_active ? "Deactivate" : "Activate"}
+              {user.is_active ? "Disable" : "Activate"}
             </Menu.Item>
           </Menu.Content>
         </Menu.Positioner>

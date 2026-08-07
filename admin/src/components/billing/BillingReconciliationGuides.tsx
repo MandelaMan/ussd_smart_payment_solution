@@ -20,10 +20,8 @@ type Props = {
 };
 
 const MODULE_GUIDE_IDS = new Set<BillingModuleId>([
-  "unallocated-mpesa",
   "billing-gaps",
   "manual-review",
-  "customer-communications",
 ]);
 
 function guideCount(summary: ReconciliationSummary | null, id: BillingGuideId) {

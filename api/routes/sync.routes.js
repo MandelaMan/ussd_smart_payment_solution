@@ -1,5 +1,6 @@
 const express = require("express");
-const { authenticate, requireRole } = require("../middleware/auth");
+const { authenticate } = require("../middleware/auth");
+const { attachPermissions, requirePermission } = require("../middleware/permissions");
 const {
   getOverview,
   listJobs,
@@ -12,7 +13,8 @@ const {
 const router = express.Router();
 
 router.use(authenticate);
-router.use(requireRole("admin", "cfo", "support"));
+router.use(attachPermissions);
+router.use(requirePermission("settings.sync", "billing.sync"));
 
 router.get("/overview", getOverview);
 router.get("/jobs", listJobs);

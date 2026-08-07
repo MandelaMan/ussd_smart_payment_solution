@@ -20,7 +20,7 @@ export const BILLING_RECONCILIATION_GUIDES: BillingGuide[] = [
       "Outstanding — total open Zoho invoice balance across matched customers.",
       "Revenue at Risk — expected subscription revenue from customers with billing or service issues.",
       "Expected (month) vs Collected (month) — compare what should have been billed against M-Pesa and Zoho payments this month.",
-      "Collection Rate — if low, start with Unallocated M-Pesa and Billing Gaps.",
+      "Collection Rate — if low, start with Billing Gaps and Manual Review.",
       "Customers with Issues — count of dashboard customers flagged in the modules below.",
     ],
     whereToCheck: [
@@ -43,24 +43,6 @@ export const BILLING_RECONCILIATION_GUIDES: BillingGuide[] = [
       "Settings → Synchronization — job history and integration health.",
       "Customer detail — TISP sync status and Zoho invoice panel.",
       "Settings → Logs — API errors from Zoho or TISP.",
-    ],
-  },
-  {
-    id: "unallocated-mpesa",
-    title: "Unallocated M-Pesa payments",
-    whenToUse:
-      "M-Pesa paybill money was received but not applied to a Zoho Books invoice.",
-    steps: [
-      "Open Unallocated M-Pesa and expand the payment row.",
-      "Confirm the account reference matches the customer number on the payment.",
-      "Review suggested open invoices and allocate the payment to the correct invoice.",
-      "If no invoice exists, open the customer in Customers and retry billing onboarding, or create the invoice in Zoho Books.",
-      "After allocation, run Sync and confirm the payment no longer appears here.",
-    ],
-    whereToCheck: [
-      "Transactions — full M-Pesa success/failure log.",
-      "Customer profile → Invoices — open balance and invoice numbers.",
-      "Zoho Books — Customer Payments and invoice status.",
     ],
   },
   {
@@ -100,24 +82,6 @@ export const BILLING_RECONCILIATION_GUIDES: BillingGuide[] = [
       "Customer expand panel — validations and recommended actions.",
       "Settings → Logs — filter by customer number or zoho/tisp service.",
       "Settings → Synchronization — failed job details.",
-    ],
-  },
-  {
-    id: "customer-communications",
-    title: "Customer communications",
-    whenToUse:
-      "Send billing reminder emails for customers with known gaps (requires Zoho Mail configured).",
-    steps: [
-      "Confirm ZOHO_MAIL is configured in Settings / environment.",
-      "Filter communications by issue type (missing invoice, overdue, etc.).",
-      "Preview the email template before sending.",
-      "Send to individual customers or in bulk where eligible.",
-      "Follow up in Billing Gaps after sending — payment may still need Zoho allocation.",
-    ],
-    whereToCheck: [
-      "Billing Gaps — confirm the underlying issue is still accurate.",
-      "Zoho Mail sent folder — delivery status.",
-      "Customer email on the dashboard profile.",
     ],
   },
 ];

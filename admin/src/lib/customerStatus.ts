@@ -39,17 +39,6 @@ export const SUBSCRIPTION_STATUS_FILTER_OPTIONS: Array<{
   },
 ];
 
-export const SUBSCRIPTION_STATUS_OPTIONS: Array<{
-  value: "" | SubscriptionStatusLabel;
-  label: string;
-}> = [
-  { value: "", label: "All statuses" },
-  ...SUBSCRIPTION_STATUS_FILTER_OPTIONS.map((o) => ({
-    value: o.value,
-    label: o.label,
-  })),
-];
-
 const ALLOWED = new Set<SubscriptionStatusLabel>([
   "Active",
   "Suspended",

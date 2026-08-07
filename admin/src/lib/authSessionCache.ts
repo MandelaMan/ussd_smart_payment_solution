@@ -7,6 +7,10 @@ export type CachedUser = {
   name: string;
   email: string;
   role: string;
+  jobTitle?: string | null;
+  mustChangePassword?: boolean;
+  permissions?: string[];
+  groups?: Array<{ id: number; slug: string; name: string }>;
 };
 
 export type SessionCache = {

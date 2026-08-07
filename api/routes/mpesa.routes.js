@@ -12,7 +12,8 @@ const {
   b2cResult,
   b2cTimeout,
 } = require("../controllers/mpesa.controller");
-const { authenticate, requireRole } = require("../middleware/auth");
+const { authenticate } = require("../middleware/auth");
+const { requirePermission } = require("../middleware/permissions");
 const { requireMpesaCallbackAuth } = require("../middleware/webhookVerify");
 
 const router = express.Router();
@@ -36,11 +37,11 @@ router.post("/callback", mpesaGuard, mpesaCallback);
 router.post("/validation", mpesaGuard, mpesaValidation);
 router.post("/confirmation", mpesaGuard, mpesaConfirmation);
 
-router.post("/register", authenticate, requireRole("admin"), registerC2BUrls);
-router.post("/simulate", authenticate, requireRole("admin"), simulateC2B);
-router.get("/split/config", authenticate, getTransactionSplitConfig);
-router.put("/split/config", authenticate, requireRole("admin"), updateTransactionSplitConfig);
-router.get("/split/logs", authenticate, getTransactionSplitLog);
+router.post("/register", authenticate, requirePermission("settings.edit"), registerC2BUrls);
+router.post("/simulate", authenticate, requirePermission("settings.edit"), simulateC2B);
+router.get("/split/config", authenticate, requirePermission("billing.view", "settings.view"), getTransactionSplitConfig);
+router.put("/split/config", authenticate, requirePermission("settings.edit"), updateTransactionSplitConfig);
+router.get("/split/logs", authenticate, requirePermission("system_logs.view", "billing.view"), getTransactionSplitLog);
 router.post("/b2c/result", mpesaGuard, b2cResult);
 router.post("/b2c/timeout", mpesaGuard, b2cTimeout);
 

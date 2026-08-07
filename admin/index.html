@@ -36,6 +36,40 @@
           window.navigator.standalone === true;
         if (isPwa) document.documentElement.classList.add("sul-pwa");
       })();
+      /* Emergency SW/cache bust when a prior shell left the app blank. */
+      (function () {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          if (params.get("reset") !== "1") return;
+          var done = function () {
+            params.delete("reset");
+            var q = params.toString();
+            window.location.replace(
+              window.location.pathname + (q ? "?" + q : "") + window.location.hash
+            );
+          };
+          var tasks = [];
+          if ("serviceWorker" in navigator) {
+            tasks.push(
+              navigator.serviceWorker.getRegistrations().then(function (regs) {
+                return Promise.all(regs.map(function (r) { return r.unregister(); }));
+              })
+            );
+          }
+          if ("caches" in window) {
+            tasks.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              })
+            );
+          }
+          try {
+            localStorage.removeItem("sul-admin-build-id");
+            sessionStorage.clear();
+          } catch (e) {}
+          Promise.all(tasks).then(done).catch(done);
+        } catch (e) {}
+      })();
     </script>
     <style>
       html,

@@ -2,13 +2,17 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { AppShellSkeleton } from "./PageSkeletons";
 import { useAuth } from "../lib/authContext";
 import { getSessionCache } from "../lib/authSessionCache";
-import { normalizeRole, type UserRole } from "../lib/rbac";
+import {
+  canAccessSettings,
+  hasAnyPermission,
+  hasPermission,
+  isAdministrator,
+} from "../lib/rbac";
 import type { User } from "../lib/api";
 
 function useStableAuth() {
   const { user, loading } = useAuth();
   const cached = getSessionCache()?.user as User | undefined;
-  // Prefer live context; fall back to HMR-stable cache so the shell never blanks.
   const stableUser = user ?? cached ?? null;
   const stableLoading = loading && !stableUser;
   return { user: stableUser, loading: stableLoading };
@@ -25,57 +29,97 @@ export function ProtectedRoute() {
   if (!user) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
+
+  if (user.mustChangePassword && location.pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
+  }
+
   return <Outlet />;
 }
 
-export function RoleRoute({
-  roles,
+export function PermissionRoute({
+  permissions,
+  requireAll = false,
   redirectTo = "/",
 }: {
-  roles: UserRole[];
+  permissions: string[];
+  requireAll?: boolean;
   redirectTo?: string;
 }) {
   const { user, loading } = useStableAuth();
   if (loading) return <AppShellSkeleton />;
-  if (!user || !roles.includes(normalizeRole(user.role))) {
+  const ok = requireAll
+    ? permissions.every((p) => hasPermission(user, p))
+    : hasAnyPermission(user, permissions);
+  if (!user || !ok) {
     return <Navigate to={redirectTo} replace />;
   }
   return <Outlet />;
 }
 
 export function AdminRoute() {
-  return <RoleRoute roles={["admin"]} />;
+  const { user, loading } = useStableAuth();
+  if (loading) return <AppShellSkeleton />;
+  if (!user || !isAdministrator(user)) {
+    return <Navigate to="/" replace />;
+  }
+  return <Outlet />;
 }
 
-/** Settings hub: users/webhooks/logs (admin) and synchronization (admin + CFO). */
+/** Settings hub: users, logs, sync — any settings-related permission. */
 export function SettingsRoute() {
-  return <RoleRoute roles={["admin", "cfo"]} />;
+  const { user, loading } = useStableAuth();
+  if (loading) return <AppShellSkeleton />;
+  if (!user || !canAccessSettings(user)) {
+    return <Navigate to="/" replace />;
+  }
+  return <Outlet />;
 }
 
 export function FinanceRoute() {
-  return <RoleRoute roles={["admin", "cfo", "ceo"]} />;
-}
-
-export function ReportsRoute() {
-  return <RoleRoute roles={["admin", "cfo", "partner", "ceo"]} />;
-}
-
-/** Activity page — finance feed or support stats depending on role. */
-export function ActivityRoute() {
-  return <RoleRoute roles={["admin", "support", "cfo", "ceo"]} />;
-}
-
-/** Matches API requireCustomerRead — all authenticated roles. */
-export function CustomerReadRoute() {
   return (
-    <RoleRoute roles={["admin", "support", "cfo", "partner", "ceo"]} />
+    <PermissionRoute
+      permissions={[
+        "dashboard.finance",
+        "transactions.view",
+        "billing.view",
+        "analytics.view",
+      ]}
+    />
   );
 }
 
+export function ReportsRoute() {
+  return <PermissionRoute permissions={["reports.view"]} />;
+}
+
+export function ActivityRoute() {
+  return <PermissionRoute permissions={["dashboard.activity"]} />;
+}
+
+export function CustomerReadRoute() {
+  return <PermissionRoute permissions={["customers.view"]} />;
+}
+
 export function ConfigRoute() {
-  return <RoleRoute roles={["admin", "support"]} />;
+  return (
+    <PermissionRoute
+      permissions={[
+        "packages.view",
+        "buildings.view",
+        "pops.view",
+        "apartments.view",
+        "agencies.view",
+      ]}
+    />
+  );
 }
 
 export function CustomerWriteRoute() {
-  return <RoleRoute roles={["admin", "support"]} redirectTo="/customers" />;
+  return (
+    <PermissionRoute
+      permissions={["customers.create", "customers.edit"]}
+      redirectTo="/customers"
+    />
+  );
 }

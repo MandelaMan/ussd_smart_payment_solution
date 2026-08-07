@@ -1,7 +1,11 @@
+const { requirePermission, requireAdministrator } = require("./permissions");
 const { requireRole } = require("./auth");
+const { isAdministrator, normalizeSystemRole } = require("../rbac/permissionService");
 
 const ROLES = Object.freeze({
   ADMIN: "admin",
+  USER: "user",
+  // Legacy aliases kept for migration-era code paths / JWT claims until re-login
   SUPPORT: "support",
   CFO: "cfo",
   PARTNER: "partner",
@@ -9,54 +13,67 @@ const ROLES = Object.freeze({
 });
 
 function normalizeRole(role) {
-  if (role === "viewer") return ROLES.SUPPORT;
-  return role;
+  if (role === "viewer") return ROLES.USER;
+  if (role === "admin") return ROLES.ADMIN;
+  if (
+    role === "support" ||
+    role === "cfo" ||
+    role === "partner" ||
+    role === "ceo" ||
+    role === "user"
+  ) {
+    return normalizeSystemRole(role) === "admin" ? ROLES.ADMIN : ROLES.USER;
+  }
+  return ROLES.USER;
 }
 
-function requireRoles(...roles) {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-    const role = normalizeRole(req.user.role);
-    if (!roles.includes(role)) {
-      return res.status(403).json({ error: "Insufficient permissions" });
-    }
-    return next();
-  };
-}
-
-/** Dashboard, BI, transactions, reconciliation reads, report analytics. */
-const FINANCE_READ = [ROLES.ADMIN, ROLES.CFO, ROLES.CEO];
-/** Sync, allocate, reconciliation actions, billing send. */
-const FINANCE_WRITE = [ROLES.ADMIN, ROLES.CFO];
-
+/**
+ * Capability middleware — permission-key based.
+ * Legacy role names are no longer checked; effective permissions decide access.
+ */
 module.exports = {
   ROLES,
   normalizeRole,
-  requireAdmin: requireRoles(ROLES.ADMIN),
-  requireFinance: requireRoles(...FINANCE_READ),
-  requireFinanceWrite: requireRoles(...FINANCE_WRITE),
-  requirePartner: requireRoles(ROLES.PARTNER),
-  requirePartnerDashboard: requireRoles(ROLES.ADMIN, ROLES.PARTNER),
-  requireReportsAccess: requireRoles(ROLES.ADMIN, ROLES.CFO, ROLES.PARTNER, ROLES.CEO),
-  requireCustomerRead: requireRoles(
-    ROLES.ADMIN,
-    ROLES.SUPPORT,
-    ROLES.CFO,
-    ROLES.PARTNER,
-    ROLES.CEO
+  isAdministrator,
+  requireAdministrator,
+  requireAdmin: requirePermission("users.view", "settings.view", "system_logs.view"),
+  /** Prefer explicit permission on user-management routes. */
+  requireManageUsers: requirePermission("users.view"),
+  requireFinance: requirePermission(
+    "dashboard.finance",
+    "transactions.view",
+    "billing.view",
+    "analytics.view"
   ),
-  requireCustomerFinancialRead: requireRoles(
-    ROLES.ADMIN,
-    ROLES.SUPPORT,
-    ROLES.CFO,
-    ROLES.CEO
+  requireFinanceWrite: requirePermission(
+    "billing.sync",
+    "billing.allocate",
+    "billing.actions",
+    "billing.communicate"
   ),
-  requireCustomerWrite: requireRoles(ROLES.ADMIN, ROLES.SUPPORT),
-  requireAgencyWrite: requireRoles(ROLES.ADMIN, ROLES.SUPPORT),
-  requireConfigRead: requireRoles(ROLES.ADMIN, ROLES.SUPPORT),
-  requireConfigWrite: requireRoles(ROLES.ADMIN),
-  requireOps: requireRoles(ROLES.ADMIN),
+  requirePartner: requirePermission("dashboard.partner"),
+  requirePartnerDashboard: requirePermission("dashboard.partner", "dashboard.finance"),
+  requireReportsAccess: requirePermission("reports.view"),
+  requireCustomerRead: requirePermission("customers.view"),
+  requireCustomerFinancialRead: requirePermission("customers.financials"),
+  requireCustomerWrite: requirePermission("customers.create", "customers.edit"),
+  requireAgencyWrite: requirePermission("agencies.create", "agencies.edit"),
+  requireConfigRead: requirePermission(
+    "packages.view",
+    "buildings.view",
+    "pops.view",
+    "apartments.view",
+    "agencies.view"
+  ),
+  requireConfigWrite: requirePermission(
+    "packages.create",
+    "packages.edit",
+    "buildings.create",
+    "buildings.edit",
+    "pops.create",
+    "pops.edit"
+  ),
+  requireOps: requirePermission("system_logs.view"),
   requireRole,
+  requirePermission,
 };

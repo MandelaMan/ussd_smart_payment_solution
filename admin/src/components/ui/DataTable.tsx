@@ -501,28 +501,3 @@ export function DataTableFillSkeleton({
     </Box>
   );
 }
-
-/** @deprecated Prefer DataTableFillSkeleton — legacy flex-row filler for inline panels. */
-export function DataTableSkeletonRowsFill({ rows = 10 }: { rows?: number }) {
-  return (
-    <Box
-      flex={1}
-      minH={0}
-      display="flex"
-      flexDirection="column"
-      justifyContent="space-evenly"
-      borderTop="1px solid"
-      borderColor="border.muted"
-      aria-hidden
-    >
-      {Array.from({ length: rows }).map((_, rowIdx) => (
-        <Flex key={rowIdx} align="center" px={{ base: 2, md: 4 }} minH="14px">
-          <SkeletonBlock boxSize="16px" borderRadius="sm" flexShrink={0} me={4} />
-          <SkeletonBlock height="14px" flex={1} maxW="55%" />
-          <SkeletonBlock height="14px" flex={1} mx={4} display={{ base: "none", md: "block" }} />
-          <SkeletonBlock height="14px" flex={1} display={{ base: "none", lg: "block" }} />
-        </Flex>
-      ))}
-    </Box>
-  );
-}

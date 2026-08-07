@@ -474,9 +474,7 @@ async function getStats(req, res, next) {
            GROUP BY c.building_id
          ) zp ON zp.building_id = b.id
          GROUP BY b.id, b.name
-         HAVING revenue > 0 OR subscribers > 0
-         ORDER BY revenue DESC
-         LIMIT 12`,
+         ORDER BY revenue DESC, b.name ASC`,
         [days, days]
       ),
       query(

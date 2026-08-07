@@ -90,25 +90,32 @@ async function getSettings(req, res, next) {
           id: "admin",
           label: "Administrator",
           description:
-            "Full access including user management, settings, logs, and all modules. Administrator accounts cannot be deactivated.",
+            "System role with full access by default. Permissions can still be revoked via individual denies. Administrator accounts cannot be deactivated.",
         },
         {
-          id: "support",
-          label: "Customer support",
-          description: "View and manage customers and configuration; no financials or logs",
-        },
-        {
-          id: "cfo",
-          label: "CFO",
-          description: "Financial reports and transactions; no customer write or settings",
-        },
-        {
-          id: "partner",
-          label: "Partner",
+          id: "user",
+          label: "User",
           description:
-            "Read-only partner dashboard, reports (Excel/PDF), and customer list; aggregate metrics only — no edits, billing, or transaction detail",
+            "Standard employee role with least-privilege defaults. Access is granted through User Groups and individual permission overrides.",
         },
       ],
+      permissionModel: {
+        inheritance: [
+          "System role defaults",
+          "User group permissions (merged)",
+          "Individual grants / denies (highest priority)",
+        ],
+        groups: [
+          "Sales",
+          "Finance",
+          "Support",
+          "Network Operations",
+          "Management",
+          "Installations",
+          "Customer Relations",
+          "Billing",
+        ],
+      },
     });
   } catch (err) {
     return next(err);
