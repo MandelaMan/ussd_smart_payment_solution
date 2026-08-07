@@ -54,6 +54,7 @@ const {
   stopRecurringInvoice_JS,
   updateRecurringInvoice_JS,
   markContactInactive_JS,
+  invalidateZohoContactLookupCache,
 } = require("./zoho.controller");
 const zohoEntityRepo = require("../repositories/zohoEntity.repository");
 const pendingUpgradeStore = require("../services/pendingUpgradeStore");
@@ -375,6 +376,107 @@ async function buildZohoContactPayload(customer, existingContact = null) {
 }
 
 /**
+ * True when a Zoho contact predates this dashboard customer — i.e. it belonged
+ * to a former apartment tenant (or was wrongly reactivated for the new one).
+ */
+function isZohoContactOlderThanCustomer(contact, customer, skewMs = 120_000) {
+  const customerCreated = customer?.createdAt || customer?.created_at;
+  const contactCreated = contact?.created_time || contact?.created_at;
+  if (!customerCreated || !contactCreated) return false;
+  const custMs = new Date(customerCreated).getTime();
+  const zohoMs = new Date(contactCreated).getTime();
+  if (Number.isNaN(custMs) || Number.isNaN(zohoMs)) return false;
+  return zohoMs < custMs - skewMs;
+}
+
+/**
+ * Rename Zoho company_name to {number}-CXL-{formerId}, stop recurring, mark
+ * inactive. Frees the live apartment number for a new Zoho customer + invoices.
+ */
+async function retireFormerZohoTenantContact(contact, options = {}) {
+  if (!contact?.contact_id) return null;
+
+  const {
+    updateContact_JS,
+    getContactFull_JS,
+  } = require("./zoho.controller");
+
+  const liveNumber = String(
+    options.customerNumber || contact.company_name || ""
+  )
+    .trim()
+    .toUpperCase()
+    .replace(/-CXL-\d+$/i, "");
+
+  let formerId = options.formerCustomerId
+    ? Number(options.formerCustomerId)
+    : null;
+  if (!formerId || !Number.isFinite(formerId) || formerId <= 0) {
+    formerId = await store.findMostRecentCancelledTenantIdForNumber(
+      liveNumber,
+      options.excludeCustomerId || null
+    );
+  }
+  if (!formerId || !Number.isFinite(formerId) || formerId <= 0) {
+    formerId = Number(String(Date.now()).slice(-8));
+  }
+
+  const archivedCompany = store.archiveCancelledCustomerNumber(
+    liveNumber,
+    formerId
+  );
+
+  try {
+    await stopZohoRecurringForCustomer(contact.contact_id, liveNumber);
+  } catch (e) {
+    console.warn(
+      `retire Zoho tenant: stop recurring failed for ${liveNumber}:`,
+      e.message || e
+    );
+  }
+
+  try {
+    const full = (await getContactFull_JS(contact.contact_id)) || contact;
+    const displayName = String(
+      full.contact_name || full.customer_name || archivedCompany
+    ).trim();
+    await updateContact_JS(contact.contact_id, {
+      contact_type: "customer",
+      customer_sub_type: "business",
+      company_name: archivedCompany,
+      contact_name: displayName.includes("(former)")
+        ? displayName
+        : `${displayName} (former)`.slice(0, 200),
+    });
+  } catch (e) {
+    console.warn(
+      `retire Zoho tenant: rename ${liveNumber} → ${archivedCompany} failed:`,
+      e.message || e
+    );
+  }
+
+  try {
+    await markContactInactive_JS(contact.contact_id);
+  } catch (e) {
+    console.warn(
+      `retire Zoho tenant: mark inactive failed for ${contact.contact_id}:`,
+      e.message || e
+    );
+  }
+
+  invalidateZohoContactLookupCache(liveNumber);
+  invalidateZohoContactLookupCache(contact.company_name);
+  invalidateZohoContactLookupCache(archivedCompany);
+
+  return {
+    contactId: String(contact.contact_id),
+    previousCompanyName: liveNumber,
+    archivedCompanyName: archivedCompany,
+    formerCustomerId: formerId,
+  };
+}
+
+/**
  * Zoho sometimes ignores company_name on the first write (especially when the
  * contact was created as Individual). Force company_name + business subtype
  * without overwriting Display Name (contact_name).
@@ -431,6 +533,10 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
   const previousCustomerNumber = options.previousCustomerNumber
     ? String(options.previousCustomerNumber).trim().toUpperCase()
     : null;
+  // New apartment tenants must not reuse the cancelled tenant's Zoho contact /
+  // invoices. Apartment moves keep previousCustomerNumber and still update.
+  const replaceFormerTenant =
+    options.replaceFormerTenant === true && !previousCustomerNumber;
 
   const { updateContact_JS, getSpecificCustomer_JS, getContactFull_JS, markContactActive_JS } = require("./zoho.controller");
 
@@ -441,6 +547,13 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
         enumerable: false,
         configurable: true,
       });
+      if (options._retiredFormer) {
+        Object.defineProperty(contact, "_retiredFormerTenant", {
+          value: options._retiredFormer,
+          enumerable: false,
+          configurable: true,
+        });
+      }
     }
     return contact;
   }
@@ -452,10 +565,71 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     return lean && typeof lean === "object" && lean.contact_id ? lean : null;
   }
 
+  async function shouldRetireContact(existing) {
+    if (!replaceFormerTenant || !existing?.contact_id) return false;
+    let contact = existing;
+    if (!contact.created_time) {
+      contact = (await loadContactForUpdate(existing.contact_id)) || existing;
+    }
+    if (String(contact.status || "").toLowerCase() === "inactive") {
+      return true;
+    }
+    const company = String(contact.company_name || "").trim().toUpperCase();
+    if (/-CXL-\d+$/i.test(company)) return true;
+    // Former tenant contact (even if reactivated + details updated for the new person).
+    if (isZohoContactOlderThanCustomer(contact, customer)) {
+      return true;
+    }
+    // No reliable Zoho created_time: retire only when invoices clearly predate
+    // this dashboard customer (do not retire a contact we just created).
+    if (!contact.created_time && (customer.createdAt || customer.created_at)) {
+      try {
+        const { getInvoices_JS } = require("./zoho.controller");
+        const invoices = await getInvoices_JS({
+          customer_id: contact.contact_id,
+          per_page: 20,
+          page: 1,
+        });
+        const custMs = new Date(
+          customer.createdAt || customer.created_at
+        ).getTime();
+        if (
+          !Number.isNaN(custMs) &&
+          (invoices || []).some((inv) => {
+            const invMs = new Date(inv.created_time || inv.date).getTime();
+            return !Number.isNaN(invMs) && invMs < custMs - 120_000;
+          })
+        ) {
+          return true;
+        }
+      } catch {
+        /* ignore — fall through */
+      }
+    }
+    return false;
+  }
+
+  async function retireIfFormer(existing) {
+    if (!(await shouldRetireContact(existing))) return false;
+    const retired = await retireFormerZohoTenantContact(existing, {
+      customerNumber:
+        customer.customerNumber || customer.customer_number || existing.company_name,
+      excludeCustomerId: customer.id,
+      formerCustomerId: options.formerCustomerId,
+    });
+    options._retiredFormer = retired;
+    return true;
+  }
+
   async function refreshExisting(existing) {
+    if (await retireIfFormer(existing)) {
+      return null; // caller creates a new contact
+    }
+
     let contactBase = existing;
     // Reactivate inactive Zoho contacts when linking an active dashboard customer
     // so we update the existing record instead of creating a duplicate.
+    // (Skipped for replaceFormerTenant — those contacts are retired above.)
     if (
       String(existing.status || "").toLowerCase() === "inactive" &&
       existing.contact_id
@@ -518,7 +692,9 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
       if (snapId) {
         const byId = await loadContactForUpdate(snapId);
         if (byId?.contact_id) {
-          return refreshExisting(byId);
+          const refreshed = await refreshExisting(byId);
+          if (refreshed) return refreshed;
+          // Former tenant retired — fall through to create.
         }
       }
     } catch {
@@ -527,13 +703,14 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
   }
 
   // Live lookup by previous number (apartment move) / customer number / email /
-  // phone / name — update if found, never duplicate.
+  // phone / name — update if found, never duplicate (unless replacing tenant).
   const existing = await findZohoContactForCustomer(customer, {
-    identityFallback: true,
+    identityFallback: !replaceFormerTenant,
     previousCustomerNumber: previousCustomerNumber || undefined,
   });
   if (existing?.contact_id) {
-    return refreshExisting(existing);
+    const refreshed = await refreshExisting(existing);
+    if (refreshed) return refreshed;
   }
 
   const payload = await buildZohoContactPayload(customer);
@@ -542,16 +719,28 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     created = await createContact_JS(payload);
   } catch (e) {
     // Duplicate / race: resolve the existing contact and update it instead.
+    // If it is still a former tenant, retire and retry create once.
     const retry = await findZohoContactForCustomer(customer, {
-      identityFallback: true,
+      identityFallback: !replaceFormerTenant,
       previousCustomerNumber: previousCustomerNumber || undefined,
     });
     if (retry?.contact_id) {
-      return refreshExisting(retry);
+      const refreshed = await refreshExisting(retry);
+      if (refreshed) return refreshed;
+      try {
+        created = await createContact_JS(payload);
+      } catch (retryErr) {
+        throw new Error(
+          `Zoho contact creation failed: ${
+            retryErr.response?.data?.message || retryErr.message
+          }`
+        );
+      }
+    } else {
+      throw new Error(
+        `Zoho contact creation failed: ${e.response?.data?.message || e.message}`
+      );
     }
-    throw new Error(
-      `Zoho contact creation failed: ${e.response?.data?.message || e.message}`
-    );
   }
 
   if (created?.contact_id) {
@@ -585,11 +774,12 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
 
   // Final safety: another create may have won the race.
   const retry = await findZohoContactForCustomer(customer, {
-    identityFallback: true,
+    identityFallback: !replaceFormerTenant,
     previousCustomerNumber: previousCustomerNumber || undefined,
   });
   if (retry?.contact_id) {
-    return refreshExisting(retry);
+    const refreshed = await refreshExisting(retry);
+    if (refreshed) return refreshed;
   }
 
   throw new Error("Zoho contact creation returned no contact_id");
@@ -2505,6 +2695,7 @@ async function createCustomer(req, res, next) {
         forceBilling: wantsSignupInvoice,
         forceEmail: wantsSignupInvoice && !paymentAlreadyMade,
         skipEmail: paymentAlreadyMade,
+        replaceFormerTenant: true,
         paymentAlreadyMade,
         paymentMethod: paymentAlreadyMade ? paymentMethod : undefined,
         mpesaCode:
@@ -4032,18 +4223,18 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
       if (!contact?.contact_id) {
         result.zoho = { ok: true, skipped: true, reason: "no_zoho_contact" };
       } else {
-        const recurring = await stopZohoRecurringForCustomer(
-          contact.contact_id,
-          ctx.customer_number
-        );
-        await markContactInactive_JS(contact.contact_id);
+        const retired = await retireFormerZohoTenantContact(contact, {
+          customerNumber: ctx.customer_number,
+          formerCustomerId: ctx.id,
+        });
         invalidateCustomerZoho(customerId);
         result.zoho = {
           ok: true,
           skipped: false,
           contactInactivated: true,
+          companyNameArchived: retired?.archivedCompanyName || null,
           zohoContactId: contact.contact_id,
-          recurringStopped: recurring.stopped,
+          recurringStopped: true,
         };
       }
     }
@@ -4702,7 +4893,9 @@ async function importCustomerRowWithProgress(row, emit, batchSeen) {
     zohoError: null,
   };
   try {
-    const billing = await onboardNewCustomerBilling(created.customerId);
+    const billing = await onboardNewCustomerBilling(created.customerId, {
+      replaceFormerTenant: true,
+    });
     zoho = {
       linked: billing.ok,
       zohoContactId: billing.zohoContactId,
@@ -5324,7 +5517,11 @@ async function retryBillingOnboarding(req, res, next) {
     invalidateCustomerZoho(id);
 
     try {
-      const billing = await onboardNewCustomerBilling(id, { forceBilling: true });
+      const billing = await onboardNewCustomerBilling(id, {
+        forceBilling: true,
+        forceEmail: true,
+        replaceFormerTenant: true,
+      });
       if (!billing.ok) {
         return res.status(502).json({
           ok: false,

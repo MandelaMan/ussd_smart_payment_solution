@@ -34,7 +34,8 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 | Convert C2B↔B2B | Type, agency, customer number, PPPoE if it tracked the number | Migrate old → new account number (preserve due date) | C2B→B2B: stop personal recurring, inactive contact, ensure agency. B2B→C2B: stop agency recurring for old number, create/sync personal + recurring | No |
 | Pause service (away) | `subscription_status=Paused`, pause window + reason | Due date = today (stop access) | Defer matching recurring so next invoice is after pause end | Deactivate ONU |
 | Suspend on TISP | `subscription_status=Suspended` | Due date = today | **None** (billing continues) | Deactivate ONU |
-| Cancel subscription | `status=cancelled`, close apartment history, collection dates. Number/IP/DSTV stay until a new signup reclaims them | Due date = cancel day (async) | C2B: stop recurring + inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
+| Cancel subscription | `status=cancelled`, close apartment history, collection dates. Number/IP/DSTV stay until a new signup reclaims them | Due date = cancel day (async) | C2B: stop recurring, rename company to `{number}-CXL-{id}`, mark inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
+| New signup after cancel (same apt) | Archive cancelled row as `{number}-CXL-{id}`; insert new active tenant | UPDATE existing account (name/phone/package/due) | Retire leftover Zoho contact on live number; create **new** Zoho customer + signup invoice (former invoices ignored) | No |
 | Apartment history | Read-only timeline | — | — | — |
 | Delete permanently | Hard-delete local rows | **Untouched** | **Untouched** | **Untouched** |
 
@@ -166,10 +167,23 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 - **Local:** `status=cancelled`, `subscription_status=Cancelled`, reason + collection dates; open apartment history closed.
 - **TISP:** Background sync sets due date to cancellation day.
-- **Zoho:** Background — C2B stop recurring + mark inactive; B2B stop only recurring rows matching this customer number on the agency contact (agency stays active).
+- **Zoho:** Background — C2B stop recurring, rename `company_name` to `{number}-CXL-{id}` (same archive form as local), mark contact inactive. B2B stop only recurring rows matching this customer number on the agency contact (agency stays active).
 - **OLT:** Background deactivate ONU when linked.
 
 **Notes:** Response returns `tisp/zoho: pending` immediately; check activity log for integration results. Prefer Cancel over Delete for leavers. The apartment is free for a new active tenant immediately. When the next signup uses the same apartment (same customer number), the cancelled row’s number is archived as `{number}-CXL-{id}` and its IP/DSTV serial are cleared so UNIQUE keys can be reused — no hard-delete required.
+
+### 9a. New tenant on same apartment (after cancel)
+
+**Purpose:** Put a new person on the same unit (e.g. H302) without inheriting the previous tenant’s Zoho invoices or contact.
+
+**Outcomes**
+
+- **Local:** Previous cancelled holder renamed to `{number}-CXL-{id}`; new active customer gets the live number.
+- **TISP:** Prefer **UPDATE** of the existing account (new name, phone, package, due date policy) — not a duplicate INSERT.
+- **Zoho:** Do **not** reactivate the former contact. If a contact still owns the live company name (legacy cancel that only marked inactive), it is retired (`{number}-CXL-{id}` + inactive). A **new** Zoho customer is created for the new tenant; signup invoice is created and emailed; invoices dated before the new customer’s `created_at` are ignored.
+- **OLT:** Unchanged unless separately linked.
+
+**Notes:** Use Cancel → Create. If a prior signup wrongly linked the old Zoho contact, use **Retry billing onboarding** — it retires the former contact, creates a fresh one, and emails a new signup invoice.
 
 ---
 

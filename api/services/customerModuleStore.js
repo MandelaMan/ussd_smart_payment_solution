@@ -191,15 +191,59 @@ function buildCustomerNumber(building, customerType, apartmentNumber) {
  * Archive a cancelled customer's live account number so the next tenant can
  * reuse the apartment-based number. Keeps the row for history/reporting.
  * VARCHAR(50) — keep archived form short: {number}-CXL-{id}
+ * Also used for Zoho company_name when retiring a former tenant contact.
  */
 function archiveCancelledCustomerNumber(customerNumber, customerId) {
   const base = String(customerNumber || "")
     .trim()
     .toUpperCase()
     .replace(/-CXL-\d+$/i, "");
-  const suffix = `-CXL-${Number(customerId)}`;
+  const idNum = Number(customerId);
+  const idPart =
+    Number.isFinite(idNum) && idNum > 0
+      ? String(Math.trunc(idNum))
+      : String(customerId || Date.now()).replace(/\D/g, "").slice(-8) ||
+        String(Date.now()).slice(-8);
+  const suffix = `-CXL-${idPart}`;
   const maxBase = Math.max(1, 50 - suffix.length);
   return `${base.slice(0, maxBase)}${suffix}`;
+}
+
+/**
+ * Most recent cancelled tenant that held (or still holds) this apartment number.
+ * Used when retiring the Zoho contact so the archived company_name matches local.
+ */
+async function findMostRecentCancelledTenantIdForNumber(
+  customerNumber,
+  excludeCustomerId = null
+) {
+  const base = String(customerNumber || "")
+    .trim()
+    .toUpperCase()
+    .replace(/-CXL-\d+$/i, "");
+  if (!base) return null;
+
+  const params = [base, `${base}-CXL-%`];
+  let excludeSql = "";
+  if (excludeCustomerId != null && Number(excludeCustomerId) > 0) {
+    excludeSql = " AND id <> ?";
+    params.push(Number(excludeCustomerId));
+  }
+
+  const rows = await query(
+    `SELECT id
+     FROM customers
+     WHERE status = 'cancelled'
+       AND (
+         UPPER(TRIM(customer_number)) = ?
+         OR UPPER(TRIM(customer_number)) LIKE ?
+       )
+     ${excludeSql}
+     ORDER BY id DESC
+     LIMIT 1`,
+    params
+  );
+  return rows[0]?.id ? Number(rows[0].id) : null;
 }
 
 /**
@@ -4418,6 +4462,8 @@ module.exports = {
   findCustomerByDstvSerial,
   assertDstvSerialUnique,
   releaseCancelledIdentityForReuse,
+  archiveCancelledCustomerNumber,
+  findMostRecentCancelledTenantIdForNumber,
   assertImportNotDuplicate,
   registerImportBatchEntry,
   importCustomerFromRow,

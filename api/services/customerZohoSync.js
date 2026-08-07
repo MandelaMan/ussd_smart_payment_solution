@@ -71,6 +71,7 @@ function mapContextToCustomer(ctx, agencyName = null) {
     dstvDecoderSerial: ctx.dstv_decoder_serial || null,
     trialPeriodEnabled: Boolean(ctx.trial_period_enabled),
     trialEndsAt: ctx.trial_ends_at || null,
+    createdAt: ctx.created_at || null,
   };
 }
 

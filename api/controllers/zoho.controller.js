@@ -311,6 +311,14 @@ const pickLean = (c) => {
 const CONTACT_CACHE_TTL_MS = Number(process.env.ZOHO_CONTACT_CACHE_TTL_MS || 30 * 60 * 1000);
 const cache = new LRU({ max: 500, ttl: CONTACT_CACHE_TTL_MS });
 
+/** Drop cached company/name lookups after rename / retire so the live number is free. */
+function invalidateZohoContactLookupCache(companyName) {
+  const raw = String(companyName || "").trim();
+  if (!raw) return;
+  cache.delete(`cust:company:${norm(raw)}`);
+  cache.delete(norm(raw));
+}
+
 /** ========= Core JS functions (no req/res, return raw data) ========= **/
 
 // Get invoices (array)
@@ -1836,6 +1844,7 @@ module.exports = {
   updateContact_JS,
   markContactInactive_JS,
   markContactActive_JS,
+  invalidateZohoContactLookupCache,
   markInvoiceAsPaid_JS,
 
   // Extra helpers if you want them elsewhere

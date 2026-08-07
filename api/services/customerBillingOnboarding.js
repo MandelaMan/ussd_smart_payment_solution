@@ -97,6 +97,18 @@ function invoiceMatchesCustomer(invoice, customerNumber, invoicePrefix) {
   );
 }
 
+/** Ignore former-tenant invoices created before this dashboard customer existed. */
+function invoiceBelongsToCurrentCustomer(invoice, customer, skewMs = 120_000) {
+  const customerCreated = customer?.createdAt || customer?.created_at;
+  if (!customerCreated) return true;
+  const invDate = invoice?.created_time || invoice?.date;
+  if (!invDate) return true;
+  const custMs = new Date(customerCreated).getTime();
+  const invMs = new Date(invDate).getTime();
+  if (Number.isNaN(custMs) || Number.isNaN(invMs)) return true;
+  return invMs >= custMs - skewMs;
+}
+
 async function findSignupInvoiceForCustomer(contactId, customer) {
   const prefix = buildCustomerInvoicePrefix({
     customerNumber: customer.customerNumber,
@@ -113,8 +125,9 @@ async function findSignupInvoiceForCustomer(contactId, customer) {
 
   const matching = (invoices || []).filter(
     (inv) =>
-      invoiceMatchesCustomer(inv, customer.customerNumber, prefix) ||
-      (storedId && String(inv.invoice_id) === String(storedId))
+      invoiceBelongsToCurrentCustomer(inv, customer) &&
+      (invoiceMatchesCustomer(inv, customer.customerNumber, prefix) ||
+        (storedId && String(inv.invoice_id) === String(storedId)))
   );
 
   if (!matching.length) return null;
@@ -123,7 +136,9 @@ async function findSignupInvoiceForCustomer(contactId, customer) {
     const storedInvoice = matching.find(
       (inv) => String(inv.invoice_id) === String(storedId)
     );
-    if (storedInvoice) return storedInvoice;
+    if (storedInvoice && invoiceBelongsToCurrentCustomer(storedInvoice, customer)) {
+      return storedInvoice;
+    }
   }
 
   const openUnpaid = matching.find((inv) => {
@@ -256,6 +271,7 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
  *
  * options.forceEmail — email even when ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED is off
  * options.skipEmail — create/reuse invoice but do not email (e.g. already paid)
+ * options.disregardExistingInvoices — never reuse; always create a new signup invoice
  */
 async function createSignupInvoice(customer, zohoContact, options = {}) {
   const amount = Number(customer.packagePrice || 0);
@@ -275,32 +291,34 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
   });
 
   const tracking = await customerStore.getCustomerById(customer.id);
-  const existing = await findSignupInvoiceForCustomer(
-    zohoContact.contact_id,
-    customer
-  );
-  if (existing?.invoice_id) {
-    const emailResult = await emailSignupInvoiceOnce(
-      existing,
-      customer,
-      tracking,
-      options
+  if (options.disregardExistingInvoices !== true) {
+    const existing = await findSignupInvoiceForCustomer(
+      zohoContact.contact_id,
+      customer
     );
-    await customerStore.recordSignupInvoiceDelivery(
-      customer.id,
-      existing.invoice_id,
-      { emailed: emailResult.emailed }
-    );
-    return {
-      created: false,
-      reused: true,
-      invoiceId: String(existing.invoice_id),
-      invoiceNumber: existing.invoice_number || null,
-      total: Number(existing.total || amount),
-      period,
-      emailed: emailResult.emailed,
-      emailReason: emailResult.reason,
-    };
+    if (existing?.invoice_id) {
+      const emailResult = await emailSignupInvoiceOnce(
+        existing,
+        customer,
+        tracking,
+        options
+      );
+      await customerStore.recordSignupInvoiceDelivery(
+        customer.id,
+        existing.invoice_id,
+        { emailed: emailResult.emailed }
+      );
+      return {
+        created: false,
+        reused: true,
+        invoiceId: String(existing.invoice_id),
+        invoiceNumber: existing.invoice_number || null,
+        total: Number(existing.total || amount),
+        period,
+        emailed: emailResult.emailed,
+        emailReason: emailResult.reason,
+      };
+    }
   }
 
   const referenceNumber = customer.customerNumber;
@@ -429,15 +447,21 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     (hasTrial ? computeTrialEndDate() : null);
 
   try {
-    let zohoContact = await ensureZohoContactForCustomer({
-      ...customer,
-      customerType: ctx.customer_type,
-      agencyId: ctx.agency_id,
-    });
+    const replaceFormerTenant = options.replaceFormerTenant !== false;
+    let zohoContact = await ensureZohoContactForCustomer(
+      {
+        ...customer,
+        customerType: ctx.customer_type,
+        agencyId: ctx.agency_id,
+        createdAt: ctx.created_at,
+      },
+      { replaceFormerTenant }
+    );
     if (!zohoContact?.contact_id) {
       throw new Error("Zoho contact could not be linked");
     }
     const contactCreated = zohoContact._wasCreated === true;
+    const retiredFormer = Boolean(zohoContact._retiredFormerTenant);
 
     const { updateZohoContactDetails } = require("./customerZohoSync");
     zohoContact = await updateZohoContactDetails(
@@ -449,8 +473,9 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     let recurring = null;
 
     // Advance payment / forced billing override the "existing contact → skip" rule.
+    // Also bill when we retired a former tenant and created a fresh Zoho customer.
     const shouldBill =
-      contactCreated || forceBilling || paymentAlreadyMade;
+      contactCreated || forceBilling || paymentAlreadyMade || retiredFormer;
 
     // Pre-existing Zoho contact: link only. Signup / recurring are opt-in on edit.
     if (!shouldBill) {
@@ -514,6 +539,7 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
       invoice = await createSignupInvoice(customer, zohoContact, {
         forceEmail,
         skipEmail,
+        disregardExistingInvoices: retiredFormer === true,
       });
 
       if (paymentAlreadyMade && invoice.invoiceId) {

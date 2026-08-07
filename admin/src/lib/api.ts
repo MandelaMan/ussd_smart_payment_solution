@@ -3497,14 +3497,46 @@ export function splitVatInclusive(amount: number) {
 }
 
 export function formatDate(value: string) {
-  return new Date(value).toLocaleString("en-KE", {
+  if (!value) return "—";
+  // Date-only fields (e.g. Zoho payment_date) have no clock time. Parsed as UTC
+  // midnight they display as 03:00 in Kenya (UTC+3) — omit the fake time.
+  if (isDateOnlyTimestamp(value)) {
+    return formatDateOnly(value);
+  }
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-KE", {
     dateStyle: "medium",
     timeStyle: "short",
   });
 }
 
+/** True when the value is a calendar date with no meaningful time-of-day. */
+function isDateOnlyTimestamp(value: string): boolean {
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return true;
+  if (/^\d{4}-\d{2}-\d{2}T00:00:00(?:\.\d+)?Z$/i.test(s)) return true;
+  if (/^\d{4}-\d{2}-\d{2}[ T]00:00:00(?:\.\d+)?$/.test(s)) return true;
+  return false;
+}
+
 export function formatDateOnly(value: string | null | undefined) {
   if (!value) return "—";
+  const s = String(value).trim();
+  // Prefer calendar components for YYYY-MM-DD so timezone never shifts the day.
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (dateOnly) {
+    const y = Number(dateOnly[1]);
+    const m = Number(dateOnly[2]);
+    const day = Number(dateOnly[3]);
+    const d = new Date(y, m - 1, day);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-KE", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("en-KE", {
