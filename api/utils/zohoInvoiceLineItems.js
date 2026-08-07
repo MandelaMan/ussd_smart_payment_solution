@@ -74,6 +74,14 @@ function buildDstvDecoderFeeLineItem(customer, options = {}) {
   });
 }
 
+/** Expected signup invoice total: package price + one-time decoder when DSTV. */
+function expectedSignupInvoiceTotal(customer) {
+  const packagePrice = Number(customer?.packagePrice || customer?.package_price || 0);
+  if (!(packagePrice > 0)) return 0;
+  if (!shouldIncludeDstvOneTimeFee(customer)) return packagePrice;
+  return packagePrice + resolveDstvOneTimeFee(customer);
+}
+
 /**
  * Build Zoho invoice line items for a subscription period.
  * Decoder charge is added when includeOneTimeDstvFee is true (signup / first invoice).
@@ -125,5 +133,6 @@ module.exports = {
   customerHasDstv,
   resolveDstvOneTimeFee,
   shouldIncludeDstvOneTimeFee,
+  expectedSignupInvoiceTotal,
   DSTV_ONE_TIME_FEE,
 };

@@ -613,6 +613,9 @@ export type CustomerZohoStatus = {
   totalBalanceDue: number;
   /** Zoho unused credit / overpayment on the contact (KES). */
   creditBalance?: number;
+  /** True when the linked Zoho contact still has invoices from a previous tenant. */
+  hasFormerTenantInvoices?: boolean;
+  formerTenantInvoiceCount?: number;
   billedViaAgency?: boolean;
   agencyId?: number | null;
   agencyName?: string | null;
@@ -2772,6 +2775,8 @@ export const api = {
       fromSnapshot?: boolean;
       cacheFresh?: boolean;
       creditBalance?: number;
+      hasFormerTenantInvoices?: boolean;
+      formerTenantInvoiceCount?: number;
     }>(`/admin/customers/${id}/invoices`),
 
   getCustomerPayments: (id: number, params: Record<string, string> = {}) => {

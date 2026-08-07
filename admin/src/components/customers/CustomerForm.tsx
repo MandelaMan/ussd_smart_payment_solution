@@ -567,13 +567,18 @@ export function CustomerForm({
         ? Math.round((selectedPackage.monthlyPrice * Number(customPeriodDays)) / 30)
         : selectedPackage?.price ?? (isEdit ? customer?.packagePrice : undefined);
   const decoderFee =
-    !isEdit &&
     packageHasDstv &&
-    selectedCategory?.requiresDecoderFee
-      ? selectedCategory.decoderFeeAmount || 2900
+    (selectedCategory?.requiresDecoderFee || selectedPackage?.hasDstv)
+      ? selectedCategory?.decoderFeeAmount ||
+        customer?.decoderFeeAmount ||
+        2900
       : 0;
   const displayPrice =
-    packageAmount != null ? packageAmount + decoderFee : undefined;
+    packageAmount == null
+      ? undefined
+      : !isEdit
+        ? packageAmount + decoderFee
+        : packageAmount;
 
   const previewCode = buildCustomerNumberPreview(
     buildings.find((x) => String(x.id) === buildingId),
@@ -778,7 +783,13 @@ export function CustomerForm({
       });
     }
     if (displayPrice != null) {
-      items.push({ label: "Price", value: formatCurrency(displayPrice) });
+      items.push({
+        label: !isEdit && decoderFee > 0 ? "First invoice" : "Package price",
+        value:
+          !isEdit && decoderFee > 0
+            ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAmount)} + decoder ${formatCurrency(decoderFee)})`
+            : formatCurrency(displayPrice),
+      });
     }
 
     items.push({ label: "Billing frequency", value: freqLabel });
@@ -882,6 +893,7 @@ export function CustomerForm({
     customer?.productName,
     customerType,
     customPeriodDays,
+    decoderFee,
     displayPrice,
     dstvDecoderSerial,
     email,
@@ -893,6 +905,7 @@ export function CustomerForm({
     middleName,
     paymentFrequency,
     phone,
+    packageAmount,
     ppoePassword,
     ppoeUsername,
     previewCode,
@@ -1559,15 +1572,45 @@ export function CustomerForm({
                 <option key={p.id} value={p.id} title={p.name}>
                   {isDstvOnly
                     ? formatCurrency(p.price)
-                    : `${p.mbps} Mbps · ${formatCurrency(p.price)}`}
+                    : `${p.mbps} Mbps · ${formatCurrency(p.price)}${
+                        p.hasDstv ? " · +DSTV" : ""
+                      }`}
                 </option>
               ))}
             </SelectField>
           </Field.Root>
-          {!isEdit && packageHasDstv && selectedCategory?.requiresDecoderFee && (
+          {!isEdit && packageHasDstv && decoderFee > 0 && (
             <Box gridColumn={{ md: "span 2" }} bg="orange.50" borderRadius="md" px={3} py={2}>
-              <Text fontSize="sm" color="orange.800">
-                One-off decoder fee: {formatCurrency(decoderFee)}.
+              <Text fontSize="sm" color="orange.800" fontWeight="medium">
+                First invoice: {formatCurrency(packageAmount + decoderFee)}
+              </Text>
+              <Text fontSize="xs" color="orange.700" mt={0.5}>
+                Package {formatCurrency(packageAmount)} + one-time decoder{" "}
+                {formatCurrency(decoderFee)}. Recurring invoices are package only
+                (no decoder).
+              </Text>
+            </Box>
+          )}
+          {isEdit &&
+            canEditPackage &&
+            customer &&
+            selectedPackage &&
+            (Number(selectedPackage.price) !== Number(customer.packagePrice || 0) ||
+              Boolean(customer.hasDstv) !== Boolean(selectedPackage.hasDstv)) && (
+            <Box gridColumn={{ md: "span 2" }} bg="red.50" borderRadius="md" px={3} py={2}>
+              <Text fontSize="sm" color="red.800" fontWeight="medium">
+                Use{" "}
+                {Number(selectedPackage.price) > Number(customer.packagePrice || 0) ||
+                (!customer.hasDstv && Boolean(selectedPackage.hasDstv))
+                  ? "Upgrade Package"
+                  : "Downgrade Package"}{" "}
+                — do not save this change here
+              </Text>
+              <Text fontSize="xs" color="red.700" mt={0.5}>
+                Editing the package on this form does not update Zoho invoices. Price
+                or DSTV changes must go through Upgrade/Downgrade so the customer is
+                billed correctly (including the one-time decoder fee when DSTV is
+                added).
               </Text>
             </Box>
           )}
@@ -2493,9 +2536,9 @@ export function CustomerForm({
             {displayPrice != null && (
               <Text fontSize="sm" color="brand.700" mt={0.5}>
                 {formatCurrency(displayPrice)}
-                {decoderFee > 0 && (
+                {!isEdit && decoderFee > 0 && (
                   <Text as="span" fontSize="xs" display="block" color="brand.600">
-                    incl. {formatCurrency(decoderFee)} decoder fee
+                    first invoice incl. {formatCurrency(decoderFee)} decoder
                   </Text>
                 )}
               </Text>

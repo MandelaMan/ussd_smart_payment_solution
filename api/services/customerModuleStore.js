@@ -363,6 +363,32 @@ function resolvePackagePrice(product, paymentFrequency, customPeriodDays) {
   throw new Error("Invalid payment frequency");
 }
 
+/**
+ * Decoder one-time fee flags for a product (signup / first DSTV invoice).
+ * Returns { required: 0|1, amount: number|null }.
+ */
+async function resolveDecoderFeeForProduct(product) {
+  const productHasDstv = Boolean(product?.has_dstv || product?.hasDstv);
+  const envFee = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
+  if (product?.plan_variant_id) {
+    const variant = await catalogStore.getPlanVariantDetails(
+      product.plan_variant_id
+    );
+    if (variant?.requiresDecoderFee || variant?.hasDstv || productHasDstv) {
+      return {
+        required: 1,
+        amount:
+          variant.decoderFeeAmount != null
+            ? Number(variant.decoderFeeAmount)
+            : envFee,
+      };
+    }
+  } else if (productHasDstv) {
+    return { required: 1, amount: envFee };
+  }
+  return { required: 0, amount: null };
+}
+
 function mapCustomerRow(row) {
   if (!row) return null;
   const buildingDstvSetup = row.building_dstv_setup || "decoder";
@@ -2417,22 +2443,9 @@ async function createCustomer(data) {
 
   let decoderFeeRequired = 0;
   let decoderFeeAmount = null;
-  const productHasDstv = Boolean(product.has_dstv || product.hasDstv);
-  if (product.plan_variant_id) {
-    const variant = await catalogStore.getPlanVariantDetails(
-      product.plan_variant_id
-    );
-    if (variant?.requiresDecoderFee || variant?.hasDstv || productHasDstv) {
-      decoderFeeRequired = 1;
-      decoderFeeAmount =
-        variant.decoderFeeAmount != null
-          ? variant.decoderFeeAmount
-          : Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
-    }
-  } else if (productHasDstv) {
-    decoderFeeRequired = 1;
-    decoderFeeAmount = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
-  }
+  const decoderFee = await resolveDecoderFeeForProduct(product);
+  decoderFeeRequired = decoderFee.required;
+  decoderFeeAmount = decoderFee.amount;
 
   const freqForProduct =
     data.paymentFrequency === "custom" ? "monthly" : data.paymentFrequency;
@@ -3223,7 +3236,12 @@ async function updateCustomerDetails(id, data, options = {}) {
   let paymentFrequency = existing.paymentFrequency;
   let customPeriodDays = existing.customPeriodDays;
   let packagePrice = existing.packagePrice;
+  let decoderFeeRequired = existing.decoderFeeRequired ? 1 : 0;
+  let decoderFeeAmount =
+    existing.decoderFeeAmount != null ? Number(existing.decoderFeeAmount) : null;
   let packageChanged = false;
+  let previousPackagePrice = existing.packagePrice;
+  let previousHasDstv = Boolean(existing.hasDstv);
 
   if (options.allowPackageEdit) {
     if (data.paymentFrequency != null) {
@@ -3253,10 +3271,39 @@ async function updateCustomerDetails(id, data, options = {}) {
       throw new Error("Package must belong to the same building");
     }
     packagePrice = resolvePackagePrice(product, paymentFrequency, customPeriodDays);
+    const decoderFee = await resolveDecoderFeeForProduct(product);
+    decoderFeeRequired = decoderFee.required;
+    decoderFeeAmount = decoderFee.amount;
+    const newHasDstv = Boolean(product.has_dstv || product.hasDstv);
     packageChanged =
       productId !== existing.productId ||
       paymentFrequency !== existing.paymentFrequency ||
       customPeriodDays !== existing.customPeriodDays;
+
+    // Silent admin package edit must not change billed amounts without Zoho.
+    // Higher price / add DSTV → Upgrade. Lower price / remove DSTV → Downgrade.
+    if (packageChanged && options.forceLocalPackageCorrection !== true) {
+      if (
+        packagePrice > previousPackagePrice ||
+        (!previousHasDstv && newHasDstv)
+      ) {
+        const err = new Error(
+          "This package change increases the bill or adds DSTV. Use Upgrade Package so Zoho invoices the price difference and the one-time decoder fee. Admin package edit only updates the database and will not correct an already-sent invoice."
+        );
+        err.code = "PACKAGE_EDIT_REQUIRES_UPGRADE";
+        throw err;
+      }
+      if (
+        packagePrice < previousPackagePrice ||
+        (previousHasDstv && !newHasDstv)
+      ) {
+        const err = new Error(
+          "This package change decreases the bill or removes DSTV. Use Downgrade Package so billing stays in sync. Admin package edit only updates the database and will not correct Zoho invoices."
+        );
+        err.code = "PACKAGE_EDIT_REQUIRES_DOWNGRADE";
+        throw err;
+      }
+    }
   }
 
   const effectiveProduct = await getProductById(productId);
@@ -3375,7 +3422,8 @@ async function updateCustomerDetails(id, data, options = {}) {
          is_vat_exempt = ?, customer_type = ?, agency_id = ?, ip_address = ?,
          dstv_decoder_serial = ?,
          tisp_password = ?, ppoe_username = ?,
-         product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?
+         product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?,
+         decoder_fee_required = ?, decoder_fee_amount = ?
      WHERE id = ?`,
     [
       firstName,
@@ -3401,6 +3449,8 @@ async function updateCustomerDetails(id, data, options = {}) {
       paymentFrequency,
       customPeriodDays,
       packagePrice,
+      decoderFeeRequired,
+      decoderFeeAmount,
       id,
     ]
   );

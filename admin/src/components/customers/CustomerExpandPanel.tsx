@@ -121,6 +121,8 @@ function buildZohoStatusFromInvoices(
     | "fromSnapshot"
     | "cacheFresh"
     | "creditBalance"
+    | "hasFormerTenantInvoices"
+    | "formerTenantInvoiceCount"
   >
 ): CustomerZohoStatus {
   const { overdueCount, totalOverdueBalance } = summarizeOverdueZohoInvoices(invoices);
@@ -133,6 +135,8 @@ function buildZohoStatusFromInvoices(
     unpaidCount: overdueCount,
     totalBalanceDue: totalOverdueBalance,
     creditBalance: creditBalance > 0 ? creditBalance : 0,
+    hasFormerTenantInvoices: billing?.hasFormerTenantInvoices === true,
+    formerTenantInvoiceCount: Number(billing?.formerTenantInvoiceCount) || 0,
     billedViaAgency: billing?.billedViaAgency,
     agencyName: billing?.agencyName,
     billingNote: billing?.billingNote,
@@ -608,19 +612,8 @@ export function CustomerExpandPanel({
     [zohoStatus?.invoices, invoiceSorts]
   );
 
-  /** Invoices on the linked Zoho contact that predate this BIX customer (former tenant). */
-  const hasFormerTenantInvoices = useMemo(() => {
-    const createdAt = customer?.createdAt;
-    const invoices = zohoStatus?.invoices || [];
-    if (!createdAt || !invoices.length) return false;
-    const createdMs = new Date(createdAt).getTime();
-    if (Number.isNaN(createdMs)) return false;
-    return invoices.some((inv) => {
-      if (!inv.date) return false;
-      const invMs = new Date(inv.date).getTime();
-      return !Number.isNaN(invMs) && invMs < createdMs - 120_000;
-    });
-  }, [customer?.createdAt, zohoStatus?.invoices]);
+  /** Former-tenant history still on the linked Zoho contact (hidden from the table). */
+  const hasFormerTenantInvoices = Boolean(zohoStatus?.hasFormerTenantInvoices);
 
   const sortedPayments = useMemo(
     () =>
@@ -685,6 +678,8 @@ export function CustomerExpandPanel({
               fromSnapshot: invoiceRes.fromSnapshot,
               cacheFresh: invoiceRes.cacheFresh,
               creditBalance: invoiceRes.creditBalance,
+              hasFormerTenantInvoices: invoiceRes.hasFormerTenantInvoices,
+              formerTenantInvoiceCount: invoiceRes.formerTenantInvoiceCount,
             }
           )
         );
@@ -1396,7 +1391,11 @@ export function CustomerExpandPanel({
                 borderRadius="md"
               >
                 <Text fontSize="xs" color="orange.900" fontWeight="medium">
-                  These invoices belong to the previous tenant on this apartment’s Zoho contact.
+                  {(zohoStatus?.formerTenantInvoiceCount || 0) > 0
+                    ? `${zohoStatus?.formerTenantInvoiceCount} invoice${
+                        (zohoStatus?.formerTenantInvoiceCount || 0) === 1 ? "" : "s"
+                      } from the previous tenant are hidden — this apartment’s Zoho contact was reused.`
+                    : "This apartment’s Zoho contact still belongs to the previous tenant."}
                 </Text>
                 <Text fontSize="xs" color="orange.800" mt={0.5}>
                   Replace the former Zoho contact to archive it as {customer.customerNumber?.replace(/-CXL-\d+$/i, "") || "the apartment number"}-CXL-… and create a fresh contact + signup invoice for this customer.

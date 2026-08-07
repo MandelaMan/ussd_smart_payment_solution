@@ -285,6 +285,11 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     };
   }
 
+  const {
+    expectedSignupInvoiceTotal,
+  } = require("../utils/zohoInvoiceLineItems");
+  const expectedTotal = expectedSignupInvoiceTotal(customer);
+
   const period = computeBillingPeriod({
     paymentFrequency: customer.paymentFrequency,
     customPeriodDays: customer.customPeriodDays,
@@ -297,6 +302,28 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
       customer
     );
     if (existing?.invoice_id) {
+      const existingTotal = Number(existing.total);
+      // Never re-email / reuse a signup invoice that does not match the current
+      // package (+ decoder). That is how customers got KES 5,900 while on a
+      // KES 9,250 DSTV plan.
+      if (
+        Number.isFinite(existingTotal) &&
+        expectedTotal > 0 &&
+        Math.abs(existingTotal - expectedTotal) > 1
+      ) {
+        const err = new Error(
+          `Existing signup invoice ${
+            existing.invoice_number || existing.invoice_id
+          } totals KES ${existingTotal.toLocaleString()} but the current package requires KES ${expectedTotal.toLocaleString()} (package + one-time decoder when DSTV). Void or credit the wrong invoice in Zoho, then use Upgrade Package (or create a new signup invoice with disregardExistingInvoices).`
+        );
+        err.code = "SIGNUP_INVOICE_AMOUNT_MISMATCH";
+        err.existingInvoiceId = String(existing.invoice_id);
+        err.existingInvoiceNumber = existing.invoice_number || null;
+        err.existingTotal = existingTotal;
+        err.expectedTotal = expectedTotal;
+        throw err;
+      }
+
       const emailResult = await emailSignupInvoiceOnce(
         existing,
         customer,
@@ -704,6 +731,7 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
       zohoContactId: zohoContact.contact_id,
       contactCreated,
       contactUpdated: !contactCreated,
+      retiredFormer,
       billingSkipped: linkedExisting,
       invoice,
       recurring,

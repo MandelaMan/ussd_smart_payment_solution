@@ -389,6 +389,35 @@ function isZohoContactOlderThanCustomer(contact, customer, skewMs = 120_000) {
   return zohoMs < custMs - skewMs;
 }
 
+/** True when any invoice on the contact was issued before this BIX customer existed. */
+function invoicesPredateCustomer(invoices, customer, skewMs = 120_000) {
+  const customerCreated = customer?.createdAt || customer?.created_at;
+  if (!customerCreated) return false;
+  const custMs = new Date(customerCreated).getTime();
+  if (Number.isNaN(custMs)) return false;
+  return (invoices || []).some((inv) => {
+    const invMs = new Date(
+      inv?.created_time || inv?.date || inv?.createdAt || ""
+    ).getTime();
+    return !Number.isNaN(invMs) && invMs < custMs - skewMs;
+  });
+}
+
+/** Keep C2B invoices that belong to this tenancy (issued at/after customer create). */
+function filterInvoicesForCurrentTenant(invoices, customer, skewMs = 120_000) {
+  const customerCreated = customer?.createdAt || customer?.created_at;
+  if (!customerCreated) return invoices || [];
+  const custMs = new Date(customerCreated).getTime();
+  if (Number.isNaN(custMs)) return invoices || [];
+  return (invoices || []).filter((inv) => {
+    const invMs = new Date(
+      inv?.created_time || inv?.date || inv?.createdAt || ""
+    ).getTime();
+    if (Number.isNaN(invMs)) return true;
+    return invMs >= custMs - skewMs;
+  });
+}
+
 /**
  * Rename Zoho company_name to the cancelled BIX number ({POP}-{APT}-CXL-{id},
  * e.g. ET-H302-CXL-237), stop recurring, mark inactive. Frees the live
@@ -660,26 +689,17 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     if (isZohoContactOlderThanCustomer(contact, customer)) {
       return true;
     }
-    // No reliable Zoho created_time: retire only when invoices clearly predate
-    // this dashboard customer (do not retire a contact we just created).
-    if (!contact.created_time && (customer.createdAt || customer.created_at)) {
+    // Always check invoice history when replacing tenants — Zoho created_time can be
+    // missing, wrong, or newer than reality after a contact was reused/updated.
+    if (customer.createdAt || customer.created_at) {
       try {
         const { getInvoices_JS } = require("./zoho.controller");
         const invoices = await getInvoices_JS({
           customer_id: contact.contact_id,
-          per_page: 20,
+          per_page: 50,
           page: 1,
         });
-        const custMs = new Date(
-          customer.createdAt || customer.created_at
-        ).getTime();
-        if (
-          !Number.isNaN(custMs) &&
-          (invoices || []).some((inv) => {
-            const invMs = new Date(inv.created_time || inv.date).getTime();
-            return !Number.isNaN(invMs) && invMs < custMs - 120_000;
-          })
-        ) {
+        if (invoicesPredateCustomer(invoices, customer)) {
           return true;
         }
       } catch {
@@ -958,17 +978,28 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
             stored.zohoContactId,
             customer
           );
+          const hasFormerTenantInvoices = invoicesPredateCustomer(
+            mapped,
+            customer
+          );
+          const displayMapped = isB2BCustomer(customer)
+            ? mapped
+            : filterInvoicesForCurrentTenant(mapped, customer);
         const { overdueCount, totalOverdueBalance } =
-          summarizeOverdueZohoInvoices(mapped);
+          summarizeOverdueZohoInvoices(displayMapped);
         const creditBalance = Number(stored.creditBalance) || 0;
         const result = {
           linked: true,
           zohoContactId: stored.zohoContactId,
-          invoices: mapped,
-          invoiceCount: mapped.length,
+          invoices: displayMapped,
+          invoiceCount: displayMapped.length,
           unpaidCount: overdueCount,
           totalBalanceDue: totalOverdueBalance,
           creditBalance: creditBalance > 0 ? creditBalance : 0,
+          hasFormerTenantInvoices,
+          formerTenantInvoiceCount: hasFormerTenantInvoices
+            ? Math.max(0, mapped.length - displayMapped.length)
+            : 0,
           fromSnapshot: true,
           lastSyncedAt: stored.syncedAt,
           cacheFresh: true,
@@ -977,7 +1008,7 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
         try {
           await store.reconcileZohoBillingStatus(customerId, {
             linked: true,
-            invoiceCount: mapped.length,
+            invoiceCount: displayMapped.length,
           });
         } catch (e) {
           console.warn("Zoho billing status reconcile failed:", e.message);
@@ -1147,9 +1178,12 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     }))
     .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
+  const hasFormerTenantInvoices =
+    !isB2BCustomer(customer) && invoicesPredateCustomer(mapped, customer);
+
   const displayInvoices = isB2BCustomer(customer)
     ? filterAgencyInvoicesForCustomer(mapped, customer.customerNumber)
-    : mapped;
+    : filterInvoicesForCurrentTenant(mapped, customer);
 
   const { overdueCount, totalOverdueBalance } =
     summarizeOverdueZohoInvoices(displayInvoices);
@@ -1166,6 +1200,10 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     totalBalanceDue: totalOverdueBalance,
     creditBalance,
     lastPaymentDate,
+    hasFormerTenantInvoices,
+    formerTenantInvoiceCount: hasFormerTenantInvoices
+      ? Math.max(0, mapped.length - displayInvoices.length)
+      : 0,
     ...(isB2BCustomer(customer) ? b2bBillingMeta(customer, agency) : {}),
   };
 
@@ -2115,6 +2153,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   const createInitialInvoice = options.createInitialInvoice === true;
   const createRecurringInvoice = options.createRecurringInvoice === true;
   const updateZohoRecurring = options.updateZohoRecurring === true;
+  const disregardExistingInvoices = options.disregardExistingInvoices === true;
   const previousCustomerNumber = options.previousCustomerNumber
     ? String(options.previousCustomerNumber).trim().toUpperCase()
     : null;
@@ -2241,7 +2280,9 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       let recurring = null;
 
       if (createInitialInvoice) {
-        invoice = await createSignupInvoice(customer, contact);
+        invoice = await createSignupInvoice(customer, contact, {
+          disregardExistingInvoices,
+        });
       }
 
       if (createRecurringInvoice || updateZohoRecurring || apartmentChanged) {
@@ -5221,6 +5262,10 @@ async function updateCustomer(req, res, next) {
     const createInitialInvoice = body.createInitialInvoice === true;
     const createRecurringInvoice = body.createRecurringInvoice === true;
     const updateZohoRecurring = body.updateZohoRecurring === true;
+    const forceLocalPackageCorrection =
+      body.forceLocalPackageCorrection === true;
+    const disregardExistingInvoices =
+      body.disregardExistingInvoices === true;
     const tispDueDate = body.tispDueDate
       ? String(body.tispDueDate).trim()
       : null;
@@ -5265,7 +5310,10 @@ async function updateCustomer(req, res, next) {
         ppoePassword: body.ppoePassword,
         tispPassword: body.tispPassword,
       },
-      { allowPackageEdit: isAdmin && wantsPackageEdit }
+      {
+        allowPackageEdit: isAdmin && wantsPackageEdit,
+        forceLocalPackageCorrection,
+      }
     );
 
     let tisp = { ok: true, skipped: true };
@@ -5276,6 +5324,7 @@ async function updateCustomer(req, res, next) {
         createInitialInvoice,
         createRecurringInvoice,
         updateZohoRecurring,
+        disregardExistingInvoices,
         tispDueDate: tispDueDate || undefined,
         apartmentChanged: Boolean(apartmentChanged),
         previousCustomerNumber: previousCustomerNumber || undefined,
@@ -5621,6 +5670,8 @@ async function getCustomerInvoices(req, res, next) {
       fromSnapshot: zoho.fromSnapshot === true,
       cacheFresh: zoho.cacheFresh === true,
       creditBalance: Number(zoho.creditBalance) > 0 ? Number(zoho.creditBalance) : 0,
+      hasFormerTenantInvoices: zoho.hasFormerTenantInvoices === true,
+      formerTenantInvoiceCount: Number(zoho.formerTenantInvoiceCount) || 0,
     });
   } catch (err) {
     return next(err);
@@ -5662,10 +5713,28 @@ async function retryBillingOnboarding(req, res, next) {
         });
       }
 
-      const [updatedCustomer, zoho] = await Promise.all([
-        store.getCustomerById(id),
-        fetchCustomerZohoInvoices(customer, { skipCache: true }),
-      ]);
+      const updatedCustomer = await store.getCustomerById(id);
+      const zoho = await fetchCustomerZohoInvoices(updatedCustomer || customer, {
+        skipCache: true,
+      });
+
+      // Replace must leave this customer on a fresh Zoho contact — not the
+      // former tenant's invoice history. forceBilling alone used to report
+      // success while still linked to the old contact.
+      if (zoho?.hasFormerTenantInvoices) {
+        return res.status(502).json({
+          ok: false,
+          error:
+            "Still linked to the previous tenant’s Zoho contact (older invoices remain). Open Zoho Books, confirm the former contact was renamed to …-CXL-… and marked inactive, then try Replace again.",
+          billing: {
+            ...billing,
+            retiredFormer: Boolean(billing.retiredFormer),
+            contactCreated: Boolean(billing.contactCreated),
+          },
+          zoho,
+          customer: updatedCustomer,
+        });
+      }
 
       try {
         const invoice = billing.invoice || {};
