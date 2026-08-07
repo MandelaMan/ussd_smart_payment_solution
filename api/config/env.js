@@ -9,7 +9,7 @@ const loadEnv = () => {
     MYSQL_DATABASE = "",
     MYSQL_CONNECTION_LIMIT = 10,
     JWT_SECRET = "",
-    JWT_EXPIRES_IN = "8h",
+    JWT_EXPIRES_IN = "7d",
     ADMIN_ORIGIN = "http://localhost:5173",
     REDIS_HOST = "localhost",
     REDIS_PORT = 6379,

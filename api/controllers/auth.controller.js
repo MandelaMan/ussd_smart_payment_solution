@@ -198,7 +198,7 @@ async function login(req, res, next) {
     const decoded = jwt.decode(token);
     const expiresAt = decoded?.exp
       ? new Date(decoded.exp * 1000)
-      : new Date(Date.now() + 8 * 60 * 60 * 1000);
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await createSession({
       jti,
@@ -321,7 +321,7 @@ async function changePassword(req, res, next) {
     const decoded = jwt.decode(token);
     const expiresAt = decoded?.exp
       ? new Date(decoded.exp * 1000)
-      : new Date(Date.now() + 8 * 60 * 60 * 1000);
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await createSession({ jti, userId: user.id, expiresAt, req });
     setAuthCookie(res, token);
 

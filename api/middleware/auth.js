@@ -44,7 +44,7 @@ function signToken(user, options = {}) {
     },
     getJwtSecret(),
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || "8h",
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
       algorithm: JWT_ALGORITHM,
     }
   );
@@ -55,7 +55,7 @@ function setAuthCookie(res, token) {
   const maxAge =
     decoded?.exp != null
       ? Math.max(0, decoded.exp * 1000 - Date.now())
-      : 8 * 60 * 60 * 1000;
+      : 7 * 24 * 60 * 60 * 1000;
   res.cookie(COOKIE_NAME, token, {
     ...getCookieOptions(),
     maxAge,

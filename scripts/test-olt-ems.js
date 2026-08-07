@@ -155,7 +155,7 @@ async function adminLogin() {
       tv: 0,
     },
     secret,
-    { expiresIn: process.env.JWT_EXPIRES_IN || "8h", algorithm: "HS256" }
+    { expiresIn: process.env.JWT_EXPIRES_IN || "7d", algorithm: "HS256" }
   );
   return { Cookie: `admin_token=${token}` };
 }

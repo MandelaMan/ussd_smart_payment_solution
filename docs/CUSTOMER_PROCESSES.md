@@ -34,7 +34,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 | Convert C2B↔B2B | Type, agency, customer number, PPPoE if it tracked the number | Migrate old → new account number (preserve due date) | C2B→B2B: stop personal recurring, inactive contact, ensure agency. B2B→C2B: stop agency recurring for old number, create/sync personal + recurring | No |
 | Pause service (away) | `subscription_status=Paused`, pause window + reason | Due date = today (stop access) | Defer matching recurring so next invoice is after pause end | Deactivate ONU |
 | Suspend on TISP | `subscription_status=Suspended` | Due date = today | **None** (billing continues) | Deactivate ONU |
-| Cancel subscription | `status=cancelled`, close apartment history, collection dates | Due date = cancel day (async) | C2B: stop recurring + inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
+| Cancel subscription | `status=cancelled`, close apartment history, collection dates. Number/IP/DSTV stay until a new signup reclaims them | Due date = cancel day (async) | C2B: stop recurring + inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
 | Apartment history | Read-only timeline | — | — | — |
 | Delete permanently | Hard-delete local rows | **Untouched** | **Untouched** | **Untouched** |
 
@@ -169,7 +169,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 - **Zoho:** Background — C2B stop recurring + mark inactive; B2B stop only recurring rows matching this customer number on the agency contact (agency stays active).
 - **OLT:** Background deactivate ONU when linked.
 
-**Notes:** Response returns `tisp/zoho: pending` immediately; check activity log for integration results. Prefer Cancel over Delete for leavers.
+**Notes:** Response returns `tisp/zoho: pending` immediately; check activity log for integration results. Prefer Cancel over Delete for leavers. The apartment is free for a new active tenant immediately. When the next signup uses the same apartment (same customer number), the cancelled row’s number is archived as `{number}-CXL-{id}` and its IP/DSTV serial are cleared so UNIQUE keys can be reused — no hard-delete required.
 
 ---
 

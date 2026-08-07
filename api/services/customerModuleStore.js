@@ -187,6 +187,121 @@ function buildCustomerNumber(building, customerType, apartmentNumber) {
   return `${popCode}-${apt}`;
 }
 
+/**
+ * Archive a cancelled customer's live account number so the next tenant can
+ * reuse the apartment-based number. Keeps the row for history/reporting.
+ * VARCHAR(50) — keep archived form short: {number}-CXL-{id}
+ */
+function archiveCancelledCustomerNumber(customerNumber, customerId) {
+  const base = String(customerNumber || "")
+    .trim()
+    .toUpperCase()
+    .replace(/-CXL-\d+$/i, "");
+  const suffix = `-CXL-${Number(customerId)}`;
+  const maxBase = Math.max(1, 50 - suffix.length);
+  return `${base.slice(0, maxBase)}${suffix}`;
+}
+
+/**
+ * Cancelled customers still occupy UNIQUE keys (customer_number, ip_address,
+ * dstv_decoder_serial). Free those keys when a new/active signup needs them.
+ * Active holders still block.
+ */
+async function releaseCancelledIdentityForReuse({
+  customerNumber = null,
+  ipAddress = null,
+  dstvDecoderSerial = null,
+  excludeCustomerId = null,
+} = {}) {
+  const number = String(customerNumber || "").trim();
+  if (number) {
+    const holders = await query(
+      `SELECT id, customer_number, status
+       FROM customers
+       WHERE customer_number = ?
+       LIMIT 5`,
+      [number]
+    );
+    for (const row of holders) {
+      if (excludeCustomerId && Number(row.id) === Number(excludeCustomerId)) {
+        continue;
+      }
+      if (row.status === "active") {
+        throw new Error(
+          `Customer number already exists for this apartment (${row.customer_number})`
+        );
+      }
+      const archived = archiveCancelledCustomerNumber(row.customer_number, row.id);
+      await query(
+        `UPDATE customers
+         SET customer_number = ?,
+             ip_address = NULL,
+             ppoe_username = NULL,
+             dstv_decoder_serial = NULL
+         WHERE id = ? AND status = 'cancelled'`,
+        [archived, row.id]
+      );
+    }
+  }
+
+  const ip = ipAddress ? String(ipAddress).trim() : "";
+  if (ip) {
+    const holders = await query(
+      `SELECT id, customer_number, status
+       FROM customers
+       WHERE ip_address = ?
+       LIMIT 5`,
+      [ip]
+    );
+    for (const row of holders) {
+      if (excludeCustomerId && Number(row.id) === Number(excludeCustomerId)) {
+        continue;
+      }
+      if (row.status === "active") {
+        throw new Error(
+          `IP address ${ip} is already assigned to ${row.customer_number}`
+        );
+      }
+      await query(
+        `UPDATE customers
+         SET ip_address = NULL
+         WHERE id = ? AND status = 'cancelled'`,
+        [row.id]
+      );
+    }
+  }
+
+  const serial = normalizeDstvDecoderSerial(dstvDecoderSerial);
+  if (serial) {
+    const holders = await query(
+      `SELECT id, customer_number, first_name, middle_name, last_name, status
+       FROM customers
+       WHERE dstv_decoder_serial = ?
+       LIMIT 5`,
+      [serial]
+    );
+    for (const row of holders) {
+      if (excludeCustomerId && Number(row.id) === Number(excludeCustomerId)) {
+        continue;
+      }
+      if (row.status === "active") {
+        const name = [row.first_name, row.middle_name, row.last_name]
+          .filter(Boolean)
+          .join(" ");
+        throw new Error(
+          `DSTV decoder serial is already assigned to ${name} (${row.customer_number})`
+        );
+      }
+      await query(
+        `UPDATE customers
+         SET dstv_decoder_serial = NULL
+         WHERE id = ? AND status = 'cancelled'`,
+        [row.id]
+      );
+    }
+  }
+}
+
 const DAYS_PER_MONTH = 30;
 
 function resolvePackagePrice(product, paymentFrequency, customPeriodDays) {
@@ -2099,16 +2214,10 @@ async function assertDstvSerialUnique(serial, excludeCustomerId = null) {
   const normalized = normalizeDstvDecoderSerial(serial);
   if (!normalized) return;
 
-  const existing = await findCustomerByDstvSerial(normalized);
-  if (!existing) return;
-  if (excludeCustomerId && Number(existing.id) === Number(excludeCustomerId)) return;
-
-  const name = [existing.first_name, existing.middle_name, existing.last_name]
-    .filter(Boolean)
-    .join(" ");
-  throw new Error(
-    `DSTV decoder serial is already assigned to ${name} (${existing.customer_number})`
-  );
+  await releaseCancelledIdentityForReuse({
+    dstvDecoderSerial: normalized,
+    excludeCustomerId,
+  });
 }
 
 async function validateAndNormalizeCustomerEmail(data, { existingCustomer = null } = {}) {
@@ -2227,6 +2336,16 @@ async function createCustomer(data) {
     apartmentNumber
   );
 
+  const dstvDecoderSerial = normalizeDstvDecoderSerial(data.dstvDecoderSerial);
+  assertDstvDecoderSerial(product, building, dstvDecoderSerial);
+
+  // Cancelled prior tenants still hold UNIQUE keys — free them for the new occupant.
+  await releaseCancelledIdentityForReuse({
+    customerNumber,
+    ipAddress: resolvedIp,
+    dstvDecoderSerial,
+  });
+
   const tispPassword =
     building.ip_setup === "STATIC"
       ? apartmentNumber
@@ -2276,10 +2395,6 @@ async function createCustomer(data) {
   if (product.payment_frequency !== freqForProduct && data.paymentFrequency !== "custom") {
     throw new Error("Selected product does not match payment frequency");
   }
-
-  const dstvDecoderSerial = normalizeDstvDecoderSerial(data.dstvDecoderSerial);
-  assertDstvDecoderSerial(product, building, dstvDecoderSerial);
-  await assertDstvSerialUnique(dstvDecoderSerial);
 
   const trialPeriodEnabled = Boolean(data.trialPeriod);
   const trialEndsAt = trialPeriodEnabled ? computeTrialEndDate() : null;
@@ -2672,10 +2787,10 @@ async function switchCustomerApartment(
       );
     }
     if (ipCheck.ip !== customer.ip_address) {
-      const ipTaken = await findCustomerByIp(ipCheck.ip);
-      if (ipTaken && Number(ipTaken.id) !== Number(customerId)) {
-        throw new Error("IP address is already assigned");
-      }
+      await releaseCancelledIdentityForReuse({
+        ipAddress: ipCheck.ip,
+        excludeCustomerId: customerId,
+      });
     }
     resolvedIp = ipCheck.ip;
   }
@@ -2686,6 +2801,11 @@ async function switchCustomerApartment(
     newApartment
   );
   const previousCustomerNumber = customer.customer_number;
+
+  await releaseCancelledIdentityForReuse({
+    customerNumber: newCustomerNumber,
+    excludeCustomerId: customerId,
+  });
 
   const tispPassword =
     building.ip_setup === "STATIC" ? newApartment : generatePppoePassword();
@@ -3408,13 +3528,10 @@ async function convertCustomerType(customerId, targetType, agencyId = null) {
     customer.apartment_number
   );
 
-  const [existing] = await query(
-    `SELECT id FROM customers WHERE customer_number = ? AND id <> ? LIMIT 1`,
-    [newCustomerNumber, customerId]
-  );
-  if (existing) {
-    throw new Error(`Customer number ${newCustomerNumber} is already in use`);
-  }
+  await releaseCancelledIdentityForReuse({
+    customerNumber: newCustomerNumber,
+    excludeCustomerId: customerId,
+  });
 
   const oldNumber = customer.customer_number;
   const previousAgencyId = customer.agency_id || null;
@@ -3773,24 +3890,35 @@ async function assertImportNotDuplicate({
 
   const existingByNumber = await findCustomerByNumber(normalizedNumber);
   if (existingByNumber) {
-    throw new Error(`Customer number already exists: ${normalizedNumber}`);
+    if (existingByNumber.status === "active") {
+      throw new Error(`Customer number already exists: ${normalizedNumber}`);
+    }
+    await releaseCancelledIdentityForReuse({ customerNumber: normalizedNumber });
   }
 
   if (ipAddress) {
     const existingByIp = await findCustomerByIp(ipAddress);
     if (existingByIp) {
-      throw new Error(
-        `IP address ${ipAddress} is already assigned to ${existingByIp.customer_number}`
-      );
+      if (existingByIp.status === "active") {
+        throw new Error(
+          `IP address ${ipAddress} is already assigned to ${existingByIp.customer_number}`
+        );
+      }
+      await releaseCancelledIdentityForReuse({ ipAddress });
     }
   }
 
   if (normalizedDstvSerial) {
     const existingByDstv = await findCustomerByDstvSerial(normalizedDstvSerial);
     if (existingByDstv) {
-      throw new Error(
-        `DSTV decoder serial ${normalizedDstvSerial} is already assigned to ${existingByDstv.customer_number}`
-      );
+      if (existingByDstv.status === "active") {
+        throw new Error(
+          `DSTV decoder serial ${normalizedDstvSerial} is already assigned to ${existingByDstv.customer_number}`
+        );
+      }
+      await releaseCancelledIdentityForReuse({
+        dstvDecoderSerial: normalizedDstvSerial,
+      });
     }
   }
 }
@@ -4289,6 +4417,7 @@ module.exports = {
   findCustomerByIp,
   findCustomerByDstvSerial,
   assertDstvSerialUnique,
+  releaseCancelledIdentityForReuse,
   assertImportNotDuplicate,
   registerImportBatchEntry,
   importCustomerFromRow,
