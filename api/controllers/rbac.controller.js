@@ -5,6 +5,7 @@ const {
   invalidateUserPermissionCache,
   auditPermissionChange,
   clientMeta,
+  isAdministrator,
 } = require("../rbac/permissionService");
 const { getPermission: lookupPerm } = require("../rbac/permissionCatalog");
 
@@ -287,6 +288,13 @@ async function setUserPermissionOverrides(req, res, next) {
       [userId]
     );
     if (!rows[0]) return res.status(404).json({ error: "User not found" });
+
+    if (isAdministrator(rows[0].role)) {
+      return res.status(400).json({
+        error:
+          "Administrator accounts always have access to all modules. Change the system role to User before editing individual permissions.",
+      });
+    }
 
     const prev = await query(
       `SELECT perm_key, effect FROM rbac_user_permissions WHERE user_id = ?`,

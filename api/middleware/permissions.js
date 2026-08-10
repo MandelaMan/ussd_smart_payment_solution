@@ -45,6 +45,7 @@ function requirePermission(...keys) {
         return res.status(401).json({ error: "Authentication required" });
       }
       if (!required.length) return next();
+      if (isAdministrator(req.user.role)) return next();
 
       const set = await ensureReqPermissionSet(req);
       const ok = required.some((k) => set.has(k));
@@ -68,6 +69,7 @@ function requireAllPermissions(...keys) {
       if (!req.user) {
         return res.status(401).json({ error: "Authentication required" });
       }
+      if (isAdministrator(req.user.role)) return next();
       const set = await ensureReqPermissionSet(req);
       for (const key of required) {
         if (!set.has(key)) {
@@ -97,6 +99,7 @@ function requireAdministrator(req, res, next) {
 
 module.exports = {
   attachPermissions,
+  ensureReqPermissionSet,
   requirePermission,
   requireAllPermissions,
   requireAdministrator,

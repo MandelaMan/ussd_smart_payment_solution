@@ -554,7 +554,16 @@ async function updateUser(req, res, next) {
     if (Array.isArray(groupIds)) {
       await setUserGroups(id, groupIds);
       shouldInvalidate = true;
-      await invalidateUserPermissionCache();
+    }
+
+    // Promoting to Administrator grants every module — drop stale overrides and refresh cache.
+    if (role === "admin") {
+      await query(`DELETE FROM rbac_user_permissions WHERE user_id = ?`, [id]);
+      shouldInvalidate = true;
+    }
+
+    if (shouldInvalidate) {
+      await invalidateUserPermissionCache(Number(id));
     }
 
     if (shouldInvalidate && (role || is_active === false)) {
@@ -668,7 +677,7 @@ async function resetUserPassword(req, res, next) {
 
     return res.json({
       ok: true,
-      temporaryPassword: password ? undefined : temporaryPassword,
+      temporaryPassword,
       mustChangePassword: true,
       emailed,
       email: target.email,

@@ -2074,7 +2074,7 @@ export const api = {
   ) =>
     request<{
       ok: boolean;
-      temporaryPassword?: string;
+      temporaryPassword: string;
       mustChangePassword: boolean;
       emailed?: boolean;
       email?: string;

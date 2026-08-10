@@ -125,7 +125,7 @@ async function invalidateUserPermissionCache(userId) {
 /**
  * Resolve effective permissions for a user.
  * Order: role defaults → group union → individual grants → individual denies.
- * Administrators start with all permissions (denies still apply).
+ * Administrators always receive every catalog permission (groups/overrides ignored).
  *
  * @returns {Promise<{ permissions: string[], sources: Record<string, string[]>, groups: object[] }>}
  */
@@ -161,6 +161,15 @@ async function resolveUserPermissions(user) {
   /** @type {Set<string>} */
   const effective = new Set();
 
+  const groups = await query(
+    `SELECT g.id, g.slug, g.name, g.description
+     FROM rbac_user_groups ug
+     JOIN rbac_groups g ON g.id = ug.group_id
+     WHERE ug.user_id = ? AND g.is_active = 1
+     ORDER BY g.name ASC`,
+    [user.id]
+  );
+
   if (role === "admin") {
     for (const key of allPermissionKeys()) {
       effective.add(key);
@@ -171,47 +180,37 @@ async function resolveUserPermissions(user) {
       effective.add(key);
       addSource(key, "role:user");
     }
-  }
 
-  const groups = await query(
-    `SELECT g.id, g.slug, g.name, g.description
-     FROM rbac_user_groups ug
-     JOIN rbac_groups g ON g.id = ug.group_id
-     WHERE ug.user_id = ? AND g.is_active = 1
-     ORDER BY g.name ASC`,
-    [user.id]
-  );
-
-  if (groups.length) {
-    const groupIds = groups.map((g) => g.id);
-    const placeholders = groupIds.map(() => "?").join(",");
-    const groupPerms = await query(
-      `SELECT gp.perm_key, g.slug AS group_slug
-       FROM rbac_group_permissions gp
-       JOIN rbac_groups g ON g.id = gp.group_id
-       WHERE gp.group_id IN (${placeholders})`,
-      groupIds
-    );
-    for (const row of groupPerms) {
-      effective.add(row.perm_key);
-      addSource(row.perm_key, `group:${row.group_slug}`);
+    if (groups.length) {
+      const groupIds = groups.map((g) => g.id);
+      const placeholders = groupIds.map(() => "?").join(",");
+      const groupPerms = await query(
+        `SELECT gp.perm_key, g.slug AS group_slug
+         FROM rbac_group_permissions gp
+         JOIN rbac_groups g ON g.id = gp.group_id
+         WHERE gp.group_id IN (${placeholders})`,
+        groupIds
+      );
+      for (const row of groupPerms) {
+        effective.add(row.perm_key);
+        addSource(row.perm_key, `group:${row.group_slug}`);
+      }
     }
-  }
 
-  const overrides = await query(
-    `SELECT perm_key, effect FROM rbac_user_permissions WHERE user_id = ?`,
-    [user.id]
-  );
+    const overrides = await query(
+      `SELECT perm_key, effect FROM rbac_user_permissions WHERE user_id = ?`,
+      [user.id]
+    );
 
-  for (const row of overrides) {
-    if (row.effect === "grant") {
-      effective.add(row.perm_key);
-      addSource(row.perm_key, "user:grant");
-    } else if (row.effect === "deny") {
-      effective.delete(row.perm_key);
-      // Track deny as source even when removed from effective set
-      if (!sources.has(row.perm_key)) sources.set(row.perm_key, new Set());
-      sources.get(row.perm_key).add("user:deny");
+    for (const row of overrides) {
+      if (row.effect === "grant") {
+        effective.add(row.perm_key);
+        addSource(row.perm_key, "user:grant");
+      } else if (row.effect === "deny") {
+        effective.delete(row.perm_key);
+        if (!sources.has(row.perm_key)) sources.set(row.perm_key, new Set());
+        sources.get(row.perm_key).add("user:deny");
+      }
     }
   }
 

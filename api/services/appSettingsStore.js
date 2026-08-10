@@ -111,7 +111,7 @@ const DEFAULT_WELCOME_BODY_HTML = `<p>Dear {{firstName}},</p>
   <strong>Package:</strong> {{productName}}
 </p>
 <p>Please use your account number as the M-Pesa Paybill reference for payments.</p>
-<p>If you have any questions, reply to this email — we are happy to help.</p>
+<p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`;
 
 /** Lifecycle email templates editable under Settings → Customer emails. */
@@ -136,7 +136,8 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>New package:</strong> {{productName}} ({{productMbps}} Mbps)<br/>
   <strong>Billing:</strong> {{paymentFrequency}} · {{packagePrice}}
 </p>
-<p>Your new speeds should be available shortly. If anything looks wrong, reply to this email.</p>
+<p>Your new speeds should be available shortly.</p>
+<p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
   downgrade: {
@@ -152,7 +153,8 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>New package:</strong> {{productName}} ({{productMbps}} Mbps)<br/>
   <strong>Billing:</strong> {{paymentFrequency}} · {{packagePrice}}
 </p>
-<p>If a credit applies, it will appear on your Zoho Books account. Reply to this email with any questions.</p>
+<p>If a credit applies, it will appear on your Zoho Books account.</p>
+<p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
   apartment_move: {
@@ -183,7 +185,7 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>Package:</strong> {{productName}}<br/>
   {{#cancellationReason}}<strong>Reason:</strong> {{cancellationReason}}{{/cancellationReason}}
 </p>
-<p>If this was unexpected or you wish to reconnect, reply to this email and we will help.</p>
+<p>If this was unexpected or you wish to reconnect, please email wecare@sulsolutions.biz or support@sulsolutions.biz. This is a no-reply email.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`.replace(
       "{{#cancellationReason}}<strong>Reason:</strong> {{cancellationReason}}{{/cancellationReason}}",
       "<strong>Reason:</strong> {{cancellationReason}}"
@@ -201,7 +203,8 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>Reason:</strong> {{pauseReason}}<br/>
   <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}
 </p>
-<p>Service will remain stopped until the pause ends (or you ask us to resume earlier). Reply to this email if you need changes.</p>
+<p>Service will remain stopped until the pause ends (or you ask us to resume earlier).</p>
+<p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
   disconnect: {
@@ -215,7 +218,7 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}<br/>
   <strong>Package:</strong> {{productName}}
 </p>
-<p>To restore service after payment or for any questions, reply to this email or contact support.</p>
+<p>To restore service after payment, please email wecare@sulsolutions.biz or support@sulsolutions.biz. This is a no-reply email.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
   trial_started: {
@@ -247,16 +250,57 @@ function coerceBool(value, fallback = false) {
   return fallback;
 }
 
+const NO_REPLY_CONTACT_COPY =
+  "This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.";
+
+/** Rewrite legacy “reply to this email” copy in saved templates. */
+function migrateNoReplyEmailCopy(html) {
+  let out = String(html || "");
+  const replacements = [
+    [
+      /If you have any questions, reply to this email — we are happy to help\./gi,
+      NO_REPLY_CONTACT_COPY,
+    ],
+    [
+      /If anything looks wrong, reply to this email\./gi,
+      NO_REPLY_CONTACT_COPY,
+    ],
+    [
+      /Reply to this email with any questions\./gi,
+      NO_REPLY_CONTACT_COPY,
+    ],
+    [
+      /If this was unexpected or you wish to reconnect, reply to this email and we will help\./gi,
+      `If this was unexpected or you wish to reconnect, please email wecare@sulsolutions.biz or support@sulsolutions.biz. This is a no-reply email.`,
+    ],
+    [
+      /Reply to this email if you need changes\./gi,
+      NO_REPLY_CONTACT_COPY,
+    ],
+    [
+      /To restore service after payment or for any questions, reply to this email or contact support\./gi,
+      `To restore service after payment, please email wecare@sulsolutions.biz or support@sulsolutions.biz. This is a no-reply email.`,
+    ],
+  ];
+  for (const [pattern, replacement] of replacements) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 function normalizeTemplateEntry(key, raw = {}) {
   const def = CUSTOMER_EMAIL_TEMPLATE_DEFS[key];
   if (!def) return null;
+  const bodyHtml = migrateNoReplyEmailCopy(
+    String(raw.bodyHtml || "").trim() || def.defaultBodyHtml
+  );
   return {
     enabled: coerceBool(
       raw.enabled != null ? raw.enabled : def.defaultEnabled,
       def.defaultEnabled
     ),
     subject: String(raw.subject || "").trim() || def.defaultSubject,
-    bodyHtml: String(raw.bodyHtml || "").trim() || def.defaultBodyHtml,
+    bodyHtml,
     ccEmails: normalizeEmailList(raw.ccEmails, []),
     label: def.label,
     description: def.description,

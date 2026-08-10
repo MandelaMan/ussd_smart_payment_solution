@@ -1,23 +1,43 @@
-import type { ActivityItem } from "./api";
+import type { ActivityItem, User } from "./api";
+import { hasPermission } from "./rbac";
 
-/** Support dashboard / mobile activity whitelist (matches API SUPPORT_ACTIVITY_TYPES). */
-export const SUPPORT_ACTIVITY_EVENT_TYPES = new Set([
+/**
+ * Customer lifecycle events for Recent Activity.
+ * Keep in sync with api/lib/customerActivityEvents.js
+ */
+export const CUSTOMER_ACTIVITY_EVENT_TYPES = [
   "customer_created",
   "customer_created_tisp_failed",
+  "customer_created_zoho_failed",
+  "customer_imported",
+  "customer_imported_tisp_failed",
   "customer_updated",
-  "customer_cancelled",
   "customer_upgraded",
   "customer_downgraded",
+  "customer_frequency_changed",
   "customer_apartment_switched",
   "customer_type_changed",
   "customer_paused",
-  "customer_disconnected",
-  "customer_deleted",
   "tisp_reconnected",
   "tisp_reconnect_failed",
-]);
+  "customer_disconnected",
+  "customer_cancelled",
+  "customer_deleted",
+] as const;
 
-/** Automated jobs that clutter the feed — not attributable team actions. */
+/** @deprecated Use CUSTOMER_ACTIVITY_EVENT_TYPES / isVisibleCustomerActivity */
+export const SUPPORT_ACTIVITY_EVENT_TYPES = new Set<string>(
+  CUSTOMER_ACTIVITY_EVENT_TYPES
+);
+
+/** Sensitive menu actions — gated by matching customer permission. */
+export const SENSITIVE_ACTIVITY_PERMISSIONS: Record<string, string> = {
+  customer_disconnected: "customers.disconnect",
+  customer_cancelled: "customers.cancel",
+  customer_deleted: "customers.delete",
+};
+
+/** Automated jobs that clutter the feed. */
 export const ACTIVITY_FEED_NOISE_TYPES = new Set([
   "reconciliation_sync",
   "reconciliation_sync_failed",
@@ -27,18 +47,46 @@ export function isActivityFeedNoise(item: ActivityItem): boolean {
   return ACTIVITY_FEED_NOISE_TYPES.has(item.eventType);
 }
 
-/** Prefer items that show a person doing something (creates/updates/etc.). */
-export function filterActivityFeedItems(items: ActivityItem[]): ActivityItem[] {
-  return (items ?? []).filter((item) => !isActivityFeedNoise(item));
+export function isCustomerActivityEvent(eventType: string): boolean {
+  return (CUSTOMER_ACTIVITY_EVENT_TYPES as readonly string[]).includes(eventType);
+}
+
+export function isVisibleCustomerActivity(
+  item: ActivityItem,
+  user: User | null
+): boolean {
+  if (!isCustomerActivityEvent(item.eventType)) return false;
+  if (isActivityFeedNoise(item)) return false;
+  const required = SENSITIVE_ACTIVITY_PERMISSIONS[item.eventType];
+  if (!required) return true;
+  return hasPermission(user, required);
+}
+
+export function filterActivityFeedItems(
+  items: ActivityItem[],
+  user: User | null = null
+): ActivityItem[] {
+  return (items ?? []).filter((item) => {
+    if (isActivityFeedNoise(item)) return false;
+    if (!isCustomerActivityEvent(item.eventType)) return false;
+    const required = SENSITIVE_ACTIVITY_PERMISSIONS[item.eventType];
+    if (!required) return true;
+    // If no user passed (API already filtered), keep item.
+    if (!user) return true;
+    return hasPermission(user, required);
+  });
 }
 
 export function prependActivityItem(
   items: ActivityItem[],
   next: ActivityItem,
-  limit: number
+  limit: number,
+  user: User | null = null
 ): ActivityItem[] {
   if (!next?.id) return items;
+  if (!isVisibleCustomerActivity(next, user) && user) return items;
   if (isActivityFeedNoise(next)) return items;
+  if (!isCustomerActivityEvent(next.eventType)) return items;
   if (items.some((item) => item.id === next.id)) return items;
   return [next, ...items].slice(0, Math.max(1, limit));
 }

@@ -187,9 +187,10 @@ function computeServiceDueDate({
   }).endDate;
 }
 
-/** Zoho recurring profile starts this many days before the TISP/service due date. */
+/** Zoho recurring profile starts this many days before the next cycle due date. */
 const RECURRING_LEAD_DAYS_BEFORE_DUE = 7;
 
+/** start_date = nextCycleDue − 7 days (pair with computeServiceDueDate for nextCycleDue). */
 function computeRecurringStartBeforeDue(
   dueDate,
   leadDays = RECURRING_LEAD_DAYS_BEFORE_DUE,

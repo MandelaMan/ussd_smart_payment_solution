@@ -51,13 +51,9 @@ export function hasPermission(
   key: string
 ): boolean {
   if (!user) return false;
-  // Administrators always pass client gates unless a hydrated set explicitly omits the key (deny).
+  // Administrators always have every module — ignore hydrated override lists.
   if (rawRole(user) === "admin" || normalizeRole(user.role) === "admin") {
-    if (!permissionsHydrated(user)) return true;
-    const set = permissionSet(user);
-    // Empty list after a failed hydrate must not lock admins out of the shell.
-    if (set.size === 0) return true;
-    return set.has(key);
+    return true;
   }
   if (permissionsHydrated(user)) {
     return permissionSet(user).has(key);

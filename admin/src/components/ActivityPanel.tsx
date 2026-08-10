@@ -3,6 +3,7 @@ import { SkeletonBlock } from "./ui/SkeletonBlock";
 import {
   FiAlertCircle,
   FiBriefcase,
+  FiCalendar,
   FiCheckCircle,
   FiCreditCard,
   FiEdit3,
@@ -19,6 +20,7 @@ import {
 import type { ActivityItem } from "../lib/api";
 import { formatCurrency, timeAgo } from "../lib/api";
 import { filterActivityFeedItems } from "../lib/activityFeed";
+import { useAuth } from "../lib/authContext";
 
 const EVENT_ICONS: Record<string, typeof FiCreditCard> = {
   payment_received: FiCreditCard,
@@ -38,6 +40,7 @@ const EVENT_ICONS: Record<string, typeof FiCreditCard> = {
   customer_updated: FiEdit3,
   customer_upgraded: FiPackage,
   customer_downgraded: FiPackage,
+  customer_frequency_changed: FiCalendar,
   customer_cancelled: FiAlertCircle,
   customer_disconnected: FiWifi,
   customer_paused: FiUser,
@@ -45,6 +48,7 @@ const EVENT_ICONS: Record<string, typeof FiCreditCard> = {
   customer_apartment_switched: FiHome,
   customer_type_changed: FiUser,
   customer_imported: FiPlus,
+  customer_imported_tisp_failed: FiAlertCircle,
   building_created: FiHome,
   building_updated: FiHome,
   product_created: FiPackage,
@@ -95,8 +99,9 @@ export function ActivityPanel({
   loading,
   variant = "rail",
 }: Props) {
+  const { user } = useAuth();
   const isPage = variant === "page";
-  const list = filterActivityFeedItems(items);
+  const list = filterActivityFeedItems(items, user);
 
   return (
     <Box

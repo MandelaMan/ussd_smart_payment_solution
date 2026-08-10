@@ -78,6 +78,22 @@ function isProtectedAdmin(user: AdminUser) {
   return user.role === "admin";
 }
 
+function validateManualPassword(password: string, confirm: string): string | null {
+  if (password.length < 8) {
+    return "Password must be at least 8 characters";
+  }
+  if (password.length > 128) {
+    return "Password must be at most 128 characters";
+  }
+  if (!/[a-z]/i.test(password) || !/\d/.test(password)) {
+    return "Password must include at least one letter and one number";
+  }
+  if (password !== confirm) {
+    return "Passwords do not match";
+  }
+  return null;
+}
+
 export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
@@ -94,6 +110,9 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [role, setRole] = useState("user");
   const [notes, setNotes] = useState("");
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([]);
+  const [createSetPassword, setCreateSetPassword] = useState(false);
+  const [createPassword, setCreatePassword] = useState("");
+  const [createPasswordConfirm, setCreatePasswordConfirm] = useState("");
   const [tempReveal, setTempReveal] = useState<{
     userId: number;
     name: string;
@@ -105,6 +124,9 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [resetSetPassword, setResetSetPassword] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
 
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
   const [editName, setEditName] = useState("");
@@ -176,8 +198,30 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
     setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   }
 
+  function clearCreatePasswordFields() {
+    setCreateSetPassword(false);
+    setCreatePassword("");
+    setCreatePasswordConfirm("");
+  }
+
+  function clearResetPasswordFields() {
+    setResetSetPassword(false);
+    setResetPassword("");
+    setResetPasswordConfirm("");
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
+    if (createSetPassword) {
+      const passwordError = validateManualPassword(
+        createPassword,
+        createPasswordConfirm
+      );
+      if (passwordError) {
+        toaster.create({ title: passwordError, type: "error" });
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       const res = await api.createUser({
@@ -187,12 +231,13 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         jobTitle: jobTitle || undefined,
         notes: notes || undefined,
         groupIds: selectedGroupIds,
+        ...(createSetPassword ? { password: createPassword } : {}),
       });
       setTempReveal({
         userId: res.id,
         name,
         email: email.trim(),
-        password: res.temporaryPassword,
+        password: res.temporaryPassword || createPassword,
       });
       setCopiedTemp(false);
       toaster.create({ title: "User created", type: "success" });
@@ -202,6 +247,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       setNotes("");
       setRole("user");
       setSelectedGroupIds([]);
+      clearCreatePasswordFields();
       setShowForm(false);
       void load();
     } catch (err) {
@@ -428,6 +474,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       return;
     }
     if (action.type === "resetPassword") {
+      clearResetPasswordFields();
       setResetUser(user);
       return;
     }
@@ -438,15 +485,29 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   async function handleResetPassword() {
     if (!resetUser) return;
+    if (resetSetPassword) {
+      const passwordError = validateManualPassword(
+        resetPassword,
+        resetPasswordConfirm
+      );
+      if (passwordError) {
+        toaster.create({ title: passwordError, type: "error" });
+        return;
+      }
+    }
     setResetting(true);
     try {
-      const res = await api.resetUserPassword(resetUser.id);
-      if (res.temporaryPassword) {
+      const res = await api.resetUserPassword(
+        resetUser.id,
+        resetSetPassword ? { password: resetPassword } : undefined
+      );
+      const password = res.temporaryPassword || resetPassword;
+      if (password) {
         setTempReveal({
           userId: resetUser.id,
           name: resetUser.name,
           email: resetUser.email,
-          password: res.temporaryPassword,
+          password,
         });
         setCopiedTemp(false);
       }
@@ -454,6 +515,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         title: `Password reset for ${resetUser.name}`,
         type: "success",
       });
+      clearResetPasswordFields();
       setResetUser(null);
     } catch (err) {
       toaster.create({
@@ -655,7 +717,10 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                     <Button
                       size="sm"
                       colorPalette="brand"
-                      onClick={() => setShowForm(!showForm)}
+                      onClick={() => {
+                        if (showForm) clearCreatePasswordFields();
+                        setShowForm(!showForm);
+                      }}
                     >
                       <FiUserPlus />
                       Add User
@@ -756,7 +821,11 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                     <SelectField
                       fieldProps={{
                         value: role,
-                        onChange: (e) => setRole(e.target.value),
+                        onChange: (e) => {
+                          const next = e.target.value;
+                          setRole(next);
+                          if (next === "admin") setSelectedGroupIds([]);
+                        },
                       }}
                     >
                       {CREATE_ROLE_OPTIONS.map((opt) => (
@@ -771,7 +840,14 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                   <Text fontSize="sm" fontWeight="medium" mb={2}>
                     User groups
                   </Text>
-                  {renderGroupPicker(selectedGroupIds, setSelectedGroupIds)}
+                  {role === "admin" ? (
+                    <Text fontSize="sm" color="fg.muted">
+                      Administrators automatically have access to all modules.
+                      Groups are optional and do not limit their access.
+                    </Text>
+                  ) : (
+                    renderGroupPicker(selectedGroupIds, setSelectedGroupIds)
+                  )}
                 </Box>
                 <Field.Root mt={3}>
                   <Field.Label>Notes (optional)</Field.Label>
@@ -781,15 +857,75 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                     rows={2}
                   />
                 </Field.Root>
-                <Text fontSize="sm" color="fg.muted" mt={2}>
-                  A strong temporary password is generated automatically — you can copy it or email it to the user.
-                  The user must change it on first login.
-                </Text>
+                <Box mt={3}>
+                  <Checkbox.Root
+                    checked={createSetPassword}
+                    onCheckedChange={(details) => {
+                      const next = !!details.checked;
+                      setCreateSetPassword(next);
+                      if (!next) {
+                        setCreatePassword("");
+                        setCreatePasswordConfirm("");
+                      }
+                    }}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Text fontSize="sm" fontWeight="medium">
+                      Set password manually
+                    </Text>
+                  </Checkbox.Root>
+                  {createSetPassword ? (
+                    <Grid
+                      templateColumns={{ base: "1fr", md: "1fr 1fr" }}
+                      gap={3}
+                      mt={3}
+                    >
+                      <Field.Root required>
+                        <Field.Label>New password</Field.Label>
+                        <Input
+                          type="password"
+                          value={createPassword}
+                          onChange={(e) => setCreatePassword(e.target.value)}
+                          autoComplete="new-password"
+                          required
+                        />
+                        <Field.HelperText>
+                          At least 8 characters with a letter and a number.
+                        </Field.HelperText>
+                      </Field.Root>
+                      <Field.Root required>
+                        <Field.Label>Confirm password</Field.Label>
+                        <Input
+                          type="password"
+                          value={createPasswordConfirm}
+                          onChange={(e) =>
+                            setCreatePasswordConfirm(e.target.value)
+                          }
+                          autoComplete="new-password"
+                          required
+                        />
+                      </Field.Root>
+                    </Grid>
+                  ) : (
+                    <Text fontSize="sm" color="fg.muted" mt={2}>
+                      A strong temporary password is generated automatically —
+                      you can copy it or email it to the user. The user must
+                      change it on first login.
+                    </Text>
+                  )}
+                </Box>
                 <Flex gap={2} mt={4}>
                   <Button type="submit" colorPalette="brand" loading={submitting}>
                     Create user
                   </Button>
-                  <Button variant="outline" onClick={() => setShowForm(false)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      clearCreatePasswordFields();
+                      setShowForm(false);
+                    }}
+                  >
                     Cancel
                   </Button>
                 </Flex>
@@ -833,8 +969,11 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                             {
                               label: "Groups",
                               value:
-                                (user.groups || []).map((g) => g.name).join(", ") ||
-                                "—",
+                                user.role === "admin"
+                                  ? "All"
+                                  : (user.groups || [])
+                                      .map((g) => g.name)
+                                      .join(", ") || "—",
                             },
                           ]}
                         />
@@ -896,7 +1035,11 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                             </Table.Cell>
                             <Table.Cell {...dataTableCellProps}>
                               <Flex gap={1} wrap="wrap">
-                                {(user.groups || []).length ? (
+                                {user.role === "admin" ? (
+                                  <Badge colorPalette="purple" variant="subtle" size="sm">
+                                    All
+                                  </Badge>
+                                ) : (user.groups || []).length ? (
                                   user.groups!.map((g) => (
                                     <Badge key={g.id} variant="outline" size="sm">
                                       {g.name}
@@ -961,7 +1104,11 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
               <SelectField
                 fieldProps={{
                   value: editRole,
-                  onChange: (e) => setEditRole(e.target.value),
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    setEditRole(next);
+                    if (next === "admin") setEditGroupIds([]);
+                  },
                 }}
               >
                 {CREATE_ROLE_OPTIONS.map((opt) => (
@@ -975,7 +1122,14 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
               <Text fontSize="sm" fontWeight="medium" mb={2}>
                 Groups
               </Text>
-              {renderGroupPicker(editGroupIds, setEditGroupIds)}
+              {editRole === "admin" ? (
+                <Text fontSize="sm" color="fg.muted">
+                  Administrators automatically have access to all modules. Groups
+                  are optional and do not limit their access.
+                </Text>
+              ) : (
+                renderGroupPicker(editGroupIds, setEditGroupIds)
+              )}
             </Box>
             <Field.Root>
               <Field.Label>Notes</Field.Label>
@@ -1059,6 +1213,12 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         <Dialog.Body overflowY="auto" flex="1" minH={0}>
           {loadingPerms ? (
             <Text color="fg.muted">Loading permission matrix…</Text>
+          ) : permUser?.role === "admin" ? (
+            <Text fontSize="sm" color="fg.muted">
+              Administrators automatically have access to all modules. Individual
+              permission overrides are not applied. Change the system role to User
+              if you need group-based or override-based access.
+            </Text>
           ) : (
             <Box>
               <Text fontSize="sm" color="fg.muted" mb={3}>
@@ -1081,11 +1241,13 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         <Dialog.Footer flexShrink={0}>
           <Flex gap={2} justify="flex-end" w="full">
             <Button variant="outline" onClick={() => setPermUser(null)} disabled={savingPerms}>
-              Cancel
+              {permUser?.role === "admin" ? "Close" : "Cancel"}
             </Button>
-            <Button colorPalette="brand" loading={savingPerms} onClick={() => void savePermissions()}>
-              Save permissions
-            </Button>
+            {permUser?.role === "admin" ? null : (
+              <Button colorPalette="brand" loading={savingPerms} onClick={() => void savePermissions()}>
+                Save permissions
+              </Button>
+            )}
           </Flex>
         </Dialog.Footer>
       </AppDialog>
@@ -1093,7 +1255,10 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       <AppDialog
         open={!!resetUser}
         onOpenChange={(details) => {
-          if (!details.open && !resetting) setResetUser(null);
+          if (!details.open && !resetting) {
+            clearResetPasswordFields();
+            setResetUser(null);
+          }
         }}
         maxW="md"
       >
@@ -1103,22 +1268,80 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           </Dialog.Title>
         </Dialog.Header>
         <Dialog.Body>
-          <Text fontSize="sm" color="fg.muted">
-            A strong temporary password will be generated for{" "}
+          <Text fontSize="sm" color="fg.muted" mb={3}>
+            Reset the password for{" "}
             <Text as="span" fontWeight="medium" color="fg">
               {resetUser?.name}
             </Text>
             {resetUser?.email ? ` (${resetUser.email})` : ""}. They must change it
-            on next login. You can copy it or email it to them after generation.
+            on next login.
           </Text>
+          <Checkbox.Root
+            checked={resetSetPassword}
+            onCheckedChange={(details) => {
+              const next = !!details.checked;
+              setResetSetPassword(next);
+              if (!next) {
+                setResetPassword("");
+                setResetPasswordConfirm("");
+              }
+            }}
+          >
+            <Checkbox.HiddenInput />
+            <Checkbox.Control />
+            <Text fontSize="sm" fontWeight="medium">
+              Set password manually
+            </Text>
+          </Checkbox.Root>
+          {resetSetPassword ? (
+            <VStack align="stretch" gap={3} mt={3}>
+              <Field.Root required>
+                <Field.Label>New password</Field.Label>
+                <Input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <Field.HelperText>
+                  At least 8 characters with a letter and a number.
+                </Field.HelperText>
+              </Field.Root>
+              <Field.Root required>
+                <Field.Label>Confirm password</Field.Label>
+                <Input
+                  type="password"
+                  value={resetPasswordConfirm}
+                  onChange={(e) => setResetPasswordConfirm(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field.Root>
+            </VStack>
+          ) : (
+            <Text fontSize="sm" color="fg.muted" mt={3}>
+              A strong temporary password will be generated. You can copy it or
+              email it to them after generation.
+            </Text>
+          )}
         </Dialog.Body>
         <Dialog.Footer>
           <Flex gap={2} justify="flex-end" w="full">
-            <Button variant="outline" onClick={() => setResetUser(null)} disabled={resetting}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                clearResetPasswordFields();
+                setResetUser(null);
+              }}
+              disabled={resetting}
+            >
               Cancel
             </Button>
-            <Button colorPalette="brand" loading={resetting} onClick={() => void handleResetPassword()}>
-              Generate temporary password
+            <Button
+              colorPalette="brand"
+              loading={resetting}
+              onClick={() => void handleResetPassword()}
+            >
+              {resetSetPassword ? "Set temporary password" : "Generate temporary password"}
             </Button>
           </Flex>
         </Dialog.Footer>

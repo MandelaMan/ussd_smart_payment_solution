@@ -1037,22 +1037,27 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
 
       // Always create/ensure recurring profile after signup invoice
       // (both advance-paid and unpaid → invoice emailed paths).
-      // Start = service/TISP due date minus 7 days (not the due date itself).
-      const serviceDue =
+      // Initial due = Net 7 (today+7). Next cycle due = that date + payment
+      // frequency. Recurring starts 7 days before that next due
+      // (e.g. created 10 Aug monthly → due 17 Aug → next 17 Sep → starts 10 Sep).
+      const initialDue =
         options.serviceDueDate ||
-        computeServiceDueDate({
-          paymentFrequency: customer.paymentFrequency,
-          customPeriodDays: customer.customPeriodDays,
-        });
+        computeInvoiceDueDate(customer);
+      const nextCycleDue = computeServiceDueDate({
+        anchorDate: initialDue,
+        paymentFrequency: customer.paymentFrequency,
+        customPeriodDays: customer.customPeriodDays,
+      });
       const recurringStart =
-        computeRecurringStartBeforeDue(serviceDue) ||
+        computeRecurringStartBeforeDue(nextCycleDue) ||
         invoice.period?.endDate;
       try {
         recurring = await ensureRecurringSubscription(customer, zohoContact, {
           startDate: recurringStart,
         });
         if (recurring && typeof recurring === "object") {
-          recurring.serviceDueDate = serviceDue;
+          recurring.serviceDueDate = initialDue;
+          recurring.nextCycleDue = nextCycleDue;
           recurring.startDate = recurringStart;
         }
       } catch (e) {
@@ -1061,7 +1066,8 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
           created: false,
           updated: false,
           error: e.message || "recurring_setup_failed",
-          serviceDueDate: serviceDue,
+          serviceDueDate: initialDue,
+          nextCycleDue,
           startDate: recurringStart,
         };
       }

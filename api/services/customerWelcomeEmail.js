@@ -147,7 +147,6 @@ function buildCustomerTemplateVars(customer, extra = {}) {
 function wrapLifecycleHtml(bodyHtml) {
   return `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#1a1a1a;line-height:1.5;max-width:600px">
 ${bodyHtml}
-<p style="margin-top:24px;font-size:13px;color:#666">Starlynx Internet Services<br/>Pay via M-Pesa Paybill — use your account number as the reference.</p>
 </body></html>`;
 }
 

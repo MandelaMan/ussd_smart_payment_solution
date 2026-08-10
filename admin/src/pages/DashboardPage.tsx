@@ -41,6 +41,7 @@ import { useMobileViewport } from "../hooks/useMobileViewport";
 import { useActivitySocket } from "../hooks/useActivitySocket";
 import { prependActivityItem } from "../lib/activityFeed";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
+import { useAuth } from "../lib/authContext";
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: BRAND.cerulean,
@@ -152,6 +153,7 @@ function buildRevenueChartData(
 }
 
 export function DashboardPage() {
+  const { user } = useAuth();
   const isMobile = useMobileViewport();
   const [stats, setStats] = useState<Stats | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
@@ -216,9 +218,12 @@ export function DashboardPage() {
     };
   }, [isMobile]);
 
-  const onLiveActivity = useCallback((item: ActivityItem) => {
-    setActivity((prev) => prependActivityItem(prev, item, 40));
-  }, []);
+  const onLiveActivity = useCallback(
+    (item: ActivityItem) => {
+      setActivity((prev) => prependActivityItem(prev, item, 40, user));
+    },
+    [user]
+  );
 
   useActivitySocket(onLiveActivity, !isMobile);
 

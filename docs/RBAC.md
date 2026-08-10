@@ -8,7 +8,7 @@ Only two system roles exist:
 
 | Role | Meaning |
 |------|---------|
-| **Administrator** | Full access by default. Individual permissions can still be denied. |
+| **Administrator** | Full access to every module automatically. Groups and individual overrides do not limit access. |
 | **User** | Least-privilege baseline. Access comes from groups and overrides. |
 
 Roles set the baseline only. Day-to-day access is controlled by **permissions**.
@@ -26,9 +26,9 @@ The catalog lives in `api/rbac/permissionCatalog.js`. Adding a new module permis
 
 ## Inheritance order
 
-1. **System role defaults** (Administrator = all; User = safe baseline)
-2. **User group permissions** (union across all groups)
-3. **Individual overrides** (grant or deny) — always win
+1. **System role defaults** (Administrator = all modules, always; User = safe baseline)
+2. **User group permissions** (union across all groups; ignored for Administrators)
+3. **Individual overrides** (grant or deny) — apply to Users only; Administrators ignore overrides
 
 ## User groups
 

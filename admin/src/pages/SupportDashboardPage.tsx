@@ -32,9 +32,10 @@ import { timeAgo } from "../lib/api";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { useActivitySocket } from "../hooks/useActivitySocket";
 import {
-  SUPPORT_ACTIVITY_EVENT_TYPES,
+  isVisibleCustomerActivity,
   prependActivityItem,
 } from "../lib/activityFeed";
+import { useAuth } from "../lib/authContext";
 import {
   FiAlertCircle,
   FiCheckCircle,
@@ -168,6 +169,7 @@ function SupportActivityPanel({
 }
 
 export function SupportDashboardPage() {
+  const { user } = useAuth();
   const [stats, setStats] = useState<SupportStats | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [error, setError] = useState("");
@@ -198,10 +200,13 @@ export function SupportDashboardPage() {
     };
   }, []);
 
-  const onLiveActivity = useCallback((item: ActivityItem) => {
-    if (!SUPPORT_ACTIVITY_EVENT_TYPES.has(item.eventType)) return;
-    setActivity((prev) => prependActivityItem(prev, item, 40));
-  }, []);
+  const onLiveActivity = useCallback(
+    (item: ActivityItem) => {
+      if (!isVisibleCustomerActivity(item, user)) return;
+      setActivity((prev) => prependActivityItem(prev, item, 40, user));
+    },
+    [user]
+  );
 
   useActivitySocket(onLiveActivity, true);
 

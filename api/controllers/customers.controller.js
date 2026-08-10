@@ -2959,10 +2959,12 @@ async function createCustomer(req, res, next) {
     // TISP BillingCycle stays Monthly.
     // Signup due-date policy:
     // - Trial: due at trial end.
-    // - Prior payment made: due = today + 7 days.
-    // - No payment made: due = invoice sent date + Net terms (C2B 7 / B2B 30).
+    // - Prior payment made / C2B unpaid: due = today + 7 days (Net 7).
+    // - B2B unpaid: due = today + 30 days (Net 30).
     //   Initial sync uses "today" as the invoice anchor; after Zoho creates the
     //   signup invoice we re-assert from the real invoice date when available.
+    // Recurring start (non-trial): 7 days before (initial due + payment frequency)
+    // e.g. created 10 Aug monthly → due 17 Aug → next due 17 Sep → starts 10 Sep.
     const paymentAnchor = new Date();
     let serviceDueDate;
     if (body.trialPeriod) {
@@ -3822,7 +3824,7 @@ async function upgradePackage(req, res, next) {
     try {
       await logActivity({
         eventType: "customer_upgraded",
-        title: "Customer package upgraded",
+        title: "Upgrade package",
         message: `${customer?.customerNumber}: ${current.product_mbps} → ${newProduct.mbps} Mbps`,
         source: "tisp",
         status: tispError ? "failed" : "success",
@@ -3939,7 +3941,7 @@ async function downgradePackage(req, res, next) {
     try {
       await logActivity({
         eventType: "customer_downgraded",
-        title: "Customer package downgraded",
+        title: "Downgrade package",
         message: `${customer?.customerNumber}: ${current.product_mbps} → ${newProduct.mbps} Mbps${
           creditNote?.creditNoteNumber
             ? ` · credit note ${creditNote.creditNoteNumber} (${formatCurrency(quote.creditAmount)})`
@@ -4086,8 +4088,8 @@ async function changePaymentFrequency(req, res, next) {
 
     try {
       await logActivity({
-        eventType: "customer_upgraded",
-        title: "Payment frequency changed",
+        eventType: "customer_frequency_changed",
+        title: "Update frequency",
         message: `${customer?.customerNumber}: ${result.previousFrequency} → ${paymentFrequency}`,
         source: "tisp",
         status: tispError ? "failed" : "success",
@@ -4202,7 +4204,7 @@ async function switchApartment(req, res, next) {
       }
       await logActivity({
         eventType: "customer_apartment_switched",
-        title: "Customer apartment switched",
+        title: "Move apartment",
         message: `${customer?.customerNumber}: ${result.oldApartment} → ${result.newApartment}${
           result.ipAddress ? ` · IP ${result.ipAddress}` : ""
         }${oltCleared ? " · OLT ONU mapping cleared" : ""}${
@@ -4631,7 +4633,7 @@ async function cancelSubscription(req, res, next) {
           try {
             await logActivity({
               eventType: "customer_cancelled",
-              title: "Customer subscription cancelled",
+              title: "Cancel subscription",
               message: [
                 customer?.customerNumber || "",
                 customer?.cancellationReason || null,
@@ -4765,7 +4767,7 @@ async function disconnectCustomer(req, res, next) {
 
     await logActivity({
       eventType: "customer_disconnected",
-      title: "Customer disconnected on TISP",
+      title: "Suspend on TISP",
       message: [
         customer?.customerNumber || "",
         tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
@@ -4887,7 +4889,7 @@ async function pauseCustomer(req, res, next) {
 
     await logActivity({
       eventType: "customer_paused",
-      title: "Customer service paused",
+      title: "Pause service",
       message: [
         customer?.customerNumber || "",
         `away ${pauseStart} → ${pauseEnd}`,
@@ -4980,7 +4982,7 @@ async function deleteCustomerPermanently(req, res, next) {
     try {
       await logActivity({
         eventType: "customer_deleted",
-        title: "Customer permanently deleted",
+        title: "Delete customer permanently",
         message: `${deleted.customerNumber} removed from admin database`,
         source: "admin",
         status: "success",
@@ -5057,7 +5059,7 @@ async function bulkCancelSubscriptions(req, res, next) {
               const customer = await store.getCustomerById(id);
               await logActivity({
                 eventType: "customer_cancelled",
-                title: "Customer subscription cancelled",
+                title: "Cancel subscription",
                 message: [
                   customer?.customerNumber || "",
                   customer?.cancellationReason || null,
@@ -5532,7 +5534,7 @@ async function updateCustomer(req, res, next) {
       const detail = parts.length ? ` · ${parts.join(", ")}` : "";
       await logActivity({
         eventType: "customer_updated",
-        title: "Customer updated",
+        title: "Edit customer details",
         message: `${customer?.firstName || ""} ${customer?.lastName || ""} (${
           customer?.customerNumber || id
         })${detail}`.trim(),
@@ -5716,7 +5718,8 @@ async function convertCustomerTypeHandler(req, res, next) {
     try {
       await logActivity({
         eventType: "customer_type_changed",
-        title: "Customer billing type changed",
+        title:
+          result.newType === "B2B" ? "Convert to B2B" : "Convert to C2B",
         message: `${customer?.customerNumber}: ${result.previousType} → ${result.newType}${
           result.agencyName ? ` (${result.agencyName})` : ""
         }`,

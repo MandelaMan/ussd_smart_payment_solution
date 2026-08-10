@@ -113,27 +113,48 @@ async function logActivitySafe(payload) {
   }
 }
 
-async function listActivity({ limit = 40, excludeEventTypes = null } = {}) {
+async function listActivity({
+  limit = 40,
+  eventTypes = null,
+  excludeEventTypes = null,
+} = {}) {
   const capped = Math.min(100, Math.max(1, Number(limit) || 40));
+  const included = Array.isArray(eventTypes)
+    ? eventTypes
+        .map((t) => String(t || "").trim())
+        .filter(Boolean)
+        .slice(0, 80)
+    : null;
   const excluded = Array.isArray(excludeEventTypes)
     ? excludeEventTypes
-    : [
-        "reconciliation_sync",
-        "reconciliation_sync_failed",
-      ];
-  const cleanExcluded = excluded
-    .map((t) => String(t || "").trim())
-    .filter(Boolean)
-    .slice(0, 40);
+        .map((t) => String(t || "").trim())
+        .filter(Boolean)
+        .slice(0, 40)
+    : included
+      ? []
+      : ["reconciliation_sync", "reconciliation_sync_failed"];
+
+  if (included && included.length === 0) {
+    return [];
+  }
 
   let sql = `SELECT id, event_type, title, message, source, status, customer_ref,
             amount, reference_id, actor_user_id, actor_name, created_at
      FROM activity_logs`;
   const params = [];
+  const where = [];
 
-  if (cleanExcluded.length > 0) {
-    sql += ` WHERE event_type NOT IN (${cleanExcluded.map(() => "?").join(", ")})`;
-    params.push(...cleanExcluded);
+  if (included && included.length > 0) {
+    where.push(`event_type IN (${included.map(() => "?").join(", ")})`);
+    params.push(...included);
+  }
+  if (excluded.length > 0) {
+    where.push(`event_type NOT IN (${excluded.map(() => "?").join(", ")})`);
+    params.push(...excluded);
+  }
+
+  if (where.length) {
+    sql += ` WHERE ${where.join(" AND ")}`;
   }
 
   sql += ` ORDER BY created_at DESC LIMIT ?`;

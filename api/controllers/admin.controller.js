@@ -2,6 +2,11 @@ const { query } = require("../config/db");
 const { sendTableExport } = require("../utils/tableExportResponse");
 const { listIntegrationEvents } = require("../services/integrationEventStore");
 const { listActivity } = require("../services/activityLogStore");
+const {
+  visibleCustomerActivityTypes,
+} = require("../lib/customerActivityEvents");
+const { ensureReqPermissionSet } = require("../middleware/permissions");
+const { isAdministrator } = require("../rbac/permissionService");
 
 // Best-effort cache for optional org-balance derivation.
 // updatedSubscriptions.json can be large and is not required for core dashboard KPIs.
@@ -1217,22 +1222,6 @@ async function getZohoCustomerPayment(req, res, next) {
   }
 }
 
-const SUPPORT_ACTIVITY_TYPES = [
-  "customer_created",
-  "customer_created_tisp_failed",
-  "customer_updated",
-  "customer_cancelled",
-  "customer_upgraded",
-  "customer_downgraded",
-  "customer_apartment_switched",
-  "customer_type_changed",
-  "customer_paused",
-  "customer_disconnected",
-  "customer_deleted",
-  "tisp_reconnected",
-  "tisp_reconnect_failed",
-];
-
 async function getSupportStats(req, res, next) {
   try {
     const period = req.query.period || "30d";
@@ -1263,16 +1252,14 @@ async function getSupportStats(req, res, next) {
       WHERE status = 'active'
     `);
 
-    const placeholders = SUPPORT_ACTIVITY_TYPES.map(() => "?").join(", ");
-    const activityRows = await query(
-      `SELECT id, event_type, title, message, source, status, customer_ref,
-              reference_id, actor_user_id, actor_name, created_at
-       FROM activity_logs
-       WHERE event_type IN (${placeholders})
-       ORDER BY created_at DESC
-       LIMIT 40`,
-      SUPPORT_ACTIVITY_TYPES
-    );
+    const permissionSet = await ensureReqPermissionSet(req);
+    const activityTypes = visibleCustomerActivityTypes(permissionSet, {
+      isAdmin: isAdministrator(req.user?.role),
+    });
+    const activity = await listActivity({
+      limit: 40,
+      eventTypes: activityTypes,
+    });
 
     return res.json({
       period: { days },
@@ -1299,20 +1286,7 @@ async function getSupportStats(req, res, next) {
         failed: Number(tispSync[0]?.failed || 0),
         pending: Number(tispSync[0]?.pending || 0),
       },
-      activity: activityRows.map((row) => ({
-        id: row.id,
-        eventType: row.event_type,
-        title: row.title,
-        message: row.message,
-        source: row.source,
-        status: row.status,
-        customerRef: row.customer_ref,
-        referenceId: row.reference_id,
-        actorUserId:
-          row.actor_user_id != null ? Number(row.actor_user_id) : null,
-        actorName: row.actor_name || null,
-        createdAt: row.created_at,
-      })),
+      activity,
     });
   } catch (err) {
     return next(err);
@@ -1412,7 +1386,11 @@ module.exports = {
   getActivityFeed: async (req, res, next) => {
     try {
       const limit = Math.min(100, parseInt(req.query.limit, 10) || 40);
-      const feed = await listActivity({ limit });
+      const permissionSet = await ensureReqPermissionSet(req);
+      const eventTypes = visibleCustomerActivityTypes(permissionSet, {
+        isAdmin: isAdministrator(req.user?.role),
+      });
+      const feed = await listActivity({ limit, eventTypes });
       return res.json({ data: feed });
     } catch (err) {
       return next(err);

@@ -9,7 +9,7 @@ import { useAuth } from "../lib/authContext";
 import { canAccessFinance, isPartner } from "../lib/rbac";
 import { useActivitySocket } from "../hooks/useActivitySocket";
 import {
-  SUPPORT_ACTIVITY_EVENT_TYPES,
+  isVisibleCustomerActivity,
   prependActivityItem,
 } from "../lib/activityFeed";
 
@@ -56,10 +56,10 @@ export function ActivityPage() {
 
   const onLiveActivity = useCallback(
     (item: ActivityItem) => {
-      if (!finance && !SUPPORT_ACTIVITY_EVENT_TYPES.has(item.eventType)) return;
-      setItems((prev) => prependActivityItem(prev, item, ACTIVITY_LIMIT));
+      if (!isVisibleCustomerActivity(item, user)) return;
+      setItems((prev) => prependActivityItem(prev, item, ACTIVITY_LIMIT, user));
     },
-    [finance]
+    [user]
   );
 
   useActivitySocket(onLiveActivity, liveEnabled);

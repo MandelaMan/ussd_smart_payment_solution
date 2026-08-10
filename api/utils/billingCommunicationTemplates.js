@@ -21,7 +21,6 @@ function greeting(customerName, customerNumber) {
 function wrapHtml(bodyHtml) {
   return `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#1a1a1a;line-height:1.5;max-width:600px">
 ${bodyHtml}
-<p style="margin-top:24px;font-size:13px;color:#666">Starlynx Internet Services<br/>Pay via M-Pesa Paybill — use your account number as the reference.</p>
 </body></html>`;
 }
 
@@ -93,7 +92,8 @@ const TEMPLATE_DEFS = {
       return wrapHtml(`
 <p>Dear ${g},</p>
 <p>Your recurring billing profile on Starlynx account <strong>${ctx.customerNumber}</strong> requires attention — automatic invoicing may have stopped.</p>
-<p>Our team is reviewing your account to restore regular billing. If you have questions, reply to this email.</p>
+<p>Our team is reviewing your account to restore regular billing.</p>
+<p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Billing</p>`);
     },
   },
