@@ -521,6 +521,14 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
         reused: true,
         invoiceId: String(existing.invoice_id),
         invoiceNumber: existing.invoice_number || null,
+        invoiceDate: existing.date
+          ? String(existing.date).slice(0, 10)
+          : null,
+        dueDate: existing.due_date
+          ? String(existing.due_date).slice(0, 10)
+          : existing.date
+            ? computeInvoiceDueDate(customer, existing.date)
+            : null,
         total: Number(existing.total || expectedTotal),
         period,
         emailed: emailResult.emailed,
@@ -592,11 +600,20 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     { emailed: emailResult.emailed }
   );
 
+  const invoiceDate = invoice.date
+    ? String(invoice.date).slice(0, 10)
+    : null;
+  const dueDate = invoice.due_date
+    ? String(invoice.due_date).slice(0, 10)
+    : computeInvoiceDueDate(customer, invoiceDate || undefined);
+
   return {
     created: true,
     reused: false,
     invoiceId: String(invoice.invoice_id),
     invoiceNumber: invoice.invoice_number || invoiceNumber,
+    invoiceDate,
+    dueDate,
     total: Number(invoice.total != null ? invoice.total : expectedTotal),
     period,
     emailed: emailResult.emailed,

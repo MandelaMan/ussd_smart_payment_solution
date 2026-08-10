@@ -3257,11 +3257,16 @@ async function updateCustomerDetails(id, data, options = {}) {
   if (!ipCheck.ok) {
     throw new Error(ipCheck.error);
   }
-  if (ipCheck.ip && ipCheck.ip !== existing.ipAddress) {
-    const ipTaken = await findCustomerByIp(ipCheck.ip);
-    if (ipTaken && ipTaken.id !== id) {
-      throw new Error("IP address is already assigned");
-    }
+  const previousIp = existing.ipAddress || null;
+  const nextIp = ipCheck.ip || null;
+  const ipChanged =
+    String(previousIp || "").trim() !== String(nextIp || "").trim();
+  if (ipChanged && nextIp) {
+    // Free cancelled holders of the new IP (same as create / apartment switch).
+    await releaseCancelledIdentityForReuse({
+      ipAddress: nextIp,
+      excludeCustomerId: id,
+    });
   }
 
   const fullName = [firstName, middleName, lastName].filter(Boolean).join(" ");
@@ -3475,7 +3480,7 @@ async function updateCustomerDetails(id, data, options = {}) {
       data.isVatExempt ? 1 : 0,
       customerType,
       agencyId,
-      ipCheck.ip,
+      nextIp,
       dstvDecoderSerial,
       tispPassword,
       isPpoe ? ppoeUsername : null,
@@ -3502,12 +3507,21 @@ async function updateCustomerDetails(id, data, options = {}) {
     );
   }
 
-  await query(
-    `UPDATE apartment_history
-     SET customer_name = ?
-     WHERE customer_id = ? AND moved_out_at IS NULL`,
-    [fullName, id]
-  );
+  if (ipChanged) {
+    await query(
+      `UPDATE apartment_history
+       SET customer_name = ?, ip_address = ?
+       WHERE customer_id = ? AND moved_out_at IS NULL`,
+      [fullName, nextIp, id]
+    );
+  } else {
+    await query(
+      `UPDATE apartment_history
+       SET customer_name = ?
+       WHERE customer_id = ? AND moved_out_at IS NULL`,
+      [fullName, id]
+    );
+  }
 
   if (existing.status === "active") {
     const apartmentNumber = String(data.apartmentNumber || existing.apartmentNumber)
@@ -3529,6 +3543,8 @@ async function updateCustomerDetails(id, data, options = {}) {
     packageChanged,
     apartmentChanged,
     previousCustomerNumber,
+    ipChanged: ipChanged && !apartmentChanged,
+    previousIp: ipChanged && !apartmentChanged ? previousIp : null,
   };
 }
 

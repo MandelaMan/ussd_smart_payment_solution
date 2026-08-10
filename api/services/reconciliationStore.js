@@ -1107,15 +1107,6 @@ async function doRunSync({
       issuesFound,
     });
 
-    await logActivity({
-      eventType: "reconciliation_sync",
-      title: "Billing reconciliation sync completed",
-      message: `Scanned ${records.length} customers, ${issuesFound} issues found`,
-      source: "reconciliation",
-      status: "success",
-      metadata: { runId, issuesFound, customersScanned: records.length, fullZoho },
-    });
-
     return {
       ok: true,
       customersScanned: records.length,
@@ -1142,14 +1133,6 @@ async function doRunSync({
       customersScanned: snapshot.records.size,
       issuesFound: 0,
       errorMessage: snapshot.sync.lastError,
-    });
-
-    await logActivity({
-      eventType: "reconciliation_sync_failed",
-      title: "Billing reconciliation sync failed",
-      message: snapshot.sync.lastError,
-      source: "reconciliation",
-      status: "failed",
     });
 
     return { ok: false, error: snapshot.sync.lastError };

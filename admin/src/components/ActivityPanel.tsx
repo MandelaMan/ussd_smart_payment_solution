@@ -18,6 +18,7 @@ import {
 } from "react-icons/fi";
 import type { ActivityItem } from "../lib/api";
 import { formatCurrency, timeAgo } from "../lib/api";
+import { filterActivityFeedItems } from "../lib/activityFeed";
 
 const EVENT_ICONS: Record<string, typeof FiCreditCard> = {
   payment_received: FiCreditCard,
@@ -68,6 +69,19 @@ const SOURCE_COLORS: Record<string, string> = {
   reconciliation: "orange.500",
 };
 
+/** Strip trailing " (REF)" when ref is shown separately. */
+function subjectLabel(item: ActivityItem): string | null {
+  const raw = item.message?.trim() || null;
+  if (!raw) return null;
+  if (!item.customerRef) return raw;
+  const suffix = ` (${item.customerRef})`;
+  if (raw.endsWith(suffix)) {
+    const without = raw.slice(0, -suffix.length).trim();
+    return without || raw;
+  }
+  return raw;
+}
+
 type Props = {
   items: ActivityItem[];
   loading?: boolean;
@@ -80,10 +94,9 @@ export function ActivityPanel({
   items,
   loading,
   variant = "rail",
-  live = false,
 }: Props) {
   const isPage = variant === "page";
-  const list = items ?? [];
+  const list = filterActivityFeedItems(items);
 
   return (
     <Box
@@ -105,10 +118,7 @@ export function ActivityPanel({
       {!isPage ? (
         <Box px={{ base: 2.5, xl: 3 }} py={{ base: 2, xl: 3 }} borderBottom="1px solid" borderColor="border.muted">
           <Text fontSize="sm" fontWeight="semibold" color="fg">
-            Activity
-          </Text>
-          <Text fontSize="2xs" color="fg.muted">
-            {live ? "Live · creates and updates" : "Creates, updates, and payments"}
+            Recent Activity
           </Text>
         </Box>
       ) : null}
@@ -162,6 +172,11 @@ export function ActivityPanel({
           const Icon = EVENT_ICONS[item.eventType] || FiCheckCircle;
           const iconColor = SOURCE_COLORS[item.source] || "gray.500";
           const failed = item.status === "failed";
+          const actor = item.actorName?.trim() || null;
+          const subject = subjectLabel(item);
+          const showRef =
+            Boolean(item.customerRef) &&
+            !(subject && item.customerRef && subject.includes(item.customerRef));
 
           return (
             <Flex
@@ -187,13 +202,27 @@ export function ActivityPanel({
                 <Icon size={14} />
               </Flex>
               <Box flex={1} minW={0}>
-                <Text fontSize={{ base: "xs", xl: "sm" }} fontWeight="semibold" color="fg" lineClamp={2}>
-                  {item.title}
-                </Text>
-                {item.message && (
-                  <Text fontSize="2xs" color="fg.muted" mt={0.5} lineClamp={2}>
-                    {item.message}
-                  </Text>
+                {actor ? (
+                  <>
+                    <Text fontSize={{ base: "xs", xl: "sm" }} fontWeight="semibold" color="fg" lineClamp={1}>
+                      {actor}
+                    </Text>
+                    <Text fontSize="2xs" color="fg.muted" mt={0.5} lineClamp={2}>
+                      {item.title}
+                      {subject ? ` · ${subject}` : ""}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text fontSize={{ base: "xs", xl: "sm" }} fontWeight="semibold" color="fg" lineClamp={2}>
+                      {item.title}
+                    </Text>
+                    {subject ? (
+                      <Text fontSize="2xs" color="fg.muted" mt={0.5} lineClamp={2}>
+                        {subject}
+                      </Text>
+                    ) : null}
+                  </>
                 )}
                 <Flex gap={2} mt={1} flexWrap="wrap" align="center">
                   {item.amount != null && (
@@ -201,14 +230,9 @@ export function ActivityPanel({
                       {formatCurrency(item.amount)}
                     </Text>
                   )}
-                  {item.customerRef && (
+                  {showRef ? (
                     <Text fontSize="2xs" color="fg.subtle">
                       {item.customerRef}
-                    </Text>
-                  )}
-                  {item.actorName ? (
-                    <Text fontSize="2xs" fontWeight="medium" color="fg.muted">
-                      by {item.actorName}
                     </Text>
                   ) : null}
                   <Text fontSize="2xs" color="fg.subtle" ml="auto">

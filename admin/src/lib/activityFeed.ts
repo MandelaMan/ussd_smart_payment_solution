@@ -17,12 +17,28 @@ export const SUPPORT_ACTIVITY_EVENT_TYPES = new Set([
   "tisp_reconnect_failed",
 ]);
 
+/** Automated jobs that clutter the feed — not attributable team actions. */
+export const ACTIVITY_FEED_NOISE_TYPES = new Set([
+  "reconciliation_sync",
+  "reconciliation_sync_failed",
+]);
+
+export function isActivityFeedNoise(item: ActivityItem): boolean {
+  return ACTIVITY_FEED_NOISE_TYPES.has(item.eventType);
+}
+
+/** Prefer items that show a person doing something (creates/updates/etc.). */
+export function filterActivityFeedItems(items: ActivityItem[]): ActivityItem[] {
+  return (items ?? []).filter((item) => !isActivityFeedNoise(item));
+}
+
 export function prependActivityItem(
   items: ActivityItem[],
   next: ActivityItem,
   limit: number
 ): ActivityItem[] {
   if (!next?.id) return items;
+  if (isActivityFeedNoise(next)) return items;
   if (items.some((item) => item.id === next.id)) return items;
   return [next, ...items].slice(0, Math.max(1, limit));
 }

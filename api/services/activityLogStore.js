@@ -113,16 +113,33 @@ async function logActivitySafe(payload) {
   }
 }
 
-async function listActivity({ limit = 40 } = {}) {
-  const rows = await query(
-    `SELECT id, event_type, title, message, source, status, customer_ref,
-            amount, reference_id, actor_user_id, actor_name, created_at
-     FROM activity_logs
-     ORDER BY created_at DESC
-     LIMIT ?`,
-    [Math.min(100, Math.max(1, limit))]
-  );
+async function listActivity({ limit = 40, excludeEventTypes = null } = {}) {
+  const capped = Math.min(100, Math.max(1, Number(limit) || 40));
+  const excluded = Array.isArray(excludeEventTypes)
+    ? excludeEventTypes
+    : [
+        "reconciliation_sync",
+        "reconciliation_sync_failed",
+      ];
+  const cleanExcluded = excluded
+    .map((t) => String(t || "").trim())
+    .filter(Boolean)
+    .slice(0, 40);
 
+  let sql = `SELECT id, event_type, title, message, source, status, customer_ref,
+            amount, reference_id, actor_user_id, actor_name, created_at
+     FROM activity_logs`;
+  const params = [];
+
+  if (cleanExcluded.length > 0) {
+    sql += ` WHERE event_type NOT IN (${cleanExcluded.map(() => "?").join(", ")})`;
+    params.push(...cleanExcluded);
+  }
+
+  sql += ` ORDER BY created_at DESC LIMIT ?`;
+  params.push(capped);
+
+  const rows = await query(sql, params);
   return rows.map(formatActivity);
 }
 

@@ -1559,9 +1559,10 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     .trim()
     .toUpperCase();
 
-  const resolvedIp = meta.releaseNetwork
-    ? TISP_RELEASE_PLACEHOLDER_IP
-    : await resolveIpForTispWrite(ctx, accountNumber);
+  const resolvedIp =
+    meta.releaseNetwork || meta.releaseIpOnly
+      ? TISP_RELEASE_PLACEHOLDER_IP
+      : await resolveIpForTispWrite(ctx, accountNumber);
 
   const input = {
     ...tispPayloadInput(
@@ -1586,6 +1587,10 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     input.apartmentNumber = `${releaseApt}-X`;
     input.ppoeUsername = `${releaseApt}-X`;
     input.tispPassword = `x${String(Date.now()).slice(-6)}`;
+  } else if (meta.releaseIpOnly) {
+    // Same AccountNumber, new StaticIP: park on 0.0.0.0 first so Mikrotik
+    // releases the old IP queue before the next UPDATE claims the new one.
+    input.ipAddress = TISP_RELEASE_PLACEHOLDER_IP;
   } else if (!String(input.ipAddress || "").trim()) {
     throw new Error(
       "Static IP address is required for TISP update, but none is set on the customer"
@@ -1613,6 +1618,43 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     }
   }
   return result;
+}
+
+/**
+ * Same AccountNumber IP change: TISP UPDATE can report success while Mikrotik
+ * still holds the old StaticIP queue. Release to 0.0.0.0 first, then claim the
+ * new IP — without renaming apartment / PPPoE (unlike account migrate).
+ */
+async function reclaimCustomerIpOnTisp(ctx, previousIp, meta = {}) {
+  const currentIp = String(ctx.ip_address || ctx.ipAddress || "").trim();
+  const oldIp = String(previousIp || "").trim();
+  if (!currentIp || !oldIp || currentIp === oldIp) {
+    return updateCustomerOnTisp(ctx, meta);
+  }
+
+  await updateCustomerOnTisp(ctx, {
+    ...meta,
+    releaseIpOnly: true,
+    skipStatusRefresh: true,
+  });
+  try {
+    return await updateCustomerOnTisp(ctx, meta);
+  } catch (claimErr) {
+    // Best-effort restore so the customer is not left on 0.0.0.0.
+    try {
+      await updateCustomerOnTisp(
+        { ...ctx, ip_address: oldIp },
+        {
+          ...meta,
+          skipStatusRefresh: true,
+          parentLogId: meta.parentLogId ?? null,
+        }
+      );
+    } catch {
+      /* ignore rollback failure */
+    }
+    throw claimErr;
+  }
 }
 
 /**
@@ -1791,6 +1833,12 @@ async function pushCustomerToTisp(ctx, meta = {}) {
   const previousNumber = meta.previousCustomerNumber
     ? String(meta.previousCustomerNumber).trim().toUpperCase()
     : null;
+  const previousIp = meta.previousIp
+    ? String(meta.previousIp).trim()
+    : null;
+  const currentIp = String(ctx.ip_address || ctx.ipAddress || "").trim();
+  const ipIdentityChanged =
+    Boolean(previousIp) && Boolean(currentIp) && previousIp !== currentIp;
 
   // Edits must never INSERT just because Client Status falsely says "missing".
   // Prefer UPDATE whenever the caller says so, or we previously synced, or a
@@ -1814,6 +1862,10 @@ async function pushCustomerToTisp(ctx, meta = {}) {
 
     const onCurrent = await accountExistsOnTisp(currentNumber);
     if (onCurrent) {
+      // Same account, new StaticIP: release old Mikrotik IP then claim new.
+      if (ipIdentityChanged) {
+        return await reclaimCustomerIpOnTisp(ctx, previousIp, meta);
+      }
       return await updateCustomerOnTisp(ctx, meta);
     }
 
@@ -1833,6 +1885,9 @@ async function pushCustomerToTisp(ctx, meta = {}) {
 
     // Existence check failed / unavailable — still try UPDATE first on edits.
     try {
+      if (ipIdentityChanged) {
+        return await reclaimCustomerIpOnTisp(ctx, previousIp, meta);
+      }
       return await updateCustomerOnTisp(ctx, meta);
     } catch (updateErr) {
       if (preferUpdate && !isTispAccountMissingError(updateErr)) {
@@ -1845,6 +1900,9 @@ async function pushCustomerToTisp(ctx, meta = {}) {
       } catch (createErr) {
         // Account already on TISP — Client Status lied. Fall back to UPDATE.
         if (isTispDuplicateAccountError(createErr)) {
+          if (ipIdentityChanged) {
+            return await reclaimCustomerIpOnTisp(ctx, previousIp, meta);
+          }
           return await updateCustomerOnTisp(ctx, meta);
         }
         throw createErr;
@@ -2199,6 +2257,9 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   const previousCustomerNumber = options.previousCustomerNumber
     ? String(options.previousCustomerNumber).trim().toUpperCase()
     : null;
+  const previousIp = options.previousIp
+    ? String(options.previousIp).trim()
+    : null;
   const apartmentChanged = options.apartmentChanged === true || Boolean(previousCustomerNumber);
   const tispDueDateRaw = options.tispDueDate
     ? String(options.tispDueDate).trim()
@@ -2249,6 +2310,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     await pushCustomerToTisp(ctx, {
       previousCustomerNumber: previousCustomerNumber || undefined,
       previousApartmentNumber: options.previousApartmentNumber,
+      previousIp: previousIp || undefined,
       dueDate: dueForSync,
       preferUpdate: true,
     });
@@ -2256,7 +2318,9 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       ok: true,
       updated: true,
       migrated: Boolean(previousCustomerNumber),
+      ipReclaimed: Boolean(previousIp) && !previousCustomerNumber,
       previousCustomerNumber: previousCustomerNumber || undefined,
+      previousIp: previousIp || undefined,
       customerNumber: ctx.customer_number,
       dueDate: dueForSync,
     };
@@ -2896,7 +2960,9 @@ async function createCustomer(req, res, next) {
     // Signup due-date policy:
     // - Trial: due at trial end.
     // - Prior payment made: due = today + 7 days.
-    // - No payment made: due = today.
+    // - No payment made: due = invoice sent date + Net terms (C2B 7 / B2B 30).
+    //   Initial sync uses "today" as the invoice anchor; after Zoho creates the
+    //   signup invoice we re-assert from the real invoice date when available.
     const paymentAnchor = new Date();
     let serviceDueDate;
     if (body.trialPeriod) {
@@ -2908,10 +2974,13 @@ async function createCustomer(req, res, next) {
         .add(7, "days")
         .format("YYYY-MM-DD");
     } else {
-      serviceDueDate = moment.tz(DEFAULT_TZ).startOf("day").format("YYYY-MM-DD");
+      serviceDueDate = computeInvoiceDueDate(
+        { customerType: body.customerType || "C2B" },
+        paymentAnchor
+      );
     }
 
-    const tispError = await syncNewCustomerToTisp(
+    let tispError = await syncNewCustomerToTisp(
       created.customerId,
       created.customerNumber,
       { dueDate: serviceDueDate }
@@ -2947,7 +3016,45 @@ async function createCustomer(req, res, next) {
         serviceDueDate,
       });
 
-      // Keep signup due-date policy deterministic; do not re-anchor from Zoho payment date.
+      // Unpaid signup: align TISP due with Zoho invoice (sent date + Net 7/30).
+      if (
+        !body.trialPeriod &&
+        !paymentAlreadyMade &&
+        zoho?.ok &&
+        zoho.invoice &&
+        !zoho.invoice.paid
+      ) {
+        const invoiceDate =
+          zoho.invoice.invoiceDate ||
+          zoho.invoice.date ||
+          null;
+        const dueFromInvoice =
+          zoho.invoice.dueDate ||
+          zoho.invoice.due_date ||
+          (invoiceDate
+            ? computeInvoiceDueDate(
+                { customerType: body.customerType || "C2B" },
+                invoiceDate
+              )
+            : null);
+        if (
+          dueFromInvoice &&
+          String(dueFromInvoice).slice(0, 10) !==
+            String(serviceDueDate).slice(0, 10)
+        ) {
+          serviceDueDate = String(dueFromInvoice).slice(0, 10);
+          const reassertError = await syncNewCustomerToTisp(
+            created.customerId,
+            created.customerNumber,
+            { dueDate: serviceDueDate, preferUpdate: true }
+          );
+          if (reassertError) {
+            tispError = tispError || reassertError;
+          }
+        } else if (dueFromInvoice) {
+          serviceDueDate = String(dueFromInvoice).slice(0, 10);
+        }
+      }
     } catch (e) {
       zoho = { ok: false, error: e.message || "Zoho billing setup failed" };
     }
@@ -5350,6 +5457,8 @@ async function updateCustomer(req, res, next) {
       packageChanged,
       apartmentChanged,
       previousCustomerNumber,
+      ipChanged,
+      previousIp,
     } = await store.updateCustomerDetails(
       id,
       {
@@ -5396,6 +5505,7 @@ async function updateCustomer(req, res, next) {
         tispDueDate: tispDueDate || undefined,
         apartmentChanged: Boolean(apartmentChanged),
         previousCustomerNumber: previousCustomerNumber || undefined,
+        previousIp: ipChanged ? previousIp || undefined : undefined,
       });
       tisp = syncResult.tisp;
       zoho = syncResult.zoho;
@@ -5418,6 +5528,7 @@ async function updateCustomer(req, res, next) {
       const parts = [];
       if (packageChanged) parts.push("package changed");
       if (apartmentChanged) parts.push("apartment moved");
+      if (ipChanged) parts.push("IP changed");
       const detail = parts.length ? ` · ${parts.join(", ")}` : "";
       await logActivity({
         eventType: "customer_updated",
@@ -5432,6 +5543,9 @@ async function updateCustomer(req, res, next) {
         metadata: {
           packageChanged: Boolean(packageChanged),
           apartmentChanged: Boolean(apartmentChanged),
+          ipChanged: Boolean(ipChanged),
+          previousIp: ipChanged ? previousIp || null : null,
+          newIp: ipChanged ? customer?.ipAddress || null : null,
         },
       });
     } catch (logErr) {
