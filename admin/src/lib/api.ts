@@ -2840,6 +2840,20 @@ export const api = {
           receiptEmailed?: boolean;
           invoiceNumber?: string | null;
           invoiceId?: string | null;
+          /** Advance payment amount matches expected signup total (within KES 1). */
+          paymentMatch?: boolean;
+          paymentAmount?: number;
+          expectedTotal?: number;
+        } | null;
+        /** Separate unpaid invoice for decoder / package / balance shortfall. */
+        outstandingInvoice?: {
+          created?: boolean;
+          error?: string;
+          invoiceNumber?: string | null;
+          invoiceId?: string | null;
+          decoderOnly?: boolean;
+          packageOnly?: boolean;
+          balanceOnly?: boolean;
         } | null;
         recurring?: {
           created?: boolean;
