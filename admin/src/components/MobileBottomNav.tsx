@@ -69,8 +69,9 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
       as="nav"
       mx={0}
       mb={0}
-      // Floating pill only — no safe-area padding (that painted the white bottom strip).
-      pb={0}
+      // Pill hugs its content — clearance is on the outer shell `bottom`, not padding here.
+      p={1}
+      pb={1}
       bg="whiteAlpha.900"
       border="1px solid"
       borderColor="border"
@@ -78,9 +79,7 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
       boxShadow="0 8px 28px rgba(15, 23, 42, 0.14)"
       backdropFilter="blur(16px)"
       css={{ WebkitBackdropFilter: "blur(16px)", pointerEvents: "auto" }}
-      overflow="visible"
-      px={1}
-      py={1}
+      overflow="hidden"
     >
       <Flex justify="space-between" align="center" minH={MOBILE_BOTTOM_NAV_H} gap={0.5}>
         {tabs.map((tab) => {

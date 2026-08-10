@@ -3,8 +3,11 @@ import {
   Badge,
   Box,
   Button,
+  Dialog,
+  Field,
   Flex,
   IconButton,
+  Input,
   Stack,
   Table,
   Text,
@@ -44,6 +47,8 @@ import { TextStatus } from "../ui/TextStatus";
 import { DetailCard, DetailGrid } from "../module/EntityExpandShell";
 import { DstvSerialMissingBadge } from "./DstvSerialMissingBadge";
 import { CatalogPackageMissingBadge } from "./CatalogPackageMissingBadge";
+import { AppDialog } from "../ui/AppDialog";
+import { SelectField } from "../ui/SelectField";
 
 type Props = {
   customerId: number;
@@ -572,6 +577,12 @@ export function CustomerExpandPanel({
   const [zohoLoading, setZohoLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [retryingBilling, setRetryingBilling] = useState(false);
+  const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+  const [paymentAlreadyMade, setPaymentAlreadyMade] = useState(true);
+  const [paymentMethod, setPaymentMethod] = useState<"" | "mpesa" | "paystack" | "bank">("");
+  const [mpesaCode, setMpesaCode] = useState("");
+  const [paystackReference, setPaystackReference] = useState("");
+  const [bankReference, setBankReference] = useState("");
   const { inCooldown, remainingSeconds, startCooldown } = useSyncCooldown(customerId);
   const [error, setError] = useState("");
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -871,7 +882,34 @@ export function CustomerExpandPanel({
     ? "Replace former Zoho contact"
     : "Retry billing setup";
 
-  async function handleRetryBilling() {
+  function openRetryBillingFlow() {
+    if (inCooldown) {
+      toaster.create({
+        title: "Sync cooldown",
+        description: `Try again in ${remainingSeconds} seconds`,
+        type: "info",
+      });
+      return;
+    }
+    if (hasFormerTenantInvoices) {
+      setPaymentAlreadyMade(true);
+      setPaymentMethod("");
+      setMpesaCode("");
+      setPaystackReference("");
+      setBankReference("");
+      setReplaceDialogOpen(true);
+      return;
+    }
+    void runRetryBilling();
+  }
+
+  async function runRetryBilling(options?: {
+    paymentAlreadyMade?: boolean;
+    paymentMethod?: "mpesa" | "paystack" | "bank";
+    mpesaCode?: string;
+    paystackReference?: string;
+    bankReference?: string;
+  }) {
     if (inCooldown) {
       toaster.create({
         title: "Sync cooldown",
@@ -883,10 +921,11 @@ export function CustomerExpandPanel({
 
     setRetryingBilling(true);
     try {
-      const res = await api.retryBillingOnboarding(customerId);
+      const res = await api.retryBillingOnboarding(customerId, options);
       setCustomer(res.customer);
       setZohoStatus(res.zoho);
       onCustomerUpdated?.(res.customer);
+      setReplaceDialogOpen(false);
 
       const parts: string[] = [];
       const invoice = res.billing.invoice;
@@ -895,7 +934,9 @@ export function CustomerExpandPanel({
       } else if (invoice?.reused && invoice.invoiceNumber) {
         parts.push(`Reused open invoice ${invoice.invoiceNumber}`);
       }
-      if (invoice?.emailed) {
+      if (options?.paymentAlreadyMade) {
+        parts.push("marked paid (payment already made)");
+      } else if (invoice?.emailed) {
         parts.push("emailed to customer");
       }
       if (res.billing.recurring?.created) {
@@ -929,6 +970,47 @@ export function CustomerExpandPanel({
     } finally {
       setRetryingBilling(false);
     }
+  }
+
+  function confirmReplaceDialog() {
+    if (paymentAlreadyMade) {
+      if (!paymentMethod) {
+        toaster.create({
+          title: "Payment method required",
+          description: "Select M-Pesa, Paystack, or Bank",
+          type: "error",
+        });
+        return;
+      }
+      if (paymentMethod === "mpesa" && !/^[A-Z0-9]{8,15}$/i.test(mpesaCode.trim())) {
+        toaster.create({
+          title: "M-Pesa code required",
+          description: "Enter a valid M-Pesa receipt code (8–15 letters/numbers)",
+          type: "error",
+        });
+        return;
+      }
+      if (paymentMethod === "paystack" && !paystackReference.trim()) {
+        toaster.create({
+          title: "Paystack reference required",
+          description: "Enter the Paystack / Zoho payment REFERENCE#",
+          type: "error",
+        });
+        return;
+      }
+      void runRetryBilling({
+        paymentAlreadyMade: true,
+        paymentMethod,
+        mpesaCode:
+          paymentMethod === "mpesa" ? mpesaCode.trim().toUpperCase() : undefined,
+        paystackReference:
+          paymentMethod === "paystack" ? paystackReference.trim() : undefined,
+        bankReference:
+          paymentMethod === "bank" ? bankReference.trim() || undefined : undefined,
+      });
+      return;
+    }
+    void runRetryBilling({ paymentAlreadyMade: false });
   }
 
   const revealPanel = useCallback(() => {
@@ -983,6 +1065,7 @@ export function CustomerExpandPanel({
   const zohoNarrations = buildZohoNarrations(customer, integrations, zohoStatus);
 
   return (
+    <>
     <Box {...shellProps}>
       <Box
         bg="bg.panel"
@@ -1398,7 +1481,12 @@ export function CustomerExpandPanel({
                     : "This apartment’s Zoho contact still belongs to the previous tenant."}
                 </Text>
                 <Text fontSize="xs" color="orange.800" mt={0.5}>
-                  Replace the former Zoho contact to archive it as {customer.customerNumber?.replace(/-CXL-\d+$/i, "") || "the apartment number"}-CXL-… and create a fresh contact + signup invoice for this customer.
+                  Archive the former Zoho contact as{" "}
+                  {customer.customerNumber?.replace(/-CXL-\d+$/i, "") ||
+                    "the apartment number"}
+                  -CXL-… and create a fresh contact for this customer. If they
+                  already paid, you will enter the payment reference — no new
+                  invoice email is sent.
                 </Text>
                 <Button
                   mt={2}
@@ -1406,7 +1494,7 @@ export function CustomerExpandPanel({
                   colorPalette="orange"
                   loading={retryingBilling}
                   disabled={inCooldown}
-                  onClick={() => void handleRetryBilling()}
+                  onClick={() => openRetryBillingFlow()}
                 >
                   {retryBillingLabel}
                 </Button>
@@ -1459,14 +1547,14 @@ export function CustomerExpandPanel({
                     ? "No Zoho contact linked for this customer"
                     : "Billing setup incomplete — Zoho contact not linked"}
                 </EmptyState>
-                {canRetryBilling ? (
+                {canRetryBilling && !hasFormerTenantInvoices ? (
                   <Button
                     mt={3}
                     size="sm"
                     colorPalette="brand"
                     loading={retryingBilling}
                     disabled={inCooldown}
-                    onClick={() => void handleRetryBilling()}
+                    onClick={() => openRetryBillingFlow()}
                   >
                     {retryBillingLabel}
                   </Button>
@@ -1475,7 +1563,9 @@ export function CustomerExpandPanel({
             ) : sortedInvoices.length === 0 ? (
               <Box textAlign="center">
                 <EmptyState>
-                  {customer.trialPeriodEnabled && customer.trialEndsAt
+                  {hasFormerTenantInvoices
+                    ? "No invoices for this customer yet on a fresh Zoho contact."
+                    : customer.trialPeriodEnabled && customer.trialEndsAt
                     ? new Date(customer.trialEndsAt) >= new Date(new Date().toDateString())
                       ? `Trial active — first invoice scheduled ${formatDate(customer.trialEndsAt)}`
                       : "No invoices found for this customer"
@@ -1483,14 +1573,14 @@ export function CustomerExpandPanel({
                       ? "No invoices found for this customer"
                       : "Billing setup incomplete — no signup invoice yet"}
                 </EmptyState>
-                {canRetryBilling ? (
+                {canRetryBilling && !hasFormerTenantInvoices ? (
                   <Button
                     mt={3}
                     size="sm"
                     colorPalette="brand"
                     loading={retryingBilling}
                     disabled={inCooldown}
-                    onClick={() => void handleRetryBilling()}
+                    onClick={() => openRetryBillingFlow()}
                   >
                     {retryBillingLabel}
                   </Button>
@@ -1663,6 +1753,156 @@ export function CustomerExpandPanel({
       </Box>
       </Box>
     </Box>
+
+      <AppDialog
+        open={replaceDialogOpen}
+        onOpenChange={(details) => {
+          if (!details.open && !retryingBilling) setReplaceDialogOpen(false);
+        }}
+        maxW="sm"
+        showCloseButton
+      >
+        <Dialog.Header
+          borderBottomWidth="1px"
+          borderColor="border.muted"
+          px={5}
+          py={3.5}
+          pr={12}
+        >
+          <Dialog.Title fontSize="lg">Replace former Zoho contact</Dialog.Title>
+        </Dialog.Header>
+        <Dialog.Body px={5} py={4}>
+          <Stack gap={3}>
+            <Text fontSize="sm" color="fg.muted">
+              Creates a new Zoho contact for {customer?.customerNumber || "this customer"}
+              and archives the previous tenant’s contact. Choose whether payment
+              was already made so we do not email another unpaid invoice.
+            </Text>
+            <Field.Root>
+              <Field.Label>Has payment already been made?</Field.Label>
+              <SelectField
+                fieldProps={{
+                  value: paymentAlreadyMade ? "yes" : "no",
+                  onChange: (e) => {
+                    const paid = e.target.value === "yes";
+                    setPaymentAlreadyMade(paid);
+                    if (!paid) {
+                      setPaymentMethod("");
+                      setMpesaCode("");
+                      setPaystackReference("");
+                      setBankReference("");
+                    }
+                  },
+                }}
+              >
+                <option value="yes">Yes — already paid</option>
+                <option value="no">No — create and email signup invoice</option>
+              </SelectField>
+            </Field.Root>
+
+            {paymentAlreadyMade ? (
+              <>
+                <Field.Root required>
+                  <Field.Label>Payment method</Field.Label>
+                  <SelectField
+                    fieldProps={{
+                      value: paymentMethod,
+                      onChange: (e) => {
+                        const method = e.target.value as
+                          | ""
+                          | "mpesa"
+                          | "paystack"
+                          | "bank";
+                        setPaymentMethod(method);
+                        if (method !== "mpesa") setMpesaCode("");
+                        if (method !== "paystack") setPaystackReference("");
+                        if (method !== "bank") setBankReference("");
+                      },
+                    }}
+                  >
+                    <option value="">Select payment method…</option>
+                    <option value="mpesa">M-Pesa</option>
+                    <option value="paystack">Paystack</option>
+                    <option value="bank">Direct Bank</option>
+                  </SelectField>
+                </Field.Root>
+
+                {paymentMethod === "mpesa" ? (
+                  <Field.Root required>
+                    <Field.Label>Payment REFERENCE# (M-Pesa code)</Field.Label>
+                    <Input
+                      value={mpesaCode}
+                      onChange={(e) =>
+                        setMpesaCode(
+                          e.target.value.toUpperCase().replace(/\s+/g, "")
+                        )
+                      }
+                      placeholder="e.g. UH39A1LI2Y"
+                      fontFamily="mono"
+                      autoComplete="off"
+                    />
+                  </Field.Root>
+                ) : null}
+
+                {paymentMethod === "paystack" ? (
+                  <Field.Root required>
+                    <Field.Label>Paystack / Zoho payment REFERENCE#</Field.Label>
+                    <Input
+                      value={paystackReference}
+                      onChange={(e) => setPaystackReference(e.target.value)}
+                      placeholder="Paystack transaction or Zoho reference"
+                      fontFamily="mono"
+                      autoComplete="off"
+                    />
+                  </Field.Root>
+                ) : null}
+
+                {paymentMethod === "bank" ? (
+                  <Field.Root>
+                    <Field.Label>Bank transfer reference (optional)</Field.Label>
+                    <Input
+                      value={bankReference}
+                      onChange={(e) => setBankReference(e.target.value)}
+                      placeholder="Bank slip / transfer reference"
+                      autoComplete="off"
+                    />
+                  </Field.Root>
+                ) : null}
+              </>
+            ) : (
+              <Text fontSize="xs" color="fg.muted">
+                A new signup invoice will be created on the fresh Zoho contact and
+                emailed to the customer.
+              </Text>
+            )}
+          </Stack>
+        </Dialog.Body>
+        <Dialog.Footer
+          px={5}
+          py={3}
+          borderTopWidth="1px"
+          borderColor="border.muted"
+          gap={2}
+        >
+          <Button
+            variant="ghost"
+            disabled={retryingBilling}
+            onClick={() => setReplaceDialogOpen(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            colorPalette="brand"
+            loading={retryingBilling}
+            onClick={() => confirmReplaceDialog()}
+          >
+            {paymentAlreadyMade
+              ? "Replace contact & mark paid"
+              : "Replace contact & email invoice"}
+          </Button>
+        </Dialog.Footer>
+      </AppDialog>
+    </>
   );
 }
 

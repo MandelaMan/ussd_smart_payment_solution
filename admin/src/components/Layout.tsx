@@ -5,8 +5,15 @@ import { createPortal } from "react-dom";
 import { Sidebar } from "./Sidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { MobilePageTransition } from "./MobilePageTransition";
-import { MOBILE_BOTTOM_NAV_H, MOBILE_BOTTOM_NAV_OFFSET } from "../lib/mobileNav";
+import {
+  MOBILE_BOTTOM_NAV_GAP,
+  MOBILE_BOTTOM_NAV_H,
+  MOBILE_BOTTOM_NAV_OFFSET,
+} from "../lib/mobileNav";
 import { MobileSearchProvider, useMobileSearchOptional } from "../lib/mobileSearch";
+
+/** Lift the pill above the home indicator without padding the shell (padding paints white). */
+const MOBILE_NAV_BOTTOM = `max(${MOBILE_BOTTOM_NAV_GAP}, env(safe-area-inset-bottom, 0px))`;
 
 function LayoutShell() {
   const [open, setOpen] = useState(false);
@@ -70,20 +77,18 @@ function LayoutShell() {
       {typeof document !== "undefined" && !open && !hideBottomNav
         ? createPortal(
             <Box
-              // v3 busts stale SW CSS that painted an opaque white band under the pill.
-              className="sul-mobile-nav-v3"
+              // v4: bottom offset (not padding) + class bump so SW cannot restore the white band.
+              className="sul-mobile-nav-v4"
               display={{ base: "block", lg: "none" }}
               position="fixed"
               left={0}
               right={0}
-              bottom={0}
+              bottom={MOBILE_NAV_BOTTOM}
               zIndex={1000}
               bg="transparent"
               pointerEvents="none"
               p={0}
               m={0}
-              // Transparent 8px gap only — never safe-area (that created the white strip).
-              pb="8px"
               minH={0}
               h="auto"
               maxH="none"
@@ -91,10 +96,10 @@ function LayoutShell() {
                 position: "fixed",
                 left: 0,
                 right: 0,
-                bottom: 0,
+                bottom: MOBILE_NAV_BOTTOM,
                 zIndex: 1000,
                 margin: 0,
-                padding: "0 0 8px 0",
+                padding: 0,
                 background: "transparent",
                 backgroundColor: "transparent",
                 pointerEvents: "none",

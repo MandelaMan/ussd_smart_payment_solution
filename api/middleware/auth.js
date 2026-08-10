@@ -98,26 +98,41 @@ async function invalidateUserTokens(userId) {
 }
 
 async function authenticate(req, res, next) {
+  const token = req.cookies?.[COOKIE_NAME];
+  if (!token) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+
+  let decoded;
   try {
-    const token = req.cookies?.[COOKIE_NAME];
-    if (!token) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-    const decoded = verifyToken(token);
-    req.tokenExp = decoded.exp;
-    req.sessionJti = decoded.jti || null;
-    const user = await loadUserFromToken(decoded);
-    if (!user) {
-      clearAuthCookie(res);
-      return res.status(401).json({ error: "Invalid or expired session" });
-    }
-    req.user = user;
-    // Bind actor for activity logging across the request (including awaits).
-    return runWithActivityActor(actorFromUser(user), () => next());
+    decoded = verifyToken(token);
   } catch {
+    // Only wipe the cookie when the JWT itself is invalid/expired.
     clearAuthCookie(res);
     return res.status(401).json({ error: "Authentication required" });
   }
+
+  req.tokenExp = decoded.exp;
+  req.sessionJti = decoded.jti || null;
+
+  let user;
+  try {
+    user = await loadUserFromToken(decoded);
+  } catch {
+    // DB blip / pool restart — do not destroy a still-valid session cookie.
+    return res
+      .status(503)
+      .json({ error: "Authentication temporarily unavailable" });
+  }
+
+  if (!user) {
+    clearAuthCookie(res);
+    return res.status(401).json({ error: "Invalid or expired session" });
+  }
+
+  req.user = user;
+  // Bind actor for activity logging across the request (including awaits).
+  return runWithActivityActor(actorFromUser(user), () => next());
 }
 
 function requireRole(...roles) {

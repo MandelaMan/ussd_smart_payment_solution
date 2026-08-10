@@ -207,15 +207,16 @@ async function emailSignupInvoiceOnce(invoice, customer, tracking = null, option
   }
 }
 
-function buildSignupLineItems(customer, period) {
+function buildSignupLineItems(customer, period, options = {}) {
   return buildSubscriptionLineItems(customer, period, {
-    includeOneTimeDstvFee: true,
+    includePackage: options.includePackage !== false,
+    includeOneTimeDstvFee: options.includeOneTimeDstvFee === true,
   });
 }
 
 /**
- * One-off decoder invoice for trial signups (package billing starts at trial end).
- * Recurring must not carry the decoder line — it would repeat every cycle.
+ * One-off decoder invoice (trial signups, or advance payment that covered
+ * Internet only on a DSTV package). Recurring must not carry the decoder line.
  */
 async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) {
   const decoderLine = buildDstvDecoderFeeLineItem(customer, {
@@ -231,6 +232,14 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
     buildingCode: customer.buildingCode,
   });
 
+  const notes =
+    options.notes ||
+    [
+      "One-time DSTV decoder charge",
+      "Issued separately because advance payment covered Internet/package only",
+      `Decoder (from plan): KES ${Math.round(Number(decoderLine.rate) || 0)}`,
+    ].join("\n");
+
   const invoice = await createInvoice_JS({
     customer_id: zohoContact.contact_id,
     items: [decoderLine],
@@ -240,6 +249,7 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
     due_date: computeInvoiceDueDate(customer),
     ...resolveZohoPaymentTerms(customer),
     customer,
+    notes,
   });
 
   if (!invoice?.invoice_id) {
@@ -266,6 +276,146 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
 }
 
 /**
+ * Package-only signup invoice when advance payment covered decoder only
+ * (Internet/package still outstanding on a DSTV plan).
+ */
+async function createOutstandingPackageInvoice(customer, zohoContact, options = {}) {
+  const period = computeBillingPeriod({
+    paymentFrequency: customer.paymentFrequency,
+    customPeriodDays: customer.customPeriodDays,
+  });
+  const lineItems = buildSignupLineItems(customer, period, {
+    includePackage: true,
+    includeOneTimeDstvFee: false,
+  });
+  if (!lineItems.length) {
+    return { created: false, reason: "no_package_line", invoiceId: null };
+  }
+
+  const packagePrice = Number(customer.packagePrice || 0);
+  const invoiceNumber = await buildZohoInvoiceNumber({
+    customerId: customer.id,
+    customerNumber: customer.customerNumber,
+    buildingCode: customer.buildingCode,
+  });
+
+  const notes =
+    options.notes ||
+    [
+      "Internet / package charge",
+      "Issued separately because advance payment covered DSTV decoder only",
+      `Package (from plan): KES ${Math.round(packagePrice)}`,
+    ].join("\n");
+
+  const invoice = await createInvoice_JS({
+    customer_id: zohoContact.contact_id,
+    items: lineItems,
+    is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    reference_number: customer.customerNumber,
+    invoice_number: invoiceNumber,
+    due_date: computeInvoiceDueDate(customer),
+    ...resolveZohoPaymentTerms(customer),
+    customer,
+    notes,
+  });
+
+  if (!invoice?.invoice_id) {
+    throw new Error("Zoho outstanding package invoice creation failed");
+  }
+
+  const tracking = await customerStore.getCustomerById(customer.id);
+  const emailResult = await emailSignupInvoiceOnce(
+    invoice,
+    customer,
+    tracking,
+    { ...options, forceEmail: options.forceEmail === true }
+  );
+
+  return {
+    created: true,
+    invoiceId: String(invoice.invoice_id),
+    invoiceNumber: invoice.invoice_number || null,
+    total: Number(invoice.total || packagePrice),
+    emailed: emailResult.emailed,
+    emailReason: emailResult.reason,
+    packageOnly: true,
+  };
+}
+
+/**
+ * Balance invoice when advance payment amount is short of the covered package total
+ * (any package — Internet-only or DSTV).
+ */
+async function createOutstandingBalanceInvoice(
+  customer,
+  zohoContact,
+  { amount, notes, forceEmail = true } = {}
+) {
+  const balance = Math.round(Number(amount) || 0);
+  if (!(balance > 0)) {
+    return { created: false, reason: "no_balance", invoiceId: null };
+  }
+
+  const invoiceNumber = await buildZohoInvoiceNumber({
+    customerId: customer.id,
+    customerNumber: customer.customerNumber,
+    buildingCode: customer.buildingCode,
+  });
+
+  const packageLabel = String(
+    customer.productName || customer.packageName || "Package"
+  ).trim();
+
+  const invoice = await createInvoice_JS({
+    customer_id: zohoContact.contact_id,
+    items: [
+      {
+        name: `Balance — ${packageLabel}`.slice(0, 100),
+        rate: balance,
+        quantity: 1,
+        description:
+          "Outstanding balance after advance payment (amount short of package total)",
+      },
+    ],
+    is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    reference_number: customer.customerNumber,
+    invoice_number: invoiceNumber,
+    due_date: computeInvoiceDueDate(customer),
+    ...resolveZohoPaymentTerms(customer),
+    customer,
+    notes:
+      notes ||
+      [
+        "Outstanding signup balance",
+        `Package (from plan): KES ${Math.round(Number(customer.packagePrice || 0))}`,
+        `Balance due: KES ${balance}`,
+      ].join("\n"),
+  });
+
+  if (!invoice?.invoice_id) {
+    throw new Error("Zoho outstanding balance invoice creation failed");
+  }
+
+  const tracking = await customerStore.getCustomerById(customer.id);
+  const emailResult = await emailSignupInvoiceOnce(
+    invoice,
+    customer,
+    tracking,
+    { forceEmail, skipEmail: false }
+  );
+
+  return {
+    created: true,
+    invoiceId: String(invoice.invoice_id),
+    invoiceNumber: invoice.invoice_number || null,
+    total: Number(invoice.total || balance),
+    emailed: emailResult.emailed,
+    emailReason: emailResult.reason,
+    balanceOnly: true,
+  };
+}
+
+/**
  * Create (or reuse) the first subscription invoice and email it once to the customer.
  * C2B: invoice on customer contact. B2B: invoice on agency contact with customer line.
  *
@@ -274,21 +424,52 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
  * options.disregardExistingInvoices — never reuse; always create a new signup invoice
  */
 async function createSignupInvoice(customer, zohoContact, options = {}) {
-  const amount = Number(customer.packagePrice || 0);
-  if (amount <= 0) {
-    return {
-      created: false,
-      reason: "no_package_price",
-      invoiceId: null,
-      invoiceNumber: null,
-      emailed: false,
-    };
-  }
-
   const {
     expectedSignupInvoiceTotal,
+    resolveAdvancePaymentCoverage,
+    buildAdvancePaymentInvoiceNotes,
+    shouldIncludeDstvOneTimeFee,
   } = require("../utils/zohoInvoiceLineItems");
-  const expectedTotal = expectedSignupInvoiceTotal(customer);
+
+  const coverage = resolveAdvancePaymentCoverage(customer, options);
+  if (options.paymentAlreadyMade === true) {
+    if (!coverage.includePackage && !coverage.includeDecoder) {
+      return {
+        created: false,
+        reason: "payment_coverage_required",
+        invoiceId: null,
+        invoiceNumber: null,
+        emailed: false,
+      };
+    }
+  }
+
+  const expectedTotal = expectedSignupInvoiceTotal(customer, {
+    includePackage: coverage.includePackage,
+    includeOneTimeDstvFee: coverage.includeDecoder,
+    paymentAlreadyMade: options.paymentAlreadyMade === true,
+    paymentCoversInternet: coverage.includePackage,
+    paymentCoversDecoder: coverage.includeDecoder,
+  });
+
+  if (!(expectedTotal > 0)) {
+    // Decoder-only is allowed when DSTV; otherwise need a package price.
+    if (
+      !(
+        coverage.includeDecoder &&
+        shouldIncludeDstvOneTimeFee(customer) &&
+        !coverage.includePackage
+      )
+    ) {
+      return {
+        created: false,
+        reason: "no_package_price",
+        invoiceId: null,
+        invoiceNumber: null,
+        emailed: false,
+      };
+    }
+  }
 
   const period = computeBillingPeriod({
     paymentFrequency: customer.paymentFrequency,
@@ -304,7 +485,7 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     if (existing?.invoice_id) {
       const existingTotal = Number(existing.total);
       // Never re-email / reuse a signup invoice that does not match the current
-      // package (+ decoder). That is how customers got KES 5,900 while on a
+      // package (+ decoder coverage). That is how customers got KES 5,900 while on a
       // KES 9,250 DSTV plan.
       if (
         Number.isFinite(existingTotal) &&
@@ -340,10 +521,12 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
         reused: true,
         invoiceId: String(existing.invoice_id),
         invoiceNumber: existing.invoice_number || null,
-        total: Number(existing.total || amount),
+        total: Number(existing.total || expectedTotal),
         period,
         emailed: emailResult.emailed,
         emailReason: emailResult.reason,
+        coverage,
+        expectedTotal,
       };
     }
   }
@@ -355,15 +538,42 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     buildingCode: customer.buildingCode,
   });
 
+  const lineItems = buildSignupLineItems(customer, period, {
+    includePackage: coverage.includePackage,
+    includeOneTimeDstvFee: coverage.includeDecoder,
+  });
+  if (!lineItems.length) {
+    return {
+      created: false,
+      reason: "no_line_items",
+      invoiceId: null,
+      invoiceNumber: null,
+      emailed: false,
+    };
+  }
+
+  let notes = options.notes || null;
+  if (options.paymentAlreadyMade === true && !notes) {
+    notes = buildAdvancePaymentInvoiceNotes({
+      customer,
+      coverage,
+      paymentReference: options.paymentReference || null,
+      paymentMethod: options.paymentMethod || null,
+      paymentAmount: options.paymentAmount,
+      expectedAmount: expectedTotal,
+    });
+  }
+
   const invoice = await createInvoice_JS({
     customer_id: zohoContact.contact_id,
-    items: buildSignupLineItems(customer, period),
+    items: lineItems,
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
     reference_number: referenceNumber,
     invoice_number: invoiceNumber,
     due_date: computeInvoiceDueDate(customer),
     ...resolveZohoPaymentTerms(customer),
     customer,
+    notes,
   });
 
   if (!invoice?.invoice_id) {
@@ -384,12 +594,20 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
 
   return {
     created: true,
+    reused: false,
     invoiceId: String(invoice.invoice_id),
-    invoiceNumber: invoice.invoice_number || null,
-    total: Number(invoice.total || amount),
+    invoiceNumber: invoice.invoice_number || invoiceNumber,
+    total: Number(invoice.total != null ? invoice.total : expectedTotal),
     period,
     emailed: emailResult.emailed,
     emailReason: emailResult.reason,
+    coverage,
+    expectedTotal,
+    paymentMatch:
+      options.paymentAmount != null &&
+      Number.isFinite(Number(options.paymentAmount))
+        ? Math.abs(Number(options.paymentAmount) - expectedTotal) <= 1
+        : null,
   };
 }
 
@@ -422,6 +640,8 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
   const bankReference = options.bankReference
     ? String(options.bankReference).trim()
     : "";
+  const paymentCoversInternet = options.paymentCoversInternet === true;
+  const paymentCoversDecoder = options.paymentCoversDecoder === true;
   const forceEmail = options.forceEmail === true && !paymentAlreadyMade;
   const skipEmail = options.skipEmail === true || paymentAlreadyMade;
 
@@ -473,6 +693,34 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     ctx.trial_ends_at ||
     (hasTrial ? computeTrialEndDate() : null);
 
+  const {
+    resolveAdvancePaymentCoverage,
+    shouldIncludeDstvOneTimeFee,
+  } = require("../utils/zohoInvoiceLineItems");
+
+  if (paymentAlreadyMade) {
+    if (!paymentCoversInternet && !paymentCoversDecoder) {
+      return {
+        ok: false,
+        error:
+          "Select what the payment covers (Internet/package, and DSTV decoder when applicable)",
+        invoice: null,
+        recurring: null,
+      };
+    }
+    if (
+      !shouldIncludeDstvOneTimeFee(customer) &&
+      !paymentCoversInternet
+    ) {
+      return {
+        ok: false,
+        error: "Select Internet/package — this plan has no DSTV decoder fee",
+        invoice: null,
+        recurring: null,
+      };
+    }
+  }
+
   try {
     const replaceFormerTenant = options.replaceFormerTenant !== false;
     let zohoContact = await ensureZohoContactForCustomer(
@@ -497,7 +745,42 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     );
 
     let invoice;
+    let outstandingInvoice = null;
     let recurring = null;
+    let lookedUpPaymentAmount = null;
+    const paymentReference =
+      paymentMethod === "mpesa"
+        ? mpesaCode
+        : paymentMethod === "paystack"
+          ? paystackReference
+          : bankReference || null;
+
+    // Prefer knowing the Zoho payment amount before creating the invoice so
+    // reconciliation MATCH/MISMATCH can be written onto the invoice notes.
+    if (
+      paymentAlreadyMade &&
+      (paymentMethod === "mpesa" || paymentMethod === "paystack") &&
+      paymentReference
+    ) {
+      try {
+        const { findCustomerPaymentByReference_JS, getCustomerPayment_JS } =
+          require("../controllers/zoho.controller");
+        const listed = await findCustomerPaymentByReference_JS(paymentReference);
+        if (listed?.payment_id) {
+          const full =
+            (await getCustomerPayment_JS(listed.payment_id)) || listed;
+          const amt = Number(full.amount);
+          if (Number.isFinite(amt) && amt > 0) {
+            lookedUpPaymentAmount = amt;
+          }
+        }
+      } catch (e) {
+        console.warn(
+          "Advance payment amount lookup failed:",
+          e.message || e
+        );
+      }
+    }
 
     // Advance payment / forced billing override the "existing contact → skip" rule.
     // Also bill when we retired a former tenant and created a fresh Zoho customer.
@@ -563,10 +846,23 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         throw e;
       }
     } else {
+      const coverage = resolveAdvancePaymentCoverage(customer, {
+        paymentAlreadyMade,
+        paymentCoversInternet,
+        paymentCoversDecoder,
+      });
+
       invoice = await createSignupInvoice(customer, zohoContact, {
         forceEmail,
         skipEmail,
-        disregardExistingInvoices: retiredFormer === true,
+        disregardExistingInvoices:
+          retiredFormer === true || paymentAlreadyMade === true,
+        paymentAlreadyMade,
+        paymentMethod: paymentAlreadyMade ? paymentMethod : undefined,
+        paymentReference: paymentAlreadyMade ? paymentReference : undefined,
+        paymentAmount: lookedUpPaymentAmount,
+        paymentCoversInternet: coverage.includePackage,
+        paymentCoversDecoder: coverage.includeDecoder,
       });
 
       if (paymentAlreadyMade && invoice.invoiceId) {
@@ -592,6 +888,133 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
             invoice,
             mpesaCode,
           });
+        }
+
+        // Enrich response with reconciliation vs package amounts.
+        if (invoice && typeof invoice === "object") {
+          invoice.coverage = coverage;
+          invoice.expectedTotal = invoice.expectedTotal;
+          if (
+            lookedUpPaymentAmount != null ||
+            invoice.payment_amount != null ||
+            invoice.total != null
+          ) {
+            const paidAmt = Number(
+              lookedUpPaymentAmount != null
+                ? lookedUpPaymentAmount
+                : invoice.payment_amount != null
+                  ? invoice.payment_amount
+                  : invoice.total
+            );
+            const expected = Number(invoice.expectedTotal || invoice.total || 0);
+            invoice.paymentAmount = paidAmt;
+            invoice.paymentMatch =
+              Number.isFinite(paidAmt) && expected > 0
+                ? Math.abs(paidAmt - expected) <= 1
+                : invoice.paymentMatch;
+          }
+        }
+
+        // Unpaid first-invoice components → separate unpaid invoices (all packages).
+        // 1) DSTV internet-only → outstanding decoder
+        // 2) DSTV decoder-only → outstanding package
+        // 3) Payment amount short of covered total → outstanding balance (any package)
+        if (coverage.hasDstv && coverage.includePackage && !coverage.includeDecoder) {
+          try {
+            outstandingInvoice = await createDstvDecoderFeeInvoice(
+              customer,
+              zohoContact,
+              {
+                forceEmail: true,
+                skipEmail: false,
+                notes: [
+                  "One-time DSTV decoder charge",
+                  "Separate invoice — advance payment covered Internet/package only",
+                  `Decoder (from plan): KES ${Math.round(
+                    Number(customer.decoderFeeAmount || customer.decoder_fee_amount || 2900)
+                  )}`,
+                ].join("\n"),
+              }
+            );
+          } catch (e) {
+            console.error(
+              "outstanding decoder invoice after internet-only advance payment failed:",
+              e.message
+            );
+            outstandingInvoice = {
+              created: false,
+              error: e.message || "decoder_invoice_failed",
+              decoderOnly: true,
+            };
+          }
+        } else if (
+          coverage.hasDstv &&
+          !coverage.includePackage &&
+          coverage.includeDecoder
+        ) {
+          try {
+            outstandingInvoice = await createOutstandingPackageInvoice(
+              customer,
+              zohoContact,
+              {
+                forceEmail: true,
+                skipEmail: false,
+              }
+            );
+          } catch (e) {
+            console.error(
+              "outstanding package invoice after decoder-only advance payment failed:",
+              e.message
+            );
+            outstandingInvoice = {
+              created: false,
+              error: e.message || "package_invoice_failed",
+              packageOnly: true,
+            };
+          }
+        } else {
+          const paidAmt = Number(
+            lookedUpPaymentAmount != null
+              ? lookedUpPaymentAmount
+              : invoice.paymentAmount != null
+                ? invoice.paymentAmount
+                : invoice.payment_amount != null
+                  ? invoice.payment_amount
+                  : NaN
+          );
+          const expected = Number(invoice.expectedTotal || invoice.total || 0);
+          const shortfall =
+            Number.isFinite(paidAmt) && expected > 0
+              ? Math.round(expected - paidAmt)
+              : 0;
+          if (shortfall > 1) {
+            try {
+              outstandingInvoice = await createOutstandingBalanceInvoice(
+                customer,
+                zohoContact,
+                {
+                  amount: shortfall,
+                  forceEmail: true,
+                  notes: [
+                    "Outstanding signup balance",
+                    `Expected (from plan coverage): KES ${Math.round(expected)}`,
+                    `Payment received: KES ${Math.round(paidAmt)}`,
+                    `Balance due: KES ${shortfall}`,
+                  ].join("\n"),
+                }
+              );
+            } catch (e) {
+              console.error(
+                "outstanding balance invoice after short advance payment failed:",
+                e.message
+              );
+              outstandingInvoice = {
+                created: false,
+                error: e.message || "balance_invoice_failed",
+                balanceOnly: true,
+              };
+            }
+          }
         }
       }
 
@@ -734,6 +1157,7 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
       retiredFormer,
       billingSkipped: linkedExisting,
       invoice,
+      outstandingInvoice,
       recurring,
       trial: hasTrial && !linkedExisting ? { enabled: true, endsAt: trialEndsAt } : null,
     };

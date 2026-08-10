@@ -2,7 +2,8 @@ const crypto = require("crypto");
 const { query } = require("../config/db");
 const { clientIp } = require("../utils/authLogger");
 
-const DEFAULT_MAX_ACTIVE_SESSIONS = 2;
+/** Laptop + phone + tablet + PWA is common; 2 caused surprise mid-day logouts. */
+const DEFAULT_MAX_ACTIVE_SESSIONS = 5;
 
 function maxActiveSessions() {
   const raw = Number(process.env.MAX_ADMIN_SESSIONS);

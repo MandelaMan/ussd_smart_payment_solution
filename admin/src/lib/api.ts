@@ -4,7 +4,7 @@ type AuthSessionExpiredHandler = () => void;
 let authSessionExpiredHandler: AuthSessionExpiredHandler | null = null;
 let authSessionExpiredNotified = false;
 
-/** Called by AuthProvider — clears user and sends to login on any 401. */
+/** Called by AuthProvider — confirms via /auth/me before clearing the session. */
 export function registerAuthSessionExpiredHandler(handler: AuthSessionExpiredHandler | null) {
   authSessionExpiredHandler = handler;
 }
@@ -13,11 +13,19 @@ export function resetAuthSessionExpiredFlag() {
   authSessionExpiredNotified = false;
 }
 
+/** Latch after a confirmed logout so parallel 401s do not re-enter the handler. */
+export function markAuthSessionExpiredNotified() {
+  authSessionExpiredNotified = true;
+}
+
 export function notifyAuthSessionExpired(path: string) {
   if (authSessionExpiredNotified) return;
   // /auth/me is handled by AuthProvider.refresh / focus validation.
+  // /auth/login 401s are invalid credentials, not an expired session.
   if (path.startsWith("/auth/login") || path.startsWith("/auth/me")) return;
-  authSessionExpiredNotified = true;
+  // Do not set the notified flag here — AuthProvider re-checks /auth/me and
+  // only marks notified when the session is actually dead (avoids locking out
+  // after a single spurious 401 from an unrelated endpoint).
   authSessionExpiredHandler?.();
 }
 
@@ -2737,7 +2745,16 @@ export const api = {
       }),
     }),
 
-  retryBillingOnboarding: (id: number) =>
+  retryBillingOnboarding: (
+    id: number,
+    options?: {
+      paymentAlreadyMade?: boolean;
+      paymentMethod?: "mpesa" | "paystack" | "bank";
+      mpesaCode?: string;
+      paystackReference?: string;
+      bankReference?: string;
+    }
+  ) =>
     request<{
       ok: boolean;
       billing: {
@@ -2761,7 +2778,10 @@ export const api = {
       };
       customer: Customer;
       zoho: CustomerZohoStatus;
-    }>(`/admin/customers/${id}/retry-billing-onboarding`, { method: "POST" }),
+    }>(`/admin/customers/${id}/retry-billing-onboarding`, {
+      method: "POST",
+      body: JSON.stringify(options || {}),
+    }),
 
   getCustomerInvoices: (id: number) =>
     request<{

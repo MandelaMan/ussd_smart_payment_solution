@@ -58,7 +58,7 @@ export default defineConfig({
               request.destination === "style",
             handler: "NetworkFirst",
             options: {
-              cacheName: "admin-shell-v3",
+              cacheName: "admin-shell-v4",
               networkTimeoutSeconds: 4,
             },
           },
@@ -67,7 +67,8 @@ export default defineConfig({
     }),
   ],
   server: {
-    host: "127.0.0.1",
+    // Keep in sync with ADMIN_ORIGIN — cookies set on localhost are not sent to 127.0.0.1.
+    host: "localhost",
     port: 5173,
     strictPort: true,
     proxy: {

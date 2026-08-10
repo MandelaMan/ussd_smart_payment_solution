@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
+  Checkbox,
   Dialog,
   Field,
   Flex,
@@ -205,12 +206,16 @@ export function CustomerForm({
   const [mpesaCode, setMpesaCode] = useState("");
   const [paystackReference, setPaystackReference] = useState("");
   const [bankReference, setBankReference] = useState("");
+  const [paymentCoversInternet, setPaymentCoversInternet] = useState(true);
+  const [paymentCoversDecoder, setPaymentCoversDecoder] = useState(true);
   const [paymentStatusOpen, setPaymentStatusOpen] = useState(false);
   const [paymentStatusDraft, setPaymentStatusDraft] = useState<{
     method: "" | "mpesa" | "paystack" | "bank";
     mpesaCode: string;
     paystackReference: string;
     bankReference: string;
+    coversInternet: boolean;
+    coversDecoder: boolean;
   } | null>(null);
   const [createInitialInvoice, setCreateInitialInvoice] = useState(false);
   const [createRecurringInvoice, setCreateRecurringInvoice] = useState(false);
@@ -601,6 +606,8 @@ export function CustomerForm({
     setMpesaCode("");
     setPaystackReference("");
     setBankReference("");
+    setPaymentCoversInternet(true);
+    setPaymentCoversDecoder(true);
   }
 
   function billingFieldsMatchBuilding(building: Building | undefined): boolean {
@@ -657,18 +664,22 @@ export function CustomerForm({
 
   function paymentStatusSummaryLabel(): string {
     if (!paymentAlreadyMade) return "No payment";
+    const covers: string[] = [];
+    if (paymentCoversInternet) covers.push("Internet");
+    if (packageHasDstv && paymentCoversDecoder) covers.push("decoder");
+    const coverSuffix = covers.length ? ` · ${covers.join(" + ")}` : "";
     if (advancePaymentMethod === "mpesa") {
-      return `Paid · M-Pesa ${mpesaCode.trim().toUpperCase() || "—"}`;
+      return `Paid · M-Pesa ${mpesaCode.trim().toUpperCase() || "—"}${coverSuffix}`;
     }
     if (advancePaymentMethod === "paystack") {
-      return `Paid · Paystack ${paystackReference.trim() || "—"}`;
+      return `Paid · Paystack ${paystackReference.trim() || "—"}${coverSuffix}`;
     }
     if (advancePaymentMethod === "bank") {
       return bankReference.trim()
-        ? `Paid · Bank transfer (${bankReference.trim()})`
-        : "Paid · Bank transfer";
+        ? `Paid · Bank transfer (${bankReference.trim()})${coverSuffix}`
+        : `Paid · Bank transfer${coverSuffix}`;
     }
-    return "Paid";
+    return `Paid${coverSuffix}`;
   }
 
   function openPaymentStatusModal() {
@@ -677,14 +688,22 @@ export function CustomerForm({
       mpesaCode,
       paystackReference,
       bankReference,
+      coversInternet: paymentCoversInternet,
+      coversDecoder: packageHasDstv ? paymentCoversDecoder : false,
     });
     setPaymentStatusOpen(true);
   }
 
   function closePaymentStatusModal(commit: boolean) {
     if (commit && paymentStatusDraft) {
-      const { method, mpesaCode: code, paystackReference: paystack, bankReference: bank } =
-        paymentStatusDraft;
+      const {
+        method,
+        mpesaCode: code,
+        paystackReference: paystack,
+        bankReference: bank,
+        coversInternet,
+        coversDecoder,
+      } = paymentStatusDraft;
       if (!method) {
         toaster.create({
           title: "Payment method required",
@@ -708,11 +727,23 @@ export function CustomerForm({
         });
         return;
       }
+      if (!coversInternet && !(packageHasDstv && coversDecoder)) {
+        toaster.create({
+          title: "What did the payment cover?",
+          description: packageHasDstv
+            ? "Check Internet/package and/or DSTV decoder for this plan."
+            : "Check Internet/package — payment must cover the selected plan.",
+          type: "error",
+        });
+        return;
+      }
       setPaymentAlreadyMade(true);
       setAdvancePaymentMethod(method);
       setMpesaCode(method === "mpesa" ? code.trim().toUpperCase() : "");
       setPaystackReference(method === "paystack" ? paystack.trim() : "");
       setBankReference(method === "bank" ? bank.trim() : "");
+      setPaymentCoversInternet(coversInternet);
+      setPaymentCoversDecoder(packageHasDstv ? coversDecoder : false);
       setTrialPeriod(false);
     } else if (!paymentAlreadyMade) {
       // Cancelled before completing — stay on No payment
@@ -804,6 +835,32 @@ export function CustomerForm({
         label: "Advance payment",
         value: paymentStatusSummaryLabel(),
       });
+      if (
+        paymentAlreadyMade &&
+        packageHasDstv &&
+        paymentCoversInternet &&
+        !paymentCoversDecoder
+      ) {
+        items.push({
+          label: "Separate decoder invoice",
+          value: `${formatCurrency(decoderFee || 2900)} — unpaid, emailed to customer`,
+        });
+      } else if (
+        paymentAlreadyMade &&
+        packageHasDstv &&
+        !paymentCoversInternet &&
+        paymentCoversDecoder
+      ) {
+        items.push({
+          label: "Separate package invoice",
+          value: `${formatCurrency(packageAmount || 0)} — unpaid, emailed to customer`,
+        });
+      } else if (paymentAlreadyMade && paymentCoversInternet) {
+        items.push({
+          label: "Package covered",
+          value: `${formatCurrency(packageAmount || 0)} — marked paid from reference`,
+        });
+      }
     }
     items.push({
       label: "Customer type",
@@ -918,6 +975,10 @@ export function CustomerForm({
     isDstvOnly,
     trialPeriod,
     paymentAlreadyMade,
+    paymentCoversInternet,
+    paymentCoversDecoder,
+    packageHasDstv,
+    decoderFee,
     advancePaymentMethod,
     mpesaCode,
     paystackReference,
@@ -1044,6 +1105,20 @@ export function CustomerForm({
         ) {
           toaster.create({
             title: "Paystack reference required",
+            type: "error",
+          });
+          openPaymentStatusModal();
+          return false;
+        }
+        if (
+          !paymentCoversInternet &&
+          !(packageHasDstv && paymentCoversDecoder)
+        ) {
+          toaster.create({
+            title: "What did the payment cover?",
+            description: packageHasDstv
+              ? "Check Internet/package and/or DSTV decoder for this plan."
+              : "Check Internet/package — payment must cover the selected plan.",
             type: "error",
           });
           openPaymentStatusModal();
@@ -1265,6 +1340,16 @@ export function CustomerForm({
           advancePaymentMethod === "bank"
             ? bankReference.trim() || undefined
             : undefined,
+        paymentCoversInternet:
+          customerType === "C2B" && paymentAlreadyMade === true
+            ? paymentCoversInternet
+            : undefined,
+        paymentCoversDecoder:
+          customerType === "C2B" &&
+          paymentAlreadyMade === true &&
+          packageHasDstv
+            ? paymentCoversDecoder
+            : undefined,
       });
 
       if (!res.tisp.ok) {
@@ -1297,13 +1382,32 @@ export function CustomerForm({
             : advancePaymentMethod === "paystack"
               ? paystackReference.trim()
               : bankReference.trim() || "bank transfer");
+        const matchNote =
+          res.zoho.invoice.paymentMatch === true
+            ? " · amount MATCHES package"
+            : res.zoho.invoice.paymentMatch === false
+              ? " · amount MISMATCH vs package (see invoice notes)"
+              : "";
+        const outstanding = res.zoho?.outstandingInvoice;
+        const outstandingNote =
+          outstanding?.created && outstanding.invoiceNumber
+            ? outstanding.decoderOnly
+              ? ` · separate decoder invoice ${outstanding.invoiceNumber} issued`
+              : outstanding.packageOnly
+                ? ` · separate package invoice ${outstanding.invoiceNumber} issued`
+                : outstanding.balanceOnly
+                  ? ` · separate balance invoice ${outstanding.invoiceNumber} issued`
+                  : ` · separate invoice ${outstanding.invoiceNumber} issued`
+            : outstanding?.error
+              ? ` · separate invoice failed: ${outstanding.error}`
+              : "";
         toaster.create({
           title: "Customer created",
           description: `${res.customer.customerNumber} — ${
             res.zoho.invoice.paymentAttached
               ? "Zoho payment attached"
               : "signup invoice marked paid"
-          } (ref ${refLabel})${
+          } (ref ${refLabel})${matchNote}${outstandingNote}${
             res.zoho.invoice.receiptEmailed || res.zoho.invoice.emailed
               ? " · receipt emailed"
               : ""
@@ -1312,8 +1416,11 @@ export function CustomerForm({
               ? " · recurring set up"
               : ""
           }`.trim(),
-          type: "success",
-          duration: 12000,
+          type:
+            res.zoho.invoice.paymentMatch === false || outstanding?.error
+              ? "warning"
+              : "success",
+          duration: 14000,
         });
       } else if (res.zoho?.invoice?.paymentError) {
         toaster.create({
@@ -1579,18 +1686,6 @@ export function CustomerForm({
               ))}
             </SelectField>
           </Field.Root>
-          {!isEdit && packageHasDstv && decoderFee > 0 && packageAmount != null && (
-            <Box gridColumn={{ md: "span 2" }} bg="orange.50" borderRadius="md" px={3} py={2}>
-              <Text fontSize="sm" color="orange.800" fontWeight="medium">
-                First invoice: {formatCurrency(packageAmount + decoderFee)}
-              </Text>
-              <Text fontSize="xs" color="orange.700" mt={0.5}>
-                Package {formatCurrency(packageAmount)} + one-time decoder{" "}
-                {formatCurrency(decoderFee)}. Recurring invoices are package only
-                (no decoder).
-              </Text>
-            </Box>
-          )}
           {isEdit &&
             canEditPackage &&
             customer &&
@@ -1670,8 +1765,8 @@ export function CustomerForm({
                 },
               }}
             >
-              <option value="no">No — issue signup invoice immediately</option>
-              <option value="yes">Yes — 30-day free trial, bill after trial</option>
+              <option value="no">No trial</option>
+              <option value="yes">30-day trial</option>
             </SelectField>
           </Field.Root>
           {!isEdit && customerType === "C2B" && !trialPeriod ? (
@@ -1680,7 +1775,8 @@ export function CustomerForm({
               <SelectField
                 disabled={fieldsDisabled || !isActive}
                 fieldProps={{
-                  value: paymentAlreadyMade ? "yes" : "no",
+                  value:
+                    paymentAlreadyMade || paymentStatusOpen ? "yes" : "no",
                   onChange: (e) => {
                     if (e.target.value === "yes") {
                       openPaymentStatusModal();
@@ -2337,17 +2433,64 @@ export function CustomerForm({
               : trialPeriod
                 ? "Creates with a 30-day trial — no signup invoice."
                 : paymentAlreadyMade === true
-                  ? advancePaymentMethod === "paystack"
-                    ? "Creates the customer, finds the Paystack payment in Zoho Books, attaches it to the signup invoice, and marks it paid."
-                    : advancePaymentMethod === "bank"
-                      ? "Creates the customer, issues a signup invoice if needed, and marks it paid as a bank transfer."
-                      : "Creates the customer, finds the Zoho payment by REFERENCE#, attaches it to the signup invoice, and emails the receipt."
+                  ? packageHasDstv &&
+                    paymentCoversInternet &&
+                    !paymentCoversDecoder
+                    ? `Creates the customer, marks the Internet invoice paid (${formatCurrency(packageAmount || 0)}), and issues a separate unpaid DSTV decoder invoice (${formatCurrency(decoderFee || 2900)}) to the customer.`
+                    : packageHasDstv &&
+                        !paymentCoversInternet &&
+                        paymentCoversDecoder
+                      ? `Creates the customer, marks the decoder invoice paid (${formatCurrency(decoderFee || 2900)}), and issues a separate unpaid Internet/package invoice (${formatCurrency(packageAmount || 0)}).`
+                      : `Creates the customer, marks the package invoice paid (${formatCurrency(
+                          (paymentCoversInternet ? Number(packageAmount || 0) : 0) +
+                            (packageHasDstv && paymentCoversDecoder
+                              ? Number(decoderFee || 2900)
+                              : 0)
+                        )} from the payment reference). If the payment is short of the plan total, a separate balance invoice is issued.`
                   : customerType === "C2B"
                     ? "Creates the customer, issues a signup invoice in Zoho Books, and emails it to the customer."
                     : undefined
           }
           items={summaryItems}
         />
+        {!isEdit && paymentAlreadyMade ? (
+          <Box
+            mt={4}
+            px={3}
+            py={2.5}
+            bg="orange.50"
+            border="1px solid"
+            borderColor="orange.200"
+            borderRadius="md"
+          >
+            <Text fontSize="sm" fontWeight="semibold" color="orange.900">
+              {packageHasDstv &&
+              paymentCoversInternet &&
+              !paymentCoversDecoder
+                ? "Confirm: Internet paid only — decoder billed separately"
+                : packageHasDstv &&
+                    !paymentCoversInternet &&
+                    paymentCoversDecoder
+                  ? "Confirm: Decoder paid only — package billed separately"
+                  : "Confirm advance payment against this package"}
+            </Text>
+            <Text fontSize="xs" color="orange.800" mt={1}>
+              {packageHasDstv &&
+              paymentCoversInternet &&
+              !paymentCoversDecoder
+                ? `This customer is on a DSTV package but payment covers Internet only. We will mark the package invoice paid and create a separate unpaid decoder invoice for ${formatCurrency(decoderFee || 2900)} (emailed to the customer).`
+                : packageHasDstv &&
+                    !paymentCoversInternet &&
+                    paymentCoversDecoder
+                  ? `Payment covers the DSTV decoder only. We will mark the decoder invoice paid and create a separate unpaid Internet/package invoice for ${formatCurrency(packageAmount || 0)}.`
+                  : `Selected plan: ${formatCurrency(packageAmount || 0)}${
+                      packageHasDstv && paymentCoversDecoder
+                        ? ` + decoder ${formatCurrency(decoderFee || 2900)}`
+                        : ""
+                    }. We will create the Zoho invoice from this package, attach the payment reference, and mark it paid. Any shortfall vs the plan total gets a separate unpaid balance invoice.`}
+            </Text>
+          </Box>
+        ) : null}
         {submitting ? (
           <Text fontSize="sm" color="brand.700" mt={4}>
             Saving and syncing…
@@ -2363,7 +2506,15 @@ export function CustomerForm({
           loading={submitting}
           onClick={() => void executeSubmit()}
         >
-          {isEdit ? "Confirm update" : "Confirm create"}
+          {isEdit
+            ? "Confirm update"
+            : paymentAlreadyMade
+              ? packageHasDstv &&
+                ((paymentCoversInternet && !paymentCoversDecoder) ||
+                  (!paymentCoversInternet && paymentCoversDecoder))
+                ? "Confirm — create with separate invoice"
+                : "Confirm — create & mark paid"
+              : "Confirm create"}
         </Button>
       </Dialog.Footer>
     </AppDialog>
@@ -2477,6 +2628,84 @@ export function CustomerForm({
                 autoComplete="off"
               />
             </Field.Root>
+          ) : null}
+
+          {paymentStatusDraft?.method ? (
+            <Box
+              bg="orange.50"
+              border="1px solid"
+              borderColor="orange.100"
+              borderRadius="md"
+              px={3}
+              py={2.5}
+            >
+              <Stack gap={2}>
+                <Checkbox.Root
+                  checked={paymentStatusDraft.coversInternet}
+                  onCheckedChange={(details) =>
+                    setPaymentStatusDraft((prev) =>
+                      prev
+                        ? { ...prev, coversInternet: details.checked === true }
+                        : prev
+                    )
+                  }
+                  gap={2}
+                  alignItems="flex-start"
+                >
+                  <Checkbox.HiddenInput />
+                  <Checkbox.Control mt={0.5} />
+                  <Box flex="1" minW={0}>
+                    <Text fontSize="sm" fontWeight="medium">
+                      Internet / package
+                    </Text>
+                    <Text fontSize="xs" color="fg.muted">
+                      {packageAmount != null
+                        ? formatCurrency(packageAmount)
+                        : "—"}
+                    </Text>
+                  </Box>
+                </Checkbox.Root>
+                {packageHasDstv ? (
+                  <Checkbox.Root
+                    checked={paymentStatusDraft.coversDecoder}
+                    onCheckedChange={(details) =>
+                      setPaymentStatusDraft((prev) =>
+                        prev
+                          ? { ...prev, coversDecoder: details.checked === true }
+                          : prev
+                      )
+                    }
+                    gap={2}
+                    alignItems="flex-start"
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control mt={0.5} />
+                    <Box flex="1" minW={0}>
+                      <Text fontSize="sm" fontWeight="medium">
+                        DSTV decoder
+                      </Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        {formatCurrency(decoderFee || 2900)}
+                      </Text>
+                    </Box>
+                  </Checkbox.Root>
+                ) : null}
+              </Stack>
+              {(paymentStatusDraft.coversInternet ||
+                (packageHasDstv && paymentStatusDraft.coversDecoder)) && (
+                <Text fontSize="xs" color="orange.900" mt={2} fontWeight="medium">
+                  Invoice total:{" "}
+                  {formatCurrency(
+                    (paymentStatusDraft.coversInternet
+                      ? Number(packageAmount || 0)
+                      : 0) +
+                      (packageHasDstv && paymentStatusDraft.coversDecoder
+                        ? Number(decoderFee || 2900)
+                        : 0)
+                  )}
+                </Text>
+              )}
+            </Box>
           ) : null}
         </Stack>
       </Dialog.Body>

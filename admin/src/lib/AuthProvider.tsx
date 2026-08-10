@@ -10,12 +10,17 @@ import { useNavigate } from "react-router-dom";
 import {
   api,
   isUnauthorizedError,
+  markAuthSessionExpiredNotified,
   registerAuthSessionExpiredHandler,
   resetAuthSessionExpiredFlag,
   type User,
 } from "./api";
 import { AuthContext } from "./authContext";
-import { getSessionCache, setSessionCache } from "./authSessionCache";
+import {
+  getSessionCache,
+  setSessionCache,
+  SESSION_CACHE_KEY,
+} from "./authSessionCache";
 import { warmSharedLookups } from "./sharedLookups";
 import { canAccessConfig } from "./rbac";
 import { cacheInvalidate } from "./moduleDataCache";
@@ -63,6 +68,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(() => !getSessionCache()?.user);
   const sessionTimerRef = useRef<number | null>(null);
   const sessionExpiredRef = useRef(false);
+  const confirmingExpiryRef = useRef(false);
+  const applySessionRef = useRef<
+    ((nextUser: User, expiresAt: number | null | undefined) => void) | null
+  >(null);
 
   const clearSessionTimer = useCallback(() => {
     if (sessionTimerRef.current != null) {
@@ -76,9 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     resetAuthSessionExpiredFlag();
   }, []);
 
-  const handleSessionExpired = useCallback(() => {
-    if (sessionExpiredRef.current) return;
+  const forceLocalLogout = useCallback(() => {
     sessionExpiredRef.current = true;
+    markAuthSessionExpiredNotified();
     setSessionCache(null);
     clearSessionTimer();
     setUser(null);
@@ -89,6 +98,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       state: { reason: "session_expired" },
     });
   }, [clearSessionTimer, navigate]);
+
+  /**
+   * Never destroy a session on a single 401 / timer tick alone.
+   * Re-check /auth/me first — stale tab timers, nodemon blips, and mistaken
+   * 401s were logging users out while the cookie was still valid.
+   */
+  const handleSessionExpired = useCallback(() => {
+    if (sessionExpiredRef.current || confirmingExpiryRef.current) return;
+    confirmingExpiryRef.current = true;
+
+    void (async () => {
+      try {
+        const session = await fetchMeWithRetry(2);
+        applySessionRef.current?.(session.user, session.expiresAt);
+      } catch (err) {
+        if (isUnauthorizedError(err)) {
+          forceLocalLogout();
+        } else {
+          // Network / 503 — keep the cached session painted.
+          resetAuthSessionExpiredFlag();
+        }
+      } finally {
+        confirmingExpiryRef.current = false;
+      }
+    })();
+  }, [forceLocalLogout]);
 
   const scheduleSessionExpiry = useCallback(
     (expiresAt: number | null | undefined) => {
@@ -123,6 +158,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [resetSessionState, scheduleSessionExpiry]
   );
+
+  applySessionRef.current = applySession;
 
   const refresh = useCallback(async () => {
     const hadCachedUser = Boolean(getSessionCache()?.user);
@@ -200,6 +237,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [user, applySession, handleSessionExpired]);
+
+  // Other tabs login/logout via localStorage — keep this tab in sync.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== SESSION_CACHE_KEY) return;
+      if (event.newValue == null) {
+        if (!sessionExpiredRef.current) {
+          sessionExpiredRef.current = true;
+          clearSessionTimer();
+          setUser(null);
+          setLoading(false);
+          navigate("/login", {
+            replace: true,
+            state: { reason: "session_expired" },
+          });
+        }
+        return;
+      }
+      void refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [clearSessionTimer, navigate, refresh]);
 
   useEffect(() => {
     if (!user) return;

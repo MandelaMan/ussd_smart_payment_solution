@@ -83,8 +83,8 @@ function testJwtAlgorithmPinning() {
     DEFAULT_MAX_ACTIVE_SESSIONS,
   } = require("../api/services/adminSessionStore");
   assert(
-    "default max admin sessions is 2",
-    DEFAULT_MAX_ACTIVE_SESSIONS === 2 && maxActiveSessions() === 2
+    "default max admin sessions is 5",
+    DEFAULT_MAX_ACTIVE_SESSIONS === 5 && maxActiveSessions() === 5
   );
 
   const parts = token.split(".");

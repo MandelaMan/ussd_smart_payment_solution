@@ -403,8 +403,38 @@ function invoicesPredateCustomer(invoices, customer, skewMs = 120_000) {
   });
 }
 
-/** Keep C2B invoices that belong to this tenancy (issued at/after customer create). */
-function filterInvoicesForCurrentTenant(invoices, customer, skewMs = 120_000) {
+/**
+ * True apartment changeover: a cancelled local tenant was archived as
+ * {number}-CXL-{id} so this live number could be reused. Imports / long Zoho
+ * history alone must NOT count (no -CXL- predecessor).
+ */
+async function customerHasPriorCancelledTenant(customer) {
+  const number = String(
+    customer?.customerNumber || customer?.customer_number || ""
+  ).trim();
+  if (!number || /-CXL-\d+$/i.test(number)) return false;
+
+  const base = number.toUpperCase().replace(/-CXL-\d+$/i, "");
+  if (!base) return false;
+
+  const excludeId = customer?.id != null ? Number(customer.id) : null;
+  const formerId = await store.findArchivedCancelledTenantIdForNumber(
+    base,
+    excludeId
+  );
+  return Boolean(formerId);
+}
+
+/**
+ * Hide former-tenant invoices only on a real apartment changeover.
+ * Otherwise show full Zoho history (e.g. customers imported into BIX later).
+ */
+function filterInvoicesForCurrentTenant(
+  invoices,
+  customer,
+  { isChangeover = false, skewMs = 120_000 } = {}
+) {
+  if (!isChangeover) return invoices || [];
   const customerCreated = customer?.createdAt || customer?.created_at;
   if (!customerCreated) return invoices || [];
   const custMs = new Date(customerCreated).getTime();
@@ -685,6 +715,12 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     }
     const company = String(contact.company_name || "").trim().toUpperCase();
     if (/-CXL-\d+$/i.test(company)) return true;
+
+    // Only force-retire when this apartment actually had a cancelled tenant
+    // archived for reuse — not for imports with older Zoho invoice history.
+    const hasChangeover = await customerHasPriorCancelledTenant(customer);
+    if (!hasChangeover) return false;
+
     // Former tenant contact (even if reactivated + details updated for the new person).
     if (isZohoContactOlderThanCustomer(contact, customer)) {
       return true;
@@ -978,13 +1014,16 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
             stored.zohoContactId,
             customer
           );
-          const hasFormerTenantInvoices = invoicesPredateCustomer(
-            mapped,
-            customer
-          );
+          const isChangeover =
+            !isB2BCustomer(customer) &&
+            (await customerHasPriorCancelledTenant(customer));
+          const hasFormerTenantInvoices =
+            isChangeover && invoicesPredateCustomer(mapped, customer);
           const displayMapped = isB2BCustomer(customer)
             ? mapped
-            : filterInvoicesForCurrentTenant(mapped, customer);
+            : filterInvoicesForCurrentTenant(mapped, customer, {
+                isChangeover,
+              });
         const { overdueCount, totalOverdueBalance } =
           summarizeOverdueZohoInvoices(displayMapped);
         const creditBalance = Number(stored.creditBalance) || 0;
@@ -1178,12 +1217,15 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     }))
     .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
+  const isChangeover =
+    !isB2BCustomer(customer) &&
+    (await customerHasPriorCancelledTenant(customer));
   const hasFormerTenantInvoices =
-    !isB2BCustomer(customer) && invoicesPredateCustomer(mapped, customer);
+    isChangeover && invoicesPredateCustomer(mapped, customer);
 
   const displayInvoices = isB2BCustomer(customer)
     ? filterAgencyInvoicesForCustomer(mapped, customer.customerNumber)
-    : filterInvoicesForCurrentTenant(mapped, customer);
+    : filterInvoicesForCurrentTenant(mapped, customer, { isChangeover });
 
   const { overdueCount, totalOverdueBalance } =
     summarizeOverdueZohoInvoices(displayInvoices);
@@ -2799,6 +2841,8 @@ async function createCustomer(req, res, next) {
       .toUpperCase();
     const paystackReference = String(body.paystackReference || "").trim();
     const bankReference = String(body.bankReference || "").trim();
+    const paymentCoversInternet = body.paymentCoversInternet === true;
+    const paymentCoversDecoder = body.paymentCoversDecoder === true;
 
     if (paymentAlreadyMade) {
       if (String(body.customerType).toUpperCase() !== "C2B") {
@@ -2824,6 +2868,24 @@ async function createCustomer(req, res, next) {
       if (paymentMethod === "paystack" && !paystackReference) {
         return res.status(400).json({
           error: "Enter the Paystack / Zoho payment REFERENCE#",
+        });
+      }
+
+      // Always check the selected package before create.
+      const productId = Number(body.productId);
+      if (productId) {
+        const product = await store.getProductById(productId);
+        const hasDstv = Boolean(product?.has_dstv || product?.hasDstv);
+        if (!paymentCoversInternet && !(hasDstv && paymentCoversDecoder)) {
+          return res.status(400).json({
+            error:
+              "Select what the payment covers (Internet/package" +
+              (hasDstv ? ", and/or DSTV decoder)" : ")"),
+          });
+        }
+      } else if (!paymentCoversInternet && !paymentCoversDecoder) {
+        return res.status(400).json({
+          error: "Select what the payment covers for this package",
         });
       }
     }
@@ -2860,8 +2922,9 @@ async function createCustomer(req, res, next) {
       const wantsSignupInvoice =
         String(body.customerType).toUpperCase() === "C2B" &&
         body.trialPeriod !== true;
+      // Payment reference entered → always create Zoho invoice and mark paid.
       zoho = await onboardNewCustomerBilling(created.customerId, {
-        forceBilling: wantsSignupInvoice,
+        forceBilling: wantsSignupInvoice || paymentAlreadyMade,
         forceEmail: wantsSignupInvoice && !paymentAlreadyMade,
         skipEmail: paymentAlreadyMade,
         replaceFormerTenant: true,
@@ -2877,6 +2940,10 @@ async function createCustomer(req, res, next) {
           paymentAlreadyMade && paymentMethod === "bank"
             ? bankReference || undefined
             : undefined,
+        paymentCoversInternet:
+          paymentAlreadyMade && paymentCoversInternet ? true : false,
+        paymentCoversDecoder:
+          paymentAlreadyMade && paymentCoversDecoder ? true : false,
         serviceDueDate,
       });
 
@@ -2941,6 +3008,7 @@ async function createCustomer(req, res, next) {
             contactUpdated: zoho.contactUpdated === true,
             billingSkipped: zoho.billingSkipped === true,
             invoice: zoho.invoice,
+            outstandingInvoice: zoho.outstandingInvoice || null,
             recurring: zoho.recurring,
             trial: zoho.trial || null,
           }
@@ -5681,6 +5749,7 @@ async function getCustomerInvoices(req, res, next) {
 async function retryBillingOnboarding(req, res, next) {
   try {
     const id = Number(req.params.id);
+    const body = req.body || {};
     const customer = await store.getCustomerById(id);
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
@@ -5696,14 +5765,75 @@ async function retryBillingOnboarding(req, res, next) {
       });
     }
 
+    const paymentAlreadyMade = body.paymentAlreadyMade === true;
+    const paymentMethod = String(body.paymentMethod || "")
+      .trim()
+      .toLowerCase();
+    const mpesaCode = body.mpesaCode
+      ? String(body.mpesaCode).trim().toUpperCase()
+      : "";
+    const paystackReference = body.paystackReference
+      ? String(body.paystackReference).trim()
+      : "";
+    const bankReference = body.bankReference
+      ? String(body.bankReference).trim()
+      : "";
+    const paymentCoversInternet = body.paymentCoversInternet === true;
+    const paymentCoversDecoder = body.paymentCoversDecoder === true;
+
+    if (paymentAlreadyMade) {
+      if (!["mpesa", "paystack", "bank"].includes(paymentMethod)) {
+        return res.status(400).json({
+          error: "Select a payment method (M-Pesa, Paystack, or Bank)",
+        });
+      }
+      if (paymentMethod === "mpesa" && !/^[A-Z0-9]{8,15}$/.test(mpesaCode)) {
+        return res.status(400).json({
+          error: "Enter a valid M-Pesa receipt code (8–15 letters/numbers)",
+        });
+      }
+      if (paymentMethod === "paystack" && !paystackReference) {
+        return res.status(400).json({
+          error: "Enter the Paystack / Zoho payment REFERENCE#",
+        });
+      }
+      const hasDstv = Boolean(
+        customer.hasDstv || customer.decoderFeeRequired
+      );
+      if (!paymentCoversInternet && !(hasDstv && paymentCoversDecoder)) {
+        return res.status(400).json({
+          error:
+            "Select what the payment covers (Internet/package" +
+            (hasDstv ? ", and/or DSTV decoder)" : ")"),
+        });
+      }
+    }
+
     syncCooldown.assertSyncAllowed(id);
     invalidateCustomerZoho(id);
 
     try {
       const billing = await onboardNewCustomerBilling(id, {
         forceBilling: true,
-        forceEmail: true,
+        forceEmail: !paymentAlreadyMade,
+        skipEmail: paymentAlreadyMade,
         replaceFormerTenant: true,
+        paymentAlreadyMade,
+        paymentMethod: paymentAlreadyMade ? paymentMethod : undefined,
+        mpesaCode:
+          paymentAlreadyMade && paymentMethod === "mpesa" ? mpesaCode : undefined,
+        paystackReference:
+          paymentAlreadyMade && paymentMethod === "paystack"
+            ? paystackReference
+            : undefined,
+        bankReference:
+          paymentAlreadyMade && paymentMethod === "bank"
+            ? bankReference || undefined
+            : undefined,
+        paymentCoversInternet:
+          paymentAlreadyMade && paymentCoversInternet ? true : false,
+        paymentCoversDecoder:
+          paymentAlreadyMade && paymentCoversDecoder ? true : false,
       });
       if (!billing.ok) {
         return res.status(502).json({
@@ -5743,15 +5873,27 @@ async function retryBillingOnboarding(req, res, next) {
             ? "zoho_billing_retry"
             : "zoho_billing_retry_linked",
           title: invoice.created
-            ? "Billing onboarding retried — invoice created"
+            ? paymentAlreadyMade
+              ? "Billing onboarding retried — invoice created (already paid)"
+              : "Billing onboarding retried — invoice created"
             : invoice.reused
               ? "Billing onboarding retried — existing invoice"
               : "Billing onboarding retried",
-          message: invoice.invoiceNumber
-            ? `${customer.customerNumber}: ${invoice.invoiceNumber}${
-                invoice.emailed ? " — emailed" : ""
-              }`
-            : customer.customerNumber,
+          message: [
+            customer.customerNumber,
+            invoice.invoiceNumber || null,
+            paymentAlreadyMade
+              ? `paid via ${paymentMethod}${
+                  mpesaCode || paystackReference || bankReference
+                    ? ` ${mpesaCode || paystackReference || bankReference}`
+                    : ""
+                }`
+              : invoice.emailed
+                ? "emailed"
+                : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
           source: "zoho",
           status: "success",
           customerRef: customer.customerNumber,

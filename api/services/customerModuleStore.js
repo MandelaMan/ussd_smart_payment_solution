@@ -247,6 +247,40 @@ async function findMostRecentCancelledTenantIdForNumber(
 }
 
 /**
+ * Cancelled tenant whose number was archived for apartment reuse
+ * ({base}-CXL-{id}). Used to detect real changeovers — not mere Zoho history.
+ */
+async function findArchivedCancelledTenantIdForNumber(
+  customerNumber,
+  excludeCustomerId = null
+) {
+  const base = String(customerNumber || "")
+    .trim()
+    .toUpperCase()
+    .replace(/-CXL-\d+$/i, "");
+  if (!base) return null;
+
+  const params = [`${base}-CXL-%`];
+  let excludeSql = "";
+  if (excludeCustomerId != null && Number(excludeCustomerId) > 0) {
+    excludeSql = " AND id <> ?";
+    params.push(Number(excludeCustomerId));
+  }
+
+  const rows = await query(
+    `SELECT id
+     FROM customers
+     WHERE status = 'cancelled'
+       AND UPPER(TRIM(customer_number)) LIKE ?
+     ${excludeSql}
+     ORDER BY id DESC
+     LIMIT 1`,
+    params
+  );
+  return rows[0]?.id ? Number(rows[0].id) : null;
+}
+
+/**
  * Cancelled customers still occupy UNIQUE keys (customer_number, ip_address,
  * dstv_decoder_serial). Free those keys when a new/active signup needs them.
  * Active holders still block.
@@ -4514,6 +4548,7 @@ module.exports = {
   releaseCancelledIdentityForReuse,
   archiveCancelledCustomerNumber,
   findMostRecentCancelledTenantIdForNumber,
+  findArchivedCancelledTenantIdForNumber,
   assertImportNotDuplicate,
   registerImportBatchEntry,
   importCustomerFromRow,

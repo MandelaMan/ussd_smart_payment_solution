@@ -1298,6 +1298,7 @@ const createInvoice_JS = async ({
   payment_terms_label,
   billing_address,
   customer,
+  notes,
 }) => {
   try {
     if (!customer_id || !items?.length) {
@@ -1331,6 +1332,9 @@ const createInvoice_JS = async ({
     }
     if (invoice_number) {
       invoiceData.invoice_number = String(invoice_number);
+    }
+    if (notes) {
+      invoiceData.notes = String(notes).slice(0, 2000);
     }
     if (discount != null && Number(discount) > 0) {
       invoiceData.discount = Number(discount);

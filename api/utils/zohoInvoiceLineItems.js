@@ -46,6 +46,144 @@ function shouldIncludeDstvOneTimeFee(customer) {
 }
 
 /**
+ * Resolve which signup line items an advance payment covers.
+ * Every package asks what the payment covers (Internet/package).
+ * DSTV packages also allow a separate decoder allocation.
+ */
+function resolveAdvancePaymentCoverage(customer, options = {}) {
+  const hasDstv = shouldIncludeDstvOneTimeFee(customer);
+  const paymentAlreadyMade = options.paymentAlreadyMade === true;
+
+  if (!paymentAlreadyMade) {
+    return {
+      includePackage: true,
+      includeDecoder: hasDstv,
+      hasDstv,
+    };
+  }
+
+  // Explicit flags from admin (preferred).
+  if (
+    options.paymentCoversInternet != null ||
+    options.paymentCoversDecoder != null
+  ) {
+    return {
+      includePackage: options.paymentCoversInternet === true,
+      includeDecoder: hasDstv && options.paymentCoversDecoder === true,
+      hasDstv,
+    };
+  }
+
+  // Legacy callers with no coverage flags → full first invoice.
+  return {
+    includePackage: true,
+    includeDecoder: hasDstv,
+    hasDstv,
+  };
+}
+
+/** Expected signup invoice total for the selected coverage (always from package fields). */
+function expectedSignupInvoiceTotal(customer, options = {}) {
+  const coverage =
+    options.includePackage != null || options.includeOneTimeDstvFee != null
+      ? {
+          includePackage: options.includePackage !== false,
+          includeDecoder: options.includeOneTimeDstvFee === true,
+          hasDstv: shouldIncludeDstvOneTimeFee(customer),
+        }
+      : resolveAdvancePaymentCoverage(customer, options);
+
+  let total = 0;
+  if (coverage.includePackage) {
+    total += Number(customer?.packagePrice || customer?.package_price || 0);
+  }
+  if (coverage.includeDecoder && shouldIncludeDstvOneTimeFee(customer)) {
+    total += resolveDstvOneTimeFee(customer);
+  }
+  return total;
+}
+
+/**
+ * Human-readable Zoho invoice notes for advance-payment reconciliation.
+ * Always quotes package / decoder amounts from the customer package.
+ */
+function buildAdvancePaymentInvoiceNotes({
+  customer,
+  coverage,
+  paymentReference,
+  paymentMethod,
+  paymentAmount,
+  expectedAmount,
+}) {
+  const lines = [];
+  const covers = [];
+  if (coverage?.includePackage) covers.push("Internet / package");
+  if (coverage?.includeDecoder) covers.push("DSTV decoder");
+  lines.push(
+    `Advance payment covers: ${covers.length ? covers.join(" + ") : "none"}`
+  );
+
+  const method = String(paymentMethod || "").trim();
+  const ref = String(paymentReference || "").trim();
+  if (method) lines.push(`Payment method: ${method}`);
+  if (ref) lines.push(`Payment reference: ${ref}`);
+
+  const packagePrice = Number(
+    customer?.packagePrice || customer?.package_price || 0
+  );
+  const decoderFee = resolveDstvOneTimeFee(customer);
+  if (coverage?.includePackage) {
+    lines.push(`Package (from plan): KES ${Math.round(packagePrice)}`);
+  }
+  if (coverage?.includeDecoder) {
+    lines.push(`Decoder (from plan): KES ${Math.round(decoderFee)}`);
+  }
+  if (
+    coverage?.hasDstv &&
+    coverage?.includePackage &&
+    !coverage?.includeDecoder
+  ) {
+    lines.push(
+      `DSTV decoder not included in this payment — still outstanding (KES ${Math.round(decoderFee)})`
+    );
+  }
+  if (
+    coverage?.hasDstv &&
+    !coverage?.includePackage &&
+    coverage?.includeDecoder
+  ) {
+    lines.push(
+      `Internet/package not included in this payment — still outstanding (KES ${Math.round(packagePrice)})`
+    );
+  }
+  if (!coverage?.includePackage && !coverage?.includeDecoder) {
+    lines.push("No package components selected for this payment");
+  }
+
+  const expected = Math.round(Number(expectedAmount) || 0);
+  lines.push(`Expected invoice total: KES ${expected}`);
+
+  if (paymentAmount != null && Number.isFinite(Number(paymentAmount))) {
+    const paid = Math.round(Number(paymentAmount));
+    lines.push(`Payment amount: KES ${paid}`);
+    const diff = paid - expected;
+    if (Math.abs(diff) <= 1) {
+      lines.push("Reconciliation: MATCH — payment equals expected package total");
+    } else if (diff < 0) {
+      lines.push(
+        `Reconciliation: MISMATCH — payment short by KES ${Math.abs(diff)}`
+      );
+    } else {
+      lines.push(`Reconciliation: MISMATCH — payment over by KES ${diff}`);
+    }
+  } else {
+    lines.push("Reconciliation: payment amount not verified in Zoho");
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * One-time decoder / DSTV charge line item, or null when not applicable.
  * options.name — override line name (e.g. include customer number on agency invoices)
  */
@@ -74,21 +212,15 @@ function buildDstvDecoderFeeLineItem(customer, options = {}) {
   });
 }
 
-/** Expected signup invoice total: package price + one-time decoder when DSTV. */
-function expectedSignupInvoiceTotal(customer) {
-  const packagePrice = Number(customer?.packagePrice || customer?.package_price || 0);
-  if (!(packagePrice > 0)) return 0;
-  if (!shouldIncludeDstvOneTimeFee(customer)) return packagePrice;
-  return packagePrice + resolveDstvOneTimeFee(customer);
-}
-
 /**
  * Build Zoho invoice line items for a subscription period.
  * Decoder charge is added when includeOneTimeDstvFee is true (signup / first invoice).
  * Recurring profiles must pass includeOneTimeDstvFee: false (default).
+ * options.includePackage — false to bill decoder only (advance payment allocation).
  */
 function buildSubscriptionLineItems(customer, period, options = {}) {
   const items = [];
+  const includePackage = options.includePackage !== false;
   const packagePrice = Number(customer.packagePrice || 0);
   const b2b = isB2BCustomer(customer);
   const lineName = b2b
@@ -107,14 +239,16 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
       ? buildManagedHouseLineItemDescription(customer, period)
       : buildSubscriptionInvoiceDescription(customer, period);
 
-  items.push(
-    withTax({
-      name: lineName,
-      rate: packagePrice,
-      quantity: 1,
-      description: periodDescription,
-    })
-  );
+  if (includePackage) {
+    items.push(
+      withTax({
+        name: lineName,
+        rate: packagePrice,
+        quantity: 1,
+        description: periodDescription,
+      })
+    );
+  }
 
   if (options.includeOneTimeDstvFee === true) {
     const decoderLine = buildDstvDecoderFeeLineItem(customer, {
@@ -133,6 +267,8 @@ module.exports = {
   customerHasDstv,
   resolveDstvOneTimeFee,
   shouldIncludeDstvOneTimeFee,
+  resolveAdvancePaymentCoverage,
   expectedSignupInvoiceTotal,
+  buildAdvancePaymentInvoiceNotes,
   DSTV_ONE_TIME_FEE,
 };

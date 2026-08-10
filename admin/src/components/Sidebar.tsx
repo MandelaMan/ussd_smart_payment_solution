@@ -140,8 +140,9 @@ export function Sidebar({ open, onClose }: Props) {
         borderColor="sidebar.border"
         position={{ base: "fixed", lg: "sticky" }}
         top={0}
-        h="100dvh"
-        maxH="100dvh"
+        bottom={{ base: 0, lg: "auto" }}
+        h={{ base: "auto", lg: "100dvh" }}
+        maxH={{ base: "none", lg: "100dvh" }}
         zIndex={{ base: 1200, lg: 50 }}
         transform={{
           base: open ? "translateX(0)" : "translateX(-100%)",
