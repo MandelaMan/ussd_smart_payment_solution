@@ -1200,6 +1200,9 @@ export function CustomerForm({
                     ? Number(customPeriodDays)
                     : undefined,
                 productId: Number(productId),
+                // Corrections (e.g. wrong package after upload) must save here;
+                // Upgrade/Downgrade remains the path when Zoho should re-bill.
+                forceLocalPackageCorrection: true,
               }
             : {}),
           ...(isActive && customerType === "C2B"
@@ -1693,22 +1696,25 @@ export function CustomerForm({
             canEditPackage &&
             customer &&
             selectedPackage &&
-            (Number(selectedPackage.price) !== Number(customer.packagePrice || 0) ||
+            (Number(productId) !== Number(customer.productId) ||
+              paymentFrequency !== customer.paymentFrequency ||
+              Number(packageAmount ?? 0) !== Number(customer.packagePrice || 0) ||
               Boolean(customer.hasDstv) !== Boolean(selectedPackage.hasDstv)) && (
-            <Box gridColumn={{ md: "span 2" }} bg="red.50" borderRadius="md" px={3} py={2}>
-              <Text fontSize="sm" color="red.800" fontWeight="medium">
-                Use{" "}
-                {Number(selectedPackage.price) > Number(customer.packagePrice || 0) ||
+            <Box gridColumn={{ md: "span 2" }} bg="blue.50" borderRadius="md" px={3} py={2}>
+              <Text fontSize="sm" color="blue.800" fontWeight="medium">
+                Suggestion: prefer{" "}
+                {Number(packageAmount ?? 0) > Number(customer.packagePrice || 0) ||
                 (!customer.hasDstv && Boolean(selectedPackage.hasDstv))
                   ? "Upgrade Package"
                   : "Downgrade Package"}{" "}
-                — do not save this change here
+                when the customer should be re-billed
               </Text>
-              <Text fontSize="xs" color="red.700" mt={0.5}>
-                Editing the package on this form does not update Zoho invoices. Price
-                or DSTV changes must go through Upgrade/Downgrade so the customer is
-                billed correctly (including the one-time decoder fee when DSTV is
-                added).
+              <Text fontSize="xs" color="blue.700" mt={0.5}>
+                You can still save here to correct a wrong package or payment
+                frequency (for example after upload). This updates the database
+                only and does not change Zoho invoices. Use Upgrade/Downgrade when
+                you need Zoho to bill a price difference or the one-time decoder
+                fee.
               </Text>
             </Box>
           )}

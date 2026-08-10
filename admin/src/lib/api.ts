@@ -2890,6 +2890,11 @@ export const api = {
       paymentFrequency?: Customer["paymentFrequency"];
       customPeriodDays?: number;
       productId?: number;
+      /**
+       * Allow admin package/frequency correction on edit without Upgrade/Downgrade.
+       * Updates the database only; does not create Zoho price-difference invoices.
+       */
+      forceLocalPackageCorrection?: boolean;
       ipAddress?: string;
       dstvDecoderSerial?: string | null;
       /** Create Zoho signup invoice when provisioning a missing Zoho contact (default false). */
