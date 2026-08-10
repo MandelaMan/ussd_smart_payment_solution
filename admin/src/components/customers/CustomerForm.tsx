@@ -379,7 +379,10 @@ export function CustomerForm({
     setIpPrefix(prefix);
     setIpLastOctet(lastOctet);
     setInitializingEdit(false);
-  }, [customer, buildings]);
+    // Only re-seed when the edited customer identity (or building list) changes —
+    // not when the parent replaces the same customer object reference mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: customer.id
+  }, [customer?.id, buildings]);
 
   useEffect(() => {
     if (!customer?.planId || !catalog.length) return;
@@ -2337,6 +2340,20 @@ export function CustomerForm({
                       />
                     </Flex>
                   </Flex>
+                  {previewIp ? (
+                    <Text mt={2} fontSize="sm" fontFamily="mono" color="fg">
+                      Will save: {previewIp}
+                      {isEdit &&
+                      customer?.ipAddress &&
+                      customer.ipAddress !== previewIp
+                        ? ` (was ${customer.ipAddress})`
+                        : ""}
+                    </Text>
+                  ) : previewIpResult.ok === false ? (
+                    <Text mt={2} fontSize="sm" color="red.500">
+                      {previewIpResult.error}
+                    </Text>
+                  ) : null}
                 </Field.Root>
               </Box>
             ) : null}

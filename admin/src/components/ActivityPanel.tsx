@@ -138,12 +138,22 @@ export function ActivityPanel({
             ? undefined
             : {
                 scrollbarWidth: "thin",
-                scrollbarColor: "var(--chakra-colors-gray-300) transparent",
-                "&::-webkit-scrollbar": { width: "4px" },
-                "&::-webkit-scrollbar-track": { background: "transparent" },
+                scrollbarColor: "rgba(0, 0, 0, 0.12) transparent",
+                "&::-webkit-scrollbar": {
+                  width: "3px",
+                },
+                "&::-webkit-scrollbar-track": {
+                  background: "transparent",
+                },
                 "&::-webkit-scrollbar-thumb": {
-                  background: "var(--chakra-colors-gray-300)",
+                  background: "transparent",
                   borderRadius: "999px",
+                },
+                "&:hover::-webkit-scrollbar-thumb": {
+                  background: "rgba(0, 0, 0, 0.18)",
+                },
+                "&::-webkit-scrollbar-thumb:hover": {
+                  background: "rgba(0, 0, 0, 0.28)",
                 },
               }
         }
@@ -207,28 +217,15 @@ export function ActivityPanel({
                 <Icon size={14} />
               </Flex>
               <Box flex={1} minW={0}>
+                <Text fontSize={{ base: "xs", xl: "sm" }} fontWeight="semibold" color="fg" lineClamp={2}>
+                  {item.title}
+                  {subject ? ` · ${subject}` : ""}
+                </Text>
                 {actor ? (
-                  <>
-                    <Text fontSize={{ base: "xs", xl: "sm" }} fontWeight="semibold" color="fg" lineClamp={1}>
-                      {actor}
-                    </Text>
-                    <Text fontSize="2xs" color="fg.muted" mt={0.5} lineClamp={2}>
-                      {item.title}
-                      {subject ? ` · ${subject}` : ""}
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Text fontSize={{ base: "xs", xl: "sm" }} fontWeight="semibold" color="fg" lineClamp={2}>
-                      {item.title}
-                    </Text>
-                    {subject ? (
-                      <Text fontSize="2xs" color="fg.muted" mt={0.5} lineClamp={2}>
-                        {subject}
-                      </Text>
-                    ) : null}
-                  </>
-                )}
+                  <Text fontSize="2xs" color="fg.muted" mt={0.5} lineClamp={1}>
+                    by {actor}
+                  </Text>
+                ) : null}
                 <Flex gap={2} mt={1} flexWrap="wrap" align="center">
                   {item.amount != null && (
                     <Text fontSize="2xs" fontWeight="medium" color="brand.700">

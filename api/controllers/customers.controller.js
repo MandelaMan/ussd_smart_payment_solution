@@ -1559,10 +1559,13 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     .trim()
     .toUpperCase();
 
+  // Prefer an explicit IP from the edit/reclaim caller over a context re-read
+  // so StaticIPAddress cannot silently fall back to a stale local/TISP value.
+  const forcedIp = meta.ipAddress != null ? String(meta.ipAddress).trim() : "";
   const resolvedIp =
     meta.releaseNetwork || meta.releaseIpOnly
       ? TISP_RELEASE_PLACEHOLDER_IP
-      : await resolveIpForTispWrite(ctx, accountNumber);
+      : forcedIp || (await resolveIpForTispWrite(ctx, accountNumber));
 
   const input = {
     ...tispPayloadInput(
@@ -1620,32 +1623,73 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
   return result;
 }
 
+async function readLiveTispStaticIp(accountNumber) {
+  const num = String(accountNumber || "")
+    .trim()
+    .toUpperCase();
+  if (!num) return null;
+  try {
+    const live = await getTISPCustomer(num);
+    return extractTispStaticIp(live);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Same AccountNumber IP change: TISP UPDATE can report success while Mikrotik
  * still holds the old StaticIP queue. Release to 0.0.0.0 first, then claim the
  * new IP — without renaming apartment / PPPoE (unlike account migrate).
+ *
+ * On claim failure (or live Client Status still showing the old IP), restore
+ * TISP and local DB to previousIp so the next edit can detect ipChanged again.
  */
 async function reclaimCustomerIpOnTisp(ctx, previousIp, meta = {}) {
-  const currentIp = String(ctx.ip_address || ctx.ipAddress || "").trim();
+  const currentIp = String(
+    meta.ipAddress || ctx.ip_address || ctx.ipAddress || ""
+  ).trim();
   const oldIp = String(previousIp || "").trim();
+  const customerId = ctx.id ?? ctx.customerId ?? null;
+  const accountNumber = String(
+    meta.accountNumber || ctx.customer_number || ctx.customerNumber || ""
+  )
+    .trim()
+    .toUpperCase();
+
   if (!currentIp || !oldIp || currentIp === oldIp) {
-    return updateCustomerOnTisp(ctx, meta);
+    return updateCustomerOnTisp(ctx, {
+      ...meta,
+      ipAddress: currentIp || meta.ipAddress,
+    });
   }
 
-  await updateCustomerOnTisp(ctx, {
+  const claimCtx = { ...ctx, ip_address: currentIp, ipAddress: currentIp };
+
+  await updateCustomerOnTisp(claimCtx, {
     ...meta,
     releaseIpOnly: true,
     skipStatusRefresh: true,
   });
-  try {
-    return await updateCustomerOnTisp(ctx, meta);
-  } catch (claimErr) {
-    // Best-effort restore so the customer is not left on 0.0.0.0.
+
+  const revertLocalIp = async () => {
+    if (!customerId || !oldIp) return;
+    try {
+      await store.revertCustomerIpAddress(customerId, oldIp);
+    } catch (e) {
+      console.warn(
+        `Local IP revert to ${oldIp} failed for customer ${customerId}:`,
+        e.message
+      );
+    }
+  };
+
+  const restoreOldIpOnTisp = async () => {
     try {
       await updateCustomerOnTisp(
         { ...ctx, ip_address: oldIp },
         {
           ...meta,
+          ipAddress: oldIp,
           skipStatusRefresh: true,
           parentLogId: meta.parentLogId ?? null,
         }
@@ -1653,6 +1697,46 @@ async function reclaimCustomerIpOnTisp(ctx, previousIp, meta = {}) {
     } catch {
       /* ignore rollback failure */
     }
+  };
+
+  try {
+    const result = await updateCustomerOnTisp(claimCtx, {
+      ...meta,
+      // Force the new IP into StaticIPAddress — do not re-resolve from stale ctx.
+      ipAddress: currentIp,
+      skipStatusRefresh: true,
+    });
+
+    // Client Status can lag briefly after SetClientDetails — retry a few times.
+    let liveIp = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, 800 * attempt));
+      }
+      liveIp = await readLiveTispStaticIp(accountNumber);
+      if (!liveIp || liveIp === currentIp) break;
+    }
+    if (liveIp && liveIp !== currentIp) {
+      throw new Error(
+        `TISP still reports StaticIP ${liveIp} after reclaim to ${currentIp}`
+      );
+    }
+
+    if (meta.skipStatusRefresh !== true) {
+      try {
+        await refreshTispStatus(
+          { id: ctx.id, customerNumber: ctx.customer_number },
+          { preferredDueDate: meta.dueDate }
+        );
+      } catch {
+        /* best-effort live snapshot */
+      }
+    }
+    return result;
+  } catch (claimErr) {
+    // Best-effort restore so the customer is not left on 0.0.0.0 / divergent local IP.
+    await restoreOldIpOnTisp();
+    await revertLocalIp();
     throw claimErr;
   }
 }
@@ -1836,9 +1920,14 @@ async function pushCustomerToTisp(ctx, meta = {}) {
   const previousIp = meta.previousIp
     ? String(meta.previousIp).trim()
     : null;
-  const currentIp = String(ctx.ip_address || ctx.ipAddress || "").trim();
+  const currentIp = String(
+    meta.ipAddress || ctx.ip_address || ctx.ipAddress || ""
+  ).trim();
   const ipIdentityChanged =
     Boolean(previousIp) && Boolean(currentIp) && previousIp !== currentIp;
+  const pushCtx = currentIp
+    ? { ...ctx, ip_address: currentIp, ipAddress: currentIp }
+    : ctx;
 
   // Edits must never INSERT just because Client Status falsely says "missing".
   // Prefer UPDATE whenever the caller says so, or we previously synced, or a
@@ -1856,7 +1945,7 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     if (previousNumber && previousNumber !== currentNumber) {
       const onPrevious = await accountExistsOnTisp(previousNumber);
       if (onPrevious) {
-        return await migrateTispAccountNumber(ctx, previousNumber, meta);
+        return await migrateTispAccountNumber(pushCtx, previousNumber, meta);
       }
     }
 
@@ -1864,18 +1953,18 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     if (onCurrent) {
       // Same account, new StaticIP: release old Mikrotik IP then claim new.
       if (ipIdentityChanged) {
-        return await reclaimCustomerIpOnTisp(ctx, previousIp, meta);
+        return await reclaimCustomerIpOnTisp(pushCtx, previousIp, meta);
       }
-      return await updateCustomerOnTisp(ctx, meta);
+      return await updateCustomerOnTisp(pushCtx, meta);
     }
 
     // Recovery: local number already converted (CLB-A10) but TISP still has
     // the other type code (CL-A10) for the same apartment.
-    const altNumber = alternateTypeAccountNumber(ctx);
+    const altNumber = alternateTypeAccountNumber(pushCtx);
     if (altNumber) {
       const onAlt = await accountExistsOnTisp(altNumber);
       if (onAlt) {
-        return await migrateTispAccountNumber(ctx, altNumber, {
+        return await migrateTispAccountNumber(pushCtx, altNumber, {
           ...meta,
           previousApartmentNumber:
             meta.previousApartmentNumber || altNumber,
@@ -1886,9 +1975,9 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     // Existence check failed / unavailable — still try UPDATE first on edits.
     try {
       if (ipIdentityChanged) {
-        return await reclaimCustomerIpOnTisp(ctx, previousIp, meta);
+        return await reclaimCustomerIpOnTisp(pushCtx, previousIp, meta);
       }
-      return await updateCustomerOnTisp(ctx, meta);
+      return await updateCustomerOnTisp(pushCtx, meta);
     } catch (updateErr) {
       if (preferUpdate && !isTispAccountMissingError(updateErr)) {
         // Soft Client Status failures / unrelated UPDATE errors: do not INSERT.
@@ -1896,14 +1985,14 @@ async function pushCustomerToTisp(ctx, meta = {}) {
       }
 
       try {
-        return await createCustomerOnTisp(ctx, meta);
+        return await createCustomerOnTisp(pushCtx, meta);
       } catch (createErr) {
         // Account already on TISP — Client Status lied. Fall back to UPDATE.
         if (isTispDuplicateAccountError(createErr)) {
           if (ipIdentityChanged) {
-            return await reclaimCustomerIpOnTisp(ctx, previousIp, meta);
+            return await reclaimCustomerIpOnTisp(pushCtx, previousIp, meta);
           }
-          return await updateCustomerOnTisp(ctx, meta);
+          return await updateCustomerOnTisp(pushCtx, meta);
         }
         throw createErr;
       }
@@ -2260,6 +2349,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
   const previousIp = options.previousIp
     ? String(options.previousIp).trim()
     : null;
+  const newIp = options.newIp ? String(options.newIp).trim() : null;
   const apartmentChanged = options.apartmentChanged === true || Boolean(previousCustomerNumber);
   const tispDueDateRaw = options.tispDueDate
     ? String(options.tispDueDate).trim()
@@ -2275,6 +2365,10 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       zoho: { ok: true, skipped: true },
     };
   }
+
+  // If the edit just changed IP, pin that address onto the context used for TISP
+  // so StaticIPAddress cannot be built from a stale row/snapshot.
+  const tispCtx = newIp ? { ...ctx, ip_address: newIp } : ctx;
 
   const presence = await resolveCustomerIntegrationPresence(customerId);
   const isB2B = Boolean(presence?.isB2B);
@@ -2307,12 +2401,14 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     if (!dueForSync) {
       dueForSync = ctx.tisp_due_date || TISP_STANDARD_DUE_DATE;
     }
-    await pushCustomerToTisp(ctx, {
+    await pushCustomerToTisp(tispCtx, {
       previousCustomerNumber: previousCustomerNumber || undefined,
       previousApartmentNumber: options.previousApartmentNumber,
       previousIp: previousIp || undefined,
+      ipAddress: newIp || undefined,
       dueDate: dueForSync,
       preferUpdate: true,
+      skipCooldown: true,
     });
     tisp = {
       ok: true,
@@ -2321,6 +2417,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       ipReclaimed: Boolean(previousIp) && !previousCustomerNumber,
       previousCustomerNumber: previousCustomerNumber || undefined,
       previousIp: previousIp || undefined,
+      newIp: newIp || undefined,
       customerNumber: ctx.customer_number,
       dueDate: dueForSync,
     };
@@ -5508,6 +5605,9 @@ async function updateCustomer(req, res, next) {
         apartmentChanged: Boolean(apartmentChanged),
         previousCustomerNumber: previousCustomerNumber || undefined,
         previousIp: ipChanged ? previousIp || undefined : undefined,
+        newIp: ipChanged
+          ? updated?.ipAddress || body.ipAddress || undefined
+          : undefined,
       });
       tisp = syncResult.tisp;
       zoho = syncResult.zoho;

@@ -3209,6 +3209,24 @@ async function deleteCustomerCompletely(customerId) {
   return customer;
 }
 
+/**
+ * Revert a failed TISP IP reclaim so local DB stays aligned with TISP and the
+ * next edit can detect ipChanged again (otherwise reclaim never re-runs).
+ */
+async function revertCustomerIpAddress(customerId, ipAddress) {
+  const id = Number(customerId);
+  if (!id) return null;
+  const ip = ipAddress == null ? null : String(ipAddress).trim() || null;
+  await query(`UPDATE customers SET ip_address = ? WHERE id = ?`, [ip, id]);
+  await query(
+    `UPDATE apartment_history
+     SET ip_address = ?
+     WHERE customer_id = ? AND moved_out_at IS NULL`,
+    [ip, id]
+  );
+  return getCustomerById(id);
+}
+
 async function updateCustomerDetails(id, data, options = {}) {
   const existing = await getCustomerById(id);
   if (!existing) throw new Error("Customer not found");
@@ -4546,6 +4564,7 @@ module.exports = {
   clearCustomerOnuMapping,
   deleteCustomerCompletely,
   updateCustomerDetails,
+  revertCustomerIpAddress,
   convertCustomerType,
   findActiveTenantInApartment,
   assertApartmentAvailable,
