@@ -22,11 +22,13 @@ import {
   FiSettings,
   FiMessageSquare,
   FiSend,
+  FiActivity,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/authContext";
 import { routePrefetchHandlers } from "../lib/routePrefetch";
 import {
+  canAccessActivityAudit,
   canAccessFinance,
   canAccessReports,
   canAccessSettings,
@@ -90,6 +92,12 @@ export function Sidebar({ open, onClose }: Props) {
       label: "Apartments",
       icon: FiLayers,
       visible: hasPermission(user, "apartments.view"),
+    },
+    {
+      to: "/activity-audit",
+      label: "Activity",
+      icon: FiActivity,
+      visible: canAccessActivityAudit(user),
     },
     {
       to: "/transactions",

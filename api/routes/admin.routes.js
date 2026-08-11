@@ -10,6 +10,7 @@ const {
   exportMpesaTransactions,
   exportIntegrationEvents,
   getActivityFeed,
+  getActivityAudit,
   listUnifiedTransactions,
   exportUnifiedTransactions,
   getIntegrationEvent,
@@ -154,7 +155,7 @@ const {
 } = require("../controllers/communication.controller");
 
 const { authenticate } = require("../middleware/auth");
-const { attachPermissions, requirePermission } = require("../middleware/permissions");
+const { attachPermissions, requirePermission, requireAdministrator } = require("../middleware/permissions");
 const {
   listPermissionCatalog,
   listGroups,
@@ -183,6 +184,7 @@ router.get("/support-stats", requirePermission("dashboard.support", "customers.v
 router.get("/partner/dashboard", requirePermission("dashboard.partner"), getPartnerDashboard);
 router.get("/revenue-chart", requirePermission("dashboard.finance"), getRevenueChart);
 router.get("/activity", requirePermission("dashboard.activity"), getActivityFeed);
+router.get("/activity/audit", requireAdministrator, getActivityAudit);
 router.get("/reports", requirePermission("reports.view"), listReports);
 router.get("/reports/analytics", requirePermission("analytics.view", "reports.view"), getAnalytics);
 router.get("/reports/kpis", requirePermission("analytics.view", "dashboard.finance"), getKpis);

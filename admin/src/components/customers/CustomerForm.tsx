@@ -1701,20 +1701,13 @@ export function CustomerForm({
               Number(packageAmount ?? 0) !== Number(customer.packagePrice || 0) ||
               Boolean(customer.hasDstv) !== Boolean(selectedPackage.hasDstv)) && (
             <Box gridColumn={{ md: "span 2" }} bg="blue.50" borderRadius="md" px={3} py={2}>
-              <Text fontSize="sm" color="blue.800" fontWeight="medium">
-                Suggestion: prefer{" "}
+              <Text fontSize="sm" color="blue.800">
+                Save here to fix a wrong package or frequency (database only). Use{" "}
                 {Number(packageAmount ?? 0) > Number(customer.packagePrice || 0) ||
                 (!customer.hasDstv && Boolean(selectedPackage.hasDstv))
-                  ? "Upgrade Package"
-                  : "Downgrade Package"}{" "}
-                when the customer should be re-billed
-              </Text>
-              <Text fontSize="xs" color="blue.700" mt={0.5}>
-                You can still save here to correct a wrong package or payment
-                frequency (for example after upload). This updates the database
-                only and does not change Zoho invoices. Use Upgrade/Downgrade when
-                you need Zoho to bill a price difference or the one-time decoder
-                fee.
+                  ? "Upgrade"
+                  : "Downgrade"}{" "}
+                if Zoho should bill the change.
               </Text>
             </Box>
           )}

@@ -194,6 +194,11 @@ export function canAccessActivity(user: User | null): boolean {
   return hasPermission(user, "dashboard.activity");
 }
 
+/** Admin-only customer change audit module. */
+export function canAccessActivityAudit(user: User | null): boolean {
+  return isAdministrator(user);
+}
+
 export function canAccessCustomerRead(user: User | null): boolean {
   return hasPermission(user, "customers.view");
 }

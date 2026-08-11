@@ -1,8 +1,9 @@
 const { query } = require("../config/db");
 const { sendTableExport } = require("../utils/tableExportResponse");
 const { listIntegrationEvents } = require("../services/integrationEventStore");
-const { listActivity } = require("../services/activityLogStore");
+const { listActivity, listActivityAudit } = require("../services/activityLogStore");
 const {
+  CUSTOMER_ACTIVITY_EVENT_TYPES,
   visibleCustomerActivityTypes,
 } = require("../lib/customerActivityEvents");
 const { ensureReqPermissionSet } = require("../middleware/permissions");
@@ -1392,6 +1393,32 @@ module.exports = {
       });
       const feed = await listActivity({ limit, eventTypes });
       return res.json({ data: feed });
+    } catch (err) {
+      return next(err);
+    }
+  },
+  getActivityAudit: async (req, res, next) => {
+    try {
+      const limit = Math.min(100, parseInt(req.query.limit, 10) || 40);
+      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+      const search = String(req.query.search || "").trim();
+      const eventType = String(req.query.eventType || "").trim();
+      const actorUserId = req.query.actorUserId
+        ? Number(req.query.actorUserId)
+        : null;
+      const dateFrom = String(req.query.dateFrom || "").trim();
+      const dateTo = String(req.query.dateTo || "").trim();
+      const result = await listActivityAudit({
+        limit,
+        page,
+        search,
+        eventType,
+        actorUserId,
+        dateFrom,
+        dateTo,
+        eventTypes: [...CUSTOMER_ACTIVITY_EVENT_TYPES],
+      });
+      return res.json(result);
     } catch (err) {
       return next(err);
     }

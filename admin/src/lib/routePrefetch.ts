@@ -20,6 +20,7 @@ const prefetchers: Record<string, Prefetcher> = {
   "/reports": () => import("../pages/ReportsPage"),
   "/settings": () => import("../pages/SettingsPage"),
   "/activity": () => import("../pages/ActivityPage"),
+  "/activity-audit": () => import("../pages/ActivityAuditPage"),
   "/billing": () => import("../pages/billing/BillingReconciliationLayout"),
   "/billing/overview": () => import("../pages/billing/BillingOverviewPage"),
   "/billing/billing-gaps": () => import("../pages/billing/BillingModulePage"),

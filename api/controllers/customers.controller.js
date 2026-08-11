@@ -3926,6 +3926,16 @@ async function upgradePackage(req, res, next) {
         source: "tisp",
         status: tispError ? "failed" : "success",
         customerRef: customer?.customerNumber,
+        metadata: {
+          changes: [
+            {
+              field: "package",
+              label: "Package",
+              from: `${current.product_name || current.product_mbps} (${current.product_mbps} Mbps)`,
+              to: `${newProduct.name || newProduct.mbps} (${newProduct.mbps} Mbps)`,
+            },
+          ],
+        },
       });
     } catch (logErr) {
       console.error("activity log (upgrade) failed:", logErr.message);
@@ -4053,6 +4063,16 @@ async function downgradePackage(req, res, next) {
         customerRef: customer?.customerNumber,
         amount: (quote.creditAmount || 0) > 0 ? quote.creditAmount : undefined,
         referenceId: creditNote?.creditNoteId || null,
+        metadata: {
+          changes: [
+            {
+              field: "package",
+              label: "Package",
+              from: `${current.product_name || current.product_mbps} (${current.product_mbps} Mbps)`,
+              to: `${newProduct.name || newProduct.mbps} (${newProduct.mbps} Mbps)`,
+            },
+          ],
+        },
       });
     } catch (logErr) {
       console.error("activity log (downgrade) failed:", logErr.message);
@@ -4191,6 +4211,16 @@ async function changePaymentFrequency(req, res, next) {
         source: "tisp",
         status: tispError ? "failed" : "success",
         customerRef: customer?.customerNumber,
+        metadata: {
+          changes: [
+            {
+              field: "paymentFrequency",
+              label: "Payment frequency",
+              from: String(result.previousFrequency || ""),
+              to: String(paymentFrequency || ""),
+            },
+          ],
+        },
       });
     } catch (logErr) {
       console.error("activity log (payment frequency) failed:", logErr.message);
@@ -4314,6 +4344,35 @@ async function switchApartment(req, res, next) {
           previousCustomerNumber: result.previousCustomerNumber,
           companyNameUpdated: Boolean(zohoCompanyOk),
           recurringUpdated: Boolean(zohoRecurringOk),
+          changes: [
+            {
+              field: "apartment",
+              label: "Apartment",
+              from: result.oldApartment || null,
+              to: result.newApartment || null,
+            },
+            ...(result.previousCustomerNumber &&
+            result.previousCustomerNumber !== customer?.customerNumber
+              ? [
+                  {
+                    field: "customerNumber",
+                    label: "Customer number",
+                    from: result.previousCustomerNumber,
+                    to: customer?.customerNumber || null,
+                  },
+                ]
+              : []),
+            ...(result.ipAddress
+              ? [
+                  {
+                    field: "ipAddress",
+                    label: "IP address",
+                    from: null,
+                    to: result.ipAddress,
+                  },
+                ]
+              : []),
+          ],
         },
       });
     } catch (logErr) {
@@ -5558,6 +5617,7 @@ async function updateCustomer(req, res, next) {
       previousCustomerNumber,
       ipChanged,
       previousIp,
+      changes: fieldChanges,
     } = await store.updateCustomerDetails(
       id,
       {
@@ -5627,11 +5687,21 @@ async function updateCustomer(req, res, next) {
 
     notifyCustomersChanged(id, "updated");
     try {
-      const parts = [];
-      if (packageChanged) parts.push("package changed");
-      if (apartmentChanged) parts.push("apartment moved");
-      if (ipChanged) parts.push("IP changed");
-      const detail = parts.length ? ` · ${parts.join(", ")}` : "";
+      const changeList = Array.isArray(fieldChanges) ? fieldChanges : [];
+      const parts = changeList.slice(0, 4).map((c) => c.label);
+      const more =
+        changeList.length > 4 ? ` (+${changeList.length - 4} more)` : "";
+      const detail = parts.length
+        ? ` · ${parts.join(", ")}${more}`
+        : packageChanged || apartmentChanged || ipChanged
+          ? ` · ${[
+              packageChanged ? "package changed" : null,
+              apartmentChanged ? "apartment moved" : null,
+              ipChanged ? "IP changed" : null,
+            ]
+              .filter(Boolean)
+              .join(", ")}`
+          : "";
       await logActivity({
         eventType: "customer_updated",
         title: "Edit customer details",
@@ -5648,6 +5718,7 @@ async function updateCustomer(req, res, next) {
           ipChanged: Boolean(ipChanged),
           previousIp: ipChanged ? previousIp || null : null,
           newIp: ipChanged ? customer?.ipAddress || null : null,
+          changes: changeList,
         },
       });
     } catch (logErr) {
@@ -5826,6 +5897,37 @@ async function convertCustomerTypeHandler(req, res, next) {
         source: "tisp",
         status: tispError ? "failed" : "success",
         customerRef: customer?.customerNumber,
+        metadata: {
+          changes: [
+            {
+              field: "customerType",
+              label: "Billing type",
+              from: result.previousType,
+              to: result.newType,
+            },
+            ...(result.previousCustomerNumber &&
+            result.previousCustomerNumber !== customer?.customerNumber
+              ? [
+                  {
+                    field: "customerNumber",
+                    label: "Customer number",
+                    from: result.previousCustomerNumber,
+                    to: customer?.customerNumber || null,
+                  },
+                ]
+              : []),
+            ...(result.agencyName
+              ? [
+                  {
+                    field: "agency",
+                    label: "Agency",
+                    from: null,
+                    to: result.agencyName,
+                  },
+                ]
+              : []),
+          ],
+        },
       });
     } catch (logErr) {
       console.error("activity log (type change) failed:", logErr.message);

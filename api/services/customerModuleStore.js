@@ -3555,6 +3555,21 @@ async function updateCustomerDetails(id, data, options = {}) {
   }
 
   const customer = await getCustomerById(id);
+  const previousProduct = await getProductById(existing.productId);
+  const nextProduct = await getProductById(customer?.productId || productId);
+  const formatProduct = (product, fallbackName) => {
+    if (!product) return fallbackName || null;
+    const name = product.name || fallbackName;
+    const mbps = product.mbps != null ? `${product.mbps} Mbps` : null;
+    if (name && mbps && !String(name).includes("Mbps")) return `${name} (${mbps})`;
+    return name || mbps;
+  };
+  const { diffCustomerDetails } = require("../lib/activityChanges");
+  const changes = diffCustomerDetails(existing, customer, {
+    previousProductName: formatProduct(previousProduct, existing.productName),
+    nextProductName: formatProduct(nextProduct, customer?.productName),
+  });
+
   return {
     customer,
     contactChanged,
@@ -3563,6 +3578,7 @@ async function updateCustomerDetails(id, data, options = {}) {
     previousCustomerNumber,
     ipChanged: ipChanged && !apartmentChanged,
     previousIp: ipChanged && !apartmentChanged ? previousIp : null,
+    changes,
   };
 }
 

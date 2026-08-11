@@ -164,8 +164,8 @@ async function listActivity({
   return rows.map(formatActivity);
 }
 
-function formatActivity(row) {
-  return {
+function formatActivity(row, { includeMetadata = false } = {}) {
+  const item = {
     id: row.id,
     eventType: row.event_type,
     title: row.title,
@@ -180,6 +180,119 @@ function formatActivity(row) {
     actorName: row.actor_name || null,
     createdAt: row.created_at,
   };
+
+  if (includeMetadata) {
+    let metadata = null;
+    if (row.metadata != null) {
+      if (typeof row.metadata === "object") {
+        metadata = row.metadata;
+      } else {
+        try {
+          metadata = JSON.parse(row.metadata);
+        } catch {
+          metadata = null;
+        }
+      }
+    }
+    item.metadata = metadata;
+  }
+
+  return item;
 }
 
-module.exports = { logActivity, logActivitySafe, listActivity, formatActivity };
+/**
+ * Paginated activity audit feed (includes metadata / field changes).
+ */
+async function listActivityAudit({
+  limit = 40,
+  page = 1,
+  search = "",
+  eventType = "",
+  eventTypes = null,
+  actorUserId = null,
+  dateFrom = "",
+  dateTo = "",
+} = {}) {
+  const capped = Math.min(100, Math.max(1, Number(limit) || 40));
+  const pageNum = Math.max(1, Number(page) || 1);
+  const offset = (pageNum - 1) * capped;
+  const params = [];
+  const where = [];
+
+  const included = Array.isArray(eventTypes)
+    ? eventTypes.map((t) => String(t || "").trim()).filter(Boolean)
+    : null;
+  if (included && included.length) {
+    where.push(`event_type IN (${included.map(() => "?").join(", ")})`);
+    params.push(...included);
+  }
+
+  const typeFilter = String(eventType || "").trim();
+  if (typeFilter) {
+    where.push("event_type = ?");
+    params.push(typeFilter);
+  }
+
+  const actorId = Number(actorUserId);
+  if (Number.isFinite(actorId) && actorId > 0) {
+    where.push("actor_user_id = ?");
+    params.push(actorId);
+  }
+
+  const from = String(dateFrom || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    where.push("created_at >= ?");
+    params.push(`${from} 00:00:00`);
+  }
+
+  const to = String(dateTo || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    where.push("created_at <= ?");
+    params.push(`${to} 23:59:59`);
+  }
+
+  const q = String(search || "").trim();
+  if (q) {
+    where.push(
+      `(title LIKE ? OR message LIKE ? OR customer_ref LIKE ? OR actor_name LIKE ? OR CAST(metadata AS CHAR) LIKE ?)`
+    );
+    const like = `%${q}%`;
+    params.push(like, like, like, like, like);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const countRows = await query(
+    `SELECT COUNT(*) AS total FROM activity_logs ${whereSql}`,
+    params
+  );
+  const total = Number(countRows[0]?.total || 0);
+
+  const rows = await query(
+    `SELECT id, event_type, title, message, source, status, customer_ref,
+            amount, reference_id, actor_user_id, actor_name, metadata, created_at
+     FROM activity_logs
+     ${whereSql}
+     ORDER BY created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, capped, offset]
+  );
+
+  return {
+    data: rows.map((row) => formatActivity(row, { includeMetadata: true })),
+    pagination: {
+      page: pageNum,
+      limit: capped,
+      total,
+      pages: Math.max(1, Math.ceil(total / capped)),
+    },
+  };
+}
+
+module.exports = {
+  logActivity,
+  logActivitySafe,
+  listActivity,
+  listActivityAudit,
+  formatActivity,
+};

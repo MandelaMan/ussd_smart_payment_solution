@@ -829,6 +829,13 @@ export type ZohoCustomerPaymentDetail = {
   createdAt: string;
 };
 
+export type ActivityChange = {
+  field: string;
+  label: string;
+  from: string | null;
+  to: string | null;
+};
+
 export type ActivityItem = {
   id: number;
   eventType: string;
@@ -842,6 +849,17 @@ export type ActivityItem = {
   actorUserId?: number | null;
   actorName?: string | null;
   createdAt: string;
+  metadata?: {
+    changes?: ActivityChange[];
+    [key: string]: unknown;
+  } | null;
+};
+
+export type ActivityAuditItem = ActivityItem & {
+  metadata?: {
+    changes?: ActivityChange[];
+    [key: string]: unknown;
+  } | null;
 };
 
 export type ReconciliationRecommendation = {
@@ -1795,6 +1813,19 @@ export const api = {
 
   getActivity: (limit = 40) =>
     request<{ data: ActivityItem[] }>(`/admin/activity?limit=${limit}`),
+
+  getActivityAudit: (params: Record<string, string> = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request<{
+      data: ActivityAuditItem[];
+      pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        pages: number;
+      };
+    }>(`/admin/activity/audit${qs ? `?${qs}` : ""}`);
+  },
 
   getTransactions: (params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();

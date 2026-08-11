@@ -36,6 +36,10 @@ function lazyPage<T extends Record<string, unknown>>(
 
 const RoleHomePage = lazyPage(() => import("./pages/RoleHomePage"), "RoleHomePage");
 const ActivityPage = lazyPage(() => import("./pages/ActivityPage"), "ActivityPage");
+const ActivityAuditPage = lazyPage(
+  () => import("./pages/ActivityAuditPage"),
+  "ActivityAuditPage"
+);
 const LeadsPage = lazyPage(() => import("./pages/LeadsPage"), "LeadsPage");
 const CommunicationPage = lazyPage(
   () => import("./pages/CommunicationPage"),
@@ -236,6 +240,14 @@ export default function App() {
                   />
                 </Route>
                 <Route element={<AdminRoute />}>
+                  <Route
+                    path="activity-audit"
+                    element={
+                      <LazyRoute>
+                        <ActivityAuditPage />
+                      </LazyRoute>
+                    }
+                  />
                   <Route
                     path="logs"
                     element={<Navigate to="/settings?tab=logs" replace />}
