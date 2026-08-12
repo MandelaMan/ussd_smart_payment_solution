@@ -14,7 +14,7 @@ import {
   type ActivityChange,
   type AdminUser,
 } from "../lib/api";
-import { CUSTOMER_ACTIVITY_EVENT_TYPES } from "../lib/activityFeed";
+import { ADMIN_AUDIT_EVENT_TYPES } from "../lib/activityFeed";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
@@ -37,9 +37,11 @@ import { TextStatus } from "../components/ui/TextStatus";
 const PAGE_SIZE = 30;
 
 function eventLabel(value: string): string {
+  if (value === "user_login") return "User signed in";
   return value
     .replace(/^customer_/, "")
     .replace(/^tisp_/, "TISP ")
+    .replace(/^user_/, "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -215,7 +217,7 @@ function ActivityFilters({
           }}
         >
           <option value="">All actions</option>
-          {CUSTOMER_ACTIVITY_EVENT_TYPES.map((value) => (
+          {ADMIN_AUDIT_EVENT_TYPES.map((value) => (
             <option key={value} value={value}>
               {eventLabel(value)}
             </option>

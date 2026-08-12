@@ -4,6 +4,15 @@ const {
 } = require("./zohoInvoiceStatus");
 const { detectSkippedMonthlyPayment } = require("./skippedPayment");
 
+/** Raw subscription_status values that mean "not present on TISP" (not Suspended). */
+const UNKNOWN_TISP_ALIASES = new Set([
+  "unknown",
+  "not on tisp",
+  "not_on_tisp",
+  "missing",
+  "none",
+]);
+
 const BILLING_STATUSES = [
   "current",
   "paid",
@@ -85,8 +94,27 @@ function isDisconnectedService(subscriptionStatus) {
   return normalizeSubscriptionStatus(subscriptionStatus) === "Suspended";
 }
 
+/**
+ * True when TISP presence is unknown (empty / "Not on TISP" / legacy aliases),
+ * as opposed to an explicit Suspended/Paused/Active/Cancelled service state.
+ * Must inspect the raw value — normalizeSubscriptionStatus maps these to Suspended.
+ */
 function isUnknownService(subscriptionStatus) {
-  return normalizeSubscriptionStatus(subscriptionStatus) === "Not on TISP";
+  const raw = String(subscriptionStatus ?? "").trim().toLowerCase();
+  if (!raw) return true;
+  if (
+    raw.includes("active") ||
+    raw.includes("suspend") ||
+    raw.includes("pause") ||
+    raw.includes("cancel")
+  ) {
+    return false;
+  }
+  return (
+    UNKNOWN_TISP_ALIASES.has(raw) ||
+    raw.includes("not on tisp") ||
+    raw === "unknown"
+  );
 }
 
 function daysSince(dateStr) {
@@ -1020,4 +1048,5 @@ module.exports = {
   detectSkippedMonthlyPayment,
   isActiveService,
   isDisconnectedService,
+  isUnknownService,
 };

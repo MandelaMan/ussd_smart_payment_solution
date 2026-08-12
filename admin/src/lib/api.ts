@@ -334,6 +334,36 @@ export type AgencyInvoiceDiscount = {
   value: number;
 };
 
+export type CampaignMetrics = {
+  applications: number;
+  discountAmountTotal: number;
+  referralsPending: number;
+  referralsQualified: number;
+  referralsRewarded: number;
+  referralsCancelled: number;
+  rewardsQueued: number;
+  rewardsApplied: number;
+  rewardsRestored: number;
+  rewardsFailed: number;
+};
+
+export type Campaign = {
+  id: number;
+  code: string;
+  name: string;
+  status: "draft" | "active" | "paused" | "ended";
+  startsAt: string;
+  endsAt: string | null;
+  newCustomerDiscountPercent: number;
+  referrerRewardPercent: number;
+  appliesToDecoder: boolean;
+  priority: number;
+  description: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  metrics?: CampaignMetrics;
+};
+
 export type AgencyInvoicePayload = {
   mode: "consolidated" | "customer";
   customerId?: number;
@@ -518,6 +548,8 @@ export type Customer = {
   zohoSignupInvoiceEmailedAt?: string | null;
   trialPeriodEnabled: boolean;
   trialEndsAt: string | null;
+  referredByCustomerId?: number | null;
+  campaignId?: number | null;
   lastPaymentDate: string | null;
   tispDueDate: string | null;
   status: "active" | "cancelled";
@@ -2689,6 +2721,100 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  listCampaigns: (params: Record<string, string | undefined> = {}) =>
+    request<{ ok: boolean; campaigns: Campaign[] }>(
+      `/admin/campaigns${buildQueryString(params)}`
+    ),
+
+  getActiveCampaign: () =>
+    request<{
+      ok: boolean;
+      campaign: Campaign | null;
+      campaigns: Campaign[];
+    }>(`/admin/campaigns/active`),
+
+  createCampaign: (data: {
+    code: string;
+    name: string;
+    status?: "draft" | "active" | "paused" | "ended";
+    startsAt?: string;
+    endsAt?: string | null;
+    newCustomerDiscountPercent?: number;
+    referrerRewardPercent?: number;
+    priority?: number;
+    description?: string | null;
+  }) =>
+    request<{ ok: boolean; campaign: Campaign }>(`/admin/campaigns`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateCampaign: (
+    id: number,
+    data: {
+      name?: string;
+      status?: "draft" | "active" | "paused" | "ended";
+      startsAt?: string;
+      endsAt?: string | null;
+      newCustomerDiscountPercent?: number;
+      referrerRewardPercent?: number;
+      priority?: number;
+      description?: string | null;
+    }
+  ) =>
+    request<{ ok: boolean; campaign: Campaign }>(`/admin/campaigns/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteCampaign: (id: number) =>
+    request<{ ok: boolean; campaign: Campaign }>(`/admin/campaigns/${id}`, {
+      method: "DELETE",
+    }),
+
+  lookupCustomerByNumber: (customerNumber: string) =>
+    request<{
+      ok: boolean;
+      found: boolean;
+      reason?: string;
+      customer?: {
+        id: number;
+        customerNumber: string;
+        apartmentNumber?: string | null;
+        fullName: string;
+        status: string;
+        buildingName?: string | null;
+      };
+    }>(
+      `/admin/customers/lookup${buildQueryString({ customerNumber })}`
+    ),
+
+  lookupCustomerByApartment: (
+    apartmentNumber: string,
+    buildingId?: number | string | null
+  ) =>
+    request<{
+      ok: boolean;
+      found: boolean;
+      reason?: string;
+      customer?: {
+        id: number;
+        customerNumber: string;
+        apartmentNumber?: string | null;
+        fullName: string;
+        status: string;
+        buildingName?: string | null;
+      };
+    }>(
+      `/admin/customers/lookup${buildQueryString({
+        apartmentNumber,
+        buildingId:
+          buildingId != null && String(buildingId) !== ""
+            ? String(buildingId)
+            : undefined,
+      })}`
+    ),
+
   listCustomers: (
     params: Record<string, string | undefined> = {},
     options: ApiRequestOptions = {}
@@ -2875,6 +3001,8 @@ export const api = {
           paymentMatch?: boolean;
           paymentAmount?: number;
           expectedTotal?: number;
+          packageDiscountPercent?: number;
+          packageDiscountAmount?: number;
         } | null;
         /** Separate unpaid invoice for decoder / package / balance shortfall. */
         outstandingInvoice?: {

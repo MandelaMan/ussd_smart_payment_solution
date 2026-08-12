@@ -211,6 +211,8 @@ function buildSignupLineItems(customer, period, options = {}) {
   return buildSubscriptionLineItems(customer, period, {
     includePackage: options.includePackage !== false,
     includeOneTimeDstvFee: options.includeOneTimeDstvFee === true,
+    packageDiscountPercent: options.packageDiscountPercent || 0,
+    appliesToDecoder: options.appliesToDecoder === true,
   });
 }
 
@@ -280,6 +282,14 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
  * (Internet/package still outstanding on a DSTV plan).
  */
 async function createOutstandingPackageInvoice(customer, zohoContact, options = {}) {
+  const {
+    getSignupCampaignDiscount,
+  } = require("./referralRewardService");
+  const campaignDiscount = await getSignupCampaignDiscount(customer.id);
+  const packageDiscountPercent = Number(
+    campaignDiscount?.discountPercent || 0
+  );
+
   const period = computeBillingPeriod({
     paymentFrequency: customer.paymentFrequency,
     customPeriodDays: customer.customPeriodDays,
@@ -287,12 +297,19 @@ async function createOutstandingPackageInvoice(customer, zohoContact, options = 
   const lineItems = buildSignupLineItems(customer, period, {
     includePackage: true,
     includeOneTimeDstvFee: false,
+    packageDiscountPercent,
+    appliesToDecoder: false,
   });
   if (!lineItems.length) {
     return { created: false, reason: "no_package_line", invoiceId: null };
   }
 
   const packagePrice = Number(customer.packagePrice || 0);
+  const discounted =
+    packageDiscountPercent > 0
+      ? Math.round(packagePrice * (1 - packageDiscountPercent / 100) * 100) /
+        100
+      : packagePrice;
   const invoiceNumber = await buildZohoInvoiceNumber({
     customerId: customer.id,
     customerNumber: customer.customerNumber,
@@ -305,7 +322,12 @@ async function createOutstandingPackageInvoice(customer, zohoContact, options = 
       "Internet / package charge",
       "Issued separately because advance payment covered DSTV decoder only",
       `Package (from plan): KES ${Math.round(packagePrice)}`,
-    ].join("\n");
+      packageDiscountPercent > 0
+        ? `Campaign: ${packageDiscountPercent}% off package → KES ${Math.round(discounted)}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
   const invoice = await createInvoice_JS({
     customer_id: zohoContact.contact_id,
@@ -335,10 +357,11 @@ async function createOutstandingPackageInvoice(customer, zohoContact, options = 
     created: true,
     invoiceId: String(invoice.invoice_id),
     invoiceNumber: invoice.invoice_number || null,
-    total: Number(invoice.total || packagePrice),
+    total: Number(invoice.total || discounted),
     emailed: emailResult.emailed,
     emailReason: emailResult.reason,
     packageOnly: true,
+    packageDiscountPercent,
   };
 }
 
@@ -429,7 +452,22 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     resolveAdvancePaymentCoverage,
     buildAdvancePaymentInvoiceNotes,
     shouldIncludeDstvOneTimeFee,
+    discountedPackageAmount,
   } = require("../utils/zohoInvoiceLineItems");
+  const campaignStore = require("./campaignStore");
+  const {
+    getSignupCampaignDiscount,
+  } = require("./referralRewardService");
+
+  const campaignDiscount = await getSignupCampaignDiscount(customer.id);
+  const packageDiscountPercent = Number(
+    options.packageDiscountPercent != null
+      ? options.packageDiscountPercent
+      : campaignDiscount?.discountPercent || 0
+  );
+  const appliesToDecoder =
+    options.appliesToDecoder === true ||
+    campaignDiscount?.appliesToDecoder === true;
 
   const coverage = resolveAdvancePaymentCoverage(customer, options);
   if (options.paymentAlreadyMade === true) {
@@ -450,6 +488,8 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     paymentAlreadyMade: options.paymentAlreadyMade === true,
     paymentCoversInternet: coverage.includePackage,
     paymentCoversDecoder: coverage.includeDecoder,
+    packageDiscountPercent,
+    appliesToDecoder,
   });
 
   if (!(expectedTotal > 0)) {
@@ -535,6 +575,7 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
         emailReason: emailResult.reason,
         coverage,
         expectedTotal,
+        packageDiscountPercent,
       };
     }
   }
@@ -549,6 +590,8 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
   const lineItems = buildSignupLineItems(customer, period, {
     includePackage: coverage.includePackage,
     includeOneTimeDstvFee: coverage.includeDecoder,
+    packageDiscountPercent,
+    appliesToDecoder,
   });
   if (!lineItems.length) {
     return {
@@ -560,6 +603,16 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     };
   }
 
+  const packageListPrice = Number(customer.packagePrice || 0);
+  const packageDiscountAmount =
+    packageDiscountPercent > 0 && coverage.includePackage
+      ? Math.round(
+          (packageListPrice -
+            discountedPackageAmount(packageListPrice, packageDiscountPercent)) *
+            100
+        ) / 100
+      : 0;
+
   let notes = options.notes || null;
   if (options.paymentAlreadyMade === true && !notes) {
     notes = buildAdvancePaymentInvoiceNotes({
@@ -570,6 +623,17 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
       paymentAmount: options.paymentAmount,
       expectedAmount: expectedTotal,
     });
+  }
+  if (packageDiscountPercent > 0) {
+    const campaignNote = [
+      `Campaign: ${packageDiscountPercent}% off package (first month only)`,
+      `Package list price: KES ${Math.round(packageListPrice)}`,
+      `Package after discount: KES ${Math.round(
+        discountedPackageAmount(packageListPrice, packageDiscountPercent)
+      )}`,
+      "Recurring subscription remains at full package price",
+    ].join("\n");
+    notes = notes ? `${notes}\n${campaignNote}` : campaignNote;
   }
 
   const invoice = await createInvoice_JS({
@@ -586,6 +650,36 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
 
   if (!invoice?.invoice_id) {
     throw new Error("Zoho signup invoice creation failed");
+  }
+
+  if (packageDiscountPercent > 0 && campaignDiscount?.campaignId) {
+    try {
+      await campaignStore.recordCampaignApplication({
+        campaignId: campaignDiscount.campaignId,
+        customerId: customer.id,
+        discountPercent: packageDiscountPercent,
+        packageListPrice,
+        packageDiscountAmount,
+        signupInvoiceId: String(invoice.invoice_id),
+        signupInvoiceNumber: invoice.invoice_number || invoiceNumber,
+      });
+    } catch (e) {
+      console.warn("campaign application persist failed:", e.message);
+    }
+  } else if (packageDiscountPercent > 0 && campaignDiscount?.campaign?.id) {
+    try {
+      await campaignStore.recordCampaignApplication({
+        campaignId: campaignDiscount.campaign.id,
+        customerId: customer.id,
+        discountPercent: packageDiscountPercent,
+        packageListPrice,
+        packageDiscountAmount,
+        signupInvoiceId: String(invoice.invoice_id),
+        signupInvoiceNumber: invoice.invoice_number || invoiceNumber,
+      });
+    } catch (e) {
+      console.warn("campaign application persist failed:", e.message);
+    }
   }
 
   const emailResult = await emailSignupInvoiceOnce(
@@ -620,6 +714,8 @@ async function createSignupInvoice(customer, zohoContact, options = {}) {
     emailReason: emailResult.reason,
     coverage,
     expectedTotal,
+    packageDiscountPercent,
+    packageDiscountAmount,
     paymentMatch:
       options.paymentAmount != null &&
       Number.isFinite(Number(options.paymentAmount))
@@ -1073,6 +1169,44 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
       }
     }
     invalidateCustomerZoho(customerId);
+
+    // Keep referral attribution tied to the signup invoice; qualify when paid.
+    if (invoice?.invoiceId && !hasTrial) {
+      try {
+        const campaignStore = require("./campaignStore");
+        const attribution = await campaignStore.getAttributionForReferee(
+          customerId
+        );
+        if (attribution?.id) {
+          await require("../config/db").query(
+            `UPDATE referral_attributions
+             SET signup_invoice_id = COALESCE(signup_invoice_id, ?)
+             WHERE id = ?`,
+            [String(invoice.invoiceId), Number(attribution.id)]
+          );
+        }
+        await campaignStore.updateApplicationInvoice(
+          customerId,
+          String(invoice.invoiceId),
+          invoice.invoiceNumber || null
+        );
+      } catch (e) {
+        console.warn("campaign signup invoice link failed:", e.message);
+      }
+    }
+
+    if (invoice?.paid && invoice?.invoiceId && !hasTrial) {
+      try {
+        const { onRefereeSignupPaid } = require("./referralRewardService");
+        await onRefereeSignupPaid({
+          customerId,
+          invoiceId: invoice.invoiceId,
+          source: "onboarding_advance_payment",
+        });
+      } catch (e) {
+        console.warn("referral reward on onboard payment failed:", e.message);
+      }
+    }
 
     try {
       const invoices = await getInvoices_JS({

@@ -110,6 +110,14 @@ async function syncPermissionsToDb() {
       );
     }
   }
+
+  // Campaign create/edit are administrator-only (API + UI). Drop from any group grants.
+  await query(
+    `DELETE FROM rbac_group_permissions WHERE perm_key IN ('campaigns.create', 'campaigns.edit')`
+  );
+  await query(
+    `DELETE FROM rbac_user_permissions WHERE perm_key IN ('campaigns.create', 'campaigns.edit') AND effect = 'grant'`
+  );
 }
 
 async function invalidateUserPermissionCache(userId) {

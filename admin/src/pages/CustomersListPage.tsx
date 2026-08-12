@@ -871,7 +871,9 @@ export function CustomersListPage() {
   }
 
   function openAction(customer: Customer, type: CustomerAction) {
-    if (type === "deletePermanent" && !allowPermanentDelete) return;
+    if (type === "deletePermanent") {
+      if (!allowPermanentDelete || customer.status !== "cancelled") return;
+    }
     if (!canMutate && type !== "history" && type !== "deletePermanent") return;
     if (type === "edit") {
       setEditCustomer(customer);
@@ -1485,7 +1487,7 @@ export function CustomersListPage() {
           buildCancelPayload(cancelNotes, needsDstvDecoder)
         );
         toaster.create({
-          title: "Subscription cancelled",
+          title: "Subscription cancelled — apartment released",
           description: "TISP and Zoho are updating in the background",
           type: "success",
         });
@@ -1519,7 +1521,7 @@ export function CustomersListPage() {
         }
       } else if (actionType === "deletePermanent") {
         await api.deleteCustomerPermanently(actionCustomer.id);
-        toaster.create({ title: "Customer deleted permanently", type: "success" });
+        toaster.create({ title: "Local records wiped", type: "success" });
         setExpanded(null);
       }
       closeAction();

@@ -239,6 +239,14 @@ export function canMutateAgencies(user: User | null): boolean {
   return hasAnyPermission(user, ["agencies.create", "agencies.edit"]);
 }
 
+export function canViewCampaigns(user: User | null): boolean {
+  return hasPermission(user, "campaigns.view");
+}
+
+export function canMutateCampaigns(user: User | null): boolean {
+  return isAdministrator(user);
+}
+
 export function canMutateConfig(user: User | null): boolean {
   return hasAnyPermission(user, [
     "packages.create",

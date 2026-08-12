@@ -60,6 +60,41 @@ function eventPathIncludesNode(event: PointerEvent, node: HTMLElement | null) {
   return event.composedPath().includes(node);
 }
 
+/**
+ * Chrome attaches its history dropdown on focus if the field is editable.
+ * Keep read-only through focus, then unlock after a short delay (rAF alone is
+ * too early on Chromium).
+ */
+function unlockInputAfterFocus(input: HTMLInputElement) {
+  input.readOnly = true;
+  window.setTimeout(() => {
+    if (document.activeElement !== input) return;
+    input.readOnly = false;
+    const len = input.value.length;
+    try {
+      input.setSelectionRange(len, len);
+    } catch {
+      /* ignored */
+    }
+  }, 50);
+}
+
+/**
+ * Chrome ignores autocomplete=off and also heuristics off nearby labels
+ * ("Building"). `chrome-off` / `one-time-code` are the values Chromium
+ * currently respects for custom comboboxes.
+ */
+const SEARCH_SELECT_AUTOFILL_PROPS = {
+  autoComplete: "chrome-off",
+  autoCorrect: "off",
+  autoCapitalize: "off",
+  spellCheck: false,
+  "data-1p-ignore": "",
+  "data-lpignore": "true",
+  "data-bwignore": "true",
+  "data-form-type": "other",
+} as const;
+
 export function SearchableSelect({
   value,
   onChange,
@@ -79,6 +114,8 @@ export function SearchableSelect({
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuId = useId();
+  // Unique per instance so Chrome does not reuse shared field history.
+  const fieldKey = `ss-${menuId.replace(/:/g, "")}`;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -151,7 +188,11 @@ export function SearchableSelect({
     }
   }
 
-  const displayValue = open ? query : selected?.label ?? "";
+  // Never put the selected label into <input value> — Chrome learns those
+  // strings and resurfaces them in its native autofill popup.
+  const inputValue = open ? query : "";
+  const closedLabel = selected?.label;
+  const showClosedLabel = !open && !!closedLabel;
 
   const menuItems =
     filtered.length === 0 ? (
@@ -237,42 +278,68 @@ export function SearchableSelect({
         <Box ps={3} color="fg.subtle" flexShrink={0}>
           <FiSearch size={14} />
         </Box>
-        <Input
-          ref={inputRef}
-          role="combobox"
-          aria-expanded={open}
-          aria-controls={open ? menuId : undefined}
-          aria-busy={isLoading || undefined}
-          autoComplete="new-password"
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          name="searchable-select-filter"
-          data-1p-ignore=""
-          data-lpignore="true"
-          data-form-type="other"
-          value={displayValue}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            if (!open) setOpen(true);
-          }}
-          onFocus={openMenu}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            open ? searchPlaceholder : selected ? undefined : resolvedPlaceholder
-          }
-          disabled={isDisabled}
-          size={size}
-          flex="1"
-          minW={0}
-          w="full"
-          px={2}
-          readOnly={!open && !!selected}
-          onClick={() => {
-            if (!open) openMenu();
-          }}
-          {...embeddedFieldInputStyles}
-        />
+        <Box position="relative" flex="1" minW={0} h="100%">
+          {showClosedLabel ? (
+            <Text
+              position="absolute"
+              inset={0}
+              px={2}
+              display="flex"
+              alignItems="center"
+              fontSize="sm"
+              color="fg"
+              truncate
+              pointerEvents="none"
+              userSelect="none"
+              zIndex={1}
+            >
+              {closedLabel}
+            </Text>
+          ) : null}
+          <Input
+            ref={inputRef}
+            id={fieldKey}
+            name={fieldKey}
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={open ? menuId : undefined}
+            aria-busy={isLoading || undefined}
+            aria-label={closedLabel || resolvedPlaceholder}
+            {...SEARCH_SELECT_AUTOFILL_PROPS}
+            value={inputValue}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (!open) setOpen(true);
+            }}
+            onFocus={(e) => {
+              unlockInputAfterFocus(e.currentTarget);
+              openMenu();
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              open
+                ? searchPlaceholder
+                : showClosedLabel
+                  ? undefined
+                  : resolvedPlaceholder
+            }
+            disabled={isDisabled}
+            size={size}
+            h="100%"
+            minW={0}
+            w="full"
+            px={2}
+            // Closed: read-only + empty value so Chrome has nothing to suggest.
+            // Open: still start read-only; unlockInputAfterFocus enables typing.
+            readOnly={!open}
+            color={showClosedLabel ? "transparent" : undefined}
+            caretColor={showClosedLabel ? "transparent" : undefined}
+            onClick={() => {
+              if (!open) openMenu();
+            }}
+            {...embeddedFieldInputStyles}
+          />
+        </Box>
         <Flex
           pe={3}
           color="fg.muted"

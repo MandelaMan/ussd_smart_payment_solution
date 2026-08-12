@@ -23,6 +23,7 @@ import {
   FiMessageSquare,
   FiSend,
   FiActivity,
+  FiGift,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/authContext";
@@ -32,6 +33,7 @@ import {
   canAccessFinance,
   canAccessReports,
   canAccessSettings,
+  canViewCampaigns,
   hasPermission,
   roleLabel,
 } from "../lib/rbac";
@@ -86,6 +88,12 @@ export function Sidebar({ open, onClose }: Props) {
       label: "Agencies",
       icon: FiBriefcase,
       visible: hasPermission(user, "agencies.view"),
+    },
+    {
+      to: "/campaigns",
+      label: "Campaigns",
+      icon: FiGift,
+      visible: canViewCampaigns(user),
     },
     {
       to: "/apartments",

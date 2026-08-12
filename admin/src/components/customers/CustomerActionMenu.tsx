@@ -37,6 +37,9 @@ type Props = {
 
 export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }: Props) {
   const active = customer.status === "active";
+  const cancelled = customer.status === "cancelled";
+  // Permanent delete is a local wipe only — only after cancel so integrations are stopped.
+  const showPermanentDelete = Boolean(allowPermanentDelete) && cancelled;
 
   return (
     <Menu.Root
@@ -111,7 +114,7 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
                 </Menu.Item>
                 <Menu.Item value="cancel" color="fg.error">
                   <FiXCircle />
-                  Cancel subscription
+                  Cancel & release apartment
                 </Menu.Item>
               </>
             )}
@@ -120,12 +123,12 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
               <FiClock />
               Apartment history
             </Menu.Item>
-            {allowPermanentDelete ? (
+            {showPermanentDelete ? (
               <>
                 <Menu.Separator />
                 <Menu.Item value="deletePermanent" color="fg.error">
                   <FiTrash2 />
-                  Delete customer permanently
+                  Wipe local records
                 </Menu.Item>
               </>
             ) : null}

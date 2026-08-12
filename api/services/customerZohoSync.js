@@ -281,7 +281,15 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     paymentFrequency: customer.paymentFrequency,
     customPeriodDays: customer.customPeriodDays,
   });
-  const lineItem = buildRecurringLineItems(customer, period, options);
+  let lineItem = buildRecurringLineItems(customer, period, options);
+  try {
+    const {
+      overlayReferralDiscountOnLineItems,
+    } = require("./referralRewardService");
+    lineItem = await overlayReferralDiscountOnLineItems(customer.id, lineItem);
+  } catch (e) {
+    console.warn("referral overlay on recurring lines failed:", e.message);
+  }
 
   const existing = matchedProfiles[0] || null;
 

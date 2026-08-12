@@ -20,6 +20,7 @@ import {
   type Agency,
   type ApartmentOccupancy,
   type Building,
+  type Campaign,
   type Customer,
   type PackageCategory,
   type Product,
@@ -28,6 +29,7 @@ import { toaster } from "../ui/toaster";
 import { SelectField } from "../ui/SelectField";
 import { SearchableSelect } from "../ui/SearchableSelect";
 import { startSyncCooldown } from "../../hooks/useSyncCooldown";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import {
   getBuildingIpRules,
   validateIpForBuilding,
@@ -197,6 +199,19 @@ export function CustomerForm({
   const [ppoePassword, setPpoePassword] = useState("");
   const [ppoeUsernameTouched, setPpoeUsernameTouched] = useState(false);
   const [trialPeriod, setTrialPeriod] = useState(false);
+  const [referredByCustomerNumber, setReferredByCustomerNumber] = useState("");
+  const [activeCampaigns, setActiveCampaigns] = useState<Campaign[]>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const activeCampaign =
+    activeCampaigns.find((c) => String(c.id) === selectedCampaignId) || null;
+  const [referrerLookup, setReferrerLookup] = useState<{
+    status: "idle" | "checking" | "found" | "not_found" | "cancelled";
+    name?: string;
+  }>({ status: "idle" });
+  const debouncedReferredBy = useDebouncedValue(
+    referredByCustomerNumber.trim().toUpperCase(),
+    400
+  );
   /** Advance payment: false = No payment (default); true = already paid. */
   const [paymentAlreadyMade, setPaymentAlreadyMade] = useState(false);
   /** Advance payment channel when customer already paid: mpesa | paystack | bank */
@@ -245,15 +260,86 @@ export function CustomerForm({
       api.listBuildings({ limit: "100" }),
       api.listAgencies({ limit: "100" }),
       api.getPackageCatalog(),
+      api.getActiveCampaign().catch(() => ({
+        ok: false,
+        campaign: null,
+        campaigns: [] as Campaign[],
+      })),
     ])
-      .then(([b, a, c]) => {
+      .then(([b, a, c, campaignRes]) => {
         setBuildings(b.buildings);
         setAgencies(a.agencies);
         setCatalog(c.categories);
+        const live = campaignRes?.campaigns?.length
+          ? campaignRes.campaigns
+          : campaignRes?.campaign
+            ? [campaignRes.campaign]
+            : [];
+        setActiveCampaigns(live);
+        // Single live campaign can be pre-selected; multiple requires an explicit choice.
+        setSelectedCampaignId(live.length === 1 ? String(live[0].id) : "");
       })
       .catch(() => {})
       .finally(() => setLookupsLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!activeCampaign) {
+      setReferredByCustomerNumber("");
+      setReferrerLookup({ status: "idle" });
+    }
+  }, [activeCampaign]);
+
+  useEffect(() => {
+    if (isEdit || customerType !== "C2B" || trialPeriod || !activeCampaign) {
+      setReferrerLookup({ status: "idle" });
+      return;
+    }
+    const ref = debouncedReferredBy.trim().toUpperCase();
+    if (!ref) {
+      setReferrerLookup({ status: "idle" });
+      return;
+    }
+    if (ref.length < 2) {
+      setReferrerLookup({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setReferrerLookup({ status: "checking" });
+    api
+      .lookupCustomerByApartment(ref, buildingId || undefined)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.found && res.customer) {
+          const apt =
+            res.customer.apartmentNumber ||
+            res.customer.customerNumber ||
+            ref;
+          const who = res.customer.fullName || res.customer.customerNumber;
+          setReferrerLookup({
+            status: "found",
+            name: res.customer.buildingName
+              ? `${who} · ${apt} (${res.customer.buildingName})`
+              : `${who} · ${apt}`,
+          });
+          return;
+        }
+        if (res.reason === "cancelled") {
+          setReferrerLookup({
+            status: "cancelled",
+            name: res.customer?.fullName,
+          });
+          return;
+        }
+        setReferrerLookup({ status: "not_found" });
+      })
+      .catch(() => {
+        if (!cancelled) setReferrerLookup({ status: "not_found" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedReferredBy, isEdit, customerType, trialPeriod, activeCampaign, buildingId]);
 
   useEffect(() => {
     if (!customer?.id || customer.status !== "active") {
@@ -581,11 +667,27 @@ export function CustomerForm({
         customer?.decoderFeeAmount ||
         2900
       : 0;
+  const campaignDiscountPercent =
+    !isEdit &&
+    customerType === "C2B" &&
+    !trialPeriod &&
+    activeCampaign &&
+    Number(activeCampaign.newCustomerDiscountPercent) > 0
+      ? Number(activeCampaign.newCustomerDiscountPercent)
+      : 0;
+  const packageAfterCampaign =
+    packageAmount == null
+      ? undefined
+      : campaignDiscountPercent > 0
+        ? Math.round(
+            Number(packageAmount) * (1 - campaignDiscountPercent / 100) * 100
+          ) / 100
+        : Number(packageAmount);
   const displayPrice =
     packageAmount == null
       ? undefined
       : !isEdit
-        ? packageAmount + decoderFee
+        ? (packageAfterCampaign ?? Number(packageAmount)) + decoderFee
         : packageAmount;
 
   const previewCode = buildCustomerNumberPreview(
@@ -820,10 +922,20 @@ export function CustomerForm({
       items.push({
         label: !isEdit && decoderFee > 0 ? "First invoice" : "Package price",
         value:
-          !isEdit && decoderFee > 0
-            ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAmount)} + decoder ${formatCurrency(decoderFee)})`
-            : formatCurrency(displayPrice),
+          !isEdit && campaignDiscountPercent > 0
+            ? decoderFee > 0
+              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAfterCampaign)} after ${campaignDiscountPercent}% off · list ${formatCurrency(packageAmount)} + decoder ${formatCurrency(decoderFee)})`
+              : `${formatCurrency(displayPrice)} (${campaignDiscountPercent}% campaign off · list ${formatCurrency(packageAmount)})`
+            : !isEdit && decoderFee > 0
+              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAmount)} + decoder ${formatCurrency(decoderFee)})`
+              : formatCurrency(displayPrice),
       });
+      if (!isEdit && campaignDiscountPercent > 0 && activeCampaign) {
+        items.push({
+          label: "Campaign",
+          value: `${campaignDiscountPercent}% off package (first month)`,
+        });
+      }
     }
 
     items.push({ label: "Billing frequency", value: freqLabel });
@@ -966,6 +1078,9 @@ export function CustomerForm({
     paymentFrequency,
     phone,
     packageAmount,
+    campaignDiscountPercent,
+    packageAfterCampaign,
+    activeCampaign,
     ppoePassword,
     ppoeUsername,
     previewCode,
@@ -1022,6 +1137,55 @@ export function CustomerForm({
     if (isActive && (!isEdit || canEditPackage) && !productId) {
       toaster.create({ title: "Select a package", type: "error" });
       return false;
+    }
+    if (
+      !isEdit &&
+      customerType === "C2B" &&
+      !trialPeriod &&
+      activeCampaigns.length > 0 &&
+      !selectedCampaignId
+    ) {
+      toaster.create({
+        title: "Select a campaign",
+        description:
+          "Choose which live campaign this customer was added under so the correct discount applies.",
+        type: "error",
+      });
+      return false;
+    }
+    if (
+      !isEdit &&
+      customerType === "C2B" &&
+      !trialPeriod &&
+      activeCampaign &&
+      referredByCustomerNumber.trim()
+    ) {
+      const typed = referredByCustomerNumber.trim().toUpperCase();
+      if (typed.length >= 2) {
+        if (
+          typed !== debouncedReferredBy ||
+          referrerLookup.status === "checking" ||
+          referrerLookup.status === "idle"
+        ) {
+          toaster.create({
+            title: "Checking referrer",
+            description: "Wait a moment for the apartment lookup to finish.",
+            type: "warning",
+          });
+          return false;
+        }
+        if (
+          referrerLookup.status === "not_found" ||
+          referrerLookup.status === "cancelled"
+        ) {
+          toaster.create({
+            title: "Referral skipped",
+            description:
+              "Referrer not found or cancelled — continuing without referral discount.",
+            type: "warning",
+          });
+        }
+      }
     }
     if (customerType === "B2B" && !agencyId) {
       toaster.create({ title: "Select an agency for B2B customers", type: "error" });
@@ -1320,6 +1484,28 @@ export function CustomerForm({
             }
           : {}),
         trialPeriod: trialPeriod || undefined,
+        campaignId:
+          customerType === "C2B" &&
+          !trialPeriod &&
+          activeCampaign?.id
+            ? activeCampaign.id
+            : undefined,
+        referredByApartmentNumber:
+          customerType === "C2B" &&
+          !trialPeriod &&
+          activeCampaign &&
+          referredByCustomerNumber.trim() &&
+          referrerLookup.status === "found"
+            ? referredByCustomerNumber.trim().toUpperCase()
+            : undefined,
+        referredByCustomerNumber:
+          customerType === "C2B" &&
+          !trialPeriod &&
+          activeCampaign &&
+          referredByCustomerNumber.trim() &&
+          referrerLookup.status === "found"
+            ? referredByCustomerNumber.trim().toUpperCase()
+            : undefined,
         paymentAlreadyMade:
           customerType === "C2B" && paymentAlreadyMade === true ? true : undefined,
         paymentMethod:
@@ -1809,6 +1995,71 @@ export function CustomerForm({
                 </Flex>
               ) : null}
             </Field.Root>
+          ) : null}
+          {!isEdit &&
+          customerType === "C2B" &&
+          !trialPeriod &&
+          activeCampaigns.length > 0 ? (
+            <>
+              <Field.Root required>
+                <Field.Label>Campaign</Field.Label>
+                <SelectField
+                  disabled={fieldsDisabled || !isActive}
+                  fieldProps={{
+                    value: selectedCampaignId,
+                    onChange: (e) => setSelectedCampaignId(e.target.value),
+                  }}
+                >
+                  {activeCampaigns.length > 1 ? (
+                    <option value="">Select campaign…</option>
+                  ) : null}
+                  {activeCampaigns.map((c) => (
+                    <option key={c.id} value={String(c.id)}>
+                      {c.name} ({c.newCustomerDiscountPercent}% off first
+                      invoice)
+                    </option>
+                  ))}
+                </SelectField>
+              </Field.Root>
+              <Field.Root>
+                <Field.Label>Referred by</Field.Label>
+                <Input
+                  w="full"
+                  value={referredByCustomerNumber}
+                  onChange={(e) =>
+                    setReferredByCustomerNumber(e.target.value.toUpperCase())
+                  }
+                  placeholder="Referrer's Apartment No"
+                  fontFamily="mono"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  disabled={fieldsDisabled || !isActive || !activeCampaign}
+                  bg={
+                    fieldsDisabled || !isActive || !activeCampaign
+                      ? "gray.50"
+                      : undefined
+                  }
+                />
+                <Field.HelperText>
+                  {!activeCampaign
+                    ? "Select a campaign first"
+                    : !referredByCustomerNumber.trim()
+                      ? `${activeCampaign.newCustomerDiscountPercent}% off first invoice · referral reward after pay`
+                      : referrerLookup.status === "checking" ||
+                          referredByCustomerNumber.trim().toUpperCase() !==
+                            debouncedReferredBy
+                        ? "Looking up apartment…"
+                        : referrerLookup.status === "found"
+                          ? `Found ${referrerLookup.name} — referral reward applies after this customer pays`
+                          : referrerLookup.status === "cancelled"
+                            ? "Referrer is cancelled — referral discount will not apply"
+                            : referrerLookup.status === "not_found"
+                              ? "No active customer in that apartment — referral discount will not apply"
+                              : `${activeCampaign.newCustomerDiscountPercent}% off first invoice · referral reward after pay`}
+                </Field.HelperText>
+              </Field.Root>
+            </>
           ) : null}
             </>
           )}

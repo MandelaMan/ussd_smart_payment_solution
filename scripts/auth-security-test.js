@@ -127,28 +127,20 @@ function testAccountLockoutHelpers() {
 
 function testWebhookVerify() {
   const crypto = require("crypto");
-  const { verifyWhatsAppSignature, getMpesaAllowedIps } = require("../api/middleware/webhookVerify");
+  const { verifyWhatsAppHmac, getMpesaAllowedIps } = require("../api/middleware/webhookVerify");
 
-  process.env.WHATSAPP_APP_SECRET = "test-app-secret";
+  const appSecret = "test-app-secret";
   const body = Buffer.from(JSON.stringify({ entry: [] }));
   const sig =
     "sha256=" +
-    crypto.createHmac("sha256", "test-app-secret").update(body).digest("hex");
+    crypto.createHmac("sha256", appSecret).update(body).digest("hex");
 
-  const okReq = {
-    headers: { "x-hub-signature-256": sig },
-    rawBody: body,
-  };
-  assert("accept valid WhatsApp signature", verifyWhatsAppSignature(okReq).ok);
-
-  const badReq = {
-    headers: { "x-hub-signature-256": "sha256=deadbeef" },
-    rawBody: body,
-  };
-  assert("reject invalid WhatsApp signature", !verifyWhatsAppSignature(badReq).ok);
+  assert("accept valid WhatsApp signature", verifyWhatsAppHmac(sig, body, appSecret).ok);
+  assert(
+    "reject invalid WhatsApp signature",
+    !verifyWhatsAppHmac("sha256=deadbeef", body, appSecret).ok
+  );
   assert("M-Pesa IP allowlist is non-empty", getMpesaAllowedIps().length > 0);
-
-  delete process.env.WHATSAPP_APP_SECRET;
 }
 
 async function testRateLimiter() {

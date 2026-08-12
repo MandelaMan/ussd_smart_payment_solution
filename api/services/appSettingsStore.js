@@ -237,6 +237,28 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
 <p>After the trial, billing continues on your selected plan. Use your account number as the M-Pesa Paybill reference.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
+  referral_reward: {
+    label: "Referral reward",
+    description:
+      "Sent to a referrer when their referral discount is applied to the next subscription cycle.",
+    defaultEnabled: true,
+    defaultSubject:
+      "You've earned a {{referralDiscountPercent}}% referral discount — {{customerNumber}}",
+    defaultBodyHtml: `<p>Dear {{firstName}},</p>
+<p>Thank you for referring a new Starlynx customer{{#referredCustomerNumber}} (<strong>{{referredCustomerNumber}}</strong>){{/referredCustomerNumber}}.</p>
+<p>As a thank you, your <strong>next subscription</strong> will be discounted by <strong>{{referralDiscountPercent}}%</strong>.</p>
+<p>
+  <strong>Your account:</strong> {{customerNumber}}<br/>
+  <strong>Usual package price:</strong> {{packagePrice}}<br/>
+  <strong>Next cycle with referral discount:</strong> {{referralDiscountedPrice}}
+</p>
+<p>After that billing cycle, your recurring amount returns to the normal package price automatically.</p>
+<p>This is a no-reply email. If you have any questions, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
+<p>Thank you,<br/>Starlynx Customer Support</p>`.replace(
+      "{{#referredCustomerNumber}} (<strong>{{referredCustomerNumber}}</strong>){{/referredCustomerNumber}}",
+      " (<strong>{{referredCustomerNumber}}</strong>)"
+    ),
+  },
 };
 
 const CUSTOMER_EMAIL_TEMPLATE_KEYS = Object.keys(CUSTOMER_EMAIL_TEMPLATE_DEFS);

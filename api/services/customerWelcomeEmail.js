@@ -37,6 +37,10 @@ const PLACEHOLDER_KEYS = [
   "pauseEndDate",
   "pauseReason",
   "trialEndsAt",
+  "referralDiscountPercent",
+  "referralDiscountedPrice",
+  "referredCustomerNumber",
+  "referredCustomerName",
 ];
 
 function escapeHtml(value) {
@@ -117,6 +121,10 @@ function buildCustomerTemplateVars(customer, extra = {}) {
     )
       .trim()
       .slice(0, 10),
+    referralDiscountPercent: "",
+    referralDiscountedPrice: "",
+    referredCustomerNumber: "",
+    referredCustomerName: "",
     toAddress,
   };
 
@@ -129,6 +137,14 @@ function buildCustomerTemplateVars(customer, extra = {}) {
     base.packagePrice = formatKes(packagePriceRaw);
   } else {
     base.packagePrice = String(packagePriceRaw || "").trim();
+  }
+
+  if (
+    extra.referralDiscountedPrice != null &&
+    extra.referralDiscountedPrice !== "" &&
+    !String(extra.referralDiscountedPrice).startsWith("KES")
+  ) {
+    base.referralDiscountedPrice = formatKes(extra.referralDiscountedPrice);
   }
 
   for (const key of PLACEHOLDER_KEYS) {

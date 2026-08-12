@@ -34,10 +34,10 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 | Convert C2B↔B2B | Type, agency, customer number, PPPoE if it tracked the number | Migrate old → new account number (preserve due date) | C2B→B2B: stop personal recurring, inactive contact, ensure agency. B2B→C2B: stop agency recurring for old number, create/sync personal + recurring | No |
 | Pause service (away) | `subscription_status=Paused`, pause window + reason | Due date = today (stop access) | Defer matching recurring so next invoice is after pause end | Deactivate ONU |
 | Suspend on TISP | `subscription_status=Suspended` | Due date = today | **None** (billing continues) | Deactivate ONU |
-| Cancel subscription | `status=cancelled`, close apartment history, collection dates. Number/IP/DSTV stay until a new signup reclaims them | Due date = cancel day (async) | C2B: stop recurring, rename company to `{number}-CXL-{id}`, mark inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
-| New signup after cancel (same apt) | Archive cancelled row as `{number}-CXL-{id}`; insert new active tenant | UPDATE existing account (name/phone/package/due) | Retire leftover Zoho contact on live number; create **new** Zoho customer + signup invoice (former invoices ignored) | No |
+| Cancel subscription | `status=cancelled`, close apartment history, collection dates; archive number to `{number}-CXL-{id}` and clear IP/DSTV immediately | Due date = cancel day (async) | C2B: stop recurring, rename company to `{number}-CXL-{id}`, mark inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
+| New signup after cancel (same apt) | Cancelled row already archived; insert new active tenant on live number | UPDATE existing account (name/phone/package/due) | Retire leftover Zoho contact on live number; create **new** Zoho customer + signup invoice (former invoices ignored) | No |
 | Apartment history | Read-only timeline | — | — | — |
-| Delete permanently | Hard-delete local rows | **Untouched** | **Untouched** | **Untouched** |
+| Wipe local records | Hard-delete local rows (**cancelled only**) | **Untouched** | **Untouched** | **Untouched** |
 
 ---
 
@@ -161,16 +161,16 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 ## 9. Cancel subscription
 
-**Purpose:** End the subscription permanently in-app while retaining history; collect ONU / DSTV decoder dates.
+**Purpose:** End the subscription permanently in-app while retaining history; collect ONU / DSTV decoder dates; free the apartment for a new tenant.
 
 **Outcomes**
 
-- **Local:** `status=cancelled`, `subscription_status=Cancelled`, reason + collection dates; open apartment history closed.
-- **TISP:** Background sync sets due date to cancellation day.
+- **Local:** `status=cancelled`, `subscription_status=Cancelled`, reason + collection dates; open apartment history closed. Customer number archived to `{number}-CXL-{id}` and IP / PPPoE / DSTV serial cleared **immediately** so UNIQUE keys are free for reuse.
+- **TISP:** Background sync sets due date to cancellation day (uses the live apartment number, not the archived local value).
 - **Zoho:** Background — C2B stop recurring, rename `company_name` to `{number}-CXL-{id}` (same archive form as local), mark contact inactive. B2B stop only recurring rows matching this customer number on the agency contact (agency stays active).
 - **OLT:** Background deactivate ONU when linked.
 
-**Notes:** Response returns `tisp/zoho: pending` immediately; check activity log for integration results. Prefer Cancel over Delete for leavers. The apartment is free for a new active tenant immediately. When the next signup uses the same apartment (same customer number), the cancelled row’s number is archived as `{number}-CXL-{id}` and its IP/DSTV serial are cleared so UNIQUE keys can be reused — no hard-delete required.
+**Notes:** Response returns `tisp/zoho: pending` immediately; check activity log for integration results. Prefer Cancel over Wipe for leavers. The apartment number is free for a new active tenant immediately. Menu label: **Cancel & release apartment**.
 
 ### 9a. New tenant on same apartment (after cancel)
 
@@ -178,7 +178,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 **Outcomes**
 
-- **Local:** Previous cancelled holder renamed to `{number}-CXL-{id}`; new active customer gets the live number.
+- **Local:** Previous cancelled holder is already `{number}-CXL-{id}`; new active customer gets the live number.
 - **TISP:** Prefer **UPDATE** of the existing account (new name, phone, package, due date policy) — not a duplicate INSERT.
 - **Zoho:** Do **not** reactivate the former contact. If a contact still owns the live company name (legacy cancel that only marked inactive), it is retired (`{number}-CXL-{id}` + inactive). A **new** Zoho customer is created for the new tenant; signup invoice is created and emailed; invoices dated before the new customer’s `created_at` are ignored.
 - **OLT:** Unchanged unless separately linked.
@@ -195,16 +195,16 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 ---
 
-## 11. Delete customer permanently
+## 11. Wipe local records (formerly Delete permanently)
 
-**Purpose:** Admin-only hard wipe of local customer data (snapshots, events, history, pending upgrades, customer row).
+**Purpose:** Admin-only hard wipe of local customer data (snapshots, events, history, pending upgrades, customer row). Available only for **cancelled** customers.
 
 **Outcomes**
 
 - **Local:** Row deleted.
-- **TISP / Zoho / OLT:** Explicitly **not** cleaned up — live orphans may remain.
+- **TISP / Zoho / OLT:** Explicitly **not** cleaned up — live orphans may remain (cancel should already have stopped them).
 
-**Notes:** Operationally dangerous. Use Cancel for normal offboarding so integrations are stopped first.
+**Notes:** Operationally dangerous. Menu shows **Wipe local records** only after Cancel. API rejects wipe while still `active`. Use Cancel for normal offboarding.
 
 ---
 
@@ -222,3 +222,18 @@ When M-Pesa / Zoho payment is allocated for a customer whose subscription is Sus
 
 - [Sync architecture](./SYNC_ARCHITECTURE.md) — background workers, Redis, Zoho API budget
 - [Zoho sync setup](./ZOHO_SYNC_SETUP.md) — webhooks, incremental sync
+
+## Automated tests
+
+Process-flow decision rules are covered by `yarn test` (`tests/unit`, `tests/flows`):
+
+| Area | Coverage |
+|------|----------|
+| Customer numbering / cancel archive / C2B↔B2B | `tests/unit/customerNumber.test.js`, `tests/flows/customerProcesses.test.js` |
+| Upgrade / downgrade quotes | `tests/unit/upgradeDowngradeFlow.test.js` |
+| M-Pesa matching + payment plan + C2B validation | `tests/unit/mpesaPaymentFlow.test.js`, `tests/flows/mpesaValidation.test.js` |
+| Billing periods + B2B agency rules | `tests/unit/billingB2bFlow.test.js` |
+| Reconciliation scenarios | `tests/unit/reconciliationFlow.test.js` |
+| Auth / RBAC / Zoho sync gates | `tests/unit/authRbacPolicy.test.js` |
+
+Live integration checks (staging only): `yarn test:smoke`, `yarn paybill:simulate`, `yarn test:olt`.

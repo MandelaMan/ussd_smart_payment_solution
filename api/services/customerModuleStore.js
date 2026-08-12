@@ -8,6 +8,11 @@ const {
 } = require("../utils/lastPaymentDate");
 const { computeTrialEndDate } = require("../utils/billingPeriod");
 const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
+const {
+  buildCustomerNumber,
+  liveCustomerNumber,
+  archiveCancelledCustomerNumber,
+} = require("../utils/customerNumber");
 
 /** Keep sync error columns short — TISP often returns full HTML error pages. */
 function sanitizeSyncError(message, maxLen = 240) {
@@ -163,50 +168,26 @@ function splitFullName(fullName) {
   };
 }
 
-function buildCustomerNumber(building, customerType, apartmentNumber) {
-  const popCode = String(
-    customerType === "B2B"
-      ? building.b2b_code || building.b2bCode
-      : building.c2b_code || building.c2bCode
-  )
-    .trim()
-    .toUpperCase();
-  const buildingCode = String(
-    building.building_code || building.buildingCode || ""
-  )
-    .trim()
-    .toUpperCase();
-  const apt = String(apartmentNumber || "")
-    .trim()
-    .toUpperCase();
-  // Multi-building POPs: POP-BUILDING-APT (e.g. AZE-TGA-401A).
-  // Single-building POPs leave building_code empty → POP-APT (e.g. ET-401A).
-  if (buildingCode && buildingCode !== popCode) {
-    return `${popCode}-${buildingCode}-${apt}`;
-  }
-  return `${popCode}-${apt}`;
-}
-
 /**
- * Archive a cancelled customer's live account number so the next tenant can
- * reuse the apartment-based number. Keeps the row for history/reporting.
- * VARCHAR(50) — keep archived form short: {number}-CXL-{id}
- * e.g. ET-H302 → ET-H302-CXL-237 (same value used as Zoho company_name for old tenants).
+ * Free UNIQUE identity keys immediately after cancel so another tenant can
+ * take the apartment number / IP / DSTV serial without waiting for signup.
  */
-function archiveCancelledCustomerNumber(customerNumber, customerId) {
-  const base = String(customerNumber || "")
-    .trim()
-    .toUpperCase()
-    .replace(/-CXL-\d+$/i, "");
-  const idNum = Number(customerId);
-  const idPart =
-    Number.isFinite(idNum) && idNum > 0
-      ? String(Math.trunc(idNum))
-      : String(customerId || Date.now()).replace(/\D/g, "").slice(-8) ||
-        String(Date.now()).slice(-8);
-  const suffix = `-CXL-${idPart}`;
-  const maxBase = Math.max(1, 50 - suffix.length);
-  return `${base.slice(0, maxBase)}${suffix}`;
+async function archiveCancelledCustomerIdentity(customerId, identity = {}) {
+  const id = Number(customerId);
+  if (!id) return null;
+  const liveNumber = liveCustomerNumber(identity.customerNumber);
+  if (!liveNumber) return null;
+  const archived = archiveCancelledCustomerNumber(liveNumber, id);
+  await query(
+    `UPDATE customers
+     SET customer_number = ?,
+         ip_address = NULL,
+         ppoe_username = NULL,
+         dstv_decoder_serial = NULL
+     WHERE id = ? AND status = 'cancelled'`,
+    [archived, id]
+  );
+  return archived;
 }
 
 /**
@@ -217,10 +198,7 @@ async function findMostRecentCancelledTenantIdForNumber(
   customerNumber,
   excludeCustomerId = null
 ) {
-  const base = String(customerNumber || "")
-    .trim()
-    .toUpperCase()
-    .replace(/-CXL-\d+$/i, "");
+  const base = liveCustomerNumber(customerNumber);
   if (!base) return null;
 
   const params = [base, `${base}-CXL-%`];
@@ -254,10 +232,7 @@ async function findArchivedCancelledTenantIdForNumber(
   customerNumber,
   excludeCustomerId = null
 ) {
-  const base = String(customerNumber || "")
-    .trim()
-    .toUpperCase()
-    .replace(/-CXL-\d+$/i, "");
+  const base = liveCustomerNumber(customerNumber);
   if (!base) return null;
 
   const params = [`${base}-CXL-%`];
@@ -281,9 +256,9 @@ async function findArchivedCancelledTenantIdForNumber(
 }
 
 /**
- * Cancelled customers still occupy UNIQUE keys (customer_number, ip_address,
- * dstv_decoder_serial). Free those keys when a new/active signup needs them.
- * Active holders still block.
+ * Cancelled customers may still occupy UNIQUE keys (customer_number, ip_address,
+ * dstv_decoder_serial) if they were cancelled before eager archive. Free those
+ * keys when a new/active signup needs them. Active holders still block.
  */
 async function releaseCancelledIdentityForReuse({
   customerNumber = null,
@@ -525,6 +500,11 @@ function mapCustomerRow(row) {
     zohoSignupInvoiceEmailedAt: row.zoho_signup_invoice_emailed_at || null,
     trialPeriodEnabled: Boolean(row.trial_period_enabled),
     trialEndsAt: row.trial_ends_at || null,
+    referredByCustomerId:
+      row.referred_by_customer_id != null
+        ? Number(row.referred_by_customer_id)
+        : null,
+    campaignId: row.campaign_id != null ? Number(row.campaign_id) : null,
     lastPaymentDate: row.last_payment_date
       ? String(row.last_payment_date).slice(0, 10)
       : null,
@@ -3055,6 +3035,12 @@ async function cancelCustomer(customerId, payload = {}) {
     [customerId, customer.apartment_number, eventNotes]
   );
 
+  // Eager identity release — apartment number / IP / DSTV free for next tenant.
+  // Integrations still use the live number via liveCustomerNumber().
+  await archiveCancelledCustomerIdentity(customerId, {
+    customerNumber: customer.customer_number,
+  });
+
   return customer;
 }
 
@@ -4028,6 +4014,46 @@ async function findCustomerByNumber(customerNumber) {
   return rows[0] || null;
 }
 
+/**
+ * Find a customer by exact apartment number (active preferred).
+ * When preferredBuildingId is set, same-building tenants win.
+ */
+async function findCustomerByApartmentNumber(
+  apartmentNumber,
+  { preferredBuildingId = null, activeOnly = false } = {}
+) {
+  const apt = String(apartmentNumber || "").trim().toUpperCase();
+  if (!apt) return null;
+
+  const preferBuilding =
+    preferredBuildingId != null && Number(preferredBuildingId) > 0
+      ? Number(preferredBuildingId)
+      : null;
+
+  const params = [apt];
+  let statusSql = "";
+  if (activeOnly) {
+    statusSql = ` AND LOWER(status) = 'active'`;
+  }
+
+  let orderSql = `ORDER BY id DESC`;
+  if (preferBuilding) {
+    orderSql = `ORDER BY CASE WHEN building_id = ? THEN 0 ELSE 1 END, id DESC`;
+    params.push(preferBuilding);
+  }
+
+  const rows = await query(
+    `SELECT id, customer_number, ip_address, status, building_id, apartment_number,
+            first_name, middle_name, last_name
+     FROM customers
+     WHERE UPPER(TRIM(apartment_number)) = ?${statusSql}
+     ${orderSql}
+     LIMIT 1`,
+    params
+  );
+  return rows[0] || null;
+}
+
 async function findCustomerByIp(ipAddress) {
   if (!ipAddress) return null;
   const rows = await query(
@@ -4593,11 +4619,14 @@ module.exports = {
   getApartment,
   getCustomerEvents,
   findCustomerByNumber,
+  findCustomerByApartmentNumber,
   findCustomerByIp,
   findCustomerByDstvSerial,
   assertDstvSerialUnique,
   releaseCancelledIdentityForReuse,
   archiveCancelledCustomerNumber,
+  archiveCancelledCustomerIdentity,
+  liveCustomerNumber,
   findMostRecentCancelledTenantIdForNumber,
   findArchivedCancelledTenantIdForNumber,
   assertImportNotDuplicate,

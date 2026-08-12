@@ -1155,7 +1155,11 @@ export function SettingsPage() {
       { id: "versioning", label: "Versioning" },
     ];
     return all.filter((tab) => {
-      if (tab.id === "permissions" || tab.id === "webhooks" || tab.id === "communication")
+      if (
+        tab.id === "permissions" ||
+        tab.id === "webhooks" ||
+        tab.id === "communication"
+      )
         return canManageUsers(user);
       if (tab.id === "logs") return canAccessOps(user);
       if (tab.id === "synchronization") return canOperateFinance(user);

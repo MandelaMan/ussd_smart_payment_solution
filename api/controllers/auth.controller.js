@@ -12,7 +12,7 @@ const {
 const { validatePassword } = require("../utils/passwordPolicy");
 const { generateTemporaryPassword } = require("../utils/tempPassword");
 const { sendZohoMail, isZohoMailConfigured } = require("../utils/zohoMail");
-const { logAuthEvent } = require("../utils/authLogger");
+const { logAuthEvent, clientIp } = require("../utils/authLogger");
 const {
   MAX_FAILED_ATTEMPTS,
   LOCKOUT_MINUTES,
@@ -215,6 +215,42 @@ async function login(req, res, next) {
       userId: user.id,
       outcome: "success",
       req,
+    });
+
+    const ip = clientIp(req);
+    await logActivitySafe({
+      eventType: "user_login",
+      title: "User signed in",
+      message: ip
+        ? `${user.name} signed in from ${ip}`
+        : `${user.name} signed in`,
+      source: "admin",
+      status: "success",
+      actor: { id: user.id, name: user.name },
+      metadata: {
+        ip: ip || null,
+        userAgent: req?.headers?.["user-agent"]
+          ? String(req.headers["user-agent"]).slice(0, 500)
+          : null,
+        changes: [
+          {
+            field: "loginAt",
+            label: "Signed in",
+            from: null,
+            to: new Date().toISOString(),
+          },
+          ...(ip
+            ? [
+                {
+                  field: "ip",
+                  label: "IP address",
+                  from: null,
+                  to: ip,
+                },
+              ]
+            : []),
+        ],
+      },
     });
 
     const authUser = await buildAuthUserPayload(user);

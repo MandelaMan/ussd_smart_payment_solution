@@ -3,6 +3,30 @@ const { clientIp } = require("../utils/authLogger");
 const { timingSafeEqualString } = require("../utils/timingSafeEqual");
 
 /**
+ * Pure Meta WhatsApp Cloud API signature check (X-Hub-Signature-256).
+ */
+function verifyWhatsAppHmac(signature, rawBody, appSecret) {
+  if (!appSecret) {
+    return { ok: false, reason: "WhatsApp app secret not configured" };
+  }
+  if (!signature || typeof signature !== "string") {
+    return { ok: false, reason: "missing signature" };
+  }
+  if (!rawBody || !Buffer.isBuffer(rawBody)) {
+    return { ok: false, reason: "missing raw body" };
+  }
+
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+
+  if (!timingSafeEqualString(signature, expected)) {
+    return { ok: false, reason: "invalid signature" };
+  }
+  return { ok: true };
+}
+
+/**
  * Verifies Meta WhatsApp Cloud API webhook signature (X-Hub-Signature-256).
  * Requires req.rawBody to be set by express.json verify callback.
  */
@@ -25,30 +49,11 @@ async function verifyWhatsAppSignature(req) {
     return { ok: false, reason: "WhatsApp app secret not configured" };
   }
 
-  const signature = req.headers["x-hub-signature-256"];
-  if (!signature || typeof signature !== "string") {
-    return { ok: false, reason: "missing signature" };
-  }
-
-  const rawBody = req.rawBody;
-  if (!rawBody || !Buffer.isBuffer(rawBody)) {
-    return { ok: false, reason: "missing raw body" };
-  }
-
-  const expected =
-    "sha256=" +
-    crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
-
-  const sigBuf = Buffer.from(signature);
-  const expBuf = Buffer.from(expected);
-  if (
-    sigBuf.length !== expBuf.length ||
-    !crypto.timingSafeEqual(sigBuf, expBuf)
-  ) {
-    return { ok: false, reason: "invalid signature" };
-  }
-
-  return { ok: true };
+  return verifyWhatsAppHmac(
+    req.headers["x-hub-signature-256"],
+    req.rawBody,
+    appSecret
+  );
 }
 
 /** Known Safaricom Daraja callback egress IPs (override via env). */
@@ -131,6 +136,7 @@ function requireMpesaCallbackAuth(req, res, next) {
 }
 
 module.exports = {
+  verifyWhatsAppHmac,
   verifyWhatsAppSignature,
   requireMpesaCallbackAuth,
   getMpesaAllowedIps,

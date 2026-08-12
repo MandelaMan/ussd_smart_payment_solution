@@ -25,6 +25,14 @@ export const CUSTOMER_ACTIVITY_EVENT_TYPES = [
   "customer_deleted",
 ] as const;
 
+/** Admin Activity audit extras (not on the team Recent Activity rail). */
+export const ADMIN_AUDIT_EXTRA_EVENT_TYPES = ["user_login"] as const;
+
+export const ADMIN_AUDIT_EVENT_TYPES = [
+  ...CUSTOMER_ACTIVITY_EVENT_TYPES,
+  ...ADMIN_AUDIT_EXTRA_EVENT_TYPES,
+] as const;
+
 /** @deprecated Use CUSTOMER_ACTIVITY_EVENT_TYPES / isVisibleCustomerActivity */
 export const SUPPORT_ACTIVITY_EVENT_TYPES = new Set<string>(
   CUSTOMER_ACTIVITY_EVENT_TYPES

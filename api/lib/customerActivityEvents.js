@@ -25,6 +25,14 @@ const CUSTOMER_ACTIVITY_EVENT_TYPES = Object.freeze([
   "customer_deleted",
 ]);
 
+/** Admin Activity audit only — not shown on the team Recent Activity rail. */
+const ADMIN_AUDIT_EXTRA_EVENT_TYPES = Object.freeze(["user_login"]);
+
+const ADMIN_AUDIT_EVENT_TYPES = Object.freeze([
+  ...CUSTOMER_ACTIVITY_EVENT_TYPES,
+  ...ADMIN_AUDIT_EXTRA_EVENT_TYPES,
+]);
+
 /**
  * High-impact / destructive menu actions.
  * Visible only when the viewer has the matching permission (admins typically have all).
@@ -63,6 +71,8 @@ function visibleCustomerActivityTypes(permissionSet, opts = {}) {
 
 module.exports = {
   CUSTOMER_ACTIVITY_EVENT_TYPES,
+  ADMIN_AUDIT_EXTRA_EVENT_TYPES,
+  ADMIN_AUDIT_EVENT_TYPES,
   SENSITIVE_ACTIVITY_EVENT_TYPES,
   SENSITIVE_ACTIVITY_PERMISSIONS,
   visibleCustomerActivityTypes,

@@ -147,6 +147,14 @@ export function MobilePageChrome({
                 bg="bg.muted"
                 border="none"
                 boxShadow="none"
+                autoComplete="chrome-off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                name="mobile-page-search"
+                data-1p-ignore=""
+                data-lpignore="true"
+                data-form-type="other"
                 autoFocus
                 _focusVisible={{
                   bg: "bg.panel",

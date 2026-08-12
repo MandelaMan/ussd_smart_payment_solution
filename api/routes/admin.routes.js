@@ -51,6 +51,7 @@ const {
 const { listOnus, getOnuAbility, getCustomerOltStatus } = require("../controllers/olt.controller");
 const {
   listCustomers,
+  lookupCustomerByNumber,
   exportCustomers,
   getCustomer,
   getCustomerTransactions,
@@ -316,6 +317,38 @@ router.get("/agencies/:id", requirePermission("agencies.view"), getAgency);
 router.get("/agencies/:id/invoices", requirePermission("agencies.view"), getAgencyInvoices);
 router.post("/agencies/:id/invoices", requirePermission("agencies.create"), createAgencyInvoice);
 
+const {
+  listCampaigns,
+  getActiveCampaign,
+  getCampaign,
+  getCampaignMetrics,
+  createCampaign,
+  updateCampaign,
+  deleteCampaign,
+  runReferralMaintenance,
+} = require("../controllers/campaigns.controller");
+
+router.get("/campaigns", requirePermission("campaigns.view"), listCampaigns);
+router.get(
+  "/campaigns/active",
+  requirePermission("customers.create", "campaigns.view"),
+  getActiveCampaign
+);
+router.get(
+  "/campaigns/:id/metrics",
+  requirePermission("campaigns.view"),
+  getCampaignMetrics
+);
+router.get("/campaigns/:id", requirePermission("campaigns.view"), getCampaign);
+router.post("/campaigns", requireAdministrator, createCampaign);
+router.patch("/campaigns/:id", requireAdministrator, updateCampaign);
+router.delete("/campaigns/:id", requireAdministrator, deleteCampaign);
+router.post(
+  "/campaigns/referral-maintenance",
+  requireAdministrator,
+  runReferralMaintenance
+);
+
 router.get("/apartments/history", requirePermission("apartments.view"), listApartmentHistoryRecords);
 router.get("/apartments/check", requirePermission("apartments.view"), checkApartmentOccupancy);
 router.get("/apartments", requirePermission("apartments.view"), listApartments);
@@ -338,6 +371,11 @@ router.post(
   importCustomers
 );
 router.get("/customers", requirePermission("customers.view"), listCustomers);
+router.get(
+  "/customers/lookup",
+  requirePermission("customers.view"),
+  lookupCustomerByNumber
+);
 router.get("/customers/export", requirePermission("customers.export"), exportCustomers);
 router.post("/customers", requirePermission("customers.create"), createCustomer);
 router.post("/customers/refresh-batch", requirePermission("customers.view"), refreshCustomersBatch);

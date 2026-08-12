@@ -110,6 +110,7 @@ export function ConfigRoute() {
         "pops.view",
         "apartments.view",
         "agencies.view",
+        "campaigns.view",
       ]}
     />
   );

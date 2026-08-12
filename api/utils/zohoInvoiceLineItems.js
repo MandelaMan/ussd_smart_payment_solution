@@ -82,6 +82,21 @@ function resolveAdvancePaymentCoverage(customer, options = {}) {
   };
 }
 
+function normalizePackageDiscountPercent(options = {}) {
+  const n = Number(options.packageDiscountPercent);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(100, n);
+}
+
+function discountedPackageAmount(packagePrice, discountPercent) {
+  const price = Number(packagePrice) || 0;
+  const pct = normalizePackageDiscountPercent({
+    packageDiscountPercent: discountPercent,
+  });
+  if (!(pct > 0)) return price;
+  return Math.round(price * (1 - pct / 100) * 100) / 100;
+}
+
 /** Expected signup invoice total for the selected coverage (always from package fields). */
 function expectedSignupInvoiceTotal(customer, options = {}) {
   const coverage =
@@ -93,12 +108,23 @@ function expectedSignupInvoiceTotal(customer, options = {}) {
         }
       : resolveAdvancePaymentCoverage(customer, options);
 
+  const packageDiscountPercent = normalizePackageDiscountPercent(options);
+  // Decoder is never campaign-discounted unless explicitly opted in.
+  const discountDecoder =
+    options.appliesToDecoder === true && packageDiscountPercent > 0;
+
   let total = 0;
   if (coverage.includePackage) {
-    total += Number(customer?.packagePrice || customer?.package_price || 0);
+    const packagePrice = Number(
+      customer?.packagePrice || customer?.package_price || 0
+    );
+    total += discountedPackageAmount(packagePrice, packageDiscountPercent);
   }
   if (coverage.includeDecoder && shouldIncludeDstvOneTimeFee(customer)) {
-    total += resolveDstvOneTimeFee(customer);
+    const fee = resolveDstvOneTimeFee(customer);
+    total += discountDecoder
+      ? discountedPackageAmount(fee, packageDiscountPercent)
+      : fee;
   }
   return total;
 }
@@ -239,15 +265,27 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
       ? buildManagedHouseLineItemDescription(customer, period)
       : buildSubscriptionInvoiceDescription(customer, period);
 
+  const packageDiscountPercent = normalizePackageDiscountPercent(options);
+
   if (includePackage) {
-    items.push(
-      withTax({
-        name: lineName,
-        rate: packagePrice,
-        quantity: 1,
-        description: periodDescription,
-      })
-    );
+    const packageLine = withTax({
+      name: lineName,
+      rate: packagePrice,
+      quantity: 1,
+      description: periodDescription,
+    });
+    // Line-level % discount so Zoho invoice shows 50% off the package only
+    // (decoder stays full price on a separate line).
+    if (packageDiscountPercent > 0) {
+      packageLine.discount = packageDiscountPercent;
+      packageLine.description = [
+        periodDescription,
+        `Campaign discount: ${packageDiscountPercent}% off package (first month)`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+    items.push(packageLine);
   }
 
   if (options.includeOneTimeDstvFee === true) {
@@ -255,7 +293,12 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
       // C2B signup: short name; B2B managed-house line already identifies the house.
       name: b2b ? undefined : "Decoder charge",
     });
-    if (decoderLine) items.push(decoderLine);
+    if (decoderLine) {
+      if (options.appliesToDecoder === true && packageDiscountPercent > 0) {
+        decoderLine.discount = packageDiscountPercent;
+      }
+      items.push(decoderLine);
+    }
   }
 
   return items;
@@ -270,5 +313,7 @@ module.exports = {
   resolveAdvancePaymentCoverage,
   expectedSignupInvoiceTotal,
   buildAdvancePaymentInvoiceNotes,
+  discountedPackageAmount,
+  normalizePackageDiscountPercent,
   DSTV_ONE_TIME_FEE,
 };

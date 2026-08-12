@@ -69,8 +69,10 @@
 
     main {
       flex: 1;
+      min-width: 0;
       max-width: 920px;
       padding: 2.5rem 3rem 4rem;
+      overflow-x: auto;
     }
 
     header.doc-header {
@@ -130,6 +132,13 @@
       color: #d4dce8;
     }
 
+    h4 {
+      font-size: 0.95rem;
+      margin: 1.1rem 0 0.5rem;
+      color: #c5d0de;
+      font-weight: 600;
+    }
+
     p, li { color: #c5d0de; margin-bottom: 0.65rem; }
     ul, ol { padding-left: 1.4rem; margin-bottom: 1rem; }
     li { margin-bottom: 0.35rem; }
@@ -179,10 +188,25 @@
       font-size: 0.88rem;
     }
 
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      margin: 1rem 0;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .table-wrap > table {
+      margin: 0;
+      min-width: 520px;
+    }
+
     th, td {
       text-align: left;
       padding: 0.6rem 0.75rem;
       border: 1px solid var(--border);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      vertical-align: top;
     }
 
     th { background: var(--surface-2); color: #fff; font-weight: 600; }
@@ -273,6 +297,7 @@
   <a href="#workers">11. Background workers</a>
   <a href="#integrations">12. External integrations</a>
   <a class="sub" href="#admin-billing">Admin Billing UI</a>
+  <a class="sub" href="#custom-invoice">Custom invoice (customer card)</a>
   <a href="#webhooks">13. Webhooks &amp; public URLs</a>
   <a class="sub" href="#zoho-webhook-onetime">Zoho webhook (one-time)</a>
   <a href="#ussd">14. USSD endpoints</a>
@@ -293,7 +318,7 @@
       Complete step-by-step guide for first-time setup, environment migration, and production deployment.
     </p>
     <div class="meta">
-      <span>Last updated: <strong>2026-07-10</strong> (Docker Compose for local MySQL/MariaDB + Redis; XAMPP restore)</span>
+      <span>Last updated: <strong>2026-08-12</strong> (Custom invoice on customer card; Docker Compose + XAMPP restore)</span>
       <span>App version: <strong>1.0.0</strong></span>
       <span>Node.js: <strong>18+</strong> (CI uses 18)</span>
       <span>Also see root <a href="../README.md"><code>README.md</code></a> for a short local-dev quick start.</span>
@@ -317,7 +342,7 @@
       <li>All required services, environment variables, and external registrations</li>
       <li>Production process layout (API, worker, optional Xtream scheduler)</li>
       <li>Post-deploy verification and ongoing maintenance</li>
-      <li>Billing reconciliation UI, Zoho/TISP onboarding behaviour, and integration snapshot caching</li>
+      <li>Billing reconciliation UI, Zoho/TISP onboarding behaviour, integration snapshot caching, and custom-period invoices from the customer card</li>
     </ul>
     <div class="callout danger">
       <strong>Security:</strong> Never commit <code>.env</code> or real credentials. The template
@@ -917,6 +942,7 @@ pm2 startup              # follow printed instructions</code></pre>
           <li>Recurring Zoho profile on signup is <strong>off</strong> by default (<code>ZOHO_RECURRING_ON_SIGNUP=false</code>) to avoid a second invoice.</li>
           <li>Signup invoice email from this app is <strong>off</strong> by default (<code>ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED=false</code>) — enable only if Zoho Books is not already emailing invoices.</li>
           <li>Invoice numbers use per-customer sequences (migration <code>024</code>); reference number remains the customer number for M-Pesa matching.</li>
+          <li>After signup, operators can issue a <strong>custom-period invoice</strong> from the customer card — see <a href="#custom-invoice">§12.7</a>.</li>
         </ul>
       </li>
       <li>M-Pesa paybill allocation uses the customer number as bill reference; Zoho contact lookup still uses customer number for existing contacts.</li>
@@ -980,6 +1006,129 @@ pm2 startup              # follow printed instructions</code></pre>
     <p><strong>Billing Gaps performance:</strong> <code>RECONCILIATION_BROWSE_BATCH</code> (default 10) limits browse mode to local/MySQL data with no Zoho API calls. Search by customer number or name fetches live Zoho/TISP detail (~4 API calls per match) and persists snapshots for later.</p>
     <p><strong>Tutorial guides</strong> on the overview page explain how to resolve each issue type and where to check in the dashboard (Customers, Transactions, Synchronization, Logs).</p>
     <p>API: reconciliation summary and customer lists under <code>/api/admin/reconciliation/*</code>. Real-time sync progress via Socket.IO.</p>
+
+    <h3 id="custom-invoice">12.7 Custom invoice for a customer (non-standard period)</h3>
+    <p>
+      Use this when you need a one-off Zoho invoice for a customer’s <strong>current package</strong>,
+      covering a billing window that is <strong>not</strong> monthly, quarterly, or yearly
+      (for example 45 days, 10 days, or any other day count). Catalog variants only exist for
+      monthly / quarterly / yearly; custom periods are priced from the monthly rate.
+    </p>
+
+    <div class="callout info">
+      <strong>UI placement decision:</strong> Add <strong>Create custom invoice</strong> as a
+      <strong>new item on the customer card kebab menu</strong> (active customers only), next to
+      Upgrade / Downgrade / Update frequency — not as a Billing Reconciliation screen, and not as
+      a replacement for the Invoices tab’s “Retry billing setup”.
+      Optional secondary button on the <strong>Invoices</strong> tab is fine for empty/gap states;
+      the primary entry should match other lifecycle actions on the card.
+    </div>
+
+    <h4>Why a new menu item (not only the Invoices tab)</h4>
+    <ul>
+      <li>Customer card actions already own billing mutations (upgrade, downgrade, update frequency, pause, cancel).</li>
+      <li>The Invoices tab is for viewing synced invoices and retrying signup onboarding — not day-to-day issuing.</li>
+      <li>B2B already uses an explicit <strong>Invoice</strong> action on the agency page; C2B should mirror that pattern on the customer.</li>
+      <li>Keeps “change standing frequency” (<strong>Update frequency</strong>) separate from “bill this period once” (<strong>Create custom invoice</strong>).</li>
+    </ul>
+
+    <h4>Operator flow</h4>
+    <ol>
+      <li>Open <strong>Customers</strong>, expand the customer card (must be <strong>active</strong> with a package and Zoho contact).</li>
+      <li>Open the kebab (⋯) → <strong>Create custom invoice</strong>.</li>
+      <li>Dialog shows the <strong>current package</strong> (plan, Mbps, standing frequency, standing <code>package_price</code>) — read-only; do not pick a different package here (use Upgrade / Downgrade for that).</li>
+      <li>Enter the <strong>custom period in days</strong> (required; must be ≥ 1). This is independent of the customer’s stored monthly / quarterly / yearly / custom frequency unless you also change frequency separately.</li>
+      <li>Optionally set the period <strong>start date</strong> (default: today). End date is computed as start + N days (<code>computeBillingPeriod</code> with <code>paymentFrequency: "custom"</code>).</li>
+      <li>Preview amount: <code>round(monthly_price × days / 30)</code> (same rule as <code>resolvePackagePrice</code> for custom frequency).</li>
+      <li>Confirm → create Zoho invoice with ad-hoc line items for that window, customer number as reference, C2B Net 7 / B2B Net 30 due terms.</li>
+      <li>Invoice appears under the card’s <strong>Invoices</strong> tab after sync (or immediately if the API returns the created invoice).</li>
+    </ol>
+
+    <h4>Behaviour rules</h4>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Topic</th><th>Rule</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Package source</td>
+          <td>Always the customer’s current product / plan. No package picker on this dialog.</td>
+        </tr>
+        <tr>
+          <td>Period</td>
+          <td>Custom day count only — not monthly / quarterly / yearly presets. Those are covered by standing frequency + signup / recurring.</td>
+        </tr>
+        <tr>
+          <td>Standing subscription</td>
+          <td>Creating the invoice does <strong>not</strong> change <code>payment_frequency</code> or <code>custom_period_days</code> on the customer. Use <strong>Update frequency</strong> if the standing cycle should change.</td>
+        </tr>
+        <tr>
+          <td>Pricing</td>
+          <td>Uses monthly twin price × days / 30. Catalog has no custom variant (<code>package_plan_variants</code> is monthly|quarterly|yearly only).</td>
+        </tr>
+        <tr>
+          <td>DSTV one-time fee</td>
+          <td>Do <strong>not</strong> add the signup decoder fee on custom invoices — that line is first signup invoice only.</td>
+        </tr>
+        <tr>
+          <td>B2B</td>
+          <td>Agency consolidated / per-customer invoices stay on the agency page. This menu item is for C2B (and optionally B2B customers billed on their own contact if product supports it).</td>
+        </tr>
+        <tr>
+          <td>Eligibility</td>
+          <td>Active status, linked package with price &gt; 0, Zoho contact present. Otherwise show a clear block reason (retry billing setup first).</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h4>How this differs from related actions</h4>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Action</th><th>What it does</th><th>Creates invoice?</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Create custom invoice</strong> (new)</td>
+          <td>One-off Zoho invoice for current package + custom day window</td>
+          <td>Yes</td>
+        </tr>
+        <tr>
+          <td>Update frequency</td>
+          <td>Changes standing <code>payment_frequency</code> / product twin / <code>package_price</code></td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td>Upgrade / Downgrade (pay by invoice)</td>
+          <td>Changes package; may create an invoice for the package change amount</td>
+          <td>Sometimes (package change)</td>
+        </tr>
+        <tr>
+          <td>Retry billing setup</td>
+          <td>Re-runs signup onboarding; reuses open signup invoice when present</td>
+          <td>Signup path only</td>
+        </tr>
+        <tr>
+          <td>Agency Invoice</td>
+          <td>Manual B2B invoice on agency Zoho contact</td>
+          <td>Yes (agency)</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h4>Implementation notes (for developers)</h4>
+    <ul>
+      <li>UI: new <code>CustomerAction</code> (e.g. <code>createCustomInvoice</code>) in <code>CustomerActionMenu.tsx</code> → dialog (mirror <code>AgencyInvoiceDialog</code> / <code>CustomerActionDialog</code>) wired from <code>CustomersListPage.tsx</code>.</li>
+      <li>API: new admin endpoint such as <code>POST /api/admin/customers/:id/custom-invoice</code> with body <code>{ customPeriodDays, startDate? }</code>.</li>
+      <li>Reuse <code>computeBillingPeriod({ paymentFrequency: "custom", customPeriodDays })</code> and <code>buildSubscriptionLineItems</code> / Zoho <code>createInvoice_JS</code> from onboarding — do not invent a second pricing path.</li>
+      <li>Line description should include the period labels (e.g. <code>01 Aug 2026 – 15 Sep 2026 (45 days)</code>) so Zoho and M-Pesa matching stay auditable.</li>
+    </ul>
+
+    <div class="callout warn">
+      <strong>Do not confuse</strong> a customer whose standing frequency is already <code>custom</code>
+      (stored <code>custom_period_days</code>) with this one-off invoice. Standing custom frequency
+      affects signup invoices and recurring mapping; this action always bills an explicit day
+      window you enter in the dialog, without rewriting the customer record.
+    </div>
   </section>
 
   <!-- STEP 13 WEBHOOKS -->
@@ -1156,20 +1305,24 @@ yarn xtream:sync</code></pre>
       <li><code>curl https://YOUR_HOST/api/health</code> — db and redis connected</li>
       <li>Login at <code>https://YOUR_HOST/admin/</code> with seeded admin</li>
       <li>Admin Settings page shows correct webhook URLs</li>
-      <li><code>yarn test:smoke</code> — core module load test</li>
+      <li><code>yarn test</code> — unit + process-flow suite (customer lifecycle, M-Pesa matching, billing, reconciliation, RBAC)</li>
+      <li><code>yarn test:auth-security</code> — password policy, JWT hardening, webhook HMAC</li>
       <li><code>yarn test:xtream-spec</code> — Xtream client unit tests (offline)</li>
+      <li><code>yarn test:smoke</code> — core module load + MySQL smoke (needs local DB)</li>
       <li><code>yarn xtream:check</code> — Xtream panel connectivity</li>
-      <li><code>yarn paybill:simulate</code> — simulated C2B → Zoho payment flow</li>
+      <li><code>yarn paybill:simulate</code> — simulated C2B → Zoho payment flow (staging/sandbox)</li>
       <li>Synchronization page shows jobs completing</li>
       <li>Test STK push in sandbox with a real phone number</li>
     </ul>
-    <p>See <code>SIMULATIONS.txt</code> in the repo root for detailed simulation commands and log file locations.</p>
+    <p>See <code>SIMULATIONS.txt</code> in the repo root for detailed simulation commands and log file locations.
+      CI runs <code>yarn test:ci</code> before deploy on <code>main</code>; PRs use <code>.github/workflows/ci.yml</code>.</p>
   </section>
 
   <!-- STEP 19 CICD -->
   <section id="cicd">
     <h2><span class="num">19</span> CI/CD (GitHub Actions)</h2>
-    <p>Workflow: <code>.github/workflows/deploy.yml</code> — triggers on push to <code>main</code>.</p>
+    <p>Workflows: <code>.github/workflows/ci.yml</code> (PRs / <code>develop</code>) and
+      <code>.github/workflows/deploy.yml</code> (push to <code>main</code> — tests then deploy).</p>
     <h3>Required GitHub secrets</h3>
     <table>
       <thead><tr><th>Secret</th><th>Description</th></tr></thead>
@@ -1182,7 +1335,8 @@ yarn xtream:sync</code></pre>
     </table>
     <h3>Deploy pipeline steps</h3>
     <ol>
-      <li>Checkout repo, setup Node 18</li>
+      <li>Run unit + process-flow tests, auth-security, xtream-spec, and admin build</li>
+      <li>Checkout repo, setup Node, SSH to droplet</li>
       <li>SSH: clean destination (keeps <code>.env</code> and <code>logs/</code>)</li>
       <li>rsync code to server (checksum-based)</li>
       <li><code>yarn install</code> + <code>yarn build</code></li>
@@ -1275,6 +1429,15 @@ yarn xtream:sync</code></pre>
       <li>Default: app does not email signup invoices (<code>ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED=false</code>) — use Zoho Books automation or enable the env var, not both</li>
       <li>Migration <code>025</code> tracks <code>zoho_signup_invoice_id</code> and email-sent time to avoid resending</li>
       <li>Retry billing from customer detail reuses an open signup invoice when one already exists</li>
+    </ul>
+
+    <h3>Custom invoice (customer card)</h3>
+    <ul>
+      <li>Menu item only for <strong>active</strong> customers with a package and Zoho contact — use Retry billing setup first if contact/signup invoice is missing</li>
+      <li>Period must be a day count (≥ 1), not monthly/quarterly/yearly presets — those use Update frequency + standing billing</li>
+      <li>Invoice amount should match <code>monthly_price × days / 30</code>; if wrong, check the product’s monthly twin price</li>
+      <li>Creating a custom invoice must not rewrite <code>payment_frequency</code> — if standing cycle changed, that was Update frequency, not this action</li>
+      <li>See <a href="#custom-invoice">§12.7</a> for UI placement and flow</li>
     </ul>
 
     <h3>TISP errors</h3>

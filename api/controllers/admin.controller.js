@@ -3,7 +3,7 @@ const { sendTableExport } = require("../utils/tableExportResponse");
 const { listIntegrationEvents } = require("../services/integrationEventStore");
 const { listActivity, listActivityAudit } = require("../services/activityLogStore");
 const {
-  CUSTOMER_ACTIVITY_EVENT_TYPES,
+  ADMIN_AUDIT_EVENT_TYPES,
   visibleCustomerActivityTypes,
 } = require("../lib/customerActivityEvents");
 const { ensureReqPermissionSet } = require("../middleware/permissions");
@@ -1416,7 +1416,7 @@ module.exports = {
         actorUserId,
         dateFrom,
         dateTo,
-        eventTypes: [...CUSTOMER_ACTIVITY_EVENT_TYPES],
+        eventTypes: [...ADMIN_AUDIT_EVENT_TYPES],
       });
       return res.json(result);
     } catch (err) {

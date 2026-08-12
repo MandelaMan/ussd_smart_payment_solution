@@ -2622,6 +2622,123 @@ async function syncNewCustomerToTisp(customerId, customerNumber, meta = {}) {
   }
 }
 
+async function lookupCustomerByNumber(req, res, next) {
+  try {
+    const apartmentNumber = String(
+      req.query.apartmentNumber || req.query.apartment || ""
+    )
+      .trim()
+      .toUpperCase();
+    const preferredBuildingId = req.query.buildingId
+      ? Number(req.query.buildingId)
+      : null;
+
+    if (apartmentNumber) {
+      if (apartmentNumber.length < 2) {
+        return res.json({ ok: true, found: false, reason: "too_short" });
+      }
+      let row = await store.findCustomerByApartmentNumber(apartmentNumber, {
+        preferredBuildingId,
+        activeOnly: true,
+      });
+      let cancelledOnly = false;
+      if (!row?.id) {
+        row = await store.findCustomerByApartmentNumber(apartmentNumber, {
+          preferredBuildingId,
+          activeOnly: false,
+        });
+        if (row?.id && String(row.status || "").toLowerCase() === "cancelled") {
+          cancelledOnly = true;
+        } else if (!row?.id) {
+          return res.json({ ok: true, found: false, reason: "not_found" });
+        } else if (String(row.status || "").toLowerCase() !== "active") {
+          return res.json({ ok: true, found: false, reason: "not_found" });
+        }
+      }
+      const customer = await store.getCustomerById(row.id);
+      if (!customer) {
+        return res.json({ ok: true, found: false, reason: "not_found" });
+      }
+      if (
+        cancelledOnly ||
+        String(customer.status || "").toLowerCase() === "cancelled"
+      ) {
+        return res.json({
+          ok: true,
+          found: false,
+          reason: "cancelled",
+          customer: {
+            id: customer.id,
+            customerNumber: customer.customerNumber,
+            apartmentNumber: customer.apartmentNumber || apartmentNumber,
+            fullName: customer.fullName,
+            status: customer.status,
+            buildingName: customer.buildingName || null,
+          },
+        });
+      }
+      return res.json({
+        ok: true,
+        found: true,
+        customer: {
+          id: customer.id,
+          customerNumber: customer.customerNumber,
+          apartmentNumber: customer.apartmentNumber || apartmentNumber,
+          fullName: customer.fullName,
+          status: customer.status,
+          buildingName: customer.buildingName || null,
+        },
+      });
+    }
+
+    const raw = String(
+      req.query.customerNumber || req.query.number || req.params.customerNumber || ""
+    )
+      .trim()
+      .toUpperCase();
+    if (!raw || raw.length < 3) {
+      return res.json({ ok: true, found: false, reason: "too_short" });
+    }
+    const row = await store.findCustomerByNumber(raw);
+    if (!row?.id) {
+      return res.json({ ok: true, found: false, reason: "not_found" });
+    }
+    const customer = await store.getCustomerById(row.id);
+    if (!customer) {
+      return res.json({ ok: true, found: false, reason: "not_found" });
+    }
+    if (String(customer.status || "").toLowerCase() === "cancelled") {
+      return res.json({
+        ok: true,
+        found: false,
+        reason: "cancelled",
+        customer: {
+          id: customer.id,
+          customerNumber: customer.customerNumber,
+          apartmentNumber: customer.apartmentNumber || null,
+          fullName: customer.fullName,
+          status: customer.status,
+          buildingName: customer.buildingName || null,
+        },
+      });
+    }
+    return res.json({
+      ok: true,
+      found: true,
+      customer: {
+        id: customer.id,
+        customerNumber: customer.customerNumber,
+        apartmentNumber: customer.apartmentNumber || null,
+        fullName: customer.fullName,
+        status: customer.status,
+        buildingName: customer.buildingName || null,
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function listCustomers(req, res, next) {
   try {
     const {
@@ -3051,7 +3168,65 @@ async function createCustomer(req, res, next) {
       }
     }
 
+    // Multiple live campaigns → staff must pick which one applies on onboard.
+    if (
+      String(body.customerType).toUpperCase() === "C2B" &&
+      body.trialPeriod !== true
+    ) {
+      const campaignStore = require("../services/campaignStore");
+      const liveCampaigns = await campaignStore.listActiveCampaigns();
+      if (liveCampaigns.length > 0) {
+        const requestedId = body.campaignId != null ? Number(body.campaignId) : null;
+        if (!requestedId) {
+          return res.status(400).json({
+            error:
+              liveCampaigns.length > 1
+                ? "Select which campaign this customer was added under"
+                : "Campaign is required for this signup",
+            code: "CAMPAIGN_REQUIRED",
+            campaigns: liveCampaigns.map((c) => ({
+              id: c.id,
+              code: c.code,
+              name: c.name,
+            })),
+          });
+        }
+        const selected = liveCampaigns.find((c) => c.id === requestedId);
+        if (!selected) {
+          return res.status(400).json({
+            error: "Selected campaign is not currently live",
+            code: "CAMPAIGN_NOT_LIVE",
+          });
+        }
+      }
+    }
+
     const created = await store.createCustomer(body);
+
+    // Acquisition campaign + referral attribution (non-trial C2B only).
+    let campaignAttach = { attached: false };
+    try {
+      if (
+        String(body.customerType).toUpperCase() === "C2B" &&
+        body.trialPeriod !== true
+      ) {
+        const { attachCampaignOnOnboard } = require("../services/referralRewardService");
+        campaignAttach = await attachCampaignOnOnboard(created.customerId, {
+          campaignId: body.campaignId || null,
+          campaignCode: body.campaignCode || null,
+          referredByApartmentNumber:
+            body.referredByApartmentNumber ||
+            body.referredByCustomerNumber ||
+            body.referredBy ||
+            null,
+          referredByCustomerId: body.referredByCustomerId || null,
+          buildingId: body.buildingId || null,
+          trialPeriod: body.trialPeriod === true,
+        });
+      }
+    } catch (e) {
+      console.warn("campaign attach on create failed:", e.message);
+    }
 
     // TISP BillingCycle stays Monthly.
     // Signup due-date policy:
@@ -3219,6 +3394,17 @@ async function createCustomer(req, res, next) {
             trial: zoho.trial || null,
           }
         : { ok: false, error: zoho.error },
+      campaign: campaignAttach?.attached
+        ? {
+            attached: true,
+            campaignId: campaignAttach.campaign?.id || null,
+            campaignCode: campaignAttach.campaign?.code || null,
+            packageDiscountPercent:
+              campaignAttach.packageDiscountPercent || null,
+            referrerCustomerNumber:
+              campaignAttach.referrer?.customerNumber || null,
+          }
+        : { attached: false, reason: campaignAttach?.reason || null },
       welcomeEmail,
     });
   } catch (err) {
@@ -4626,6 +4812,12 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
     };
   }
 
+  // Cancel archives local customer_number to {base}-CXL-{id}; TISP/Zoho still
+  // use the live apartment number.
+  const liveNumber =
+    store.liveCustomerNumber(ctx.customer_number) || ctx.customer_number;
+  const integrationCtx = { ...ctx, customer_number: liveNumber };
+
   const dueDateLabel = formatTispDueDate(cancellationDate);
   const result = {
     tisp: { ok: true, skipped: true },
@@ -4635,9 +4827,9 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
   };
 
   try {
-    const onTisp = await accountExistsOnTisp(ctx.customer_number);
+    const onTisp = await accountExistsOnTisp(liveNumber);
     if (onTisp) {
-      await updateCustomerOnTisp(ctx, {
+      await updateCustomerOnTisp(integrationCtx, {
         dueDate: cancellationDate,
         skipCooldown: true,
       });
@@ -4655,9 +4847,9 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
   }
 
   try {
-    result.olt = await oltEmsService.deactivateOnuForCustomer(ctx, {
+    result.olt = await oltEmsService.deactivateOnuForCustomer(integrationCtx, {
       customerId: ctx.id,
-      customerNumber: ctx.customer_number,
+      customerNumber: liveNumber,
     });
   } catch (e) {
     result.olt = {
@@ -4670,7 +4862,7 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
   try {
     const customer = {
       id: ctx.id,
-      customerNumber: ctx.customer_number,
+      customerNumber: liveNumber,
       customerType: ctx.customer_type,
       agencyId: ctx.agency_id,
       agencyName: ctx.agency_name,
@@ -4702,7 +4894,7 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
           if (agencyContact?.contact_id) {
             const recurring = await stopZohoRecurringForCustomer(
               agencyContact.contact_id,
-              ctx.customer_number
+              liveNumber
             );
             result.zoho = {
               ok: true,
@@ -4726,10 +4918,10 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
         result.zoho = { ok: true, skipped: true, reason: "no_zoho_contact" };
       } else {
         const retired = await retireFormerZohoTenantContact(contact, {
-          customerNumber: ctx.customer_number,
+          customerNumber: liveNumber,
           formerCustomerId: ctx.id,
           archivedCompanyName: store.archiveCancelledCustomerNumber(
-            ctx.customer_number,
+            liveNumber,
             ctx.id
           ),
         });
@@ -4768,10 +4960,17 @@ async function cancelSubscription(req, res, next) {
     });
     const cancellationDate = new Date();
     const customer = await store.getCustomerById(customerId);
+    const liveNumber =
+      store.liveCustomerNumber(customer?.customerNumber) ||
+      customer?.customerNumber ||
+      "";
+    const emailCustomer = customer
+      ? { ...customer, customerNumber: liveNumber }
+      : customer;
 
     try {
       const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
-      await sendCustomerLifecycleEmail("cancellation", customer, {
+      await sendCustomerLifecycleEmail("cancellation", emailCustomer, {
         createdBy: req.user?.id || null,
         extraVars: {
           cancellationReason:
@@ -4791,7 +4990,7 @@ async function cancelSubscription(req, res, next) {
               eventType: "customer_cancelled",
               title: "Cancel subscription",
               message: [
-                customer?.customerNumber || "",
+                liveNumber,
                 customer?.cancellationReason || null,
                 integrations.tisp?.dueDate
                   ? `TISP due ${integrations.tisp.dueDate}`
@@ -4813,7 +5012,7 @@ async function cancelSubscription(req, res, next) {
                 (integrations.olt?.ok !== false || integrations.olt?.skipped)
                   ? "success"
                   : "failed",
-              customerRef: customer?.customerNumber,
+              customerRef: liveNumber,
             });
           } catch (logErr) {
             console.error("activity log (cancel) failed:", logErr.message);
@@ -5130,6 +5329,13 @@ async function deleteCustomerPermanently(req, res, next) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
+    if (String(customer.status || "").toLowerCase() !== "cancelled") {
+      return res.status(400).json({
+        error:
+          "Cancel the subscription first. Permanent delete only removes local records after cancel and does not update TISP or Zoho.",
+      });
+    }
+
     // Hard-delete from the admin DB only — no TISP/Zoho presence checks.
     // External accounts (if any) are left untouched.
     const deleted = await store.deleteCustomerCompletely(id);
@@ -5185,11 +5391,15 @@ async function bulkCancelSubscriptions(req, res, next) {
       try {
         await store.cancelCustomer(id, cancelPayload);
         const customer = await store.getCustomerById(id);
+        const liveNumber =
+          store.liveCustomerNumber(customer?.customerNumber) ||
+          customer?.customerNumber ||
+          null;
         cancelledIds.push(id);
         results.push({
           id,
           ok: true,
-          customerNumber: customer?.customerNumber || null,
+          customerNumber: liveNumber,
           tisp: { ok: true, pending: true },
           zoho: { ok: true, pending: true },
         });
@@ -5213,11 +5423,15 @@ async function bulkCancelSubscriptions(req, res, next) {
                 cancellationDate
               );
               const customer = await store.getCustomerById(id);
+              const liveNumber =
+                store.liveCustomerNumber(customer?.customerNumber) ||
+                customer?.customerNumber ||
+                "";
               await logActivity({
                 eventType: "customer_cancelled",
                 title: "Cancel subscription",
                 message: [
-                  customer?.customerNumber || "",
+                  liveNumber,
                   customer?.cancellationReason || null,
                   integrations.tisp?.dueDate
                     ? `TISP due ${integrations.tisp.dueDate}`
@@ -5232,7 +5446,7 @@ async function bulkCancelSubscriptions(req, res, next) {
                   integrations.zoho?.ok !== false
                     ? "success"
                     : "failed",
-                customerRef: customer?.customerNumber,
+                customerRef: liveNumber,
               });
             } catch (err) {
               console.error(
@@ -6422,6 +6636,7 @@ async function getCustomerTransactions(req, res, next) {
 
 module.exports = {
   listCustomers,
+  lookupCustomerByNumber,
   exportCustomers,
   getCustomer,
   getCustomerTransactions,

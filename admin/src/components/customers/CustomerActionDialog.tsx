@@ -398,8 +398,8 @@ export function CustomerActionDialog({
   if (actionType === "switch") title = "Move apartment";
   if (actionType === "disconnect") title = "Suspend on TISP";
   if (actionType === "pause") title = "Pause service";
-  if (actionType === "cancel") title = "Cancel subscription";
-  if (actionType === "deletePermanent") title = "Delete customer permanently";
+  if (actionType === "cancel") title = "Cancel & release apartment";
+  if (actionType === "deletePermanent") title = "Wipe local records";
   if (actionType === "history") {
     title = `Apartment history — ${customer?.apartmentNumber ?? ""}`;
   }
@@ -546,6 +546,10 @@ export function CustomerActionDialog({
         {actionType === "cancel" ? (
           cancelStep === 1 ? (
             <Stack gap={4}>
+              <Text fontSize="sm" color="fg.muted">
+                Ends the subscription, marks Zoho inactive, stops TISP access, and
+                frees this apartment number for a new tenant. Customer history is kept.
+              </Text>
               <Field.Root w="full" required>
                 <Field.Label>Reason for cancellation</Field.Label>
                 <Input
@@ -589,14 +593,15 @@ export function CustomerActionDialog({
             <Stack gap={4}>
               <Text fontSize="sm" color="fg.muted">
                 Cancel <strong>{formatTitleCase(customer?.fullName)}</strong> (
-                {customer?.customerNumber})? This cannot be undone from here.
+                {customer?.customerNumber})? The apartment number is released for
+                reuse. This cannot be undone from here.
               </Text>
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={() => setCancelStep(1)}>
                   Go back
                 </Button>
                 <Button colorPalette="red" loading={loading} onClick={onSubmit}>
-                  Yes, cancel subscription
+                  Yes, cancel & release
                 </Button>
               </Flex>
             </Stack>
@@ -607,11 +612,14 @@ export function CustomerActionDialog({
           deleteStep === 1 ? (
             <Stack gap={4}>
               <Text fontSize="sm" color="red.700">
-                Permanently deletes local records. TISP and Zoho are not changed.
+                Danger zone: permanently wipes this cancelled customer&apos;s local
+                records (history, invoices cache, events). TISP and Zoho are not
+                changed — use only for bad test data or after cancel when you must
+                remove the row.
               </Text>
               <Flex justify="flex-end" gap={2}>
                 <Button variant="ghost" onClick={onClose}>
-                  Cancel
+                  Keep records
                 </Button>
                 <Button colorPalette="red" onClick={() => setDeleteStep(2)}>
                   Continue
@@ -621,7 +629,7 @@ export function CustomerActionDialog({
           ) : (
             <Stack gap={4}>
               <Text fontSize="sm" color="red.700">
-                Permanently delete{" "}
+                Permanently wipe local records for{" "}
                 <strong>{formatTitleCase(customer?.fullName)}</strong> (
                 {customer?.customerNumber})? This cannot be undone.
               </Text>
@@ -630,7 +638,7 @@ export function CustomerActionDialog({
                   Go back
                 </Button>
                 <Button colorPalette="red" loading={loading} onClick={onSubmit}>
-                  Yes, delete permanently
+                  Yes, wipe local records
                 </Button>
               </Flex>
             </Stack>

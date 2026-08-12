@@ -90,6 +90,16 @@ async function processReconciliationSyncJob(job) {
 
     await invalidateDashboardCaches();
 
+    try {
+      const {
+        processReferralRewardMaintenance,
+      } = require("../services/referralRewardService");
+      await processReferralRewardMaintenance({ limit: 25 });
+    } catch (e) {
+      syncLog.warn?.("referral_maintenance_failed", { error: e.message }) ||
+        console.warn("referral reward maintenance failed:", e.message);
+    }
+
     const durationMs = Date.now() - started;
     const payload = {
       ok: true,

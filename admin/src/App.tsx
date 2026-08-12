@@ -89,6 +89,7 @@ const ApartmentUnitHistoryPage = lazyPage(
 const BuildingsPage = lazyPage(() => import("./pages/BuildingsPage"), "BuildingsPage");
 const ProductsPage = lazyPage(() => import("./pages/ProductsPage"), "ProductsPage");
 const AgenciesPage = lazyPage(() => import("./pages/AgenciesPage"), "AgenciesPage");
+const CampaignsPage = lazyPage(() => import("./pages/CampaignsPage"), "CampaignsPage");
 const AgencyDetailPage = lazyPage(
   () => import("./pages/AgencyDetailPage"),
   "AgencyDetailPage"
@@ -361,6 +362,14 @@ export default function App() {
                     element={
                       <LazyRoute>
                         <AgencyDetailPage />
+                      </LazyRoute>
+                    }
+                  />
+                  <Route
+                    path="campaigns"
+                    element={
+                      <LazyRoute>
+                        <CampaignsPage />
                       </LazyRoute>
                     }
                   />

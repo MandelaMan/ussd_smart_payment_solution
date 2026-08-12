@@ -239,8 +239,25 @@ export function StatusMultiSelect({
             <Box px={2} pb={1} pt={1}>
               <Input
                 ref={searchRef}
+                id={`sms-${menuId.replace(/:/g, "")}`}
+                name={`sms-${menuId.replace(/:/g, "")}`}
+                autoComplete="chrome-off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-1p-ignore=""
+                data-lpignore="true"
+                data-bwignore="true"
+                data-form-type="other"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onFocus={(e) => {
+                  const input = e.currentTarget;
+                  input.readOnly = true;
+                  window.setTimeout(() => {
+                    if (document.activeElement === input) input.readOnly = false;
+                  }, 50);
+                }}
                 size="xs"
                 placeholder="Filter statuses…"
                 borderRadius="md"

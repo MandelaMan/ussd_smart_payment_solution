@@ -85,6 +85,19 @@ async function handleSubscriptionPaymentReceived({
 
   await customerStore.recordCustomerLastPayment(accountRef, paidOn);
 
+  // If this payment settled a campaign referee's signup invoice, qualify referrer reward.
+  try {
+    const { onRefereeSignupPaid } = require("./referralRewardService");
+    await onRefereeSignupPaid({
+      customerId: customerRow?.id || null,
+      customerNumber: accountRef,
+      invoiceId: meta.invoiceId || meta.invoice_id || null,
+      source: source || "payment",
+    });
+  } catch (e) {
+    console.warn("referral reward on payment failed:", e.message);
+  }
+
   let tispOk = false;
   let tispError = null;
   let olt = { ok: true, skipped: true, reason: "not_checked" };

@@ -24,6 +24,8 @@ const {
   invoiceOutstandingBalance,
   findTargetOpenInvoice,
 } = require("../utils/mpesaInvoiceMatching");
+const { planInvoicePayment } = require("../utils/mpesaPaymentPlan");
+const { isValidPaybillAccountRef } = require("../utils/customerNumber");
 
 // 👇 ADD: import Zoho helpers (adjust path if needed)
 const {
@@ -700,43 +702,6 @@ async function findOpenInvoiceForPayment({
   }
   return findTargetOpenInvoice(customerInvoices, customerNumber, paymentAmount);
 }
-function planInvoicePayment(paymentAmount, invoiceBalance) {
-  const pay = roundMoney(paymentAmount);
-  const balance = roundMoney(invoiceBalance);
-
-  if (balance <= 0) {
-    return {
-      payment_amount: pay,
-      amount_applied: pay,
-      outcome: "paid_in_full",
-      excess_amount: 0,
-    };
-  }
-  if (amountsEqual(pay, balance)) {
-    return {
-      payment_amount: pay,
-      amount_applied: balance,
-      outcome: "paid_in_full",
-      excess_amount: 0,
-    };
-  }
-  if (pay < balance) {
-    return {
-      payment_amount: pay,
-      amount_applied: pay,
-      outcome: "partially_paid",
-      excess_amount: 0,
-      remaining_balance: roundMoney(balance - pay),
-    };
-  }
-  return {
-    payment_amount: pay,
-    amount_applied: balance,
-    outcome: "paid_with_excess_credit",
-    excess_amount: roundMoney(pay - balance),
-  };
-}
-
 async function createInvoiceForExactAmount({
   companyName,
   customer_id,
@@ -1186,6 +1151,18 @@ async function processUnallocatedMpesaPayment(row, meta = {}) {
     console.warn("[mpesa-allocation] TISP refresh skipped:", e.message);
   }
 
+  try {
+    const { onRefereeSignupPaid } = require("../services/referralRewardService");
+    await onRefereeSignupPaid({
+      customerId: customer?.id || null,
+      customerNumber: accountRef,
+      invoiceId: zohoResult.invoice_id || null,
+      source: "mpesa_allocation",
+    });
+  } catch (e) {
+    console.warn("[mpesa-allocation] referral reward failed:", e.message);
+  }
+
   return {
     ok: true,
     zoho: zohoResult,
@@ -1217,8 +1194,9 @@ const mpesaValidation = (req, res) => {
       body?.TransAmount || body?.TransactionAmount || body?.Amount || 0
     );
 
-    // Example rule: references like ET-... and amount >= 1
-    if (!/^ET-\w+/i.test(ref) || amount < 1) {
+    // Accept POP-APT / POP-BUILDING-APT account refs used across all buildings
+    // (not only ET-*). Reject archived cancel numbers and free-text refs.
+    if (!isValidPaybillAccountRef(ref) || !(amount >= 1)) {
       return res.status(200).json({ ResultCode: 1, ResultDesc: "Rejected" });
     }
 
