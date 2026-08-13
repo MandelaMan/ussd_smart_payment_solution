@@ -49,6 +49,13 @@ For write operations (invoice creation, mark paid):
 - `ZohoBooks.invoices.CREATE`
 - `ZohoBooks.invoices.UPDATE`
 - `ZohoBooks.contacts.CREATE`
+- `ZohoBooks.customerpayments.CREATE`
+- `ZohoBooks.customerpayments.UPDATE`
+
+Optional, for resolving the M-Pesa **Deposited To** account (`MPESA PAYBILL NO 4185091`) by name. If these are missing, set `ZOHO_MPESA_ACCOUNT_ID` instead:
+
+- `ZohoBooks.banking.READ`
+- `ZohoBooks.settings.READ`
 
 ### Refresh token handling
 

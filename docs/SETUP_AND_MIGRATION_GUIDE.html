@@ -506,6 +506,8 @@ cd ussd_smart_payment_solution</code></pre>
         <tr><td><code>ZOHO_BASE_URL</code></td><td><code>https://www.zohoapis.com/books/v3</code></td></tr>
         <tr><td><code>ZOHO_AUTH_URL</code></td><td><code>https://accounts.zoho.com/oauth/v2/token</code></td></tr>
         <tr><td><code>ZOHO_PAYMENT_MODE</code></td><td>Must match a Zoho Books payment mode (e.g. <code>Mobile Money</code>)</td></tr>
+        <tr><td><code>ZOHO_MPESA_DEPOSIT_ACCOUNT_NAME</code></td><td>Zoho Books <strong>Deposited To</strong> account for M-Pesa receipts. Default <code>MPESA PAYBILL NO 4185091</code> — never Paystack Funds.</td></tr>
+        <tr><td><code>ZOHO_MPESA_ACCOUNT_ID</code></td><td>Optional Zoho bank/chart-of-accounts ID for that paybill account. Set this if name lookup fails (Banking or Chart of Accounts → copy account ID from the URL).</td></tr>
         <tr><td><code>ZOHO_INVOICE_TAX_INCLUSIVE</code></td><td><code>true</code> — M-Pesa amounts are VAT-inclusive</td></tr>
         <tr><td><code>ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED</code></td><td><code>false</code> — when <code>true</code>, the app emails signup invoices via Zoho API; leave off if Zoho Books already sends invoice mail (avoids double-send)</td></tr>
         <tr><td><code>ZOHO_RECURRING_ON_SIGNUP</code></td><td><code>false</code> — when <code>true</code>, creates a Zoho recurring profile on new customer signup (default: one signup invoice only)</td></tr>
@@ -933,6 +935,7 @@ pm2 startup              # follow printed instructions</code></pre>
       <li>Generate a refresh token with Books scopes.</li>
       <li>Set <code>ZOHO_ORG_ID</code> from Books → Settings → Organization Profile.</li>
       <li>Configure payment mode <strong>Mobile Money</strong> in Books → Settings → Payments.</li>
+      <li>M-Pesa receipts must be <strong>Deposited To</strong> <code>MPESA PAYBILL NO 4185091</code>, not Paystack Funds. Set <code>ZOHO_MPESA_ACCOUNT_ID</code> (or keep the default account name) so API payments use that bank account.</li>
       <li>Set <code>ZOHO_INVOICE_TAX_INCLUSIVE=true</code> so M-Pesa amounts are not double-VAT'd.</li>
       <li><strong>New customer billing</strong> (<code>api/services/customerBillingOnboarding.js</code>) when admin creates a customer:
         <ul>
@@ -1417,6 +1420,7 @@ yarn xtream:sync</code></pre>
     <h3>Zoho payments not applying</h3>
     <ul>
       <li>Verify <code>ZOHO_PAYMENT_MODE</code> exists in Books</li>
+      <li>M-Pesa payments must show <strong>Deposited To</strong> <code>MPESA PAYBILL NO 4185091</code> (not Paystack Funds). Set <code>ZOHO_MPESA_ACCOUNT_ID</code> if they still land on Paystack Funds</li>
       <li>M-Pesa bill reference must match the customer number; Zoho contact may be stored under the customer’s name — lookup uses customer number keys</li>
       <li>Check <code>logs/zoho-mpesa-payments.jsonl</code></li>
       <li>Confirm <code>ZOHO_INVOICE_TAX_INCLUSIVE=true</code></li>

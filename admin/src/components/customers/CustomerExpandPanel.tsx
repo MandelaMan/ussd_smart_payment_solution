@@ -12,7 +12,21 @@ import {
   Table,
   Text,
 } from "@chakra-ui/react";
-import { FiRefreshCw, FiX } from "react-icons/fi";
+import type { IconType } from "react-icons";
+import {
+  FiAlertTriangle,
+  FiCalendar,
+  FiCheckCircle,
+  FiCreditCard,
+  FiFileText,
+  FiInfo,
+  FiRefreshCw,
+  FiRepeat,
+  FiUser,
+  FiWifi,
+  FiX,
+  FiXCircle,
+} from "react-icons/fi";
 import { Link as RouterLink } from "react-router-dom";
 import {
   api,
@@ -36,6 +50,7 @@ import {
 import { useTableSort } from "../../hooks/useTableSort";
 import { sortRows } from "../../lib/tableSort";
 import { DataTableLoadingSkeleton, TransactionExpandSkeleton } from "../PageSkeletons";
+import { SkeletonBlock } from "../ui/SkeletonBlock";
 import { toaster } from "../ui/toaster";
 import {
   CustomerActionMenu,
@@ -227,10 +242,93 @@ function narrationToneColor(tone: StatusTone) {
   return "fg";
 }
 
-function buildTispNarration(
+const TONE_STYLES: Record<
+  StatusTone,
+  {
+    accent: string;
+    iconBg: string;
+    iconColor: string;
+    badgeBg: string;
+    badgeColor: string;
+    badgeLabel: string;
+    border: string;
+  }
+> = {
+  ok: {
+    accent: "green.500",
+    iconBg: "green.50",
+    iconColor: "green.600",
+    badgeBg: "green.50",
+    badgeColor: "green.700",
+    badgeLabel: "Good",
+    border: "green.100",
+  },
+  warn: {
+    accent: "orange.400",
+    iconBg: "orange.50",
+    iconColor: "orange.600",
+    badgeBg: "orange.50",
+    badgeColor: "orange.800",
+    badgeLabel: "Attention",
+    border: "orange.100",
+  },
+  bad: {
+    accent: "red.500",
+    iconBg: "red.50",
+    iconColor: "red.600",
+    badgeBg: "red.50",
+    badgeColor: "red.700",
+    badgeLabel: "Issue",
+    border: "red.100",
+  },
+  neutral: {
+    accent: "gray.400",
+    iconBg: "gray.50",
+    iconColor: "gray.500",
+    badgeBg: "gray.50",
+    badgeColor: "gray.600",
+    badgeLabel: "Info",
+    border: "border.muted",
+  },
+};
+
+function narrationIcon(label: string): IconType {
+  const key = label.trim().toLowerCase();
+  if (key === "tisp" || key === "status" || key === "internet status") return FiWifi;
+  if (key === "due date") return FiCalendar;
+  if (key === "contact") return FiUser;
+  if (key === "invoice") return FiFileText;
+  if (key === "payment") return FiCreditCard;
+  if (key.includes("recurring")) return FiRepeat;
+  return FiInfo;
+}
+
+function toneBadgeIcon(tone: StatusTone): IconType {
+  if (tone === "ok") return FiCheckCircle;
+  if (tone === "warn") return FiAlertTriangle;
+  if (tone === "bad") return FiXCircle;
+  return FiInfo;
+}
+
+function buildTispDueNarration(
+  dueLabel: string | null,
+  expires: boolean
+): StatusNarration {
+  return {
+    label: "Due date",
+    text: dueLabel
+      ? expires
+        ? `Internet expires on ${dueLabel}.`
+        : `Due date is ${dueLabel}.`
+      : "No due date on TISP.",
+    tone: dueLabel ? "ok" : "neutral",
+  };
+}
+
+function buildTispNarrations(
   customer: Customer,
   integrations: CustomerIntegrationsSummary | null
-): StatusNarration {
+): StatusNarration[] {
   // DSTV Only has no ISP bandwidth — never expected on TISP.
   if (
     customer.categoryCode === "dstv_only" ||
@@ -239,14 +337,16 @@ function buildTispNarration(
       .toLowerCase()
       .includes("dstv only")
   ) {
-    return {
-      label: "TISP",
-      text: "Not applicable — DSTV Only (no bandwidth). Billed in Zoho Books only.",
-      tone: "ok",
-    };
+    return [
+      {
+        label: "Internet status",
+        text: "Not applicable — DSTV Only (no bandwidth). Billed in Zoho Books only.",
+        tone: "ok",
+      },
+    ];
   }
 
-  // "Internet expires" must be driven by the latest TISP-derived due date
+  // Due date must be driven by the latest TISP-derived due date
   // (integration snapshot / TISP sync), not by any locally-estimated customer field.
   const due = integrations?.tispDueDate
     ? formatDateOnly(integrations.tispDueDate)
@@ -256,19 +356,23 @@ function buildTispNarration(
 
   // Cancelled first — archived numbers (ET-H302-CXL-237) are never on TISP.
   if (customer.status === "cancelled" || service.toLowerCase().includes("cancel")) {
-    return {
-      label: "Status",
-      text: "Cancelled — churned and no longer counted as a current customer. TISP keeps the live apartment account for the new tenant.",
-      tone: "bad",
-    };
+    return [
+      {
+        label: "Internet status",
+        text: "Cancelled — churned and no longer counted as a current customer. TISP keeps the live apartment account for the new tenant.",
+        tone: "bad",
+      },
+    ];
   }
 
   if (integrations && !integrations.onTisp) {
-    return {
-      label: "TISP",
-      text: "Not on TISP yet — still on Books as Suspended until they are created and connected.",
-      tone: "bad",
-    };
+    return [
+      {
+        label: "Internet status",
+        text: "Not on TISP yet — still on Books as Suspended until they are created and connected.",
+        tone: "bad",
+      },
+    ];
   }
 
   const statusLower = service.toLowerCase();
@@ -280,57 +384,62 @@ function buildTispNarration(
     const pauseNote = customer.pauseReason
       ? `Reason: ${customer.pauseReason}.`
       : null;
-    return {
-      label: "Status",
-      text: [
-        pauseRange
-          ? `Paused (away ${pauseRange}). Internet stopped; billing resumes after return.`
-          : dueLabel
-            ? `Paused at customer request (away). Internet stopped; due date ${dueLabel}.`
+    return [
+      {
+        label: "Internet status",
+        text: [
+          pauseRange
+            ? `Paused (away ${pauseRange}). Internet stopped; billing resumes after return.`
             : "Paused at customer request (away). Internet stopped until they return.",
-        pauseNote,
-        "Still counted as a customer.",
-      ]
-        .filter(Boolean)
-        .join(" "),
-      tone: "warn",
-    };
+          pauseNote,
+          "Still counted as a customer.",
+        ]
+          .filter(Boolean)
+          .join(" "),
+        tone: "warn",
+      },
+      buildTispDueNarration(dueLabel, false),
+    ];
   }
   if (statusLower.includes("suspend")) {
-    return {
-      label: "Status",
-      text: dueLabel
-        ? `Suspended — on Books but not active on TISP. Due date ${dueLabel}.`
-        : "Suspended — on Books but not active on TISP (or service stopped).",
-      tone: "warn",
-    };
+    return [
+      {
+        label: "Internet status",
+        text: "Suspended — on Books but not active on TISP (or service stopped).",
+        tone: "warn",
+      },
+      buildTispDueNarration(dueLabel, false),
+    ];
   }
   if (statusLower.includes("disconnect") || statusLower.includes("inactive")) {
-    return {
-      label: "TISP",
-      text: dueLabel
-        ? `Disconnected on TISP (shown as Suspended). Due date ${dueLabel}.`
-        : "Disconnected on TISP (shown as Suspended).",
-      tone: "warn",
-    };
+    return [
+      {
+        label: "Internet status",
+        text: "Disconnected on TISP (shown as Suspended).",
+        tone: "warn",
+      },
+      buildTispDueNarration(dueLabel, false),
+    ];
   }
   if (statusLower.includes("active")) {
-    return {
-      label: "TISP",
-      text: dueLabel
-        ? `Active on TISP and Books. Internet expires on ${dueLabel}.`
-        : "Active on TISP and Books.",
-      tone: "ok",
-    };
+    return [
+      {
+        label: "Internet status",
+        text: "Active on TISP and Books.",
+        tone: "ok",
+      },
+      buildTispDueNarration(dueLabel, true),
+    ];
   }
 
-  return {
-    label: "TISP",
-    text: dueLabel
-      ? `Status is ${service}. Due date is ${dueLabel}.`
-      : `Status is ${service}.`,
-    tone: "neutral",
-  };
+  return [
+    {
+      label: "Internet status",
+      text: `Status is ${service}.`,
+      tone: "neutral",
+    },
+    buildTispDueNarration(dueLabel, false),
+  ];
 }
 
 function buildZohoNarrations(
@@ -501,51 +610,199 @@ function buildZohoNarrations(
   return rows;
 }
 
+function StatusTile({
+  item,
+  title,
+  featured,
+}: {
+  item: StatusNarration;
+  title: string;
+  featured?: boolean;
+}) {
+  const tone = TONE_STYLES[item.tone];
+  const Icon = narrationIcon(item.label || title);
+  const BadgeIcon = toneBadgeIcon(item.tone);
+  const showLabel =
+    Boolean(item.label) &&
+    item.label.trim().toLowerCase() !== title.trim().toLowerCase();
+  const heading = featured && !showLabel ? null : item.label || title;
+
+  return (
+    <Box
+      bg="bg.panel"
+      border="1px solid"
+      borderColor={tone.border}
+      borderRadius="lg"
+      px={featured ? { base: 3, md: 3.5 } : { base: 2.5, md: 3 }}
+      py={featured ? { base: 3, md: 3.5 } : { base: 2.5, md: 3 }}
+      minW={0}
+      h="full"
+      position="relative"
+      overflow="hidden"
+      boxShadow="sm"
+      _before={{
+        content: '""',
+        position: "absolute",
+        top: 0,
+        left: 0,
+        bottom: 0,
+        w: "3px",
+        bg: tone.accent,
+      }}
+    >
+      <Flex align="flex-start" gap={featured ? 3 : 2.5}>
+        <Flex
+          boxSize={featured ? "40px" : "32px"}
+          borderRadius="lg"
+          bg={tone.iconBg}
+          color={tone.iconColor}
+          align="center"
+          justify="center"
+          flexShrink={0}
+        >
+          <Icon size={featured ? 18 : 15} />
+        </Flex>
+        <Box minW={0} flex="1">
+          <Flex align="center" justify="space-between" gap={2} mb={1}>
+            {heading ? (
+              <Text
+                fontSize="xs"
+                fontWeight="semibold"
+                color="fg.muted"
+                textTransform="uppercase"
+                letterSpacing="0.04em"
+                lineClamp={1}
+              >
+                {heading}
+              </Text>
+            ) : (
+              <Box />
+            )}
+            <Flex
+              align="center"
+              gap={1}
+              px={1.5}
+              py={0.5}
+              borderRadius="full"
+              bg={tone.badgeBg}
+              flexShrink={0}
+            >
+              <BadgeIcon size={11} />
+              <Text fontSize="2xs" fontWeight="semibold" color={tone.badgeColor}>
+                {tone.badgeLabel}
+              </Text>
+            </Flex>
+          </Flex>
+          <Text
+            fontSize="sm"
+            color={narrationToneColor(item.tone)}
+            lineHeight="1.45"
+          >
+            {item.text}
+          </Text>
+        </Box>
+      </Flex>
+    </Box>
+  );
+}
+
+function StatusTileSkeleton() {
+  return (
+    <Box
+      bg="bg.panel"
+      border="1px solid"
+      borderColor="border.muted"
+      borderRadius="lg"
+      px={{ base: 2.5, md: 3 }}
+      py={{ base: 2.5, md: 3 }}
+      minW={0}
+      h="full"
+      position="relative"
+      overflow="hidden"
+      _before={{
+        content: '""',
+        position: "absolute",
+        top: 0,
+        left: 0,
+        bottom: 0,
+        w: "3px",
+        bg: "gray.200",
+      }}
+    >
+      <Flex align="flex-start" gap={2.5}>
+        <SkeletonBlock boxSize="32px" borderRadius="lg" />
+        <Box minW={0} flex="1">
+          <Flex align="center" justify="space-between" gap={2} mb={2}>
+            <SkeletonBlock height="11px" width="88px" />
+            <SkeletonBlock height="18px" width="52px" borderRadius="full" />
+          </Flex>
+          <SkeletonBlock height="12px" width="92%" mb={1.5} />
+          <SkeletonBlock height="12px" width="68%" />
+        </Box>
+      </Flex>
+    </Box>
+  );
+}
+
 function StatusNarrationBlock({
   title,
   items,
   loading,
+  featured,
+  skeletonCount = 2,
 }: {
   title: string;
   items: StatusNarration[];
   loading?: boolean;
+  featured?: boolean;
+  skeletonCount?: number;
 }) {
+  const useFeatured = featured || items.length <= 1;
+
   return (
-    <Box
-      borderWidth="1px"
-      borderColor="border.muted"
-      borderRadius="md"
-      bg="bg.subtle"
-      px={3}
-      py={3}
-    >
+    <Box>
       <Text fontWeight="bold" fontSize="sm" mb={2}>
         {title}
       </Text>
       {loading ? (
-        <Text fontSize="sm" color="fg.muted">
-          Checking status…
-        </Text>
+        <Box
+          display="grid"
+          gridTemplateColumns={
+            skeletonCount <= 1
+              ? "1fr"
+              : { base: "1fr", sm: "1fr 1fr" }
+          }
+          gap={{ base: 2, md: 2.5 }}
+          alignItems="stretch"
+          w="full"
+          minW={0}
+        >
+          {Array.from({ length: skeletonCount }, (_, index) => (
+            <StatusTileSkeleton key={`${title}-skeleton-${index}`} />
+          ))}
+        </Box>
       ) : (
-        <Stack gap={2.5}>
-          {items.map((item, index) => {
-            const showLabel =
-              Boolean(item.label) &&
-              item.label.trim().toLowerCase() !== title.trim().toLowerCase();
-            return (
-              <Box key={`${item.label}-${index}`}>
-                {showLabel ? (
-                  <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={0.5}>
-                    {item.label}
-                  </Text>
-                ) : null}
-                <Text fontSize="sm" color={narrationToneColor(item.tone)} lineHeight="1.45">
-                  {item.text}
-                </Text>
-              </Box>
-            );
-          })}
-        </Stack>
+        <Box
+          display="grid"
+          gridTemplateColumns={
+            useFeatured
+              ? "1fr"
+              : { base: "1fr", sm: "1fr 1fr" }
+          }
+          gap={{ base: 2, md: 2.5 }}
+          alignItems="stretch"
+          w="full"
+          minW={0}
+        >
+          {items.map((item, index) => (
+            <StatusTile
+              key={`${item.label}-${index}`}
+              item={item}
+              title={title}
+              featured={useFeatured}
+            />
+          ))}
+        </Box>
       )}
     </Box>
   );
@@ -1061,7 +1318,7 @@ export function CustomerExpandPanel({
       ? `Custom (${customer.customPeriodDays} days)`
       : customer.paymentFrequency;
 
-  const tispNarration = buildTispNarration(customer, integrations);
+  const tispNarrations = buildTispNarrations(customer, integrations);
   const zohoNarrations = buildZohoNarrations(customer, integrations, zohoStatus);
 
   return (
@@ -1220,13 +1477,15 @@ export function CustomerExpandPanel({
           <Stack gap={3}>
             <StatusNarrationBlock
               title="TISP"
-              items={[tispNarration]}
-              loading={loading}
+              items={tispNarrations}
+              loading={integrationsLoading}
+              skeletonCount={2}
             />
             <StatusNarrationBlock
               title="Zoho"
               items={zohoNarrations}
-              loading={integrationsLoading}
+              loading={integrationsLoading || zohoLoading}
+              skeletonCount={4}
             />
           </Stack>
         </Box>

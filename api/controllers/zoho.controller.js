@@ -3,6 +3,10 @@ const https = require("https");
 const moment = require("moment");
 const LRU = require("lru-cache");
 const { logApiCall } = require("../utils/apiCallLogger");
+const {
+  pickDepositAccountId,
+  mpesaDepositLookupOptions,
+} = require("../utils/zohoDepositAccount");
 require("dotenv").config();
 
 /** ========= Config ========= **/
@@ -687,6 +691,65 @@ const updateCustomerPayment_JS = async (paymentId, payload = {}) => {
   );
   return data.payment || data.customerpayment || data || null;
 };
+
+const BANK_ACCOUNT_CACHE_MS = 60 * 60 * 1000;
+let mpesaDepositAccountCache = { id: null, expiresAt: 0 };
+
+async function listBankAccounts_JS() {
+  const data = await withTimeout(
+    callZoho("bankaccounts", "GET", null, { page: 1, per_page: 200 }),
+    10_000,
+    "list-bank-accounts",
+  );
+  return data.bankaccounts || data.bank_accounts || [];
+}
+
+async function listChartOfAccounts_JS() {
+  const data = await withTimeout(
+    callZoho("chartofaccounts", "GET", null, { page: 1, per_page: 200 }),
+    10_000,
+    "list-chart-of-accounts",
+  );
+  return data.chartofaccounts || data.chart_of_accounts || [];
+}
+
+/**
+ * Zoho Books "Deposited To" account_id for M-Pesa customer payments.
+ * Prefers ZOHO_MPESA_ACCOUNT_ID; otherwise looks up MPESA PAYBILL NO 4185091.
+ */
+async function resolveMpesaDepositAccountId_JS() {
+  const opts = mpesaDepositLookupOptions();
+  if (opts.accountId) return opts.accountId;
+
+  const now = Date.now();
+  if (mpesaDepositAccountCache.id && now < mpesaDepositAccountCache.expiresAt) {
+    return mpesaDepositAccountCache.id;
+  }
+
+  try {
+    let accountId = pickDepositAccountId(await listBankAccounts_JS(), opts);
+    if (!accountId) {
+      accountId = pickDepositAccountId(await listChartOfAccounts_JS(), opts);
+    }
+    if (accountId) {
+      mpesaDepositAccountCache = {
+        id: accountId,
+        expiresAt: now + BANK_ACCOUNT_CACHE_MS,
+      };
+      return accountId;
+    }
+    console.warn(
+      `[zoho] M-Pesa deposit account "${opts.accountName}" not found. ` +
+        "Set ZOHO_MPESA_ACCOUNT_ID so payments deposit to the paybill, not Paystack Funds."
+    );
+  } catch (error) {
+    console.error(
+      "resolveMpesaDepositAccountId_JS error:",
+      error.response?.data || error.message
+    );
+  }
+  return null;
+}
 
 // Get customers (array, filtered by company prefixes)
 const getZohoCustomers_JS = async (params = {}) => {
@@ -1523,6 +1586,7 @@ const markInvoiceAsPaid_JS = async ({
   reference_number,
   description,
   payment_mode,
+  account_id,
 }) => {
   try {
     const paymentAmount = Number(amount);
@@ -1543,6 +1607,7 @@ const markInvoiceAsPaid_JS = async ({
     };
     if (reference_number) paymentData.reference_number = String(reference_number);
     if (description) paymentData.description = String(description);
+    if (account_id) paymentData.account_id = String(account_id);
 
     const result = await withTimeout(
       callZoho("customerpayments", "POST", paymentData),
@@ -1831,6 +1896,7 @@ module.exports = {
   findCustomerPaymentByReference_JS,
   getCustomerPayment_JS,
   updateCustomerPayment_JS,
+  resolveMpesaDepositAccountId_JS,
   getZohoCustomers_JS,
   getSpecificCustomer_JS,
   getContactFull_JS,

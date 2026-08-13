@@ -6,6 +6,7 @@ const {
 } = require("../controllers/zoho.controller");
 const customerStore = require("./customerModuleStore");
 const { logActivity } = require("./activityLogStore");
+const { isMpesaPaymentChannel } = require("../utils/zohoDepositAccount");
 const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
 const {
   isB2BCustomer,
@@ -1777,6 +1778,17 @@ async function applyAdvanceMpesaToSignupInvoice({
   };
 }
 
+async function resolveMpesaAccountIdForAttach(channelLabel) {
+  if (!isMpesaPaymentChannel(channelLabel)) return null;
+  try {
+    const { resolveMpesaDepositAccountId_JS } = require("../controllers/zoho.controller");
+    return await resolveMpesaDepositAccountId_JS();
+  } catch (e) {
+    console.warn("M-Pesa Zoho deposit account lookup failed:", e.message);
+    return null;
+  }
+}
+
 async function attachZohoPaymentToSignupInvoice({
   customer,
   contactId,
@@ -1799,17 +1811,48 @@ async function attachZohoPaymentToSignupInvoice({
   const alreadyOnInvoice = existingInvoices.some(
     (row) => String(row.invoice_id) === String(invoice.invoiceId)
   );
+  const mpesaAccountId = await resolveMpesaAccountIdForAttach(channelLabel);
+  const paymentMode =
+    String(payment.payment_mode || "").trim() ||
+    process.env.ZOHO_PAYMENT_MODE ||
+    "Mobile Money";
+  const paymentAmount = Number(payment.amount || 0);
+
   if (alreadyOnInvoice) {
+    const currentAccountId = String(payment.account_id || "").trim();
+    if (mpesaAccountId && currentAccountId !== String(mpesaAccountId)) {
+      try {
+        await updateCustomerPayment_JS(paymentId, {
+          customer_id: contactId,
+          payment_mode: paymentMode,
+          amount: paymentAmount,
+          date: payment.date || undefined,
+          reference_number: payment.reference_number || ref,
+          description: payment.description,
+          account_id: mpesaAccountId,
+          invoices: existingInvoices
+            .filter((row) => row?.invoice_id)
+            .map((row) => ({
+              invoice_id: row.invoice_id,
+              amount_applied: Number(row.amount_applied || 0),
+            })),
+        });
+      } catch (e) {
+        console.warn(
+          "Could not reassign M-Pesa payment to paybill deposit account:",
+          e.response?.data || e.message
+        );
+      }
+    }
     return {
       paid: true,
       paymentError: "payment_already_on_invoice",
       zoho_payment_id: paymentId,
       payment,
-      payment_amount: Number(payment.amount || 0),
+      payment_amount: paymentAmount,
     };
   }
 
-  const paymentAmount = Number(payment.amount || 0);
   const unused = Number(
     payment.unused_amount != null
       ? payment.unused_amount
@@ -1827,11 +1870,6 @@ async function attachZohoPaymentToSignupInvoice({
     return { paid: false, paymentError: "payment_no_usable_amount" };
   }
 
-  const paymentMode =
-    String(payment.payment_mode || "").trim() ||
-    process.env.ZOHO_PAYMENT_MODE ||
-    "Mobile Money";
-
   const updated = await updateCustomerPayment_JS(paymentId, {
     customer_id: contactId,
     payment_mode: paymentMode,
@@ -1847,6 +1885,7 @@ async function attachZohoPaymentToSignupInvoice({
         amount_applied: amountApplied,
       },
     ],
+    ...(mpesaAccountId ? { account_id: mpesaAccountId } : {}),
   });
 
   try {

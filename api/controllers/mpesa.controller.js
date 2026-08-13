@@ -33,6 +33,7 @@ const {
   createInvoice_JS,
   getInvoices_JS,
   markInvoiceAsPaid_JS,
+  resolveMpesaDepositAccountId_JS,
 } = require("./zoho.controller"); // or "../zoho/zoho.controller" etc.
 const { postSetISPPayment, getTISPCustomer } = require("./tisp.controller");
 const { ISP_PAYMENT_URL } = require("../utils/tispUrls");
@@ -743,6 +744,17 @@ async function recordInvoicePayment({
   transactionId,
   source,
 }) {
+  let account_id;
+  try {
+    account_id = await resolveMpesaDepositAccountId_JS();
+  } catch (e) {
+    console.warn("M-Pesa Zoho deposit account lookup failed:", e.message);
+  }
+  if (!account_id) {
+    console.warn(
+      "M-Pesa Zoho payment has no paybill deposit account_id — Zoho may default to Paystack Funds"
+    );
+  }
   return markInvoiceAsPaid_JS({
     invoice_id,
     customer_id,
@@ -750,6 +762,7 @@ async function recordInvoicePayment({
     amount_applied: amountApplied,
     reference_number: transactionId ? String(transactionId) : undefined,
     description: `M-Pesa ${source || "payment"} ${transactionId || ""}`.trim(),
+    account_id: account_id || undefined,
   });
 }
 
