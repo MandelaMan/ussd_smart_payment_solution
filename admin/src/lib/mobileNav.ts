@@ -34,16 +34,17 @@ export type MobileNavTab = {
 export const MOBILE_BOTTOM_NAV_H = "56px";
 
 /**
- * Clearance under the floating pill. Applied as `bottom` on the shell — never as
- * padding (padding + any opaque bg paints the white dead strip under the pill).
+ * Float the pill this far above the visible bottom edge.
+ * Do not add safe-area here — that is the dead strip under the pill.
+ * The app shell is locked to the visual viewport, so 8px is enough.
  */
 export const MOBILE_BOTTOM_NAV_GAP = "8px";
 
 /**
  * Space to reserve above the fixed floating bottom nav so content can scroll clear.
- * Nav height + bottom gap + safe-area + side clearance for shadow.
+ * Nav height + 8px float gap + shadow clearance. No safe-area (viewport lock).
  */
-export const MOBILE_BOTTOM_NAV_OFFSET = `calc(${MOBILE_BOTTOM_NAV_H} + ${MOBILE_BOTTOM_NAV_GAP} + env(safe-area-inset-bottom, 0px) + 20px)`;
+export const MOBILE_BOTTOM_NAV_OFFSET = `calc(${MOBILE_BOTTOM_NAV_H} + ${MOBILE_BOTTOM_NAV_GAP} + 16px)`;
 
 /** Build exactly four navigation destinations before the More tab. */
 export function buildMobileNavTabs(user: User | null): MobileNavTab[] {

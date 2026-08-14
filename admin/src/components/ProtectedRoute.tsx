@@ -111,9 +111,14 @@ export function ConfigRoute() {
         "apartments.view",
         "agencies.view",
         "campaigns.view",
+        "installations.view",
       ]}
     />
   );
+}
+
+export function InstallationsRoute() {
+  return <PermissionRoute permissions={["installations.view"]} />;
 }
 
 export function CustomerWriteRoute() {

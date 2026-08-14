@@ -40,6 +40,7 @@ import {
   FiAlertCircle,
   FiCheckCircle,
   FiEdit3,
+  FiTool,
   FiUser,
   FiWifi,
 } from "react-icons/fi";
@@ -57,6 +58,8 @@ const EVENT_ICONS: Record<string, typeof FiUser> = {
   customer_upgraded: FiCheckCircle,
   customer_downgraded: FiAlertCircle,
   customer_apartment_switched: FiUser,
+  installation_assigned: FiTool,
+  installation_updated: FiTool,
   customer_type_changed: FiUser,
   customer_paused: FiUser,
   customer_disconnected: FiWifi,

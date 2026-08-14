@@ -8,6 +8,7 @@ import {
 } from "@chakra-ui/react";
 import { useState } from "react";
 import { FiCalendar, FiX } from "react-icons/fi";
+import { FILTER_CONTROL_HEIGHT } from "../../theme";
 
 type Props = Omit<InputProps, "type" | "value" | "onChange"> & {
   value: string;
@@ -18,7 +19,7 @@ type Props = Omit<InputProps, "type" | "value" | "onChange"> & {
 
 const SHELL_HEIGHT = {
   xs: "28px",
-  sm: "32px",
+  sm: FILTER_CONTROL_HEIGHT,
   md: "40px",
   lg: "44px",
 } as const;
@@ -47,16 +48,20 @@ export function DateField({
 
   return (
     <Flex
+      w="full"
+      minW={0}
       align="center"
       gap={2}
       h={shellHeight}
+      minH={shellHeight}
       px={3}
       borderWidth="1px"
-      borderColor={hasValue ? "brand.200" : "gray.200"}
+      borderColor="border"
       borderRadius="md"
       bg="bg.panel"
       boxShadow="sm"
       position="relative"
+      boxSizing="border-box"
       transition="border-color 0.15s, box-shadow 0.15s"
       _focusWithin={{
         borderColor: "brand.500",
@@ -72,7 +77,7 @@ export function DateField({
       <Box flex={1} position="relative" minW={0} h="full" overflow="hidden">
         {showPlaceholder ? (
           <Text
-            fontSize={size === "sm" ? "sm" : "md"}
+            fontSize="sm"
             color="fg.subtle"
             position="absolute"
             left={0}
@@ -96,7 +101,6 @@ export function DateField({
           min={min}
           max={max}
           disabled={disabled}
-          size={size}
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
@@ -104,13 +108,14 @@ export function DateField({
           borderWidth={0}
           boxShadow="none"
           w="full"
+          minW={0}
           h="full"
           minH="unset"
           px={0}
           py={0}
-          color={hasValue || focused ? "gray.800" : "transparent"}
-          fontWeight={hasValue ? "medium" : "normal"}
-          fontSize={size === "sm" ? "sm" : "md"}
+          color={hasValue || focused ? "fg" : "transparent"}
+          fontWeight="normal"
+          fontSize="sm"
           lineHeight="1"
           className={`date-field-native${hasValue ? " date-field-has-value" : ""}`}
           _focus={{

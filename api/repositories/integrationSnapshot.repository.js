@@ -196,6 +196,21 @@ async function clearZohoContact(customerId) {
   ]);
 }
 
+/**
+ * Drop the stored Zoho contact, invoices, payments, and recurring rows so a
+ * customer is no longer shown billing that belongs to another contact
+ * (e.g. leftover agency invoices after B2B → C2B conversion).
+ */
+async function clearZohoBillingSnapshot(customerId) {
+  if (!customerId) return;
+  const id = Number(customerId);
+  if (!Number.isFinite(id) || id <= 0) return;
+  await query(`DELETE FROM zoho_customer_contacts WHERE customer_id = ?`, [id]);
+  await query(`DELETE FROM zoho_customer_invoices WHERE customer_id = ?`, [id]);
+  await query(`DELETE FROM zoho_customer_payments WHERE customer_id = ?`, [id]);
+  await query(`DELETE FROM zoho_recurring_invoices WHERE customer_id = ?`, [id]);
+}
+
 /** All dashboard customers currently linked to this Zoho contact id. */
 async function listCustomerIdsByZohoContactId(zohoContactId) {
   if (!zohoContactId) return [];
@@ -554,6 +569,7 @@ module.exports = {
   getStoredZohoContactId,
   upsertZohoContact,
   clearZohoContact,
+  clearZohoBillingSnapshot,
   listCustomerIdsByZohoContactId,
   listInvoicesForCustomer,
   replaceZohoInvoices,

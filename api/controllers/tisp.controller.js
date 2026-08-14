@@ -22,6 +22,8 @@ const { DEFAULT_TZ } = require("../utils/billingPeriod");
 const {
   TISP_STANDARD_DUE_DATE,
   TISP_BILLING_CYCLE,
+  TISP_RELEASE_PLACEHOLDER_IP,
+  TISP_PPOE_PLACEHOLDER_STATIC_IP,
 } = require("../utils/tispConstants");
 
 /** TISP expects compact JSON: no space after colons or commas. */
@@ -608,6 +610,35 @@ function resolveTispPackageType(ipSetup) {
 }
 
 /**
+ * TISP StaticIP / PppoeRemoteAddress differ by building IP setup:
+ * - STATIC (PackageType IP): both fields are the assigned static IP
+ * - PPOE (PackageType PPPOE): StaticIPAddress is 10.2.2.2; PppoeRemoteAddress is blank
+ * Release to 0.0.0.0 is preserved so migrate can free the old account.
+ */
+function resolveTispNetworkFields(ipSetup, ipAddress) {
+  const packageType = resolveTispPackageType(ipSetup);
+  const incoming = String(ipAddress || "").trim();
+
+  if (packageType === "PPPOE") {
+    const staticIpAddress =
+      incoming === TISP_RELEASE_PLACEHOLDER_IP
+        ? TISP_RELEASE_PLACEHOLDER_IP
+        : TISP_PPOE_PLACEHOLDER_STATIC_IP;
+    return {
+      packageType,
+      staticIpAddress,
+      pppoeRemoteAddress: "",
+    };
+  }
+
+  return {
+    packageType,
+    staticIpAddress: incoming,
+    pppoeRemoteAddress: incoming,
+  };
+}
+
+/**
  * Normalize category segments for TISP Package field.
  * "Internet + Apartonet Channels" → "INTERNET + APARTONET CHANNELS"
  */
@@ -731,14 +762,14 @@ function buildTispSetClientPayload(input, transactionType) {
     phone,
   } = input;
 
-  const packageType = resolveTispPackageType(ipSetup);
+  const { packageType, staticIpAddress, pppoeRemoteAddress } =
+    resolveTispNetworkFields(ipSetup, ipAddress);
   const first = tispPersonName(firstName).toUpperCase();
   // TISP rejects blank MiddleName/LastName — send "-" when empty (not for Zoho).
   const middleRaw = tispPersonName(middleName);
   const lastRaw = tispPersonName(lastName);
   const middle = middleRaw || "-";
   const last = lastRaw ? lastRaw.toUpperCase() : "-";
-  const resolvedIp = String(ipAddress || "").trim();
   const routerLocation = tispRouterLocation(buildingName);
   const packageLabel = buildTispPackageLabel({
     planName,
@@ -761,7 +792,7 @@ function buildTispSetClientPayload(input, transactionType) {
     AccountNumber: customerNumber,
     Package: packageLabel,
     Router: routerLocation,
-    StaticIPAddress: resolvedIp,
+    StaticIPAddress: staticIpAddress,
     BillingCycle: tispBillingCycle(),
     DueDate: formatTispDueDate(input.dueDate || TISP_STANDARD_DUE_DATE),
     PppoeUsername: String(
@@ -770,7 +801,7 @@ function buildTispSetClientPayload(input, transactionType) {
         : apartmentNumber || ""
     ),
     PppoePassword: String(tispPassword || ""),
-    PppoeRemoteAddress: resolvedIp,
+    PppoeRemoteAddress: pppoeRemoteAddress,
     ShortCode: String(TISP_DEFAULT_SHORTCODE).trim(),
     AllowedPppoeDevices: "1",
   };
@@ -812,6 +843,7 @@ module.exports = {
   buildSetClientDetailsPayload,
   buildTispPackageLabel,
   resolveTispPackageType,
+  resolveTispNetworkFields,
   resolveTispPackageForWrite,
   isValidTispPackageLabel,
   stringifyTispPayload,

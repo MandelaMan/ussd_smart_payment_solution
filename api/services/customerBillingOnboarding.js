@@ -17,8 +17,7 @@ const {
   computeBillingPeriod,
   computeInvoiceDueDate,
   computeTrialEndDate,
-  computeServiceDueDate,
-  computeRecurringStartBeforeDue,
+  computeSignupRecurringWindow,
   resolveZohoPaymentTerms,
 } = require("../utils/billingPeriod");
 const {
@@ -59,11 +58,11 @@ const EMAILED_INVOICE_STATUSES = new Set([
   "viewed",
 ]);
 
-async function ensureZohoContactForCustomer(customer) {
+async function ensureZohoContactForCustomer(customer, options = {}) {
   const {
     ensureZohoContactForCustomer: ensure,
   } = require("../controllers/customers.controller");
-  return ensure(customer);
+  return ensure(customer, options);
 }
 
 function isInvoiceVoid(invoice) {
@@ -1134,20 +1133,24 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
 
       // Always create/ensure recurring profile after signup invoice
       // (both advance-paid and unpaid → invoice emailed paths).
-      // Initial due = Net 7 (today+7). Next cycle due = that date + payment
+      // First invoice due = Net 7/30. Next service due = signup + payment
       // frequency. Recurring starts 7 days before that next due
-      // (e.g. created 10 Aug monthly → due 17 Aug → next 17 Sep → starts 10 Sep).
+      // (e.g. created 14 Aug monthly → due 14 Sep → invoice 7 Sep).
       const initialDue =
         options.serviceDueDate ||
         computeInvoiceDueDate(customer);
-      const nextCycleDue = computeServiceDueDate({
-        anchorDate: initialDue,
+      const signupAnchor =
+        invoice?.period?.startDate ||
+        invoice?.invoiceDate ||
+        new Date();
+      const recurringWindow = computeSignupRecurringWindow({
+        signupDate: signupAnchor,
         paymentFrequency: customer.paymentFrequency,
         customPeriodDays: customer.customPeriodDays,
       });
+      const nextCycleDue = recurringWindow.nextCycleDue;
       const recurringStart =
-        computeRecurringStartBeforeDue(nextCycleDue) ||
-        invoice.period?.endDate;
+        recurringWindow.startDate || invoice.period?.endDate;
       try {
         recurring = await ensureRecurringSubscription(customer, zohoContact, {
           startDate: recurringStart,
@@ -2004,8 +2007,142 @@ async function emailAdvancePaymentReceipt({
   };
 }
 
+/**
+ * After B2B → C2B conversion: create/link a personal Zoho contact (never the
+ * agency), issue a new C2B invoice, and create/update the personal recurring
+ * profile. Agency invoices stay on the agency contact and are not snapshotted
+ * onto this customer.
+ */
+async function provisionC2BBillingAfterB2BConversion(customerId, options = {}) {
+  const ctx = await customerStore.getCustomerContext(customerId);
+  if (!ctx) {
+    return { ok: false, error: "Customer not found" };
+  }
+  if (String(ctx.status || "").toLowerCase() !== "active") {
+    return { ok: true, skipped: true, reason: "inactive" };
+  }
+  if (isB2BCustomer({ customerType: ctx.customer_type })) {
+    return { ok: false, error: "Customer is still B2B" };
+  }
+
+  const customer = mapContextToCustomer(ctx);
+  const excludeContactIds = (options.excludeContactIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+
+  let zohoContact = await ensureZohoContactForCustomer(
+    {
+      ...customer,
+      customerType: ctx.customer_type,
+      agencyId: null,
+      createdAt: ctx.created_at,
+    },
+    {
+      skipStoredContact: true,
+      identityFallback: false,
+      excludeContactIds,
+      replaceFormerTenant: false,
+    }
+  );
+  if (!zohoContact?.contact_id) {
+    throw new Error("Zoho contact could not be linked");
+  }
+  if (excludeContactIds.includes(String(zohoContact.contact_id))) {
+    throw new Error("Refusing to reuse the agency Zoho contact for C2B billing");
+  }
+
+  const { updateZohoContactDetails } = require("./customerZohoSync");
+  zohoContact = await updateZohoContactDetails(
+    { ...customer, customerType: ctx.customer_type, agencyId: null },
+    zohoContact
+  );
+
+  const invoice = await createSignupInvoice(customer, zohoContact, {
+    disregardExistingInvoices: true,
+    skipDecoderFee: true,
+    packageDiscountPercent: 0,
+    forceEmail: options.forceEmail !== false,
+    notes: options.notes || "Converted from B2B to C2B",
+  });
+
+  const initialDue = computeInvoiceDueDate(customer);
+  const recurringWindow = computeSignupRecurringWindow({
+    signupDate: invoice?.period?.startDate || invoice?.invoiceDate || new Date(),
+    paymentFrequency: customer.paymentFrequency,
+    customPeriodDays: customer.customPeriodDays,
+  });
+  const nextCycleDue = recurringWindow.nextCycleDue;
+  const recurringStart = recurringWindow.startDate || initialDue;
+
+  let recurring = null;
+  try {
+    recurring = await ensureRecurringSubscription(customer, zohoContact, {
+      startDate: recurringStart,
+    });
+    if (recurring && typeof recurring === "object") {
+      recurring.serviceDueDate = initialDue;
+      recurring.nextCycleDue = nextCycleDue;
+      recurring.startDate = recurringStart;
+    }
+  } catch (e) {
+    console.error(
+      "C2B recurring setup after B2B conversion failed:",
+      e.message
+    );
+    recurring = {
+      created: false,
+      updated: false,
+      error: e.message || "recurring_setup_failed",
+    };
+  }
+
+  invalidateCustomerZoho(customerId);
+
+  try {
+    const invoices = await getInvoices_JS({
+      customer_id: zohoContact.contact_id,
+      per_page: 50,
+      page: 1,
+    });
+    const recurringList = await getRecurringInvoices_JS({
+      customer_id: zohoContact.contact_id,
+      per_page: 50,
+    });
+    await integrationSnapshot.saveZohoBillingSnapshot(customerId, {
+      contact: zohoContact,
+      invoices: invoices || [],
+      payments: [],
+      recurring: recurringList || [],
+    });
+  } catch (e) {
+    console.warn(
+      "Zoho snapshot after B2B→C2B conversion failed:",
+      e.message
+    );
+  }
+
+  try {
+    await customerStore.updateCustomerZohoBillingStatus(
+      customerId,
+      "completed",
+      null
+    );
+  } catch (e) {
+    console.warn("zoho billing status persist failed:", e.message);
+  }
+
+  return {
+    ok: true,
+    zohoContactId: String(zohoContact.contact_id),
+    contactUpdated: true,
+    invoice,
+    recurring,
+  };
+}
+
 module.exports = {
   onboardNewCustomerBilling,
   createSignupInvoice,
   createDstvDecoderFeeInvoice,
+  provisionC2BBillingAfterB2BConversion,
 };

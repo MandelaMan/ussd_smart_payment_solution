@@ -1,7 +1,6 @@
 import { Box, Flex } from "@chakra-ui/react";
 import { useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { Sidebar } from "./Sidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { MobilePageTransition } from "./MobilePageTransition";
@@ -12,8 +11,8 @@ import {
 } from "../lib/mobileNav";
 import { MobileSearchProvider, useMobileSearchOptional } from "../lib/mobileSearch";
 
-/** Lift the pill above the home indicator without padding the shell (padding paints white). */
-const MOBILE_NAV_BOTTOM = `max(${MOBILE_BOTTOM_NAV_GAP}, env(safe-area-inset-bottom, 0px))`;
+/** Float the pill 8px above the visible bottom — never safe-area (that paints the dead strip). */
+const MOBILE_NAV_BOTTOM = MOBILE_BOTTOM_NAV_GAP;
 
 function LayoutShell() {
   const [open, setOpen] = useState(false);
@@ -29,6 +28,7 @@ function LayoutShell() {
 
   return (
     <Flex
+      position="relative"
       h="100%"
       maxH="100%"
       minH="100%"
@@ -74,48 +74,26 @@ function LayoutShell() {
         </Box>
       </Flex>
 
-      {typeof document !== "undefined" && !open && !hideBottomNav
-        ? createPortal(
-            <Box
-              // v4: bottom offset (not padding) + class bump so SW cannot restore the white band.
-              className="sul-mobile-nav-v4"
-              display={{ base: "block", lg: "none" }}
-              position="fixed"
-              left={0}
-              right={0}
-              bottom={MOBILE_NAV_BOTTOM}
-              zIndex={1000}
-              bg="transparent"
-              pointerEvents="none"
-              p={0}
-              m={0}
-              minH={0}
-              h="auto"
-              maxH="none"
-              style={{
-                position: "fixed",
-                left: 0,
-                right: 0,
-                bottom: MOBILE_NAV_BOTTOM,
-                zIndex: 1000,
-                margin: 0,
-                padding: 0,
-                background: "transparent",
-                backgroundColor: "transparent",
-                pointerEvents: "none",
-                height: "auto",
-                minHeight: 0,
-                maxHeight: "none",
-                transform: "none",
-                boxShadow: "none",
-                border: "none",
-              }}
-            >
-              <MobileBottomNav onOpenMenu={() => setOpen(true)} />
-            </Box>,
-            document.body
-          )
-        : null}
+      {!open && !hideBottomNav ? (
+        <Box
+          className="sul-mobile-nav-v5"
+          display={{ base: "block", lg: "none" }}
+          position="absolute"
+          left={0}
+          right={0}
+          bottom={MOBILE_NAV_BOTTOM}
+          zIndex={1000}
+          bg="transparent"
+          pointerEvents="none"
+          p={0}
+          m={0}
+          minH={0}
+          h="auto"
+          maxH="none"
+        >
+          <MobileBottomNav onOpenMenu={() => setOpen(true)} />
+        </Box>
+      ) : null}
     </Flex>
   );
 }

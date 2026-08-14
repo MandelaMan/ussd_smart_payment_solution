@@ -26,11 +26,18 @@ const {
   estimateDueDateFromLastPayment,
   recommendPaymentMethod,
 } = require("../utils/upgradeQuote");
-const { TISP_STANDARD_DUE_DATE } = require("../utils/tispConstants");
+const {
+  TISP_STANDARD_DUE_DATE,
+  TISP_RELEASE_PLACEHOLDER_IP,
+  TISP_PPOE_PLACEHOLDER_STATIC_IP,
+  isTispPlaceholderIp,
+} = require("../utils/tispConstants");
 const {
   DEFAULT_TZ,
   computeTrialEndDate,
   computeInvoiceDueDate,
+  computeSignupRecurringWindow,
+  resolveTispDueDateForEditBilling,
   resolveZohoPaymentTerms,
 } = require("../utils/billingPeriod");
 const {
@@ -120,10 +127,13 @@ async function findZohoContactForCustomer(customer, options = {}) {
     keys.length = 0;
     keys.push(prev, ...withoutPrev);
   }
+  const identityFallback =
+    options.identityFallback === false
+      ? false
+      : options.identityFallback === true || Boolean(prev);
   return findContactByLookupKeys_JS(keys, {
     customer,
-    identityFallback:
-      options.identityFallback === true || Boolean(prev),
+    identityFallback,
     previousCustomerNumber: prev || undefined,
   });
 }
@@ -676,6 +686,19 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
   // invoices. Apartment moves keep previousCustomerNumber and still update.
   const replaceFormerTenant =
     options.replaceFormerTenant === true && !previousCustomerNumber;
+  const skipStoredContact = options.skipStoredContact === true;
+  const excludeContactIds = new Set(
+    (options.excludeContactIds || [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+  );
+  const identityFallback =
+    options.identityFallback !== false && !replaceFormerTenant;
+
+  function isExcludedContact(contact) {
+    const id = contact?.contact_id ? String(contact.contact_id) : "";
+    return Boolean(id && excludeContactIds.has(id));
+  }
 
   const { updateContact_JS, getSpecificCustomer_JS, getContactFull_JS, markContactActive_JS } = require("./zoho.controller");
 
@@ -758,6 +781,9 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
   }
 
   async function refreshExisting(existing) {
+    if (!existing?.contact_id || isExcludedContact(existing)) {
+      return null;
+    }
     if (await retireIfFormer(existing)) {
       return null; // caller creates a new contact
     }
@@ -822,12 +848,13 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
   }
 
   // Prefer stored Zoho contact id — works even when company_name is empty in Books.
-  if (customer.id) {
+  // B2B → C2B conversion skips this so we never refresh the agency contact.
+  if (customer.id && !skipStoredContact) {
     try {
       const snapId = await integrationSnapshot.getStoredZohoContactId(customer.id);
-      if (snapId) {
+      if (snapId && !excludeContactIds.has(String(snapId))) {
         const byId = await loadContactForUpdate(snapId);
-        if (byId?.contact_id) {
+        if (byId?.contact_id && !isExcludedContact(byId)) {
           const refreshed = await refreshExisting(byId);
           if (refreshed) return refreshed;
           // Former tenant retired — fall through to create.
@@ -841,10 +868,10 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
   // Live lookup by previous number (apartment move) / customer number / email /
   // phone / name — update if found, never duplicate (unless replacing tenant).
   const existing = await findZohoContactForCustomer(customer, {
-    identityFallback: !replaceFormerTenant,
+    identityFallback,
     previousCustomerNumber: previousCustomerNumber || undefined,
   });
-  if (existing?.contact_id) {
+  if (existing?.contact_id && !isExcludedContact(existing)) {
     const refreshed = await refreshExisting(existing);
     if (refreshed) return refreshed;
   }
@@ -857,10 +884,10 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     // Duplicate / race: resolve the existing contact and update it instead.
     // If it is still a former tenant, retire and retry create once.
     const retry = await findZohoContactForCustomer(customer, {
-      identityFallback: !replaceFormerTenant,
+      identityFallback,
       previousCustomerNumber: previousCustomerNumber || undefined,
     });
-    if (retry?.contact_id) {
+    if (retry?.contact_id && !isExcludedContact(retry)) {
       const refreshed = await refreshExisting(retry);
       if (refreshed) return refreshed;
       try {
@@ -910,10 +937,10 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
 
   // Final safety: another create may have won the race.
   const retry = await findZohoContactForCustomer(customer, {
-    identityFallback: !replaceFormerTenant,
+    identityFallback,
     previousCustomerNumber: previousCustomerNumber || undefined,
   });
-  if (retry?.contact_id) {
+  if (retry?.contact_id && !isExcludedContact(retry)) {
     const refreshed = await refreshExisting(retry);
     if (refreshed) return refreshed;
   }
@@ -1449,8 +1476,12 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
 async function createCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
   const ipSetup = await resolveTispBuildingIpSetup(ctx);
-  const resolvedIp = await resolveIpForTispWrite(ctx);
-  if (!resolvedIp) {
+  const isPpoe = resolveTispPackageType(ipSetup) === "PPPOE";
+  // PPOE buildings have no assigned static IP — TISP still requires StaticIPAddress.
+  const resolvedIp = isPpoe
+    ? TISP_PPOE_PLACEHOLDER_STATIC_IP
+    : await resolveIpForTispWrite(ctx);
+  if (!isPpoe && !resolvedIp) {
     throw new Error(
       "Static IP address is required for TISP create, but none is set on the customer"
     );
@@ -1500,7 +1531,7 @@ function extractTispStaticIp(tispCustomer) {
   ];
   for (const raw of candidates) {
     const ip = String(raw || "").trim();
-    if (ip && ip !== "0.0.0.0") return ip;
+    if (ip && !isTispPlaceholderIp(ip)) return ip;
   }
   return null;
 }
@@ -1516,16 +1547,9 @@ function assertCatalogPackageForTisp(input) {
   return label;
 }
 
-/**
- * TISP rejects blank StaticIPAddress ("StaticIPAddress Missing.").
- * When freeing an old account before INSERT, park it on this placeholder so the
- * real IP can be claimed by the new AccountNumber.
- */
-const TISP_RELEASE_PLACEHOLDER_IP = "0.0.0.0";
-
 async function resolveIpForTispWrite(ctx, accountNumberHint = null) {
   const local = String(ctx.ip_address || ctx.ipAddress || "").trim();
-  if (local) return local;
+  if (local && !isTispPlaceholderIp(local)) return local;
 
   const candidates = [
     accountNumberHint,
@@ -1561,11 +1585,15 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
 
   // Prefer an explicit IP from the edit/reclaim caller over a context re-read
   // so StaticIPAddress cannot silently fall back to a stale local/TISP value.
+  // PPOE buildings never send a real static IP — use 10.2.2.2 and blank remote.
+  const isPpoe = resolveTispPackageType(ipSetup) === "PPPOE";
   const forcedIp = meta.ipAddress != null ? String(meta.ipAddress).trim() : "";
   const resolvedIp =
     meta.releaseNetwork || meta.releaseIpOnly
       ? TISP_RELEASE_PLACEHOLDER_IP
-      : forcedIp || (await resolveIpForTispWrite(ctx, accountNumber));
+      : isPpoe
+        ? TISP_PPOE_PLACEHOLDER_STATIC_IP
+        : forcedIp || (await resolveIpForTispWrite(ctx, accountNumber));
 
   const input = {
     ...tispPayloadInput(
@@ -2351,11 +2379,13 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     : null;
   const newIp = options.newIp ? String(options.newIp).trim() : null;
   const apartmentChanged = options.apartmentChanged === true || Boolean(previousCustomerNumber);
+  const billingReset =
+    createInitialInvoice || createRecurringInvoice || updateZohoRecurring;
   const tispDueDateRaw = options.tispDueDate
     ? String(options.tispDueDate).trim()
     : "";
-  // Do not force the cycle default over a live TISP due date on edit.
-  // Prefer: explicit form value → current TISP due → standard default (create only).
+  // Do not force the cycle default over a live TISP due date on a normal edit.
+  // When signup invoice / recurring is being (re)set, recalculate from today.
   const tispDueDate = tispDueDateRaw;
 
   const ctx = await store.getCustomerContext(customerId);
@@ -2386,7 +2416,17 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     // reported onTisp=false (that caused "Duplicate Account Exists" on phone edits).
     // Apartment / account renumber: keep the existing TISP due date — never default
     // to today (that disconnects the customer after migrate release).
+    // Signup invoice / recurring on edit: reset DueDate from today (Net 7/30 or
+    // next service due), not the stale snapshot.
     let dueForSync =
+      (billingReset
+        ? resolveTispDueDateForEditBilling({
+            customer: ctx,
+            createInitialInvoice,
+            createRecurringInvoice,
+            updateZohoRecurring,
+          })
+        : null) ||
       tispDueDate ||
       presence?.tispDueDate ||
       null;
@@ -2420,6 +2460,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       newIp: newIp || undefined,
       customerNumber: ctx.customer_number,
       dueDate: dueForSync,
+      dueDateReset: Boolean(billingReset),
     };
     await store.updateCustomerTispSync(customerId, "synced", null);
     // create/update already refresh live Client Status (+ preferred due date).
@@ -2489,10 +2530,52 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       }
 
       if (createRecurringInvoice || updateZohoRecurring || apartmentChanged) {
+        const recurringWindow = computeSignupRecurringWindow({
+          signupDate: invoice?.period?.startDate || new Date(),
+          paymentFrequency: customer.paymentFrequency,
+          customPeriodDays: customer.customPeriodDays,
+        });
         recurring = await ensureRecurringSubscription(customer, contact, {
-          startDate: invoice?.period?.endDate,
+          startDate: recurringWindow.startDate,
           previousCustomerNumber: previousCustomerNumber || undefined,
         });
+      }
+
+      if (billingReset && !dstvOnly && tisp.ok && tisp.skipped !== true) {
+        const dueAfterBilling = resolveTispDueDateForEditBilling({
+          customer,
+          createInitialInvoice,
+          createRecurringInvoice,
+          updateZohoRecurring,
+          invoice,
+        });
+        const currentDue = String(tisp.dueDate || "").slice(0, 10);
+        const nextDue = dueAfterBilling
+          ? String(dueAfterBilling).slice(0, 10)
+          : "";
+        if (nextDue && nextDue !== currentDue) {
+          try {
+            await pushCustomerToTisp(tispCtx, {
+              previousCustomerNumber: previousCustomerNumber || undefined,
+              previousApartmentNumber: options.previousApartmentNumber,
+              previousIp: previousIp || undefined,
+              ipAddress: newIp || undefined,
+              dueDate: nextDue,
+              preferUpdate: true,
+              skipCooldown: true,
+            });
+            tisp = { ...tisp, dueDate: nextDue, dueDateReset: true };
+          } catch (e) {
+            tisp = { ...tisp, ok: false, error: formatTispError(e) };
+            await store.updateCustomerTispSync(
+              customerId,
+              "failed",
+              formatTispError(e)
+            );
+          }
+        } else if (nextDue) {
+          tisp = { ...tisp, dueDate: nextDue, dueDateReset: true };
+        }
       }
 
       try {
@@ -3201,6 +3284,18 @@ async function createCustomer(req, res, next) {
       }
     }
 
+    const {
+      parseInstallationInput,
+      scheduleCustomerInstallation,
+      emailVarsFromInstallation,
+    } = require("../services/installationStore");
+    let installationInput;
+    try {
+      installationInput = parseInstallationInput(body);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
     const created = await store.createCustomer(body);
 
     // Acquisition campaign + referral attribution (non-trial C2B only).
@@ -3228,6 +3323,25 @@ async function createCustomer(req, res, next) {
       console.warn("campaign attach on create failed:", e.message);
     }
 
+    let installation = null;
+    try {
+      installation = await scheduleCustomerInstallation(
+        {
+          id: created.customerId,
+          customerNumber: created.customerNumber,
+          buildingId: body.buildingId,
+          apartmentNumber: created.apartmentNumber,
+        },
+        {
+          installationScheduledAt: installationInput.scheduledAt,
+          installationAssignmentMode: installationInput.assignmentMode,
+        },
+        { kind: "onboarding", createdBy: req.user?.id || null }
+      );
+    } catch (e) {
+      console.warn("installation schedule on signup failed:", e.message);
+    }
+
     // TISP BillingCycle stays Monthly.
     // Signup due-date policy:
     // - Trial: due at trial end.
@@ -3235,8 +3349,8 @@ async function createCustomer(req, res, next) {
     // - B2B unpaid: due = today + 30 days (Net 30).
     //   Initial sync uses "today" as the invoice anchor; after Zoho creates the
     //   signup invoice we re-assert from the real invoice date when available.
-    // Recurring start (non-trial): 7 days before (initial due + payment frequency)
-    // e.g. created 10 Aug monthly → due 17 Aug → next due 17 Sep → starts 10 Sep.
+    // Recurring start (non-trial): 7 days before next service due
+    // (signup + payment frequency). e.g. created 14 Aug monthly → due 14 Sep → starts 7 Sep.
     const paymentAnchor = new Date();
     let serviceDueDate;
     if (body.trialPeriod) {
@@ -3339,6 +3453,7 @@ async function createCustomer(req, res, next) {
       const welcomeCustomer = await store.getCustomerById(created.customerId);
       welcomeEmail = await sendCustomerWelcomeEmail(welcomeCustomer, {
         createdBy: req.user?.id || null,
+        extraVars: emailVarsFromInstallation(installation),
       });
     } catch (e) {
       welcomeEmail = {
@@ -3406,6 +3521,7 @@ async function createCustomer(req, res, next) {
           }
         : { attached: false, reason: campaignAttach?.reason || null },
       welcomeEmail,
+      installation,
     });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
@@ -4433,6 +4549,18 @@ async function switchApartment(req, res, next) {
       return res.status(400).json({ error: "apartmentNumber is required" });
     }
 
+    const {
+      parseInstallationInput,
+      scheduleCustomerInstallation,
+      emailVarsFromInstallation,
+    } = require("../services/installationStore");
+    let installationInput;
+    try {
+      installationInput = parseInstallationInput(req.body || {}, { required: true });
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
     const result = await store.switchCustomerApartment(
       Number(req.params.id),
       apartmentNumber,
@@ -4482,6 +4610,24 @@ async function switchApartment(req, res, next) {
     });
 
     const customer = await store.getCustomerById(Number(req.params.id));
+
+    let installation = null;
+    try {
+      installation = await scheduleCustomerInstallation(
+        customer,
+        {
+          installationScheduledAt: installationInput.scheduledAt,
+          installationAssignmentMode: installationInput.assignmentMode,
+        },
+        {
+          kind: "apartment_switch",
+          createdBy: req.user?.id || null,
+          notes: `${result.oldApartment} → ${result.newApartment}`,
+        }
+      );
+    } catch (e) {
+      console.warn("installation schedule on apartment switch failed:", e.message);
+    }
 
     const zohoCompanyOk =
       zoho?.ok !== false &&
@@ -4572,6 +4718,7 @@ async function switchApartment(req, res, next) {
         extraVars: {
           previousApartment: result.oldApartment,
           previousCustomerNumber: result.previousCustomerNumber,
+          ...emailVarsFromInstallation(installation),
         },
       });
     } catch (e) {
@@ -4584,6 +4731,7 @@ async function switchApartment(req, res, next) {
       tisp: tispError ? { ok: false, error: tispError } : { ok: true },
       zoho,
       olt: { clearedMapping: oltCleared },
+      installation,
       renumber: {
         previousCustomerNumber: result.previousCustomerNumber,
         customerNumber: customer?.customerNumber,
@@ -6001,8 +6149,9 @@ async function convertCustomerTypeHandler(req, res, next) {
             result.previousCustomerNumber
           );
           await markContactInactive_JS(oldContact.contact_id);
-          invalidateCustomerZoho(id);
         }
+        await integrationSnapshot.clearZohoBillingSnapshot(id);
+        invalidateCustomerZoho(id);
       } catch (e) {
         console.warn(
           "Zoho C2B contact cleanup after B2B conversion failed:",
@@ -6011,16 +6160,42 @@ async function convertCustomerTypeHandler(req, res, next) {
       }
     }
 
-    // B2B → C2B: rebuild previous agency recurring without this house.
+    // B2B → C2B: drop agency snapshot, rebuild agency recurring without this
+    // house, then provision a personal C2B contact + invoice + recurring.
+    let excludeAgencyContactIds = [];
     if (result.previousType === "B2B" && result.newType === "C2B") {
       try {
         if (result.previousAgencyId) {
           const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
-          await refreshAgencyRecurring(result.previousAgencyId);
+          const { findZohoContactForAgency } = require("./agencies.controller");
+          const agency = await store.getAgencyById(result.previousAgencyId);
+          if (agency) {
+            try {
+              const agencyContact = await findZohoContactForAgency(agency);
+              if (agencyContact?.contact_id) {
+                excludeAgencyContactIds.push(String(agencyContact.contact_id));
+              }
+            } catch (lookupErr) {
+              console.warn(
+                "Agency Zoho contact lookup after C2B conversion failed:",
+                lookupErr.message
+              );
+            }
+            await refreshAgencyRecurring(result.previousAgencyId);
+          }
         }
       } catch (e) {
         console.warn(
           "Zoho B2B agency cleanup after C2B conversion failed:",
+          e.message
+        );
+      }
+      try {
+        await integrationSnapshot.clearZohoBillingSnapshot(id);
+        invalidateCustomerZoho(id);
+      } catch (e) {
+        console.warn(
+          "Zoho snapshot detach after C2B conversion failed:",
           e.message
         );
       }
@@ -6090,13 +6265,34 @@ async function convertCustomerTypeHandler(req, res, next) {
         }
       }
     }
-    const zoho =
-      result.customer?.status === "active"
-        ? await runZohoSyncForCustomer(id, {
-            previousCustomerNumber: result.previousCustomerNumber,
-            syncRecurring: result.newType === "C2B",
-          })
-        : { ok: true, skipped: true };
+    let zoho = { ok: true, skipped: true };
+    if (result.customer?.status === "active") {
+      if (result.previousType === "B2B" && result.newType === "C2B") {
+        try {
+          const {
+            provisionC2BBillingAfterB2BConversion,
+          } = require("../services/customerBillingOnboarding");
+          zoho = await provisionC2BBillingAfterB2BConversion(id, {
+            excludeContactIds: excludeAgencyContactIds,
+            forceEmail: true,
+          });
+        } catch (e) {
+          const message = e.message || "Zoho C2B billing after conversion failed";
+          console.warn(message);
+          try {
+            await store.updateCustomerZohoBillingStatus(id, "failed", message);
+          } catch {
+            /* ignore */
+          }
+          zoho = { ok: false, error: message };
+        }
+      } else {
+        zoho = await runZohoSyncForCustomer(id, {
+          previousCustomerNumber: result.previousCustomerNumber,
+          syncRecurring: result.newType === "C2B",
+        });
+      }
+    }
 
     const customer = await store.getCustomerById(id);
 

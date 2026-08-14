@@ -16,7 +16,7 @@ const SECTIONS = [
 type Section = (typeof SECTIONS)[number]["id"];
 
 /** Viewport height left after mobile page chrome + tabs + bottom nav. */
-const CHANNEL_MOBILE_H = `calc(100dvh - 11.25rem - ${MOBILE_BOTTOM_NAV_OFFSET})`;
+const CHANNEL_MOBILE_H = `calc(var(--app-height, 100dvh) - 11.25rem - ${MOBILE_BOTTOM_NAV_OFFSET})`;
 
 export function CommunicationPage() {
   const [searchParams, setSearchParams] = useSearchParams();

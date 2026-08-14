@@ -58,7 +58,7 @@ export default defineConfig({
               request.destination === "style",
             handler: "NetworkFirst",
             options: {
-              cacheName: "admin-shell-v4",
+              cacheName: "admin-shell-v5",
               networkTimeoutSeconds: 4,
             },
           },

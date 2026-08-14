@@ -20,6 +20,7 @@ const {
   computeInvoiceDueDate,
   computeServiceDueDate,
   computeRecurringStartBeforeDue,
+  computeSignupRecurringWindow,
 } = require("../../api/utils/billingPeriod");
 const {
   isB2BCustomer,
@@ -60,6 +61,18 @@ describe("process: Convert C2B ↔ B2B numbering + Zoho contact target", () => {
     });
     assert.deepEqual(b2bKeys, ["City Agency"]);
     assert.equal(isB2BCustomer({ customer_type: "B2B" }), true);
+  });
+
+  it("after convert to C2B, Zoho lookup is the personal number not the agency", () => {
+    const afterConvert = getZohoContactLookupKeys({
+      customer_type: "C2B",
+      customerNumber: "CL-A10",
+      email: "tenant@example.com",
+      agencyName: "City Agency",
+    });
+    assert.equal(afterConvert[0], "CL-A10");
+    assert.equal(afterConvert.includes("City Agency"), false);
+    assert.equal(isB2BCustomer({ customer_type: "C2B" }), false);
   });
 });
 
@@ -177,6 +190,13 @@ describe("process: Signup billing window (C2B vs B2B agency)", () => {
       computeRecurringStartBeforeDue(serviceDue, 7, "Africa/Nairobi"),
       "2026-09-05"
     );
+    const window = computeSignupRecurringWindow({
+      signupDate: anchor,
+      paymentFrequency: "monthly",
+      timeZone: "Africa/Nairobi",
+    });
+    assert.equal(window.nextCycleDue, "2026-09-12");
+    assert.equal(window.startDate, "2026-09-05");
     assert.equal(applyAgencyUnitDiscount(10000, 10), 9000);
   });
 });

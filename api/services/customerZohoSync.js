@@ -10,10 +10,10 @@ const { isB2BCustomer, resolveAgencyForCustomer } = require("../utils/b2bBilling
 const { buildSubscriptionLineItems } = require("../utils/zohoInvoiceLineItems");
 const {
   computeBillingPeriod,
+  computeSignupRecurringWindow,
 } = require("../utils/billingPeriod");
 const {
   mapPaymentFrequencyToRecurrence,
-  computeRecurringStartDate,
   recurrenceMatches,
 } = require("../utils/zohoRecurrence");
 const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
@@ -345,10 +345,10 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
 
   const startDate =
     options.startDate ||
-    computeRecurringStartDate({
+    computeSignupRecurringWindow({
       paymentFrequency: customer.paymentFrequency,
       customPeriodDays: customer.customPeriodDays,
-    });
+    }).startDate;
 
   const { resolveZohoPaymentTerms } = require("../utils/billingPeriod");
   const terms = resolveZohoPaymentTerms(customer);

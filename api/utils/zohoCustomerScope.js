@@ -92,8 +92,10 @@ function zohoContactMatchesCustomerIdentity(contact, customer) {
 /**
  * True when a Zoho contact belongs to this dashboard customer (C2B: company_name
  * must match customer number; B2B: agency name).
- * When storedContactId matches contact_id, always trust the prior sync link
- * (e.g. Zoho company_name still empty).
+ *
+ * Stored contact id is trusted only when company_name is empty (legacy Zoho
+ * contacts). A leftover agency contact must not keep showing B2B invoices after
+ * the house converts to C2B.
  */
 function zohoContactMatchesDashboardCustomer(
   contact,
@@ -102,17 +104,16 @@ function zohoContactMatchesDashboardCustomer(
 ) {
   if (!contact?.contact_id || !customer) return false;
 
-  if (
-    storedContactId &&
-    String(contact.contact_id) === String(storedContactId)
-  ) {
-    return true;
-  }
-
   if (isB2BCustomer(customer)) {
     const agency = String(
       customer.agencyName || customer.agency_name || ""
     ).trim();
+    if (
+      storedContactId &&
+      String(contact.contact_id) === String(storedContactId)
+    ) {
+      return true;
+    }
     if (!agency) return false;
     const target = normalizeCustomerRef(agency);
     return contactRefFields(contact).some(
@@ -126,9 +127,22 @@ function zohoContactMatchesDashboardCustomer(
   if (!customerNumber) return false;
 
   const target = normalizeCustomerRef(customerNumber);
-  return contactRefFields(contact).some(
+  const identityMatch = contactRefFields(contact).some(
     (field) => normalizeCustomerRef(field) === target
   );
+  if (identityMatch) return true;
+
+  if (
+    storedContactId &&
+    String(contact.contact_id) === String(storedContactId)
+  ) {
+    const company = String(contact.company_name || "").trim();
+    // Empty company_name: keep the prior sync link. Any other name that is not
+    // this customer number is a different Zoho customer (typically the agency).
+    return !company;
+  }
+
+  return false;
 }
 
 function zohoRecordContactId(record) {

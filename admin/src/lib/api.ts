@@ -976,6 +976,7 @@ export type UpcomingInvoicesForecast = {
   windowDays: number;
   windowStart: string;
   windowEnd: string;
+  monthsLabel?: string;
   invoiceCount: number;
   anticipatedAmount: number;
   items?: Array<{
@@ -983,9 +984,12 @@ export type UpcomingInvoicesForecast = {
     customerNumber: string;
     customerName: string;
     buildingName: string | null;
+    agencyName?: string | null;
+    customerType?: string;
     expectedAmount: number;
     paymentFrequency: string;
     scheduledDate: string;
+    month?: string;
     source: string;
   }>;
 };
@@ -1788,6 +1792,42 @@ export type CancelCustomerPayload = {
   notes?: string;
   onuCollectedAt: string;
   dstvDecoderCollectedAt?: string;
+};
+
+export type Installation = {
+  id: number;
+  customerId: number;
+  customerNumber: string;
+  customerName: string;
+  buildingId: number | null;
+  buildingName: string | null;
+  apartmentNumber: string;
+  kind: "onboarding" | "apartment_switch";
+  scheduledAt: string | null;
+  scheduledDate: string;
+  scheduledTime: string;
+  needsSchedule?: boolean;
+  displayDate: string;
+  displayTime: string;
+  displayDateTime: string;
+  durationMinutes: number;
+  assignmentMode: "auto" | "manual";
+  technicianId: number | null;
+  technicianName: string | null;
+  technicianEmail: string | null;
+  status: "unassigned" | "assigned" | "in_progress" | "completed" | "cancelled";
+  notes: string | null;
+  createdBy: number | null;
+  assignedAt: string | null;
+  completedAt: string | null;
+  createdAt: string | null;
+};
+
+export type InstallationTechnician = {
+  id: number;
+  name: string;
+  email: string;
+  jobTitle?: string | null;
 };
 
 export const api = {
@@ -3317,18 +3357,27 @@ export const api = {
   switchCustomerApartment: (
     id: number,
     apartmentNumber: string,
-    options: { ipAddress?: string } = {}
+    options: {
+      ipAddress?: string;
+      installationDate?: string;
+      installationTime?: string;
+      installationAssignmentMode?: "auto" | "manual";
+    } = {}
   ) =>
     request<{
       ok: boolean;
       customer: Customer;
       tisp?: { ok: boolean; error?: string };
       zoho?: { ok?: boolean; error?: string; contactUpdated?: boolean };
+      installation?: Installation | null;
     }>(`/admin/customers/${id}/switch-apartment`, {
       method: "POST",
       body: JSON.stringify({
         apartmentNumber,
         ipAddress: options.ipAddress,
+        installationDate: options.installationDate,
+        installationTime: options.installationTime,
+        installationAssignmentMode: options.installationAssignmentMode,
       }),
     }),
 
@@ -3667,6 +3716,36 @@ export const api = {
     request<{ ok: boolean; error?: string }>(`/admin/sync/${integration}/retry`, {
       method: "POST",
       body: JSON.stringify({ jobId }),
+    }),
+
+  listInstallations: (params: Record<string, string | undefined> = {}) =>
+    request<{
+      ok: boolean;
+      data: Installation[];
+      pagination: { page: number; limit: number; total: number; pages: number };
+    }>(`/admin/installations${buildQueryString(params)}`),
+
+  listInstallationTechnicians: () =>
+    request<{ ok: boolean; technicians: InstallationTechnician[] }>(
+      "/admin/installations/technicians"
+    ),
+
+  assignInstallation: (id: number, technicianId: number | null) =>
+    request<{ ok: boolean; installation: Installation }>(
+      `/admin/installations/${id}/assign`,
+      {
+        method: "POST",
+        body: JSON.stringify({ technicianId }),
+      }
+    ),
+
+  updateInstallation: (
+    id: number,
+    data: { status?: Installation["status"]; notes?: string; scheduledAt?: string }
+  ) =>
+    request<{ ok: boolean; installation: Installation }>(`/admin/installations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
     }),
 };
 

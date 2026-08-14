@@ -729,9 +729,9 @@ export function LoginPage() {
 
   return (
     <Flex
-      h={{ base: "100dvh", md: "auto" }}
-      minH={{ base: "100dvh", md: "100dvh" }}
-      maxH={{ base: "100dvh", md: "none" }}
+      h={{ base: "100%", md: "auto" }}
+      minH={{ base: "100%", md: "100dvh" }}
+      maxH={{ base: "100%", md: "none" }}
       direction={{ base: "column", md: "row" }}
       bg={BRAND.cerulean}
       overflow={{ base: "hidden", md: "visible" }}
@@ -742,7 +742,7 @@ export function LoginPage() {
         flex="1"
         direction="column"
         h="100%"
-        maxH="100dvh"
+        maxH="100%"
         position="relative"
         overflowX="hidden"
         overflowY="auto"

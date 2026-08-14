@@ -90,15 +90,23 @@ async function syncPermissionsToDb() {
       isNew = true;
     }
 
-    // Only seed permissions for brand-new groups. Re-seeding on every boot
-    // was wiping admin edits in Settings → Groups (e.g. adding buildings.view
-    // to Finance) whenever nodemon restarted.
+    // Seed new groups fully. For existing system groups, add any new catalog
+    // permissions from the preset without wiping admin custom grants.
     if (!isNew) {
       const countRows = await query(
         `SELECT COUNT(*) AS c FROM rbac_group_permissions WHERE group_id = ?`,
         [groupId]
       );
-      if (Number(countRows[0]?.c) > 0) continue;
+      if (Number(countRows[0]?.c) > 0) {
+        for (const permKey of preset.permissions) {
+          if (!getPermission(permKey)) continue;
+          await query(
+            `INSERT IGNORE INTO rbac_group_permissions (group_id, perm_key) VALUES (?, ?)`,
+            [groupId, permKey]
+          );
+        }
+        continue;
+      }
     }
 
     await query(`DELETE FROM rbac_group_permissions WHERE group_id = ?`, [groupId]);

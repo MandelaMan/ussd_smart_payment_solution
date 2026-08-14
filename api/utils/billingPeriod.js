@@ -204,6 +204,75 @@ function computeRecurringStartBeforeDue(
     .format("YYYY-MM-DD");
 }
 
+/**
+ * Recurring invoice after signup: next service due is signup + payment frequency
+ * (not the Net 7/30 first-invoice due). The profile starts 7 days before that due.
+ * Created 14 Aug monthly → due 14 Sep → invoice 7 Sep.
+ */
+function computeSignupRecurringWindow({
+  signupDate = new Date(),
+  paymentFrequency = "monthly",
+  customPeriodDays = null,
+  timeZone = DEFAULT_TZ,
+} = {}) {
+  const nextCycleDue = computeServiceDueDate({
+    anchorDate: signupDate,
+    paymentFrequency,
+    customPeriodDays,
+    timeZone,
+  });
+  return {
+    nextCycleDue,
+    startDate: computeRecurringStartBeforeDue(
+      nextCycleDue,
+      RECURRING_LEAD_DAYS_BEFORE_DUE,
+      timeZone
+    ),
+  };
+}
+
+/**
+ * When edit-customer creates a signup invoice and/or (re)sets recurring,
+ * recalculate TISP DueDate from today — do not keep a stale snapshot date.
+ * Signup invoice → Net 7/30 from the invoice date.
+ * Recurring only → next service due (signup + payment frequency).
+ */
+function resolveTispDueDateForEditBilling({
+  customer,
+  createInitialInvoice = false,
+  createRecurringInvoice = false,
+  updateZohoRecurring = false,
+  invoice = null,
+  anchorDate = new Date(),
+  timeZone = DEFAULT_TZ,
+} = {}) {
+  const billingReset =
+    createInitialInvoice === true ||
+    createRecurringInvoice === true ||
+    updateZohoRecurring === true;
+  if (!billingReset) return null;
+
+  if (createInitialInvoice) {
+    return (
+      (invoice?.dueDate && String(invoice.dueDate).slice(0, 10)) ||
+      computeInvoiceDueDate(
+        customer,
+        invoice?.invoiceDate || anchorDate,
+        timeZone
+      )
+    );
+  }
+
+  return computeSignupRecurringWindow({
+    signupDate: invoice?.period?.startDate || anchorDate,
+    paymentFrequency:
+      customer?.paymentFrequency || customer?.payment_frequency || "monthly",
+    customPeriodDays:
+      customer?.customPeriodDays ?? customer?.custom_period_days ?? null,
+    timeZone,
+  }).nextCycleDue;
+}
+
 module.exports = {
   DEFAULT_TZ,
   INVOICE_DUE_DAYS,
@@ -216,6 +285,8 @@ module.exports = {
   computeTrialEndDate,
   computeServiceDueDate,
   computeRecurringStartBeforeDue,
+  computeSignupRecurringWindow,
+  resolveTispDueDateForEditBilling,
   buildPackageLabel,
   buildSubscriptionInvoiceDescription,
   ZOHO_RECURRING_DATE_START,

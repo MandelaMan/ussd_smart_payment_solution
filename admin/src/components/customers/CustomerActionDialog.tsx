@@ -31,6 +31,7 @@ import { PackageChangeForm } from "./PackageChangeForm";
 import { PaymentFrequencyForm } from "./PaymentFrequencyForm";
 import type { CustomerAction } from "./CustomerActionMenu";
 import type { Product, PendingUpgrade, UpgradePaymentMethod, UpgradeQuote } from "../../lib/api";
+import { InstallationScheduleFields } from "../installations/InstallationScheduleFields";
 
 type Props = {
   customer: Customer | null;
@@ -39,6 +40,9 @@ type Props = {
   actionProductId: string;
   newApartment: string;
   switchIpAddress: string;
+  switchInstallationDate: string;
+  switchInstallationTime: string;
+  switchAssignmentMode: "auto" | "manual";
   cancelNotes: string;
   cancelOnuCollectedAt: string;
   cancelDstvDecoderCollectedAt: string;
@@ -66,6 +70,9 @@ type Props = {
   onCancelPendingUpgrade?: () => void;
   onApartmentChange: (value: string) => void;
   onSwitchIpChange: (value: string) => void;
+  onSwitchInstallationDateChange: (value: string) => void;
+  onSwitchInstallationTimeChange: (value: string) => void;
+  onSwitchAssignmentModeChange: (value: "auto" | "manual") => void;
   onNotesChange: (value: string) => void;
   onOnuCollectedAtChange: (value: string) => void;
   onDstvDecoderCollectedAtChange: (value: string) => void;
@@ -109,9 +116,15 @@ function MoveApartmentForm({
   building,
   newApartment,
   switchIpAddress,
+  installationDate,
+  installationTime,
+  assignmentMode,
   loading,
   onApartmentChange,
   onSwitchIpChange,
+  onInstallationDateChange,
+  onInstallationTimeChange,
+  onAssignmentModeChange,
   onSubmit,
   onClose,
 }: {
@@ -119,9 +132,15 @@ function MoveApartmentForm({
   building: Building | undefined;
   newApartment: string;
   switchIpAddress: string;
+  installationDate: string;
+  installationTime: string;
+  assignmentMode: "auto" | "manual";
   loading: boolean;
   onApartmentChange: (value: string) => void;
   onSwitchIpChange: (value: string) => void;
+  onInstallationDateChange: (value: string) => void;
+  onInstallationTimeChange: (value: string) => void;
+  onAssignmentModeChange: (value: "auto" | "manual") => void;
   onSubmit: () => void;
   onClose: () => void;
 }) {
@@ -188,7 +207,8 @@ function MoveApartmentForm({
       String(customer.apartmentNumber || "").toUpperCase();
 
   const ipOk = !needsIp || Boolean(switchIpAddress);
-  const canSubmit = apartmentOk && ipOk && !checking && !loading;
+  const installOk = Boolean(installationDate && installationTime);
+  const canSubmit = apartmentOk && ipOk && installOk && !checking && !loading;
 
   const previewNumber = (() => {
     const apt = newApartment.trim().toUpperCase();
@@ -307,6 +327,16 @@ function MoveApartmentForm({
         </Text>
       ) : null}
 
+      <InstallationScheduleFields
+        date={installationDate}
+        time={installationTime}
+        assignmentMode={assignmentMode}
+        onDateChange={onInstallationDateChange}
+        onTimeChange={onInstallationTimeChange}
+        onAssignmentModeChange={onAssignmentModeChange}
+        disabled={loading}
+      />
+
       <Flex justify="flex-end" gap={2}>
         <Button variant="ghost" onClick={onClose}>
           Cancel
@@ -331,6 +361,9 @@ export function CustomerActionDialog({
   actionProductId,
   newApartment,
   switchIpAddress,
+  switchInstallationDate,
+  switchInstallationTime,
+  switchAssignmentMode,
   cancelNotes,
   cancelOnuCollectedAt,
   cancelDstvDecoderCollectedAt,
@@ -358,6 +391,9 @@ export function CustomerActionDialog({
   onCancelPendingUpgrade,
   onApartmentChange,
   onSwitchIpChange,
+  onSwitchInstallationDateChange,
+  onSwitchInstallationTimeChange,
+  onSwitchAssignmentModeChange,
   onNotesChange,
   onOnuCollectedAtChange,
   onDstvDecoderCollectedAtChange,
@@ -473,9 +509,15 @@ export function CustomerActionDialog({
             building={buildings.find((b) => b.id === customer.buildingId)}
             newApartment={newApartment}
             switchIpAddress={switchIpAddress}
+            installationDate={switchInstallationDate}
+            installationTime={switchInstallationTime}
+            assignmentMode={switchAssignmentMode}
             loading={loading}
             onApartmentChange={onApartmentChange}
             onSwitchIpChange={onSwitchIpChange}
+            onInstallationDateChange={onSwitchInstallationDateChange}
+            onInstallationTimeChange={onSwitchInstallationTimeChange}
+            onAssignmentModeChange={onSwitchAssignmentModeChange}
             onSubmit={onSubmit}
             onClose={onClose}
           />

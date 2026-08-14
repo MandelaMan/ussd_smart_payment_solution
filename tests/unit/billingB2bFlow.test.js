@@ -7,6 +7,8 @@ const {
   computeTrialEndDate,
   computeServiceDueDate,
   computeRecurringStartBeforeDue,
+  computeSignupRecurringWindow,
+  resolveTispDueDateForEditBilling,
   buildRecurringSubscriptionInvoiceDescription,
   INVOICE_DUE_DAYS,
   TRIAL_PERIOD_DAYS,
@@ -102,6 +104,58 @@ describe("billing period + invoice terms", () => {
     assert.equal(
       computeRecurringStartBeforeDue("2026-08-07", 7, "Africa/Nairobi"),
       "2026-07-31"
+    );
+  });
+
+  it("signup recurring invoices 7 days before next service due, not Net 7 + 1 month", () => {
+    const window = computeSignupRecurringWindow({
+      signupDate: "2026-08-14T12:00:00+03:00",
+      paymentFrequency: "monthly",
+      timeZone: "Africa/Nairobi",
+    });
+    assert.equal(window.nextCycleDue, "2026-09-14");
+    assert.equal(window.startDate, "2026-09-07");
+  });
+
+  it("edit billing reset: signup invoice uses Net 7, recurring-only uses next service due", () => {
+    const customer = { customerType: "C2B", paymentFrequency: "monthly" };
+    const anchor = "2026-08-14T12:00:00+03:00";
+    assert.equal(
+      resolveTispDueDateForEditBilling({
+        customer,
+        createInitialInvoice: true,
+        updateZohoRecurring: true,
+        anchorDate: anchor,
+        timeZone: "Africa/Nairobi",
+      }),
+      "2026-08-21"
+    );
+    assert.equal(
+      resolveTispDueDateForEditBilling({
+        customer,
+        updateZohoRecurring: true,
+        anchorDate: anchor,
+        timeZone: "Africa/Nairobi",
+      }),
+      "2026-09-14"
+    );
+    assert.equal(
+      resolveTispDueDateForEditBilling({
+        customer,
+        createInitialInvoice: true,
+        invoice: { dueDate: "2026-08-22" },
+        anchorDate: anchor,
+        timeZone: "Africa/Nairobi",
+      }),
+      "2026-08-22"
+    );
+    assert.equal(
+      resolveTispDueDateForEditBilling({
+        customer,
+        anchorDate: anchor,
+        timeZone: "Africa/Nairobi",
+      }),
+      null
     );
   });
 

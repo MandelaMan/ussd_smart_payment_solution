@@ -10,14 +10,14 @@ import { PAGE_STACK_GAP, mobileStickyHeaderProps } from "./ui/pageLayout";
 
 /** Main content area — accounts for layout padding and floating bottom nav. */
 export const PAGE_CONTENT_MIN_H = {
-  base: "calc(100dvh - 6rem)",
-  lg: "calc(100dvh - 1.5rem)",
+  base: "calc(var(--app-height, 100dvh) - 6rem)",
+  lg: "calc(var(--app-height, 100dvh) - 1.5rem)",
 } as const;
 
 /** Table card area below typical page title + filter toolbar. */
 export const TABLE_VIEWPORT_MIN_H = {
-  base: "calc(100dvh - 14rem)",
-  lg: "calc(100dvh - 13rem)",
+  base: "calc(var(--app-height, 100dvh) - 14rem)",
+  lg: "calc(var(--app-height, 100dvh) - 13rem)",
 } as const;
 
 export function PaginationSkeleton() {

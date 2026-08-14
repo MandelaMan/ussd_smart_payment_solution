@@ -15,6 +15,7 @@ import {
   CustomerWriteRoute,
   CustomerReadRoute,
   ActivityRoute,
+  InstallationsRoute,
 } from "./components/ProtectedRoute";
 import { BootSplashGate } from "./components/BootSplashGate";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -90,6 +91,7 @@ const BuildingsPage = lazyPage(() => import("./pages/BuildingsPage"), "Buildings
 const ProductsPage = lazyPage(() => import("./pages/ProductsPage"), "ProductsPage");
 const AgenciesPage = lazyPage(() => import("./pages/AgenciesPage"), "AgenciesPage");
 const CampaignsPage = lazyPage(() => import("./pages/CampaignsPage"), "CampaignsPage");
+const InstallationsPage = lazyPage(() => import("./pages/InstallationsPage"), "InstallationsPage");
 const AgencyDetailPage = lazyPage(
   () => import("./pages/AgencyDetailPage"),
   "AgencyDetailPage"
@@ -287,6 +289,16 @@ export default function App() {
                     element={
                       <LazyRoute>
                         <NewCustomerPage />
+                      </LazyRoute>
+                    }
+                  />
+                </Route>
+                <Route element={<InstallationsRoute />}>
+                  <Route
+                    path="installations"
+                    element={
+                      <LazyRoute>
+                        <InstallationsPage />
                       </LazyRoute>
                     }
                   />

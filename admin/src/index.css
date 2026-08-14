@@ -2,11 +2,20 @@
   box-sizing: border-box;
 }
 
+:root {
+  --app-height: 100svh;
+  --app-top: 0px;
+  --app-bottom-inset: max(0px, calc(100dvh - var(--app-height, 100dvh)));
+  --list-page-sticky-top: 0px;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   height: 100%;
-  height: 100dvh;
+  height: 100svh;
+  height: var(--app-height, 100svh);
+  max-height: var(--app-height, 100svh);
   overflow: hidden;
   overscroll-behavior-x: none;
   background: #ffffff;
@@ -20,10 +29,10 @@ html.sul-pwa:not(.sul-booted) {
 
 body {
   margin: 0;
-  min-height: 100%;
-  min-height: 100dvh;
+  min-height: 0;
   height: 100%;
-  height: 100dvh;
+  height: var(--app-height, 100svh);
+  max-height: var(--app-height, 100svh);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
@@ -37,11 +46,14 @@ html.sul-pwa:not(.sul-booted) body {
 }
 
 #root {
-  height: 100%;
-  height: 100dvh;
-  min-height: 100%;
-  min-height: 100dvh;
-  max-height: 100dvh;
+  position: fixed;
+  top: var(--app-top, 0px);
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: var(--app-height, 100svh) !important;
+  max-height: var(--app-height, 100svh) !important;
+  min-height: 0 !important;
   overflow: hidden;
   background: #ffffff;
 }
@@ -105,10 +117,6 @@ input[disabled],
   cursor: not-allowed;
 }
 
-:root {
-  --list-page-sticky-top: 0px;
-}
-
 @media (max-width: 47.99em) {
   /*
    * iOS Safari zooms the page when focused controls are < 16px.
@@ -129,15 +137,15 @@ input[disabled],
   }
 
   /*
-   * Pin the floating nav shell above the home indicator via `bottom`, never
-   * padding (padding + opaque bg = white dead strip). Class is versioned (v4)
-   * so stale service-worker CSS cannot restore the band.
+   * Floating pill sits 8px from the visible bottom. Safe-area as `bottom`
+   * opened the dead strip under the pill; the shell is locked to the visual
+   * viewport instead. Class is versioned (v5) so stale SW CSS cannot restore it.
    */
-  .sul-mobile-nav-v4 {
-    position: fixed !important;
+  .sul-mobile-nav-v5 {
+    position: absolute !important;
     left: 0 !important;
     right: 0 !important;
-    bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
+    bottom: 8px !important;
     z-index: 1000 !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -152,17 +160,18 @@ input[disabled],
     transform: none !important;
   }
 
-  .sul-mobile-nav-v4 nav {
+  .sul-mobile-nav-v5 nav {
     pointer-events: auto !important;
     margin: 0 12px !important;
   }
 
   /* Keep the floating pill from covering modal/sheet footers. */
-  body:has([aria-modal="true"]) .sul-mobile-nav-v4 {
+  body:has([aria-modal="true"]) .sul-mobile-nav-v5 {
     display: none !important;
   }
 
   /* Legacy selectors — neutralize any cached stylesheet still targeting them. */
+  .sul-mobile-nav-v4,
   .sul-mobile-nav-v3,
   .sul-mobile-nav-v2,
   .mobile-bottom-nav-root {
@@ -182,6 +191,7 @@ input[disabled],
 }
 
 @media (min-width: 48em) {
+  .sul-mobile-nav-v5,
   .sul-mobile-nav-v4,
   .sul-mobile-nav-v3,
   .sul-mobile-nav-v2,
@@ -202,6 +212,17 @@ input[type="date"].date-field-native {
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+}
+
+input[type="date"].date-field-native::-webkit-datetime-edit,
+input[type="date"].date-field-native::-webkit-datetime-edit-fields-wrapper {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  line-height: 1;
 }
 
 input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit,
@@ -211,12 +232,6 @@ input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetim
 input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit-day-field,
 input[type="date"].date-field-native:not(.date-field-has-value)::-webkit-datetime-edit-year-field {
   color: transparent;
-}
-
-input[type="date"].date-field-native::-webkit-datetime-edit,
-input[type="date"].date-field-native::-webkit-datetime-edit-fields-wrapper {
-  padding: 0;
-  line-height: 1;
 }
 
 input[type="date"].date-field-native::-webkit-datetime-edit-text,

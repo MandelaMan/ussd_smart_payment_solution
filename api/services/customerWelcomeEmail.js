@@ -37,6 +37,10 @@ const PLACEHOLDER_KEYS = [
   "pauseEndDate",
   "pauseReason",
   "trialEndsAt",
+  "installationDate",
+  "installationTime",
+  "installationDateTime",
+  "technicianName",
   "referralDiscountPercent",
   "referralDiscountedPrice",
   "referredCustomerNumber",
@@ -121,6 +125,10 @@ function buildCustomerTemplateVars(customer, extra = {}) {
     )
       .trim()
       .slice(0, 10),
+    installationDate: "",
+    installationTime: "",
+    installationDateTime: "",
+    technicianName: "",
     referralDiscountPercent: "",
     referralDiscountedPrice: "",
     referredCustomerNumber: "",
@@ -158,6 +166,37 @@ function buildCustomerTemplateVars(customer, extra = {}) {
   }
 
   return base;
+}
+
+function ensureInstallationBlock(bodyHtml, vars) {
+  const dt = String(vars.installationDateTime || "").trim();
+  if (!dt) return bodyHtml;
+  const tech = String(vars.technicianName || "").trim();
+  const alreadyHasSlot =
+    /\{\{\s*installationDateTime\s*\}\}/i.test(bodyHtml) ||
+    bodyHtml.includes(dt);
+  let html = bodyHtml;
+  if (!alreadyHasSlot) {
+    const block = `<p><strong>Installation:</strong> ${escapeHtml(dt)}${
+      tech ? `<br/><strong>Technician:</strong> ${escapeHtml(tech)}` : ""
+    }</p>`;
+    if (/<p>Thank you/i.test(html)) {
+      html = html.replace(/<p>Thank you/i, `${block}\n<p>Thank you`);
+    } else {
+      html = `${html}\n${block}`;
+    }
+  } else if (
+    tech &&
+    !html.includes(escapeHtml(tech)) &&
+    !html.includes(tech) &&
+    !/\{\{\s*technicianName\s*\}\}/i.test(html)
+  ) {
+    html = html.replace(
+      dt,
+      `${dt}<br/><strong>Technician:</strong> ${escapeHtml(tech)}`
+    );
+  }
+  return html;
 }
 
 function wrapLifecycleHtml(bodyHtml) {
@@ -212,7 +251,11 @@ async function sendCustomerLifecycleEmail(
   const label =
     CUSTOMER_EMAIL_TEMPLATE_DEFS[templateKey].label || templateKey;
   const subject = applyTemplate(template.subject, vars);
-  const bodyInner = applyTemplate(template.bodyHtml, vars, { escape: false });
+  const templatedBody = applyTemplate(template.bodyHtml, vars, { escape: false });
+  const bodyInner =
+    templateKey === "welcome" || templateKey === "apartment_move"
+      ? ensureInstallationBlock(templatedBody, vars)
+      : templatedBody;
   const content = wrapLifecycleHtml(bodyInner);
   const ccAddress = (template.ccEmails || []).join(",");
 

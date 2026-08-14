@@ -151,6 +151,16 @@ const MODULES = [
     ],
   },
   {
+    key: "installations",
+    label: "Installations",
+    description: "Field installation jobs for new customers and apartment moves",
+    permissions: [
+      { key: "installations.view", label: "View", description: "View installation jobs and schedules" },
+      { key: "installations.assign", label: "Assign", description: "Assign or reassign technicians" },
+      { key: "installations.edit", label: "Update", description: "Update installation status and notes" },
+    ],
+  },
+  {
     key: "campaigns",
     label: "Campaigns",
     description: "Acquisition campaigns, first-month discounts, and referrals",
@@ -247,6 +257,7 @@ const USER_ROLE_DEFAULTS = Object.freeze([
   "communication.view",
   "communication.send",
   "reports.view",
+  "installations.view",
 ]);
 
 /**
@@ -273,6 +284,7 @@ const GROUP_PRESETS = [
       "communication.send",
       "reports.view",
       "campaigns.view",
+      "installations.view",
     ],
   },
   {
@@ -340,6 +352,9 @@ const GROUP_PRESETS = [
       "agencies.edit",
       "campaigns.view",
       "reports.view",
+      "installations.view",
+      "installations.assign",
+      "installations.edit",
     ],
   },
   {
@@ -360,6 +375,23 @@ const GROUP_PRESETS = [
       "pops.edit",
       "apartments.view",
       "packages.view",
+      "installations.view",
+      "installations.assign",
+      "installations.edit",
+    ],
+  },
+  {
+    slug: "technician",
+    name: "Technician",
+    description: "Field installation jobs — auto-assigned when a slot is booked",
+    permissions: [
+      "dashboard.view",
+      "dashboard.support",
+      "customers.view",
+      "buildings.view",
+      "apartments.view",
+      "installations.view",
+      "installations.edit",
     ],
   },
   {
@@ -408,6 +440,9 @@ const GROUP_PRESETS = [
       "apartments.view",
       "apartments.edit",
       "packages.view",
+      "installations.view",
+      "installations.assign",
+      "installations.edit",
     ],
   },
   {

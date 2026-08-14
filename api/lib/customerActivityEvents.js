@@ -15,6 +15,8 @@ const CUSTOMER_ACTIVITY_EVENT_TYPES = Object.freeze([
   "customer_downgraded",
   "customer_frequency_changed",
   "customer_apartment_switched",
+  "installation_assigned",
+  "installation_updated",
   "customer_type_changed",
   "customer_paused",
   "tisp_reconnected",

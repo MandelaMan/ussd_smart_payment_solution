@@ -654,6 +654,14 @@ function CommunicationPanel({
           </Text>
           ,{" "}
           <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{installationDateTime}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{technicianName}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
             {"{{fullName}}"}
           </Text>
           .

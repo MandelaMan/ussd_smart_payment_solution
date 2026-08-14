@@ -349,6 +349,28 @@ router.post(
   runReferralMaintenance
 );
 
+const {
+  listInstallations,
+  listTechnicians: listInstallationTechnicians,
+  getInstallation,
+  assignInstallation,
+  updateInstallation,
+} = require("../controllers/installations.controller");
+
+router.get("/installations", requirePermission("installations.view"), listInstallations);
+router.get(
+  "/installations/technicians",
+  requirePermission("installations.view", "installations.assign", "customers.create"),
+  listInstallationTechnicians
+);
+router.get("/installations/:id", requirePermission("installations.view"), getInstallation);
+router.post(
+  "/installations/:id/assign",
+  requirePermission("installations.assign"),
+  assignInstallation
+);
+router.patch("/installations/:id", requirePermission("installations.edit"), updateInstallation);
+
 router.get("/apartments/history", requirePermission("apartments.view"), listApartmentHistoryRecords);
 router.get("/apartments/check", requirePermission("apartments.view"), checkApartmentOccupancy);
 router.get("/apartments", requirePermission("apartments.view"), listApartments);

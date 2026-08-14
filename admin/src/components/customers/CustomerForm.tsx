@@ -41,6 +41,7 @@ import {
 import { buildCustomerNumberPreview } from "../../lib/customerNumber";
 import { embeddedFieldInputStyles } from "../../theme";
 import { FormSection } from "./FormSection";
+import { InstallationScheduleFields } from "../installations/InstallationScheduleFields";
 import { AppDialog, NESTED_APP_DIALOG_Z_INDEX } from "../ui/AppDialog";
 import { FormSubmitSummary, type FormSummaryItem } from "../ui/FormSubmitSummary";
 import { formatCustomerPackageLabel } from "../../lib/formatText";
@@ -84,6 +85,43 @@ function toDateInputValue(value: string | null | undefined): string {
     if (mon) return `${m[3]}-${mon}-${m[1].padStart(2, "0")}`;
   }
   return "";
+}
+
+function formatLocalYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addLocalDays(days: number, from = new Date()): string {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + days);
+  return formatLocalYmd(d);
+}
+
+function addLocalMonths(months: number, from = new Date()): string {
+  const d = new Date(from.getFullYear(), from.getMonth() + months, from.getDate());
+  return formatLocalYmd(d);
+}
+
+/** TISP due when edit creates a signup invoice and/or (re)sets recurring. */
+function computeEditBillingTispDueDate(opts: {
+  createInitialInvoice: boolean;
+  customerType: "C2B" | "B2B";
+  paymentFrequency: string;
+  customPeriodDays: string;
+}): string {
+  if (opts.createInitialInvoice) {
+    return addLocalDays(opts.customerType === "B2B" ? 30 : 7);
+  }
+  const freq = String(opts.paymentFrequency || "monthly").toLowerCase();
+  if (freq === "quarterly") return addLocalMonths(3);
+  if (freq === "yearly") return addLocalMonths(12);
+  if (freq === "custom") {
+    const days = Number(opts.customPeriodDays);
+    return addLocalDays(days > 0 ? days : 30);
+  }
+  return addLocalMonths(1);
 }
 
 const PPOE_PASSWORD_CHARS =
@@ -235,7 +273,13 @@ export function CustomerForm({
   const [createInitialInvoice, setCreateInitialInvoice] = useState(false);
   const [createRecurringInvoice, setCreateRecurringInvoice] = useState(false);
   const [updateZohoRecurring, setUpdateZohoRecurring] = useState(false);
+  const [installationDate, setInstallationDate] = useState("");
+  const [installationTime, setInstallationTime] = useState("");
+  const [installationAssignmentMode, setInstallationAssignmentMode] = useState<
+    "auto" | "manual"
+  >("auto");
   const [tispDueDate, setTispDueDate] = useState(TISP_STANDARD_DUE_DATE);
+  const [loadedTispDueDate, setLoadedTispDueDate] = useState(TISP_STANDARD_DUE_DATE);
   const [onTisp, setOnTisp] = useState(false);
   const [onZoho, setOnZoho] = useState(false);
   const [zohoInactive, setZohoInactive] = useState(false);
@@ -347,6 +391,7 @@ export function CustomerForm({
       setOnZoho(false);
       setZohoInactive(false);
       setTispDueDate(TISP_STANDARD_DUE_DATE);
+      setLoadedTispDueDate(TISP_STANDARD_DUE_DATE);
       setZohoInvoiceCount(0);
       setZohoInvoicesInSync(false);
       setZohoPaymentsInSync(true);
@@ -372,9 +417,10 @@ export function CustomerForm({
     setOnZoho(localOnZoho);
     setZohoInactive(false);
     // Prefill with known due date — never overwrite with the cycle default while loading.
-    setTispDueDate(
-      toDateInputValue(customer.tispDueDate) || TISP_STANDARD_DUE_DATE
-    );
+    const knownDue =
+      toDateInputValue(customer.tispDueDate) || TISP_STANDARD_DUE_DATE;
+    setTispDueDate(knownDue);
+    setLoadedTispDueDate(knownDue);
     setDashboardLastPaymentDate(customer.lastPaymentDate || null);
     setCreateInitialInvoice(false);
     setCreateRecurringInvoice(false);
@@ -389,11 +435,12 @@ export function CustomerForm({
         setOnTisp(Boolean(res.onTisp));
         setOnZoho(Boolean(res.onZoho) || res.isB2B);
         setZohoInactive(Boolean(res.zohoInactive));
-        setTispDueDate(
+        const liveDue =
           toDateInputValue(res.tispDueDate) ||
-            toDateInputValue(customer.tispDueDate) ||
-            TISP_STANDARD_DUE_DATE
-        );
+          toDateInputValue(customer.tispDueDate) ||
+          TISP_STANDARD_DUE_DATE;
+        setTispDueDate(liveDue);
+        setLoadedTispDueDate(liveDue);
         setZohoInvoiceCount(Number(res.invoiceCount) || 0);
         setZohoInvoicesInSync(Boolean(res.invoicesInSync));
         setZohoPaymentsInSync(res.paymentsInSync !== false);
@@ -425,6 +472,35 @@ export function CustomerForm({
       cancelled = true;
     };
   }, [customer]);
+
+  useEffect(() => {
+    if (!isEdit || !isActive || integrationsLoading) return;
+    const billingReset =
+      createInitialInvoice || createRecurringInvoice || updateZohoRecurring;
+    if (!billingReset) {
+      setTispDueDate(loadedTispDueDate);
+      return;
+    }
+    setTispDueDate(
+      computeEditBillingTispDueDate({
+        createInitialInvoice,
+        customerType,
+        paymentFrequency,
+        customPeriodDays,
+      })
+    );
+  }, [
+    isEdit,
+    isActive,
+    integrationsLoading,
+    createInitialInvoice,
+    createRecurringInvoice,
+    updateZohoRecurring,
+    customerType,
+    paymentFrequency,
+    customPeriodDays,
+    loadedTispDueDate,
+  ]);
 
   useEffect(() => {
     if (!customer || !buildings.length) return;
@@ -902,6 +978,16 @@ export function CustomerForm({
       { label: "Apartment", value: apartmentNumber.trim() || "—" },
     ];
 
+    if (!isEdit) {
+      items.push({
+        label: "Installation",
+        value:
+          installationDate && installationTime
+            ? `${installationDate} at ${installationTime}`
+            : "—",
+      });
+    }
+
     if (selectedPackage) {
       const dstvOnlyPkg =
         selectedCategory?.code === "dstv_only" ||
@@ -1113,6 +1199,9 @@ export function CustomerForm({
     zohoInvoiceCount,
     zohoPaymentsInSync,
     zohoInactive,
+    installationDate,
+    installationTime,
+    installationAssignmentMode,
   ]);
 
   function validateForm() {
@@ -1121,7 +1210,15 @@ export function CustomerForm({
       toaster.create({ title: ipResult.error, type: "error" });
       return false;
     }
+    if (!isEdit && Boolean(installationDate) !== Boolean(installationTime)) {
+      toaster.create({
+        title: "Enter both installation date and time, or leave both empty",
+        type: "error",
+      });
+      return false;
+    }
     if (
+      !isEdit &&
       isActive &&
       occupancy &&
       !occupancy.available &&
@@ -1484,6 +1581,9 @@ export function CustomerForm({
             }
           : {}),
         trialPeriod: trialPeriod || undefined,
+        installationDate: installationDate || undefined,
+        installationTime: installationTime || undefined,
+        installationAssignmentMode,
         campaignId:
           customerType === "C2B" &&
           !trialPeriod &&
@@ -1715,11 +1815,16 @@ export function CustomerForm({
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}
-              readOnly={!isActive}
+              readOnly={isEdit || !isActive}
               disabled={fieldsDisabled}
-              bg={!isActive ? "gray.50" : undefined}
+              bg={isEdit || !isActive ? "gray.50" : undefined}
             />
-            {isActive && occupancyChecking && apartmentNumber.trim() && buildingId ? (
+            {isEdit ? (
+              <Text fontSize="xs" color="fg.muted" mt={1}>
+                Use Move apartment from the customer menu to change the unit and
+                book an installation visit.
+              </Text>
+            ) : isActive && occupancyChecking && apartmentNumber.trim() && buildingId ? (
               <Text fontSize="xs" color="fg.muted" mt={1}>
                 Checking apartment availability…
               </Text>
@@ -1729,12 +1834,27 @@ export function CustomerForm({
                 {occupancy.tenant.customerName} ({occupancy.tenant.customerNumber})
               </Text>
             ) : isActive && occupancy?.available && apartmentNumber.trim() && buildingId ? (
-              <Text fontSize="xs" color="green.600" mt={1}>
+              <Text fontSize="xs" color="green.700" mt={1}>
                 Apartment is available
               </Text>
             ) : null}
           </Field.Root>
         </FormSection>
+
+        {!isEdit ? (
+          <FormSection title="Installation">
+            <InstallationScheduleFields
+              date={installationDate}
+              time={installationTime}
+              assignmentMode={installationAssignmentMode}
+              onDateChange={setInstallationDate}
+              onTimeChange={setInstallationTime}
+              onAssignmentModeChange={setInstallationAssignmentMode}
+              disabled={fieldsDisabled}
+              required={false}
+            />
+          </FormSection>
+        ) : null}
 
         <FormSection title="Package & billing">
           {isEdit && customer && !showPackageEditor ? (
@@ -2097,7 +2217,13 @@ export function CustomerForm({
                 disabled={fieldsDisabled || integrationsLoading}
                 placeholder="Select due date"
               />
-              {!onTisp ? (
+              {createInitialInvoice || createRecurringInvoice || updateZohoRecurring ? (
+                <Field.HelperText>
+                  {createInitialInvoice
+                    ? "Reset from today: signup invoice due date (Net 7 for C2B, Net 30 for B2B)."
+                    : "Reset from today: next service due (invoice goes out 7 days before)."}
+                </Field.HelperText>
+              ) : !onTisp ? (
                 <Field.HelperText>
                   Required to create on TISP (default {TISP_STANDARD_DUE_DATE}).
                 </Field.HelperText>

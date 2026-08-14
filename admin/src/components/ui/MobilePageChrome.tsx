@@ -401,7 +401,7 @@ export function MobileFAB({
 
   const shared = {
     position: "fixed" as const,
-    bottom: MOBILE_BOTTOM_NAV_OFFSET,
+    bottom: `calc(${MOBILE_BOTTOM_NAV_OFFSET} + var(--app-bottom-inset, 0px))`,
     right: 4,
     zIndex: 25,
     display: { base: "flex", lg: "none" } as const,

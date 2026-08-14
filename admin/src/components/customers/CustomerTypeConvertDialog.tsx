@@ -151,7 +151,9 @@ export function CustomerTypeConvertDialog({
                 ) : (
                   <>
                     This customer will be billed as <strong>C2B</strong>. The agency link
-                    will be removed and their customer number will switch to the building&apos;s
+                    will be removed, agency invoices will no longer appear here, and a
+                    personal Zoho contact, recurring profile, and new invoice will be
+                    created. Their customer number will switch to the building&apos;s
                     C2B code.
                   </>
                 )}

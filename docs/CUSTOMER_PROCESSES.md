@@ -31,7 +31,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 | Downgrade package | Product (+ frequency if changed); cancels any pending upgrade | UPDATE package | Credit note when unused value &gt; 0; C2B recurring refresh | No |
 | Update frequency | Swap to matching Mbps product + frequency + price | UPDATE | C2B recurring refresh. B2B skip | No |
 | Move apartment | New apartment, customer number, IP/PPPoE, history rows | Migrate old → new account number | C2B: renumber contact/recurring. B2B skip | Clear ONU index/SN (building OLT link kept) |
-| Convert C2B↔B2B | Type, agency, customer number, PPPoE if it tracked the number | Migrate old → new account number (preserve due date) | C2B→B2B: stop personal recurring, inactive contact, ensure agency. B2B→C2B: stop agency recurring for old number, create/sync personal + recurring | No |
+| Convert C2B↔B2B | Type, agency, customer number, PPPoE if it tracked the number | Migrate old → new account number (preserve due date) | C2B→B2B: stop personal recurring, inactive contact, agency signup invoice + recurring. B2B→C2B: detach agency snapshot, refresh agency recurring without this house, create personal contact + recurring + new invoice | No |
 | Pause service (away) | `subscription_status=Paused`, pause window + reason | Due date = today (stop access) | Defer matching recurring so next invoice is after pause end | Deactivate ONU |
 | Suspend on TISP | `subscription_status=Suspended` | Due date = today | **None** (billing continues) | Deactivate ONU |
 | Cancel subscription | `status=cancelled`, close apartment history, collection dates; archive number to `{number}-CXL-{id}` and clear IP/DSTV immediately | Due date = cancel day (async) | C2B: stop recurring, rename company to `{number}-CXL-{id}`, mark inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
@@ -121,8 +121,8 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 - **Local:** `customer_type`, `agency_id` (required for B2B, cleared for C2B), `customer_number`; PPPoE username renumbered when it matched the old number.
 - **TISP:** Migrate old → new account; due date from live TISP or local snapshot (never “today” for the new account).
 - **Zoho:**
-  - **C2B → B2B:** Stop personal recurring, mark personal contact inactive, ensure agency Zoho contact.
-  - **B2B → C2B:** Stop agency recurring matching the **previous** B2B number; then sync personal C2B contact + recurring.
+  - **C2B → B2B:** Stop personal recurring, mark personal contact inactive, clear the personal Zoho snapshot, then create a managed-house signup invoice on the agency contact and rebuild agency recurring.
+  - **B2B → C2B:** Rebuild agency recurring without this house; clear the agency Zoho snapshot so agency invoices no longer appear on the customer; create (or reactivate) a personal C2B contact; create/update the personal recurring profile; create and send a new C2B invoice.
 - **OLT:** No change.
 
 **Recovery:** If local convert succeeds but TISP fails, Refresh Status migrates from the alternate type account number.

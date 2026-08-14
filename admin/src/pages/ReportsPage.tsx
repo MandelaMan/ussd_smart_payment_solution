@@ -297,17 +297,27 @@ function ReportPreviewTable({ preview }: { preview: PreviewState }) {
   return (
     <Stack gap={3}>
       {preview.summary ? (
-        <Text fontSize="sm" color="fg.muted">
-          {typeof preview.summary.total === "number"
-            ? `${preview.summary.total} records`
-            : "Summary ready"}
-          {typeof preview.summary.totalOutstanding === "number"
-            ? ` · outstanding ${preview.summary.totalOutstanding}`
-            : ""}
-          {typeof preview.summary.totalAmount === "number"
-            ? ` · total ${preview.summary.totalAmount}`
-            : ""}
-        </Text>
+        <Stack gap={1}>
+          <Text fontSize="sm" color="fg.muted">
+            {typeof preview.summary.total === "number"
+              ? `${preview.summary.total} records`
+              : "Summary ready"}
+            {typeof preview.summary.totalOutstanding === "number"
+              ? ` · outstanding ${preview.summary.totalOutstanding}`
+              : ""}
+            {typeof preview.summary.totalAmount === "number"
+              ? ` · total ${preview.summary.totalAmount}`
+              : ""}
+          </Text>
+          {Array.isArray(preview.summary.lines) && preview.summary.lines.length ? (
+            <Text fontSize="xs" color="fg.muted">
+              {(preview.summary.lines as Array<{ label?: string; value?: unknown }>)
+                .map((line) => `${line.label || ""}: ${line.value ?? ""}`.trim())
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          ) : null}
+        </Stack>
       ) : null}
 
       {preview.sections.map((section, idx) => {
@@ -432,7 +442,7 @@ function ReportRunnerDialog({
         flexShrink={0}
       >
         <Text fontSize="lg" fontWeight="semibold" lineHeight="1.25">
-          {report.title}
+          {preview?.title || report.title}
         </Text>
       </Box>
 

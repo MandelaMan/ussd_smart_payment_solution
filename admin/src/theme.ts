@@ -275,7 +275,8 @@ const config = defineConfig({
       background: "bg",
     },
     "#root": {
-      minHeight: "100dvh",
+      minHeight: "100%",
+      height: "100%",
       background: "bg",
       color: "fg",
     },

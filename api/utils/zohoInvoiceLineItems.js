@@ -53,11 +53,13 @@ function shouldIncludeDstvOneTimeFee(customer) {
 function resolveAdvancePaymentCoverage(customer, options = {}) {
   const hasDstv = shouldIncludeDstvOneTimeFee(customer);
   const paymentAlreadyMade = options.paymentAlreadyMade === true;
+  const skipDecoderFee =
+    options.skipDecoderFee === true || options.includeOneTimeDstvFee === false;
 
   if (!paymentAlreadyMade) {
     return {
       includePackage: true,
-      includeDecoder: hasDstv,
+      includeDecoder: hasDstv && !skipDecoderFee,
       hasDstv,
     };
   }

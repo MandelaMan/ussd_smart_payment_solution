@@ -137,6 +137,9 @@ function legacyHasPermission(role: string, key: string): boolean {
     "agencies.create",
     "agencies.edit",
     "reports.view",
+    "installations.view",
+    "installations.assign",
+    "installations.edit",
   ]);
   const partner = new Set([
     "dashboard.view",
@@ -224,6 +227,8 @@ export function canAccessConfig(user: User | null): boolean {
     "pops.view",
     "apartments.view",
     "agencies.view",
+    "campaigns.view",
+    "installations.view",
   ]);
 }
 

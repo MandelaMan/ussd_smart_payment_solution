@@ -6,6 +6,7 @@ const {
   getExpectedCollections,
   resolveDateRange: resolveKpiDateRange,
 } = require("./kpiEngine");
+const { monthYearLabel } = require("./billingForecastStore");
 
 /**
  * Report catalog. `family` is the Reports IA grouping.
@@ -260,7 +261,8 @@ const REPORT_DEFINITIONS = [
   {
     id: "expected-collections",
     title: "Expected Collections",
-    description: "Forward-looking expected invoice value for the next 30 days.",
+    description:
+      "Forward-looking expected invoice value for the next 30 days, by month. Includes C2B recurring/trial invoices and B2B managed houses (agency discount applied).",
     category: "Forecasting",
     family: "Forecasting",
     dateFilter: false,
@@ -3030,27 +3032,68 @@ async function expectedCollectionsReport() {
   const expected = await getExpectedCollections({ days: 30 });
   const forecast = expected.forecast || {};
   const items = forecast.items || forecast.invoices || forecast.rows || [];
+  const monthsLabel =
+    forecast.monthsLabel ||
+    (forecast.windowStart && forecast.windowEnd
+      ? `${forecast.windowStart} → ${forecast.windowEnd}`
+      : "next 30 days");
   const headers = [
+    { key: "month", label: "Month" },
     { key: "customer_number", label: "Customer #" },
+    { key: "customer_name", label: "Name" },
+    { key: "customer_type", label: "Type" },
+    { key: "agency", label: "Agency" },
+    { key: "building", label: "Building" },
     { key: "next_invoice_date", label: "Next invoice" },
-    { key: "amount", label: "Expected amount" },
+    { key: "amount", label: "Expected amount (KES)" },
+    { key: "source", label: "Source" },
   ];
+  const sourceLabel = (source) => {
+    const s = String(source || "").toLowerCase();
+    if (s === "trial") return "Trial first invoice";
+    if (s === "b2b_recurring" || s === "b2b") return "B2B agency recurring";
+    if (s === "b2b_cadence") return "B2B last-invoice cadence";
+    return "Recurring";
+  };
   const rows = Array.isArray(items)
-    ? items.slice(0, 5000).map((i) => ({
-        customer_number: i.customerNumber || i.customer_number || "",
-        next_invoice_date:
-          i.nextInvoiceDate || i.next_invoice_date || i.dueDate || "",
-        amount: i.expectedAmount || i.amount || i.packagePrice || i.package_price || 0,
-      }))
+    ? items.slice(0, 5000).map((i) => {
+        const scheduled =
+          i.scheduledDate ||
+          i.nextInvoiceDate ||
+          i.next_invoice_date ||
+          i.dueDate ||
+          "";
+        return {
+          month: i.month || monthYearLabel(scheduled),
+          customer_number: i.customerNumber || i.customer_number || "",
+          customer_name: i.customerName || i.customer_name || "",
+          customer_type: i.customerType || i.customer_type || "",
+          agency: i.agencyName || i.agency_name || "",
+          building: i.buildingName || i.building_name || "",
+          next_invoice_date: scheduled,
+          amount: i.expectedAmount || i.amount || i.packagePrice || i.package_price || 0,
+          source: sourceLabel(i.source),
+        };
+      })
     : [];
+  const b2bCount = rows.filter((r) => String(r.customer_type).toUpperCase() === "B2B").length;
+  const c2bCount = rows.length - b2bCount;
   return {
-    title: "Expected Collections (30 days)",
+    title: `Expected Collections (30 days) — ${monthsLabel}`,
     headers,
     rows: rows.map((r) => formatRow(r, headers)),
+    period: forecast.windowStart
+      ? { from: forecast.windowStart, to: forecast.windowEnd }
+      : undefined,
     summary: {
       total: expected.invoiceCount || rows.length,
       totalAmount: expected.expectedCollections,
-      lines: [{ label: "Horizon", value: "30 days" }],
+      lines: [
+        { label: "Horizon", value: "30 days" },
+        { label: "Months", value: monthsLabel },
+        { label: "C2B", value: c2bCount },
+        { label: "B2B", value: b2bCount },
+      ],
     },
   };
 }

@@ -24,6 +24,7 @@ import {
   FiSend,
   FiActivity,
   FiGift,
+  FiTool,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { useAuth } from "../lib/authContext";
@@ -102,6 +103,12 @@ export function Sidebar({ open, onClose }: Props) {
       visible: hasPermission(user, "apartments.view"),
     },
     {
+      to: "/installations",
+      label: "Installations",
+      icon: FiTool,
+      visible: hasPermission(user, "installations.view"),
+    },
+    {
       to: "/activity-audit",
       label: "Activity",
       icon: FiActivity,
@@ -139,7 +146,7 @@ export function Sidebar({ open, onClose }: Props) {
         <Box
           className="mobile-sidebar-backdrop"
           display={{ base: "block", lg: "none" }}
-          position="fixed"
+          position="absolute"
           inset={0}
           bg="blackAlpha.500"
           zIndex={1100}
@@ -154,11 +161,11 @@ export function Sidebar({ open, onClose }: Props) {
         bg="sidebar.bg"
         borderRight="1px solid"
         borderColor="sidebar.border"
-        position={{ base: "fixed", lg: "sticky" }}
+        position={{ base: "absolute", lg: "sticky" }}
         top={0}
         bottom={{ base: 0, lg: "auto" }}
-        h={{ base: "auto", lg: "100dvh" }}
-        maxH={{ base: "none", lg: "100dvh" }}
+        h={{ base: "auto", lg: "100%" }}
+        maxH={{ base: "none", lg: "100%" }}
         zIndex={{ base: 1200, lg: 50 }}
         transform={{
           base: open ? "translateX(0)" : "translateX(-100%)",

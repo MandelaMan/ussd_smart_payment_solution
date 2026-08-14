@@ -57,6 +57,10 @@ import {
   CustomerActionDialog,
 } from "../components/customers/CustomerActionDialog";
 import type { CustomerAction } from "../components/customers/CustomerActionMenu";
+import {
+  DEFAULT_INSTALLATION_TIME,
+  defaultInstallationDate,
+} from "../components/installations/InstallationScheduleFields";
 import { CustomerExpandPanel } from "../components/customers/CustomerExpandPanel";
 import type { ApartmentHistoryEntry } from "../lib/api";
 
@@ -230,6 +234,9 @@ export function CustomersListPage() {
   const [actionProductId, setActionProductId] = useState("");
   const [newApartment, setNewApartment] = useState("");
   const [switchIpAddress, setSwitchIpAddress] = useState("");
+  const [switchInstallationDate, setSwitchInstallationDate] = useState(defaultInstallationDate);
+  const [switchInstallationTime, setSwitchInstallationTime] = useState(DEFAULT_INSTALLATION_TIME);
+  const [switchAssignmentMode, setSwitchAssignmentMode] = useState<"auto" | "manual">("auto");
   const [cancelNotes, setCancelNotes] = useState("");
   const [cancelOnuCollectedAt, setCancelOnuCollectedAt] = useState(todayDateInputValue);
   const [cancelDstvDecoderCollectedAt, setCancelDstvDecoderCollectedAt] = useState(
@@ -889,6 +896,9 @@ export function CustomersListPage() {
     setActionProductId("");
     setNewApartment("");
     setSwitchIpAddress("");
+    setSwitchInstallationDate(defaultInstallationDate());
+    setSwitchInstallationTime(DEFAULT_INSTALLATION_TIME);
+    setSwitchAssignmentMode("auto");
     setCancelNotes("");
     setCancelOnuCollectedAt(todayDateInputValue());
     setCancelDstvDecoderCollectedAt(todayDateInputValue());
@@ -1392,7 +1402,12 @@ export function CustomersListPage() {
         const res = await api.switchCustomerApartment(
           actionCustomer.id,
           newApartment.trim(),
-          { ipAddress: switchIpAddress.trim() || undefined }
+          {
+            ipAddress: switchIpAddress.trim() || undefined,
+            installationDate: switchInstallationDate,
+            installationTime: switchInstallationTime,
+            installationAssignmentMode: switchAssignmentMode,
+          }
         );
         if (res.tisp && !res.tisp.ok) {
           toaster.create({
@@ -2178,6 +2193,9 @@ export function CustomersListPage() {
         actionProductId={actionProductId}
         newApartment={newApartment}
         switchIpAddress={switchIpAddress}
+        switchInstallationDate={switchInstallationDate}
+        switchInstallationTime={switchInstallationTime}
+        switchAssignmentMode={switchAssignmentMode}
         cancelNotes={cancelNotes}
         cancelOnuCollectedAt={cancelOnuCollectedAt}
         cancelDstvDecoderCollectedAt={cancelDstvDecoderCollectedAt}
@@ -2205,6 +2223,9 @@ export function CustomersListPage() {
         onCancelPendingUpgrade={handleCancelPendingUpgrade}
         onApartmentChange={setNewApartment}
         onSwitchIpChange={setSwitchIpAddress}
+        onSwitchInstallationDateChange={setSwitchInstallationDate}
+        onSwitchInstallationTimeChange={setSwitchInstallationTime}
+        onSwitchAssignmentModeChange={setSwitchAssignmentMode}
         onNotesChange={setCancelNotes}
         onOnuCollectedAtChange={setCancelOnuCollectedAt}
         onDstvDecoderCollectedAtChange={setCancelDstvDecoderCollectedAt}

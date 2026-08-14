@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
 import { ensureFreshAdminShell } from "./lib/ensureFreshAdminShell";
+import { lockAppViewport } from "./lib/lockAppViewport";
 
 /**
  * In development, clear any leftover production service workers so Vite HMR
@@ -35,6 +36,8 @@ async function prepareServiceWorker() {
 }
 
 async function boot() {
+  lockAppViewport();
+
   const buildId =
     import.meta.env.VITE_ADMIN_BUILD_ID ||
     import.meta.env.VITE_APP_VERSION ||

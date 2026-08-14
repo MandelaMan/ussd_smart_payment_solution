@@ -108,7 +108,8 @@ const DEFAULT_WELCOME_BODY_HTML = `<p>Dear {{firstName}},</p>
   <strong>Account number:</strong> {{customerNumber}}<br/>
   <strong>Building:</strong> {{buildingName}}<br/>
   <strong>Apartment:</strong> {{apartmentNumber}}<br/>
-  <strong>Package:</strong> {{productName}}
+  <strong>Package:</strong> {{productName}}<br/>
+  <strong>Installation:</strong> {{installationDateTime}}
 </p>
 <p>Please use your account number as the M-Pesa Paybill reference for payments.</p>
 <p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
@@ -168,7 +169,8 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>Previous account:</strong> {{previousCustomerNumber}} (apt {{previousApartment}})<br/>
   <strong>New account:</strong> {{customerNumber}} (apt {{apartmentNumber}})<br/>
   <strong>Building:</strong> {{buildingName}}<br/>
-  <strong>Package:</strong> {{productName}}
+  <strong>Package:</strong> {{productName}}<br/>
+  <strong>Installation:</strong> {{installationDateTime}}
 </p>
 <p>Please use your <strong>new</strong> account number as the M-Pesa Paybill reference going forward.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,

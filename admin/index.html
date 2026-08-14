@@ -36,6 +36,17 @@
           window.navigator.standalone === true;
         if (isPwa) document.documentElement.classList.add("sul-pwa");
       })();
+      /* Pin --app-height to the visible viewport before CSS/React (iOS PWA 100dvh bug). */
+      (function () {
+        var apply = function () {
+          var vv = window.visualViewport;
+          var h = Math.round((vv && vv.height) || window.innerHeight);
+          document.documentElement.style.setProperty("--app-height", h + "px");
+        };
+        apply();
+        window.addEventListener("resize", apply);
+        if (window.visualViewport) window.visualViewport.addEventListener("resize", apply);
+      })();
       /* Emergency SW/cache bust when a prior shell left the app blank. */
       (function () {
         try {
@@ -72,10 +83,27 @@
       })();
     </script>
     <style>
+      :root {
+        --app-height: 100svh;
+      }
       html,
       body {
         margin: 0;
         background: #ffffff;
+        height: 100%;
+        height: var(--app-height, 100svh);
+        max-height: var(--app-height, 100svh);
+        overflow: hidden;
+      }
+      #root {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        height: var(--app-height, 100svh);
+        max-height: var(--app-height, 100svh);
+        overflow: hidden;
       }
       /* Brand boot background only in installed PWA. */
       html.sul-pwa:not(.sul-booted),
@@ -146,11 +174,11 @@
       }
       /* Critical mobile nav — survives a brief moment before the main CSS bundle. */
       @media (max-width: 47.99em) {
-        .sul-mobile-nav-v4 {
-          position: fixed !important;
+        .sul-mobile-nav-v5 {
+          position: absolute !important;
           left: 0 !important;
           right: 0 !important;
-          bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
+          bottom: 8px !important;
           margin: 0 !important;
           padding: 0 !important;
           background: transparent !important;
@@ -164,10 +192,11 @@
           max-height: none !important;
           transform: none !important;
         }
-        .sul-mobile-nav-v4 nav {
+        .sul-mobile-nav-v5 nav {
           pointer-events: auto !important;
           margin: 0 12px !important;
         }
+        .sul-mobile-nav-v4,
         .sul-mobile-nav-v3,
         .sul-mobile-nav-v2,
         .mobile-bottom-nav-root {
