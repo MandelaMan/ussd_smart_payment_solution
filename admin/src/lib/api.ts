@@ -22,7 +22,12 @@ export function notifyAuthSessionExpired(path: string) {
   if (authSessionExpiredNotified) return;
   // /auth/me is handled by AuthProvider.refresh / focus validation.
   // /auth/login 401s are invalid credentials, not an expired session.
-  if (path.startsWith("/auth/login") || path.startsWith("/auth/me")) return;
+  if (
+    path.startsWith("/auth/login") ||
+    path.startsWith("/auth/me") ||
+    path.startsWith("/auth/recover-account")
+  )
+    return;
   // Do not set the notified flag here — AuthProvider re-checks /auth/me and
   // only marks notified when the session is actually dead (avoids locking out
   // after a single spurious 401 from an unrelated endpoint).
@@ -206,6 +211,7 @@ export type Product = {
   planSortOrder?: number | null;
   requiresDecoderFee?: number | null;
   decoderFeeAmount?: number | null;
+  buildingDstvSetup?: "headend_coax" | "decoder";
 };
 
 export type PackagePlanVariant = {
@@ -250,12 +256,13 @@ export type Agency = {
 
 export type LeadStatus =
   | "new"
+  | "interested"
   | "contacted"
   | "qualified"
   | "converted"
   | "closed";
 
-export type LeadSource = "whatsapp" | "web" | "embed" | "email";
+export type LeadSource = "whatsapp" | "web" | "embed" | "email" | "signup";
 
 export type Lead = {
   id: number;
@@ -417,6 +424,7 @@ export type AppSettings = {
     };
     leads: {
       publicForm: string;
+      signupForm?: string;
       embedScript: string;
       embedSnippet: string;
       whatsappWebhook: string;
@@ -497,7 +505,10 @@ export type Customer = {
   ipAddress: string | null;
   isVatExempt: boolean;
   customerType: "C2B" | "B2B";
+  premiseType?: "apartment" | "shop";
   apartmentNumber: string;
+  businessName?: string | null;
+  shopLocation?: string | null;
   paymentFrequency: "monthly" | "quarterly" | "yearly" | "custom";
   customPeriodDays: number | null;
   buildingId: number;
@@ -1830,11 +1841,116 @@ export type InstallationTechnician = {
   jobTitle?: string | null;
 };
 
+export type ActionTypeStep = {
+  key: string;
+  label: string;
+  description: string;
+  sortOrder: number;
+};
+
+export type ActionType = {
+  id: number;
+  key: string;
+  name: string;
+  description: string;
+  requiresCustomer: boolean;
+  notifyCustomer: boolean;
+  sortOrder: number;
+  steps: ActionTypeStep[];
+};
+
+export type ActionAssignee = {
+  id: number;
+  name: string;
+  email: string;
+  jobTitle?: string | null;
+  role?: string | null;
+};
+
+export type ActionItemStep = {
+  id: number;
+  actionItemId: number;
+  stepKey: string;
+  label: string;
+  description: string;
+  sortOrder: number;
+  status: "pending" | "done" | "skipped";
+  assignedTo: number | null;
+  assignedToName: string | null;
+  completedAt: string | null;
+  completedBy: number | null;
+  completedByName: string | null;
+  notes: string | null;
+};
+
+export type ActionItem = {
+  id: number;
+  typeId: number;
+  typeKey: string;
+  typeName: string;
+  title: string;
+  description: string;
+  customerId: number | null;
+  customerNumber: string;
+  customerName: string;
+  buildingName: string | null;
+  apartmentNumber: string;
+  dueDate: string | null;
+  dueDisplay: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: "open" | "in_progress" | "completed" | "cancelled";
+  createdBy: number | null;
+  createdByName: string | null;
+  completedAt: string | null;
+  completedBy: number | null;
+  notes: string;
+  stepCount: number;
+  stepsDone: number;
+  assigneeNames: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  steps?: ActionItemStep[];
+  assignees?: ActionAssignee[];
+};
+
+export type UserNotification = {
+  id: number;
+  userId: number;
+  type: string;
+  title: string;
+  body: string;
+  actionItemId: number | null;
+  isRead: boolean;
+  createdAt: string;
+};
+
+export type CreateActionItemPayload = {
+  typeKey: string;
+  customerId?: number | null;
+  title?: string;
+  description?: string;
+  notes?: string;
+  dueDate?: string | null;
+  priority?: ActionItem["priority"];
+  assigneeIds?: number[];
+  extraSteps?: Array<{ label: string; description?: string }>;
+  notifyCustomer?: boolean;
+};
+
 export const api = {
   login: (email: string, password: string) =>
     request<AuthSession>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    }),
+
+  recoverAccount: (email: string, note?: string) =>
+    request<{ ok: boolean; message: string }>("/auth/recover-account", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        ...(note ? { note } : {}),
+      }),
     }),
 
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
@@ -3010,6 +3126,14 @@ export const api = {
     );
   },
 
+  previewShopCustomerNumber: (buildingId: number, customerType: "C2B" | "B2B") =>
+    request<{ unitCode: string; customerNumber: string }>(
+      `/admin/customers/shop-number-preview${buildQueryString({
+        buildingId: String(buildingId),
+        customerType,
+      })}`
+    ),
+
   createCustomer: (data: Record<string, unknown>) =>
     request<{
       ok: boolean;
@@ -3086,6 +3210,8 @@ export const api = {
       customerType?: "C2B" | "B2B";
       agencyId?: number;
       apartmentNumber?: string;
+      businessName?: string;
+      shopLocation?: string;
       paymentFrequency?: Customer["paymentFrequency"];
       customPeriodDays?: number;
       productId?: number;
@@ -3746,6 +3872,103 @@ export const api = {
     request<{ ok: boolean; installation: Installation }>(`/admin/installations/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+
+  listActionTypes: () =>
+    request<{ ok: boolean; types: ActionType[] }>("/admin/action-items/types"),
+
+  listActionAssignees: () =>
+    request<{ ok: boolean; users: ActionAssignee[] }>("/admin/action-items/assignees"),
+
+  listActionItems: (params: Record<string, string | undefined> = {}) =>
+    request<{
+      ok: boolean;
+      data: ActionItem[];
+      pagination: { page: number; limit: number; total: number; pages: number };
+    }>(`/admin/action-items${buildQueryString(params)}`),
+
+  getActionItem: (id: number) =>
+    request<{ ok: boolean; actionItem: ActionItem }>(`/admin/action-items/${id}`),
+
+  createActionItem: (data: CreateActionItemPayload) =>
+    request<{ ok: boolean; actionItem: ActionItem }>("/admin/action-items", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  updateActionItem: (
+    id: number,
+    data: Partial<{
+      title: string;
+      description: string;
+      notes: string;
+      dueDate: string | null;
+      priority: ActionItem["priority"];
+      status: ActionItem["status"];
+      assigneeIds: number[];
+    }>
+  ) =>
+    request<{ ok: boolean; actionItem: ActionItem }>(`/admin/action-items/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  assignActionItem: (id: number, assigneeIds: number[]) =>
+    request<{ ok: boolean; actionItem: ActionItem }>(`/admin/action-items/${id}/assign`, {
+      method: "POST",
+      body: JSON.stringify({ assigneeIds }),
+    }),
+
+  updateActionStep: (
+    id: number,
+    stepId: number,
+    data: { status?: ActionItemStep["status"]; notes?: string }
+  ) =>
+    request<{ ok: boolean; actionItem: ActionItem }>(
+      `/admin/action-items/${id}/steps/${stepId}`,
+      { method: "PATCH", body: JSON.stringify(data) }
+    ),
+
+  addActionStep: (id: number, data: { label: string; description?: string }) =>
+    request<{ ok: boolean; actionItem: ActionItem }>(`/admin/action-items/${id}/steps`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  listNotifications: (params: Record<string, string | undefined> = {}) =>
+    request<{
+      ok: boolean;
+      notifications: UserNotification[];
+      unreadCount: number;
+    }>(`/admin/notifications${buildQueryString(params)}`),
+
+  notificationUnreadCount: () =>
+    request<{ ok: boolean; unreadCount: number }>("/admin/notifications/unread-count"),
+
+  markNotificationsRead: (data: { ids?: number[]; all?: boolean } = {}) =>
+    request<{ ok: boolean; unreadCount: number }>("/admin/notifications/read", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getPushVapidPublicKey: () =>
+    request<{ ok: boolean; publicKey: string | null; configured: boolean }>(
+      "/admin/push/vapid-public-key"
+    ),
+
+  subscribePush: (subscription: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+  }) =>
+    request<{ ok: boolean }>("/admin/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify(subscription),
+    }),
+
+  unsubscribePush: (endpoint?: string) =>
+    request<{ ok: boolean }>("/admin/push/subscribe", {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint }),
     }),
 };
 

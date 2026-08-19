@@ -64,6 +64,17 @@ describe("M-Pesa → Zoho invoice matching", () => {
     );
   });
 
+  it("matches spaced or lowercase customer refs to hyphenated invoice refs", () => {
+    assert.equal(
+      invoiceMatchesCustomerRef({ reference_number: "ET-T506" }, "ET T506"),
+      true
+    );
+    assert.equal(
+      invoiceMatchesCustomerRef({ reference_number: "ET-T506" }, "et-t506"),
+      true
+    );
+  });
+
   it("ignores paid invoices", () => {
     assert.equal(isUnpaidLikeInvoice({ status: "paid" }), false);
     const hit = findTargetOpenInvoice(

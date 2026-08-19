@@ -40,7 +40,10 @@ export function ProductExpandPanel({
 
   const extras: string[] = [];
   if (product.hasDstv) extras.push("Includes DSTV");
-  if (product.requiresDecoderFee) {
+  if (
+    product.requiresDecoderFee &&
+    product.buildingDstvSetup !== "headend_coax"
+  ) {
     extras.push(
       `Decoder fee ${formatCurrency(product.decoderFeeAmount || 2900)} (signup)`
     );

@@ -121,6 +121,18 @@ export function InstallationsRoute() {
   return <PermissionRoute permissions={["installations.view"]} />;
 }
 
+export function RemindersRoute() {
+  return <PermissionRoute permissions={["action_items.view"]} />;
+}
+
+export function LeadsRoute() {
+  return <PermissionRoute permissions={["leads.view"]} />;
+}
+
+export function CommunicationRoute() {
+  return <PermissionRoute permissions={["communication.view"]} />;
+}
+
 export function CustomerWriteRoute() {
   return (
     <PermissionRoute

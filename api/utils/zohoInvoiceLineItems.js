@@ -9,6 +9,7 @@ const {
   buildManagedHouseLineItemDescription,
   buildManagedHouseRecurringLineItemDescription,
 } = require("./b2bBilling");
+const { buildingUsesDecoder } = require("./dstvSetup");
 
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 const DSTV_ONE_TIME_FEE = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
@@ -38,6 +39,7 @@ function resolveDstvOneTimeFee(customer) {
 }
 
 function shouldIncludeDstvOneTimeFee(customer) {
+  if (!buildingUsesDecoder(customer)) return false;
   return (
     customerHasDstv(customer) ||
     Boolean(customer?.decoderFeeRequired) ||

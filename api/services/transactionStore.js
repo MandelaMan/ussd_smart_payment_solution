@@ -250,6 +250,16 @@ async function findByMpesaReceipt(mpesaReceipt) {
   return rows[0] || null;
 }
 
+async function updateAccountReferenceById(id, accountReference) {
+  const paymentId = Number(id);
+  const ref = String(accountReference || "").trim();
+  if (!Number.isFinite(paymentId) || paymentId <= 0 || !ref) return;
+  await query(
+    `UPDATE payment_transactions SET account_reference = ? WHERE id = ?`,
+    [ref, paymentId]
+  );
+}
+
 module.exports = {
   readTransactions,
   appendTransaction,
@@ -262,5 +272,6 @@ module.exports = {
   rowToLegacyTxn,
   materializeTransactionsFromTrail,
   recordC2BConfirmation,
+  updateAccountReferenceById,
   findByMpesaReceipt,
 };

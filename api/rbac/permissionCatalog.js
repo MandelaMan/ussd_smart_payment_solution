@@ -161,6 +161,17 @@ const MODULES = [
     ],
   },
   {
+    key: "action_items",
+    label: "Reminders",
+    description: "Customer action items, tagged-user notifications, and follow-up checklists",
+    permissions: [
+      { key: "action_items.view", label: "View", description: "View reminders and action items" },
+      { key: "action_items.create", label: "Create", description: "Create reminders and tag users" },
+      { key: "action_items.assign", label: "Assign", description: "Tag or retag users on an action item" },
+      { key: "action_items.edit", label: "Update", description: "Update status, checklist steps, and notes" },
+    ],
+  },
+  {
     key: "campaigns",
     label: "Campaigns",
     description: "Acquisition campaigns, first-month discounts, and referrals",
@@ -258,6 +269,10 @@ const USER_ROLE_DEFAULTS = Object.freeze([
   "communication.send",
   "reports.view",
   "installations.view",
+  "action_items.view",
+  "action_items.create",
+  "action_items.assign",
+  "action_items.edit",
 ]);
 
 /**
@@ -285,6 +300,10 @@ const GROUP_PRESETS = [
       "reports.view",
       "campaigns.view",
       "installations.view",
+      "action_items.view",
+      "action_items.create",
+      "action_items.assign",
+      "action_items.edit",
     ],
   },
   {
@@ -318,6 +337,10 @@ const GROUP_PRESETS = [
       "agencies.view",
       "campaigns.view",
       "buildings.view",
+      "installations.view",
+      "action_items.view",
+      "action_items.create",
+      "action_items.edit",
     ],
   },
   {
@@ -355,6 +378,10 @@ const GROUP_PRESETS = [
       "installations.view",
       "installations.assign",
       "installations.edit",
+      "action_items.view",
+      "action_items.create",
+      "action_items.assign",
+      "action_items.edit",
     ],
   },
   {
@@ -378,6 +405,10 @@ const GROUP_PRESETS = [
       "installations.view",
       "installations.assign",
       "installations.edit",
+      "action_items.view",
+      "action_items.create",
+      "action_items.assign",
+      "action_items.edit",
     ],
   },
   {
@@ -392,6 +423,8 @@ const GROUP_PRESETS = [
       "apartments.view",
       "installations.view",
       "installations.edit",
+      "action_items.view",
+      "action_items.edit",
     ],
   },
   {
@@ -419,6 +452,8 @@ const GROUP_PRESETS = [
       "agencies.view",
       "campaigns.view",
       "leads.view",
+      "installations.view",
+      "action_items.view",
     ],
   },
   {
@@ -443,6 +478,10 @@ const GROUP_PRESETS = [
       "installations.view",
       "installations.assign",
       "installations.edit",
+      "action_items.view",
+      "action_items.create",
+      "action_items.assign",
+      "action_items.edit",
     ],
   },
   {
@@ -475,6 +514,9 @@ const GROUP_PRESETS = [
       "billing.export",
       "reports.view",
       "reports.export",
+      "action_items.view",
+      "action_items.create",
+      "action_items.edit",
     ],
   },
 ];

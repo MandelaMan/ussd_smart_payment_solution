@@ -179,12 +179,19 @@ async function sendCustomerEmail(req, res, next) {
     const customer = await customerStore.getCustomerById(customerId);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
 
-    const toAddress = String(req.body?.to || customer.email || "").trim();
+    const { resolveOperationalEmailRecipients } = require("../utils/b2bBilling");
+    const operational = resolveOperationalEmailRecipients(customer);
+    const toAddress = String(
+      req.body?.to || customer.email || operational.toAddress || ""
+    ).trim();
     if (!toAddress || !toAddress.includes("@")) {
       return res.status(400).json({
         error: "Customer has no email on file — provide a recipient address",
       });
     }
+    const ccAddress = operational.ccAddresses
+      .filter((value) => value.toLowerCase() !== toAddress.toLowerCase())
+      .join(",");
 
     const html = body.includes("<")
       ? body
@@ -198,6 +205,7 @@ async function sendCustomerEmail(req, res, next) {
       toAddress,
       subject,
       content: html,
+      ccAddress: ccAddress || undefined,
       attachments,
     });
 

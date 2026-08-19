@@ -1,5 +1,6 @@
 import { Box, Flex, Text } from "@chakra-ui/react";
 import type { Customer } from "../../lib/api";
+import { customerDisplayTitle, isShopPremise } from "../../lib/premise";
 import { ModalShell } from "../ui/ModalShell";
 import { CustomerForm } from "./CustomerForm";
 
@@ -28,7 +29,8 @@ export function CustomerEditDialog({ customer, onClose, onSaved }: Props) {
             Edit customer
           </Text>
           <Text fontSize="xs" color="fg.muted" mt={0.5} lineHeight="short">
-            {customer.fullName} · {customer.customerNumber}
+            {customerDisplayTitle(customer) || customer.fullName} · {customer.customerNumber}
+            {isShopPremise(customer) ? " · Shop" : ""}
             {customer.status === "cancelled" ? " · Cancelled" : ""}
           </Text>
         </Box>

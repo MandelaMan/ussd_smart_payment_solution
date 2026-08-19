@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { MobilePageTransition } from "./MobilePageTransition";
+import { NotificationProvider } from "./notifications/NotificationProvider";
+import { NotificationBell } from "./notifications/NotificationBell";
 import {
   MOBILE_BOTTOM_NAV_GAP,
   MOBILE_BOTTOM_NAV_H,
@@ -94,6 +96,17 @@ function LayoutShell() {
           <MobileBottomNav onOpenMenu={() => setOpen(true)} />
         </Box>
       ) : null}
+
+      <Box
+        display={{ base: "block", lg: "none" }}
+        position="absolute"
+        top="max(0.65rem, env(safe-area-inset-top, 0px))"
+        right={3}
+        zIndex={1100}
+        pointerEvents="auto"
+      >
+        <NotificationBell compact />
+      </Box>
     </Flex>
   );
 }
@@ -101,7 +114,9 @@ function LayoutShell() {
 export function Layout() {
   return (
     <MobileSearchProvider>
-      <LayoutShell />
+      <NotificationProvider>
+        <LayoutShell />
+      </NotificationProvider>
     </MobileSearchProvider>
   );
 }

@@ -50,6 +50,14 @@ const loginLimiter = createRateLimiter({
   },
 });
 
+const recoverAccountLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: {
+    error: "Too many recovery requests. Please try again in 15 minutes.",
+  },
+});
+
 const authApiLimiter = createRateLimiter({
   windowMs: 60 * 1000,
   max: 30,
@@ -73,6 +81,7 @@ const ussdLimiter = createRateLimiter({
 module.exports = {
   createRateLimiter,
   loginLimiter,
+  recoverAccountLimiter,
   authApiLimiter,
   authMeLimiter,
   ussdLimiter,

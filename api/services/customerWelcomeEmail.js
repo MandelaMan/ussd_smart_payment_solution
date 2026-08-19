@@ -11,7 +11,7 @@ const {
   isZohoMailConfigured,
   loadMailIdentity,
 } = require("../utils/zohoMail");
-const { resolveEffectiveCustomerEmail } = require("../utils/b2bBilling");
+const { resolveOperationalEmailRecipients } = require("../utils/b2bBilling");
 const customerEmailStore = require("./customerEmailStore");
 const { logActivity } = require("./activityLogStore");
 
@@ -45,6 +45,13 @@ const PLACEHOLDER_KEYS = [
   "referralDiscountedPrice",
   "referredCustomerNumber",
   "referredCustomerName",
+  "campaignName",
+  "actionTitle",
+  "actionTypeName",
+  "dueDate",
+  "assignedStaff",
+  "actionNotes",
+  "checklistSummary",
 ];
 
 function escapeHtml(value) {
@@ -77,7 +84,7 @@ function buildCustomerTemplateVars(customer, extra = {}) {
   const fullName =
     String(customer?.fullName || "").trim() ||
     [firstName, lastName].filter(Boolean).join(" ");
-  const toAddress = resolveEffectiveCustomerEmail(customer);
+  const { toAddress, ccAddresses } = resolveOperationalEmailRecipients(customer);
   const packagePriceRaw =
     extra.packagePrice != null
       ? extra.packagePrice
@@ -133,7 +140,15 @@ function buildCustomerTemplateVars(customer, extra = {}) {
     referralDiscountedPrice: "",
     referredCustomerNumber: "",
     referredCustomerName: "",
+    campaignName: "",
+    actionTitle: "",
+    actionTypeName: "",
+    dueDate: "",
+    assignedStaff: "",
+    actionNotes: "",
+    checklistSummary: "",
     toAddress,
+    ccAddresses,
   };
 
   if (
@@ -257,7 +272,16 @@ async function sendCustomerLifecycleEmail(
       ? ensureInstallationBlock(templatedBody, vars)
       : templatedBody;
   const content = wrapLifecycleHtml(bodyInner);
-  const ccAddress = (template.ccEmails || []).join(",");
+  const ccAddress = [
+    ...new Set(
+      [...(vars.ccAddresses || []), ...(template.ccEmails || [])]
+        .map((value) => String(value || "").trim())
+        .filter((value) => value.includes("@"))
+        .filter(
+          (value) => value.toLowerCase() !== toAddress.toLowerCase()
+        )
+    ),
+  ].join(",");
 
   try {
     const identity = await loadMailIdentity();
@@ -298,7 +322,10 @@ async function sendCustomerLifecycleEmail(
           toAddress,
           subject,
           messageId: result?.messageId || null,
-          cc: template.ccEmails || [],
+          cc: [
+            ...(vars.ccAddresses || []),
+            ...(template.ccEmails || []),
+          ],
         },
       });
     } catch {

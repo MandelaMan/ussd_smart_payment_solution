@@ -3,20 +3,21 @@ import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import {
   Badge,
   Box,
   Button,
   Field,
   Flex,
+  IconButton,
   Input,
   Stack,
   Table,
   Text,
   Textarea,
 } from "@chakra-ui/react";
-import { FiChevronDown, FiChevronRight } from "react-icons/fi";
+import { FiChevronDown, FiChevronRight, FiCopy } from "react-icons/fi";
 import {
   api,
   type Lead,
@@ -25,7 +26,15 @@ import {
   type ListPagination,
 } from "../lib/api";
 import { useAuth } from "../lib/authContext";
-import { canMutateCustomers } from "../lib/rbac";
+import { canMutateCustomers, hasPermission } from "../lib/rbac";
+import {
+  LEAD_SOURCE_OPTIONS,
+  LEAD_STATUS_OPTIONS,
+  leadSourceLabel,
+  leadStatusLabel,
+  parseLeadSignup,
+  publicSignupUrl,
+} from "../lib/leadSignup";
 import { toaster } from "../components/ui/toaster";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
@@ -64,6 +73,8 @@ function statusColor(status: string): string {
   switch (status) {
     case "new":
       return "orange";
+    case "interested":
+      return "teal";
     case "contacted":
       return "blue";
     case "qualified":
@@ -73,13 +84,6 @@ function statusColor(status: string): string {
     default:
       return "gray";
   }
-}
-
-function sourceLabel(source: string): string {
-  if (source === "whatsapp") return "WhatsApp";
-  if (source === "embed") return "Embed";
-  if (source === "email") return "Email";
-  return "Website";
 }
 
 function formatWhen(value: string | null | undefined): string {
@@ -98,6 +102,7 @@ function formatWhen(value: string | null | undefined): string {
 export function LeadsPage() {
   const { user } = useAuth();
   const canMutate = canMutateCustomers(user);
+  const canConvert = hasPermission(user, "customers.create");
   const isMobile = useMobileViewport();
   const [searchParams, setSearchParams] = useSearchParams();
   const sectionParam = searchParams.get("section");
@@ -126,6 +131,33 @@ export function LeadsPage() {
       },
       { replace: true }
     );
+  }
+
+  function openLeadRow(lead: Lead) {
+    if (lead.source === "whatsapp") {
+      setSearchParams(
+        { section: "whatsapp", lead: String(lead.id) },
+        { replace: false }
+      );
+      return;
+    }
+    if (lead.source === "email") {
+      setSearchParams(
+        { section: "email", lead: String(lead.id) },
+        { replace: false }
+      );
+      return;
+    }
+    void openLead(lead.id);
+  }
+
+  async function copySignupLink() {
+    try {
+      await navigator.clipboard.writeText(publicSignupUrl());
+      toaster.create({ type: "success", title: "Signup link copied" });
+    } catch {
+      toaster.create({ type: "error", title: "Could not copy signup link" });
+    }
   }
 
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -283,7 +315,14 @@ export function LeadsPage() {
     setExpanded(null);
   }
 
-  const expandPanel = (lead: Lead) => (
+  const expandPanel = (lead: Lead) => {
+    const signup = parseLeadSignup(lead);
+    const canVerify =
+      canConvert &&
+      lead.status !== "converted" &&
+      lead.status !== "closed" &&
+      (lead.status === "interested" || lead.source === "signup");
+    return (
     <Box px={4} py={4} bg="bg.muted" borderTopWidth="1px" borderColor="border">
       {detailLoading ? (
         <Text fontSize="sm" color="fg.muted">
@@ -292,7 +331,7 @@ export function LeadsPage() {
       ) : (
         <Stack gap={4}>
           <Flex gap={3} flexWrap="wrap" align="end">
-            <Field.Root maxW="220px">
+            <Field.Root maxW="280px">
               <Field.Label>Status</Field.Label>
               <SelectField
                 size="sm"
@@ -303,17 +342,18 @@ export function LeadsPage() {
                     void changeStatus(lead, e.target.value as Lead["status"]),
                 }}
               >
-                <option value="new">New</option>
-                <option value="contacted">Contacted</option>
-                <option value="qualified">Qualified</option>
-                <option value="converted">Converted</option>
-                <option value="closed">Closed</option>
+                {LEAD_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </SelectField>
             </Field.Root>
             <Box flex="1" minW="180px">
               <Text fontSize="sm" color="fg.muted">
                 {lead.interest || "No interest set"}
                 {lead.buildingInterest ? ` · ${lead.buildingInterest}` : ""}
+                {lead.apartmentNumber ? ` · apt ${lead.apartmentNumber}` : ""}
               </Text>
               {lead.message ? (
                 <Text fontSize="sm" mt={1}>
@@ -321,7 +361,53 @@ export function LeadsPage() {
                 </Text>
               ) : null}
             </Box>
+            {canVerify ? (
+              <Button asChild size="sm" colorPalette="brand">
+                <Link to={`/customers/new?leadId=${lead.id}`}>
+                  Verify & convert to customer
+                </Link>
+              </Button>
+            ) : lead.convertedCustomerId ? (
+              <Text fontSize="sm" color="fg.muted">
+                Converted to customer #{lead.convertedCustomerId}
+              </Text>
+            ) : null}
           </Flex>
+
+          {lead.status === "interested" || lead.source === "signup" ? (
+            <Box
+              borderWidth="1px"
+              borderColor="border"
+              borderRadius="md"
+              bg="bg.panel"
+              p={3}
+            >
+              <Text fontSize="xs" fontWeight="600" color="fg.muted" mb={2}>
+                Signup details to verify
+              </Text>
+              <Stack gap={1} fontSize="sm">
+                <Text>
+                  {signup.firstName} {signup.lastName}
+                </Text>
+                <Text color="fg.muted">
+                  {signup.phone || "—"} · {signup.email || "—"}
+                </Text>
+                <Text>
+                  {signup.buildingName || "Building not set"}
+                  {signup.apartmentNumber ? ` · apt ${signup.apartmentNumber}` : ""}
+                </Text>
+                <Text>
+                  {signup.productName || "Package not set"}
+                  {signup.paymentFrequency ? ` · ${signup.paymentFrequency}` : ""}
+                </Text>
+                {signup.dstvDecoderSerial ? (
+                  <Text fontFamily="mono" fontSize="xs">
+                    DSTV {signup.dstvDecoderSerial}
+                  </Text>
+                ) : null}
+              </Stack>
+            </Box>
+          ) : null}
 
           <Box
             maxH="240px"
@@ -391,7 +477,8 @@ export function LeadsPage() {
         </Stack>
       )}
     </Box>
-  );
+    );
+  };
 
   const leadStatsActions = stats ? (
     <Flex
@@ -403,7 +490,9 @@ export function LeadsPage() {
     >
       {[
         { label: "Total", value: stats.total },
+        { label: "Interested", value: stats.byStatus.interested ?? 0 },
         { label: "New", value: stats.byStatus.new },
+        { label: "Signup", value: stats.bySource.signup ?? 0 },
         { label: "WhatsApp", value: stats.bySource.whatsapp },
         { label: "Email", value: stats.bySource.email ?? 0 },
         { label: "Web", value: stats.bySource.web },
@@ -438,7 +527,29 @@ export function LeadsPage() {
           <ListPageStickyChrome gap={{ base: 4, lg: 5 }}>
             <MobilePageChrome
         title="Leads"
-        desktopActions={section === "all" ? leadStatsActions : undefined}
+        headerActions={
+          <IconButton
+            aria-label="Copy signup link"
+            size="sm"
+            variant="outline"
+            onClick={() => void copySignupLink()}
+          >
+            <FiCopy />
+          </IconButton>
+        }
+        desktopActions={
+          <Flex gap={2} align="center" wrap="wrap" justify="flex-end">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void copySignupLink()}
+            >
+              <FiCopy />
+              Copy signup link
+            </Button>
+            {section === "all" ? leadStatsActions : null}
+          </Flex>
+        }
         searchValue={section === "all" ? searchInput : undefined}
         onSearchChange={section === "all" ? setSearchInput : undefined}
         searchPlaceholder="Name, phone, email…"
@@ -458,11 +569,11 @@ export function LeadsPage() {
                 }}
               >
                 <option value="">All statuses</option>
-                <option value="new">New</option>
-                <option value="contacted">Contacted</option>
-                <option value="qualified">Qualified</option>
-                <option value="converted">Converted</option>
-                <option value="closed">Closed</option>
+                {LEAD_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </SelectField>
             </Field.Root>
             <Field.Root>
@@ -478,10 +589,11 @@ export function LeadsPage() {
                 }}
               >
                 <option value="">All sources</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="web">Website</option>
-                <option value="embed">Embed</option>
-                <option value="email">Email</option>
+                {LEAD_SOURCE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </SelectField>
             </Field.Root>
           </Stack>
@@ -560,11 +672,11 @@ export function LeadsPage() {
             }}
           >
             <option value="">All statuses</option>
-            <option value="new">New</option>
-            <option value="contacted">Contacted</option>
-            <option value="qualified">Qualified</option>
-            <option value="converted">Converted</option>
-            <option value="closed">Closed</option>
+            {LEAD_STATUS_OPTIONS.map((opt) => (
+              <option key={`desk-${opt.value}`} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </SelectField>
         </FilterField>
         <FilterField label="Source" flex={FILTER_FLEX.standard} minW="140px" hideOnMobile>
@@ -579,10 +691,11 @@ export function LeadsPage() {
             }}
           >
             <option value="">All sources</option>
-            <option value="whatsapp">WhatsApp</option>
-            <option value="web">Website</option>
-            <option value="embed">Embed</option>
-            <option value="email">Email</option>
+            {LEAD_SOURCE_OPTIONS.map((opt) => (
+              <option key={`desk-src-${opt.value}`} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </SelectField>
         </FilterField>
             </FilterToolbar>
@@ -643,30 +756,14 @@ export function LeadsPage() {
                 renderCard={(lead, isOpen) => (
                   <MobileDataCard
                     title={lead.name || lead.phone || `Lead #${lead.id}`}
-                    subtitle={`${sourceLabel(lead.source)} · ${formatWhen(lead.createdAt)}`}
+                    subtitle={`${leadSourceLabel(lead.source)} · ${formatWhen(lead.createdAt)}`}
                     trailing={
                       <Badge colorPalette={statusColor(lead.status)} variant="subtle">
-                        {lead.status}
+                        {leadStatusLabel(lead.status)}
                       </Badge>
                     }
                     isOpen={isOpen}
-                    onClick={() => {
-                      if (lead.source === "whatsapp") {
-                        setSearchParams(
-                          { section: "whatsapp", lead: String(lead.id) },
-                          { replace: false }
-                        );
-                        return;
-                      }
-                      if (lead.source === "email" || lead.email) {
-                        setSearchParams(
-                          { section: "email", lead: String(lead.id) },
-                          { replace: false }
-                        );
-                        return;
-                      }
-                      void openLead(lead.id);
-                    }}
+                    onClick={() => openLeadRow(lead)}
                     variant="card"
                   />
                 )}
@@ -722,23 +819,7 @@ export function LeadsPage() {
                         <Table.Row
                           bg={isOpen ? "brand.50" : undefined}
                           cursor="pointer"
-                          onClick={() => {
-                            if (lead.source === "whatsapp") {
-                              setSearchParams(
-                                { section: "whatsapp", lead: String(lead.id) },
-                                { replace: false }
-                              );
-                              return;
-                            }
-                            if (lead.source === "email" || lead.email) {
-                              setSearchParams(
-                                { section: "email", lead: String(lead.id) },
-                                { replace: false }
-                              );
-                              return;
-                            }
-                            void openLead(lead.id);
-                          }}
+                          onClick={() => openLeadRow(lead)}
                           _hover={{ bg: isOpen ? "brand.50" : "gray.50" }}
                         >
                           <Table.Cell
@@ -768,7 +849,7 @@ export function LeadsPage() {
                             ) : null}
                           </Table.Cell>
                           <Table.Cell {...dataTableCellProps}>
-                            {sourceLabel(lead.source)}
+                            {leadSourceLabel(lead.source)}
                             {lead.messageCount ? (
                               <Text fontSize="xs" color="fg.muted">
                                 {lead.messageCount} msgs
@@ -777,7 +858,7 @@ export function LeadsPage() {
                           </Table.Cell>
                           <Table.Cell {...dataTableCellProps}>
                             <Badge colorPalette={statusColor(lead.status)} variant="subtle">
-                              {lead.status}
+                              {leadStatusLabel(lead.status)}
                             </Badge>
                           </Table.Cell>
                           <Table.Cell {...dataTableCellProps} color="fg.muted">

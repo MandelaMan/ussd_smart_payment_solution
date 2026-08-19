@@ -12,6 +12,10 @@ const {
   buildCustomerNumber,
   liveCustomerNumber,
   archiveCancelledCustomerNumber,
+  paybillRefTokens,
+  pickUniquePaybillCustomer,
+  normalizePremiseType,
+  nextShopUnitCode,
 } = require("../utils/customerNumber");
 
 /** Keep sync error columns short — TISP often returns full HTML error pages. */
@@ -51,6 +55,8 @@ function buildCustomerSearchFilter(term, options = {}) {
         UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')) = ?
         OR UPPER(TRIM(c.customer_number)) = ?
         OR UPPER(TRIM(c.apartment_number)) = ?
+        OR UPPER(TRIM(c.business_name)) = ?
+        OR UPPER(TRIM(c.shop_location)) = ?
         OR UPPER(TRIM(CONCAT_WS(' ', c.first_name, c.middle_name, c.last_name))) = ?
         OR UPPER(TRIM(CONCAT_WS(' ', c.first_name, c.last_name))) = ?
         OR UPPER(TRIM(c.customer_number)) LIKE ?
@@ -61,6 +67,8 @@ function buildCustomerSearchFilter(term, options = {}) {
       )`,
       params: [
         compact,
+        upper,
+        upper,
         upper,
         upper,
         upper,
@@ -86,6 +94,8 @@ function buildCustomerSearchFilter(term, options = {}) {
       OR UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')) = ?
       OR UPPER(c.customer_number) LIKE ?
       OR UPPER(c.apartment_number) LIKE ?
+      OR UPPER(c.business_name) LIKE ?
+      OR UPPER(c.shop_location) LIKE ?
       OR UPPER(REPLACE(c.customer_number, '-', '')) LIKE ?
       OR RIGHT(
         UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')),
@@ -100,6 +110,8 @@ function buildCustomerSearchFilter(term, options = {}) {
       upper,
       upper,
       compact,
+      prefix,
+      prefix,
       prefix,
       prefix,
       likeNormalized,
@@ -376,7 +388,11 @@ function resolvePackagePrice(product, paymentFrequency, customPeriodDays) {
  * Decoder one-time fee flags for a product (signup / first DSTV invoice).
  * Returns { required: 0|1, amount: number|null }.
  */
-async function resolveDecoderFeeForProduct(product) {
+async function resolveDecoderFeeForProduct(product, building = null) {
+  const { buildingUsesDecoder } = require("../utils/dstvSetup");
+  if (building && !buildingUsesDecoder(building)) {
+    return { required: 0, amount: null };
+  }
   const productHasDstv = Boolean(product?.has_dstv || product?.hasDstv);
   const envFee = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
   if (product?.plan_variant_id) {
@@ -422,7 +438,10 @@ function mapCustomerRow(row) {
     ipAddress: row.ip_address,
     isVatExempt: Boolean(row.is_vat_exempt),
     customerType: row.customer_type,
+    premiseType: normalizePremiseType(row.premise_type),
     apartmentNumber: row.apartment_number,
+    businessName: row.business_name || null,
+    shopLocation: row.shop_location || null,
     paymentFrequency: row.payment_frequency,
     customPeriodDays: row.custom_period_days,
     buildingId: row.building_id,
@@ -1328,6 +1347,7 @@ async function listProducts(filters = {}) {
   const [countRow] = await query(
     `SELECT COUNT(*) AS total FROM products p
      JOIN buildings b ON b.id = p.building_id
+     JOIN pops pop ON pop.id = b.pop_id
      LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
      LEFT JOIN package_plans pl ON pl.id = v.plan_id
      LEFT JOIN package_categories c ON c.id = pl.category_id
@@ -1368,9 +1388,11 @@ const PRODUCT_LIST_SELECT = `
          pl.id AS planId, pl.code AS planCode, pl.name AS planName,
          pl.sort_order AS planSortOrder,
          c.requires_decoder_fee AS requiresDecoderFee,
-         c.decoder_fee_amount AS decoderFeeAmount
+         c.decoder_fee_amount AS decoderFeeAmount,
+         pop.dstv_setup AS buildingDstvSetup
   FROM products p
   JOIN buildings b ON b.id = p.building_id
+  JOIN pops pop ON pop.id = b.pop_id
   LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
   LEFT JOIN package_plans pl ON pl.id = v.plan_id
   LEFT JOIN package_categories c ON c.id = pl.category_id`;
@@ -1803,6 +1825,11 @@ async function listCustomers(filters = {}) {
     clauses.push("c.customer_type = ?");
     params.push(filters.customerType);
   }
+  const premiseType = normalizePremiseType(filters.premiseType);
+  if (filters.premiseType && (premiseType === "shop" || String(filters.premiseType).toLowerCase() === "apartment")) {
+    clauses.push("c.premise_type = ?");
+    params.push(premiseType);
+  }
   const searchFilter = buildCustomerSearchFilter(filters.search, {
     mode: filters.searchMode === "exact" ? "exact" : "fuzzy",
   });
@@ -1932,6 +1959,18 @@ async function recordCustomerLastPayment(customerNumber, paymentDate) {
 
   const date =
     formatDateOnly(paymentDate) || new Date().toISOString().slice(0, 10);
+
+  const resolved = await resolveCustomerByPaybillRef(ref);
+  if (resolved?.id) {
+    await query(
+      `UPDATE customers
+       SET last_payment_date = ?
+       WHERE id = ?
+         AND (last_payment_date IS NULL OR ? > last_payment_date)`,
+      [date, resolved.id, date]
+    );
+    return;
+  }
 
   await query(
     `UPDATE customers
@@ -2373,6 +2412,16 @@ async function validateAndNormalizeCustomerPhone(data, { existingCustomer = null
   throw new Error("Phone is required");
 }
 
+async function nextShopUnitCodeForBuilding(buildingId) {
+  const rows = await query(
+    `SELECT apartment_number
+     FROM customers
+     WHERE building_id = ? AND status = 'active'`,
+    [buildingId]
+  );
+  return nextShopUnitCode(rows.map((row) => row.apartment_number));
+}
+
 async function createCustomer(data) {
   const building = await getBuildingById(data.buildingId);
   if (!building) throw new Error("Building not found");
@@ -2411,7 +2460,29 @@ async function createCustomer(data) {
   }
   const resolvedIp = ipCheck.ip;
 
-  const apartmentNumber = String(data.apartmentNumber).trim().toUpperCase();
+  const premiseType = normalizePremiseType(data.premiseType);
+  const businessName =
+    premiseType === "shop" ? String(data.businessName || "").trim() : "";
+  const shopLocation =
+    premiseType === "shop" ? String(data.shopLocation || "").trim() : "";
+  if (premiseType === "shop") {
+    if (!businessName) throw new Error("Business name is required for a shop");
+    if (!shopLocation) throw new Error("Shop location is required");
+  }
+
+  let apartmentNumber = String(data.apartmentNumber || "")
+    .trim()
+    .toUpperCase();
+  if (premiseType === "shop" && !apartmentNumber) {
+    apartmentNumber = await nextShopUnitCodeForBuilding(building.id);
+  }
+  if (!apartmentNumber) {
+    throw new Error(
+      premiseType === "shop"
+        ? "Could not assign a shop customer number"
+        : "Apartment number is required"
+    );
+  }
   await assertApartmentAvailable(building.id, apartmentNumber);
 
   const customerNumber = buildCustomerNumber(
@@ -2457,7 +2528,7 @@ async function createCustomer(data) {
 
   let decoderFeeRequired = 0;
   let decoderFeeAmount = null;
-  const decoderFee = await resolveDecoderFeeForProduct(product);
+  const decoderFee = await resolveDecoderFeeForProduct(product, building);
   decoderFeeRequired = decoderFee.required;
   decoderFeeAmount = decoderFee.amount;
 
@@ -2511,12 +2582,13 @@ async function createCustomer(data) {
        billing_attention, billing_address, billing_street2, billing_city,
        billing_state, billing_zip, billing_country,
        ip_address,
-       is_vat_exempt, customer_type, apartment_number, payment_frequency,
+       is_vat_exempt, customer_type, premise_type, apartment_number,
+       business_name, shop_location, payment_frequency,
        custom_period_days, building_id, product_id, agency_id,
        customer_number, tisp_password, ppoe_username, package_price,
        decoder_fee_amount, decoder_fee_required, dstv_decoder_serial,
        trial_period_enabled, trial_ends_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       names.first_name,
       names.middle_name,
@@ -2533,7 +2605,10 @@ async function createCustomer(data) {
       resolvedIp,
       data.isVatExempt ? 1 : 0,
       data.customerType,
+      premiseType,
       apartmentNumber,
+      premiseType === "shop" ? businessName : null,
+      premiseType === "shop" ? shopLocation : null,
       data.paymentFrequency,
       data.paymentFrequency === "custom"
         ? Number(data.customPeriodDays ?? data.customPeriodMonths)
@@ -2592,6 +2667,9 @@ async function createCustomer(data) {
     product,
     names,
     apartmentNumber,
+    premiseType,
+    businessName: premiseType === "shop" ? businessName : null,
+    shopLocation: premiseType === "shop" ? shopLocation : null,
     tispPassword,
     packagePrice,
     decoderFeeAmount,
@@ -2623,9 +2701,10 @@ async function changeCustomerProduct(customerId, newProductId, eventType) {
 
   const addingDstv =
     !Boolean(customer.product_has_dstv) && Boolean(newProduct.has_dstv);
+  const { buildingUsesDecoder } = require("../utils/dstvSetup");
   let decoderFeeSql = "product_id = ?, package_price = ?";
   const decoderParams = [newProductId, packagePrice];
-  if (addingDstv) {
+  if (addingDstv && buildingUsesDecoder(customer)) {
     let feeAmount = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
     if (newProduct.plan_variant_id) {
       const variant = await catalogStore.getPlanVariantDetails(
@@ -3314,7 +3393,9 @@ async function updateCustomerDetails(id, data, options = {}) {
       throw new Error("Package must belong to the same building");
     }
     packagePrice = resolvePackagePrice(product, paymentFrequency, customPeriodDays);
-    const decoderFee = await resolveDecoderFeeForProduct(product);
+    const decoderFee = await resolveDecoderFeeForProduct(product, {
+      dstv_setup: existing.buildingDstvSetup,
+    });
     decoderFeeRequired = decoderFee.required;
     decoderFeeAmount = decoderFee.amount;
     const newHasDstv = Boolean(product.has_dstv || product.hasDstv);
@@ -3443,6 +3524,24 @@ async function updateCustomerDetails(id, data, options = {}) {
   }
   billingCountry = hasBilling ? billingCountry || "Kenya" : null;
 
+  const existingPremise = normalizePremiseType(existing.premiseType);
+  const businessName =
+    existingPremise === "shop"
+      ? data.businessName !== undefined
+        ? String(data.businessName || "").trim()
+        : String(existing.businessName || "").trim()
+      : "";
+  const shopLocation =
+    existingPremise === "shop"
+      ? data.shopLocation !== undefined
+        ? String(data.shopLocation || "").trim()
+        : String(existing.shopLocation || "").trim()
+      : "";
+  if (existingPremise === "shop") {
+    if (!businessName) throw new Error("Business name is required for a shop");
+    if (!shopLocation) throw new Error("Shop location is required");
+  }
+
   const contactChanged =
     firstName !== existing.firstName ||
     lastName !== existing.lastName ||
@@ -3465,6 +3564,7 @@ async function updateCustomerDetails(id, data, options = {}) {
          is_vat_exempt = ?, customer_type = ?, agency_id = ?, ip_address = ?,
          dstv_decoder_serial = ?,
          tisp_password = ?, ppoe_username = ?,
+         business_name = ?, shop_location = ?,
          product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?,
          decoder_fee_required = ?, decoder_fee_amount = ?
      WHERE id = ?`,
@@ -3488,6 +3588,8 @@ async function updateCustomerDetails(id, data, options = {}) {
       dstvDecoderSerial,
       tispPassword,
       isPpoe ? ppoeUsername : null,
+      existingPremise === "shop" ? businessName : null,
+      existingPremise === "shop" ? shopLocation : null,
       productId,
       paymentFrequency,
       customPeriodDays,
@@ -4015,6 +4117,55 @@ async function findCustomerByNumber(customerNumber) {
 }
 
 /**
+ * Resolve a messy M-Pesa BillRefNumber to a live dashboard customer.
+ * Accepts ET-T506, "ET T506", et-t506, ETT506, and unique apartment tokens (t506).
+ * Uses the paying MSISDN to break ties when several apartments share the token.
+ */
+async function resolveCustomerByPaybillRef(rawRef, options = {}) {
+  const raw = String(rawRef || "").trim();
+  const { normalized, compact, lastSegment } = paybillRefTokens(raw);
+  if (!compact || compact.length < 3) return null;
+
+  const clauses = [
+    "UPPER(TRIM(customer_number)) = ?",
+    `UPPER(REPLACE(REPLACE(REPLACE(REPLACE(customer_number, '-', ''), ' ', ''), '_', ''), '/', '')) = ?`,
+  ];
+  const params = [normalized, compact];
+
+  if (lastSegment.length >= 3) {
+    clauses.push("UPPER(TRIM(customer_number)) LIKE ?");
+    clauses.push("UPPER(TRIM(apartment_number)) = ?");
+    params.push(`%-${escapeLike(lastSegment)}`);
+    params.push(lastSegment);
+  }
+
+  const rows = await query(
+    `SELECT id, customer_number, apartment_number, phone, status, customer_type
+     FROM customers
+     WHERE LOWER(COALESCE(status, '')) != 'cancelled'
+       AND customer_number NOT LIKE '%-CXL-%'
+       AND (${clauses.join(" OR ")})
+     LIMIT 25`,
+    params
+  );
+  if (!rows.length) return null;
+
+  const candidates = rows.map((row) => ({
+    id: row.id,
+    customerNumber: row.customer_number,
+    apartmentNumber: row.apartment_number,
+    phone: row.phone,
+    status: row.status,
+    customerType: row.customer_type,
+  }));
+  const picked = pickUniquePaybillCustomer(candidates, raw, {
+    msisdn: options.msisdn,
+  });
+  if (!picked?.id) return null;
+  return getCustomerById(picked.id);
+}
+
+/**
  * Find a customer by exact apartment number (active preferred).
  * When preferredBuildingId is set, same-building tenants win.
  */
@@ -4148,8 +4299,16 @@ async function importCustomerFromRow(row, batchSeen) {
   if (!row.first_name || !row.last_name) {
     throw new Error("first_name and last_name are required");
   }
-  if (!row.phone || !row.apartment_number || !row.building_name || !row.product_name) {
+  const premiseType = normalizePremiseType(row.premise_type);
+  const isShop = premiseType === "shop";
+  if (!row.phone || !row.building_name || !row.product_name) {
+    throw new Error("phone, building_name, and product_name are required");
+  }
+  if (!isShop && !row.apartment_number) {
     throw new Error("phone, apartment_number, building_name, and product_name are required");
+  }
+  if (isShop && (!row.business_name || !row.shop_location)) {
+    throw new Error("business_name and shop_location are required for a shop");
   }
 
   const customerType = String(row.customer_type || "C2B").trim().toUpperCase();
@@ -4183,7 +4342,10 @@ async function importCustomerFromRow(row, batchSeen) {
     ipAddress = buildIpAddress(row.ip_prefix, row.ip_last_octet);
   }
 
-  const apartmentNumber = String(row.apartment_number).trim().toUpperCase();
+  const apartmentNumber = isShop
+    ? String(row.apartment_number || "").trim().toUpperCase() ||
+      (await nextShopUnitCodeForBuilding(building.id))
+    : String(row.apartment_number).trim().toUpperCase();
   const customerNumber = buildCustomerNumber(building, customerType, apartmentNumber);
 
   const ipCheck = validateIpForBuilding(building, ipAddress);
@@ -4217,7 +4379,10 @@ async function importCustomerFromRow(row, batchSeen) {
       String(row.is_vat_exempt || "no").toLowerCase()
     ),
     customerType,
-    apartmentNumber: row.apartment_number,
+    premiseType,
+    businessName: isShop ? String(row.business_name).trim() : undefined,
+    shopLocation: isShop ? String(row.shop_location).trim() : undefined,
+    apartmentNumber,
     paymentFrequency,
     customPeriodDays: row.custom_period_days
       ? Number(row.custom_period_days)
@@ -4593,6 +4758,7 @@ module.exports = {
   reconcileZohoBillingStatus,
   allocateZohoInvoiceSequence,
   recordSignupInvoiceDelivery,
+  nextShopUnitCodeForBuilding,
   createCustomer,
   changeCustomerProduct,
   updateCustomerBillingCycle,
@@ -4619,6 +4785,7 @@ module.exports = {
   getApartment,
   getCustomerEvents,
   findCustomerByNumber,
+  resolveCustomerByPaybillRef,
   findCustomerByApartmentNumber,
   findCustomerByIp,
   findCustomerByDstvSerial,

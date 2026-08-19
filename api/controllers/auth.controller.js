@@ -14,6 +14,11 @@ const { generateTemporaryPassword } = require("../utils/tempPassword");
 const { sendZohoMail, isZohoMailConfigured } = require("../utils/zohoMail");
 const { logAuthEvent, clientIp } = require("../utils/authLogger");
 const {
+  recoveryInboxEmail,
+  genericRecoveryResponse,
+  buildAccountRecoveryEmail,
+} = require("../utils/accountRecovery");
+const {
   MAX_FAILED_ATTEMPTS,
   LOCKOUT_MINUTES,
   isAccountLocked,
@@ -52,6 +57,11 @@ function escapeHtml(value) {
 function adminLoginUrl() {
   const origin = String(process.env.ADMIN_ORIGIN || "").replace(/\/$/, "");
   return origin ? `${origin}/login` : "/admin/login";
+}
+
+function adminUsersUrl() {
+  const origin = String(process.env.ADMIN_ORIGIN || "").replace(/\/$/, "");
+  return origin ? `${origin}/settings` : "/admin/settings";
 }
 
 async function sendTemporaryPasswordEmail({ name, email, temporaryPassword }) {
@@ -258,6 +268,94 @@ async function login(req, res, next) {
       user: authUser,
       expiresAt: decoded?.exp ? decoded.exp * 1000 : null,
     });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function requestAccountRecovery(req, res, next) {
+  const emailInput = req.body?.email ? normalizeEmail(req.body.email) : "";
+  const note = String(req.body?.note || "")
+    .trim()
+    .slice(0, 1000);
+
+  try {
+    if (!emailInput || !emailInput.includes("@")) {
+      return res.status(400).json({ error: "A valid email address is required" });
+    }
+
+    const rows = await query(
+      `SELECT id, name, email, role, job_title, is_active, locked_until,
+              must_change_password
+       FROM admin_users WHERE email = ? LIMIT 1`,
+      [emailInput]
+    );
+    const user = rows[0] || null;
+    const locked = user && isAccountLocked(user);
+
+    await logAuthEvent({
+      email: emailInput,
+      userId: user?.id || null,
+      outcome: "recovery",
+      req,
+      reason: user ? "account_recovery_requested" : "account_recovery_unknown",
+    });
+
+    if (!user) {
+      return res.json(genericRecoveryResponse());
+    }
+
+    if (!isZohoMailConfigured()) {
+      return res.status(503).json({
+        error: `Unable to send the recovery request. Please email ${recoveryInboxEmail()} directly.`,
+      });
+    }
+
+    const mail = buildAccountRecoveryEmail({
+      requesterEmail: emailInput,
+      user: {
+        name: user.name,
+        email: user.email,
+        role: normalizeSystemRole(user.role),
+        jobTitle: user.job_title || null,
+        is_active: Boolean(user.is_active),
+        lockedUntil: locked && user.locked_until ? String(user.locked_until) : null,
+        mustChangePassword: Boolean(user.must_change_password),
+      },
+      note,
+      ip: clientIp(req),
+      userAgent: req?.headers?.["user-agent"]
+        ? String(req.headers["user-agent"]).slice(0, 500)
+        : null,
+      requestedAt: new Date().toISOString(),
+      usersUrl: adminUsersUrl(),
+    });
+
+    try {
+      await sendZohoMail(mail);
+    } catch (err) {
+      console.error("[auth] account recovery email failed:", err.message);
+      return res.status(503).json({
+        error: `Unable to send the recovery request. Please email ${recoveryInboxEmail()} directly.`,
+      });
+    }
+
+    await logActivitySafe({
+      eventType: "user_recovery_requested",
+      title: "Account recovery requested",
+      message: `${user.name} · ${user.email} · ${normalizeSystemRole(user.role)}`,
+      source: "admin",
+      status: "success",
+      referenceId: String(user.id),
+      metadata: {
+        email: user.email,
+        role: normalizeSystemRole(user.role),
+        note: note || null,
+        ip: clientIp(req),
+      },
+    });
+
+    return res.json(genericRecoveryResponse());
   } catch (err) {
     return next(err);
   }
@@ -773,6 +871,7 @@ module.exports = {
   logout,
   me,
   changePassword,
+  requestAccountRecovery,
   listUsers,
   createUser,
   updateUser,

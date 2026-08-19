@@ -16,6 +16,9 @@ import {
   CustomerReadRoute,
   ActivityRoute,
   InstallationsRoute,
+  RemindersRoute,
+  LeadsRoute,
+  CommunicationRoute,
 } from "./components/ProtectedRoute";
 import { BootSplashGate } from "./components/BootSplashGate";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -92,6 +95,7 @@ const ProductsPage = lazyPage(() => import("./pages/ProductsPage"), "ProductsPag
 const AgenciesPage = lazyPage(() => import("./pages/AgenciesPage"), "AgenciesPage");
 const CampaignsPage = lazyPage(() => import("./pages/CampaignsPage"), "CampaignsPage");
 const InstallationsPage = lazyPage(() => import("./pages/InstallationsPage"), "InstallationsPage");
+const RemindersPage = lazyPage(() => import("./pages/RemindersPage"), "RemindersPage");
 const AgencyDetailPage = lazyPage(
   () => import("./pages/AgencyDetailPage"),
   "AgencyDetailPage"
@@ -266,6 +270,8 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
+                </Route>
+                <Route element={<LeadsRoute />}>
                   <Route
                     path="leads"
                     element={
@@ -274,6 +280,8 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
+                </Route>
+                <Route element={<CommunicationRoute />}>
                   <Route
                     path="communication"
                     element={
@@ -299,6 +307,16 @@ export default function App() {
                     element={
                       <LazyRoute>
                         <InstallationsPage />
+                      </LazyRoute>
+                    }
+                  />
+                </Route>
+                <Route element={<RemindersRoute />}>
+                  <Route
+                    path="reminders"
+                    element={
+                      <LazyRoute>
+                        <RemindersPage />
                       </LazyRoute>
                     }
                   />

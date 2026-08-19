@@ -93,6 +93,25 @@ function isFresh(syncedAt, maxAgeHours = DEFAULT_MAX_AGE_HOURS) {
   return ageMs >= 0 && ageMs < maxAgeHours * 60 * 60 * 1000;
 }
 
+function extractZohoAppliedInvoiceNumbers(payment) {
+  if (!payment || typeof payment !== "object") return null;
+  const fromInvoices = Array.isArray(payment.invoices)
+    ? payment.invoices
+        .map((inv) => String(inv?.invoice_number || "").trim())
+        .filter(Boolean)
+    : [];
+  if (fromInvoices.length) {
+    return [...new Set(fromInvoices)].join(", ");
+  }
+  const combined = payment.invoice_numbers || payment.invoice_number;
+  if (!combined) return null;
+  const parts = String(combined)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length ? [...new Set(parts)].join(", ") : null;
+}
+
 function mapStoredInvoice(row) {
   const raw = parseJson(row.raw_json, {});
   return {
@@ -112,13 +131,15 @@ function mapStoredInvoice(row) {
 }
 
 function mapStoredPayment(row) {
+  const raw = parseJson(row.raw_json, {});
   return {
     id: String(row.payment_id),
     source: "zoho",
     amount: row.amount != null ? Number(row.amount) : null,
     referenceId: row.reference_number || String(row.payment_id),
     paidAt: row.payment_date || null,
-    invoiceNumber: row.invoice_number || null,
+    invoiceNumber:
+      row.invoice_number || extractZohoAppliedInvoiceNumbers(raw) || null,
   };
 }
 
@@ -261,9 +282,7 @@ async function replaceZohoPayments(customerId, payments = []) {
   for (const p of payments) {
     const paymentId = p.payment_id || p.id;
     if (!paymentId) continue;
-    const invoiceNumber = Array.isArray(p.invoices)
-      ? p.invoices[0]?.invoice_number || null
-      : null;
+    const invoiceNumber = extractZohoAppliedInvoiceNumbers(p);
     await query(
       `INSERT INTO zoho_customer_payments
         (customer_id, payment_id, payment_date, amount, reference_number, invoice_number, raw_json, synced_at)
@@ -587,4 +606,5 @@ module.exports = {
   recordZohoPaymentSnapshot,
   recordZohoPaymentByCustomerNumber,
   mapStoredInvoice,
+  extractZohoAppliedInvoiceNumbers,
 };

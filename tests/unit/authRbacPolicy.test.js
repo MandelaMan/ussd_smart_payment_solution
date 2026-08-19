@@ -99,6 +99,56 @@ describe("RBAC permission catalog integrity", () => {
     }
   });
 
+  it("role defaults only reference known permission keys", () => {
+    const known = new Set(allPermissionKeys());
+    for (const key of USER_ROLE_DEFAULTS) {
+      assert.ok(known.has(key), `USER_ROLE_DEFAULTS unknown permission ${key}`);
+    }
+  });
+
+  it("installations and reminders are catalog modules granted to operating groups", () => {
+    const moduleKeys = MODULES.map((mod) => mod.key);
+    assert.ok(moduleKeys.includes("installations"));
+    assert.ok(moduleKeys.includes("action_items"));
+
+    for (const key of [
+      "installations.view",
+      "installations.assign",
+      "installations.edit",
+      "action_items.view",
+      "action_items.create",
+      "action_items.assign",
+      "action_items.edit",
+    ]) {
+      assert.ok(getPermission(key), `missing ${key}`);
+    }
+
+    const bySlug = Object.fromEntries(GROUP_PRESETS.map((g) => [g.slug, g.permissions]));
+    for (const slug of ["support", "network-operations", "installations", "sales"]) {
+      assert.ok(bySlug[slug].includes("action_items.view"), `${slug} missing reminders.view`);
+      assert.ok(bySlug[slug].includes("installations.view"), `${slug} missing installations.view`);
+    }
+    assert.ok(bySlug.support.includes("action_items.assign"));
+    assert.ok(bySlug.sales.includes("action_items.create"));
+    assert.ok(bySlug.technician.includes("installations.edit"));
+    assert.ok(USER_ROLE_DEFAULTS.includes("action_items.view"));
+    assert.ok(USER_ROLE_DEFAULTS.includes("action_items.assign"));
+    assert.ok(USER_ROLE_DEFAULTS.includes("installations.view"));
+  });
+
+  it("every operational module view is granted by a preset or role default", () => {
+    const granted = new Set([
+      ...USER_ROLE_DEFAULTS,
+      ...GROUP_PRESETS.flatMap((g) => g.permissions),
+    ]);
+    const skip = new Set(["users.view", "settings.view", "system_logs.view"]);
+    for (const mod of MODULES) {
+      const view = mod.permissions.find((p) => p.key.endsWith(".view"));
+      if (!view || skip.has(view.key)) continue;
+      assert.ok(granted.has(view.key), `${view.key} is not assigned to any role or group`);
+    }
+  });
+
   it("legacy role map points at known group slugs", () => {
     const slugs = new Set(GROUP_PRESETS.map((g) => g.slug));
     for (const [role, groups] of Object.entries(LEGACY_ROLE_GROUPS)) {

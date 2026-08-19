@@ -36,6 +36,7 @@ import {
   type PendingUpgrade,
 } from "../lib/api";
 import { toaster } from "../components/ui/toaster";
+import { isShopPremise, customerDisplayTitle, customerUnitLine } from "../lib/premise";
 import { startSyncCooldown } from "../hooks/useSyncCooldown";
 import {
   cacheKeyFromParams,
@@ -57,6 +58,7 @@ import {
   CustomerActionDialog,
 } from "../components/customers/CustomerActionDialog";
 import type { CustomerAction } from "../components/customers/CustomerActionMenu";
+import { CreateActionDialog } from "../components/reminders/CreateActionDialog";
 import {
   DEFAULT_INSTALLATION_TIME,
   defaultInstallationDate,
@@ -222,6 +224,7 @@ export function CustomersListPage() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [categoryId, setCategoryId] = useState("");
   const [customerType, setCustomerType] = useState("");
+  const [premiseType, setPremiseType] = useState("");
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
@@ -230,6 +233,7 @@ export function CustomersListPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [actionCustomer, setActionCustomer] = useState<Customer | null>(null);
+  const [reminderCustomer, setReminderCustomer] = useState<Customer | null>(null);
   const [actionType, setActionType] = useState<CustomerAction | null>(null);
   const [actionProductId, setActionProductId] = useState("");
   const [newApartment, setNewApartment] = useState("");
@@ -342,6 +346,7 @@ export function CustomersListPage() {
         }
         if (categoryId) params.categoryId = categoryId;
         if (customerType) params.customerType = customerType;
+        if (premiseType) params.premiseType = premiseType;
         params.sortBy = sortQuery.sortBy;
         params.sortDir = sortQuery.sortDir;
         if (refresh) params.refresh = "true";
@@ -445,7 +450,7 @@ export function CustomersListPage() {
         }
       }
     },
-    [debouncedSearch, buildingId, statusFilters, categoryId, customerType, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]
+    [debouncedSearch, buildingId, statusFilters, categoryId, customerType, premiseType, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]
   );
 
   loadCustomersRef.current = loadCustomers;
@@ -726,6 +731,7 @@ export function CustomersListPage() {
       }
       if (categoryId) params.categoryId = categoryId;
       if (customerType) params.customerType = customerType;
+      if (premiseType) params.premiseType = premiseType;
       if (options?.columns && options.columns !== "all") {
         params.columns = options.columns.join(",");
       }
@@ -736,6 +742,7 @@ export function CustomersListPage() {
       const cat = categories.find((c) => String(c.id) === categoryId);
       if (cat) filterTags.push(cat.name);
       if (customerType) filterTags.push(customerType);
+      if (premiseType) filterTags.push(premiseType === "shop" ? "Shops" : "Apartments");
       if (debouncedSearch.trim().length >= 2) filterTags.push(debouncedSearch.trim());
       await api.exportCustomers(params, format, filterTags);
     } catch (e) {
@@ -878,6 +885,10 @@ export function CustomersListPage() {
   }
 
   function openAction(customer: Customer, type: CustomerAction) {
+    if (type === "createReminder") {
+      setReminderCustomer(customer);
+      return;
+    }
     if (type === "deletePermanent") {
       if (!allowPermanentDelete || customer.status !== "cancelled") return;
     }
@@ -1622,15 +1633,16 @@ export function CustomersListPage() {
         title="Customers"
         searchValue={searchInput}
         onSearchChange={setSearchInput}
-        searchPlaceholder="Name, Apt No. , Customer No."
+        searchPlaceholder="Name, shop, apt, customer no."
         chips={[
           {
             key: "all",
             label: "All",
-            active: statusFilters.length === 0 && !customerType,
+            active: statusFilters.length === 0 && !customerType && !premiseType,
             onClick: () => {
               applyStatusFilters([]);
               setCustomerType("");
+              setPremiseType("");
               setPage(1);
               setExpanded(null);
             },
@@ -1648,6 +1660,8 @@ export function CustomersListPage() {
           })),
           { key: "c2b", label: "C2B", active: customerType === "C2B", onClick: () => { setCustomerType(customerType === "C2B" ? "" : "C2B"); setPage(1); setExpanded(null); } },
           { key: "b2b", label: "B2B", active: customerType === "B2B", onClick: () => { setCustomerType(customerType === "B2B" ? "" : "B2B"); setPage(1); setExpanded(null); } },
+          { key: "apartments", label: "Apartments", active: premiseType === "apartment", onClick: () => { setPremiseType(premiseType === "apartment" ? "" : "apartment"); setPage(1); setExpanded(null); } },
+          { key: "shops", label: "Shops", active: premiseType === "shop", onClick: () => { setPremiseType(premiseType === "shop" ? "" : "shop"); setPage(1); setExpanded(null); } },
         ]}
         filterTitle="Filters"
         activeFilterCount={(buildingId ? 1 : 0) + (categoryId ? 1 : 0)}
@@ -1756,7 +1770,7 @@ export function CustomersListPage() {
             <Input
               size="sm"
               h={FILTER_CONTROL_HEIGHT}
-              placeholder="Name, apartment, customer number…"
+              placeholder="Name, shop, apartment, customer number…"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               borderRadius="md"
@@ -1764,6 +1778,25 @@ export function CustomersListPage() {
           </FilterField>
 
           {advancedFilters}
+
+          <FilterField label="Premise" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
+            <SelectField
+              size="sm"
+              fieldProps={{
+                value: premiseType,
+                onChange: (e) => {
+                  setPremiseType(e.target.value);
+                  setPage(1);
+                  setExpanded(null);
+                },
+                borderRadius: "md",
+              }}
+            >
+              <option value="">All premises</option>
+              <option value="apartment">Apartments</option>
+              <option value="shop">Shops</option>
+            </SelectField>
+          </FilterField>
 
           <FilterField label="Type" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
             <SelectField
@@ -1926,8 +1959,8 @@ export function CustomersListPage() {
                   return (
                     <MobileDataCard
                       variant="row"
-                      title={c.fullName}
-                      subtitle={`${formatDisplayText(c.buildingName)} · ${c.apartmentNumber} • ${c.customerNumber}`}
+                      title={customerDisplayTitle(c) || c.fullName}
+                      subtitle={`${formatDisplayText(c.buildingName)} · ${customerUnitLine(c)} • ${c.customerNumber}`}
                       leading={
                         canMutate && selectionMode ? (
                           <Box onClick={(e) => e.stopPropagation()}>
@@ -2062,16 +2095,23 @@ export function CustomersListPage() {
                         </Table.Cell>
                       ) : null}
                       <Table.Cell {...dataTableTypeCellProps}>
-                        <Badge
-                          colorPalette={TYPE_COLORS[c.customerType] || "gray"}
-                          variant="subtle"
-                        >
-                          {c.customerType}
-                        </Badge>
+                        <Flex gap={1} wrap="wrap">
+                          <Badge
+                            colorPalette={TYPE_COLORS[c.customerType] || "gray"}
+                            variant="subtle"
+                          >
+                            {c.customerType}
+                          </Badge>
+                          {isShopPremise(c) ? (
+                            <Badge colorPalette="orange" variant="subtle">
+                              Shop
+                            </Badge>
+                          ) : null}
+                        </Flex>
                       </Table.Cell>
                       <Table.Cell {...dataTableCustomerWrapCellProps}>
                         <DisplayText
-                          value={c.fullName}
+                          value={customerDisplayTitle(c) || c.fullName}
                           maxLength={null}
                           fontWeight={isOpen ? "bold" : "semibold"}
                           color={isOpen ? "brand.800" : "gray.900"}
@@ -2086,8 +2126,19 @@ export function CustomersListPage() {
                           whiteSpace="normal"
                           wordBreak="break-word"
                         >
-                          {formatDisplayText(c.buildingName)} · {c.apartmentNumber}
+                          {isShopPremise(c)
+                            ? `${formatDisplayText(c.buildingName)} · ${customerUnitLine(c)}`
+                            : `${formatDisplayText(c.buildingName)} · ${c.apartmentNumber}`}
                         </Text>
+                        {isShopPremise(c) && c.fullName ? (
+                          <Text
+                            fontSize="xs"
+                            color="fg.muted"
+                            textTransform="none"
+                          >
+                            {c.fullName}
+                          </Text>
+                        ) : null}
                         {(c.catalogPackageMissing || c.dstvSerialMissing) && (
                           <Stack gap={1} mt={1.5}>
                             {c.catalogPackageMissing ? (
@@ -2343,6 +2394,11 @@ export function CustomersListPage() {
       </ModalShell>
         </>
       ) : null}
+      <CreateActionDialog
+        open={Boolean(reminderCustomer)}
+        customer={reminderCustomer}
+        onClose={() => setReminderCustomer(null)}
+      />
     </ListPageStack>
   );
 }

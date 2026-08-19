@@ -52,6 +52,7 @@ async function getSettings(req, res, next) {
         },
         leads: {
           publicForm: `${base}/leads`,
+          signupForm: `${base}/signup`,
           embedScript: `${base}/leads/embed.js`,
           embedSnippet: `<div id="starlynx-lead-form"></div>\n<script src="${base}/leads/embed.js" async></script>`,
           whatsappWebhook: `${base}/api/public/whatsapp/webhook`,

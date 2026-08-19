@@ -11,7 +11,7 @@ export default defineConfig({
       devOptions: {
         enabled: false,
       },
-      includeAssets: ["favicon.svg", "logo.png", "icons.svg"],
+      includeAssets: ["favicon.svg", "logo.png", "icons.svg", "sw-push.js"],
       manifest: {
         name: "SUL Bix",
         short_name: "SUL Bix",
@@ -45,6 +45,7 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         navigateFallback: "/admin/index.html",
+        importScripts: ["sw-push.js"],
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith("/api"),
@@ -80,6 +81,10 @@ export default defineConfig({
         proxyTimeout: 60000,
       },
       "/leads": {
+        target: "http://127.0.0.1:4000",
+        changeOrigin: true,
+      },
+      "/signup": {
         target: "http://127.0.0.1:4000",
         changeOrigin: true,
       },

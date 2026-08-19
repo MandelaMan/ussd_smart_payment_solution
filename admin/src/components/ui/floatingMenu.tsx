@@ -15,6 +15,8 @@ const MENU_GAP = 4;
 
 export type FloatingMenuPlacement = {
   top: number;
+  /** Distance from the viewport bottom; used when opening above the trigger. */
+  bottom?: number;
   left: number;
   width: number;
   maxHeight: number;
@@ -34,7 +36,12 @@ export function computeFloatingMenuPlacement(
 
   if (preferTop) {
     return {
+      // Keep `top` as the highest allowed edge so callers can clamp overflow.
       top: Math.max(MENU_GAP, trigger.top - MENU_GAP - height),
+      // Anchor the *bottom* of the menu to the trigger so short content
+      // (e.g. an empty notifications panel) stays attached instead of
+      // floating `maxHeight` pixels above the button.
+      bottom: viewportH - trigger.top + MENU_GAP,
       left: trigger.left,
       width: trigger.width,
       maxHeight: height,
@@ -97,13 +104,19 @@ export function renderFloatingMenuPortal(
 ) {
   if (!placement || typeof document === "undefined") return null;
 
+  const anchoredAbove =
+    placement.placement === "top" && placement.bottom != null;
+
   return createPortal(
     <div
       style={{
         position: "fixed",
-        top: placement.top,
+        ...(anchoredAbove
+          ? { bottom: placement.bottom, top: "auto" }
+          : { top: placement.top }),
         left: placement.left,
         width: placement.width,
+        maxHeight: placement.maxHeight,
         zIndex,
         // Avoid inheriting modal overflow / transform clipping quirks.
         pointerEvents: "auto",

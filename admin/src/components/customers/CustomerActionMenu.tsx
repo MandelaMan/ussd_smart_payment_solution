@@ -12,9 +12,13 @@ import {
   FiWifiOff,
   FiPauseCircle,
   FiXCircle,
+  FiCheckSquare,
 } from "react-icons/fi";
 import type { Customer } from "../../lib/api";
+import { isShopPremise } from "../../lib/premise";
 import { FLOATING_MENU_Z_INDEX } from "../ui/floatingMenu";
+import { useAuth } from "../../lib/authContext";
+import { hasPermission } from "../../lib/rbac";
 
 export type CustomerAction =
   | "edit"
@@ -27,7 +31,8 @@ export type CustomerAction =
   | "cancel"
   | "history"
   | "convertType"
-  | "deletePermanent";
+  | "deletePermanent"
+  | "createReminder";
 
 type Props = {
   customer: Customer;
@@ -36,6 +41,8 @@ type Props = {
 };
 
 export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }: Props) {
+  const { user } = useAuth();
+  const canCreateReminder = hasPermission(user, "action_items.create");
   const active = customer.status === "active";
   const cancelled = customer.status === "cancelled";
   // Permanent delete is a local wipe only — only after cancel so integrations are stopped.
@@ -80,6 +87,12 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
               <FiEdit2 />
               Edit customer details
             </Menu.Item>
+            {canCreateReminder ? (
+              <Menu.Item value="createReminder">
+                <FiCheckSquare />
+                Create reminder
+              </Menu.Item>
+            ) : null}
             {active && (
               <>
                 <Menu.Separator />
@@ -97,7 +110,7 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
                 </Menu.Item>
                 <Menu.Item value="switch">
                   <FiMove />
-                  Move apartment
+                  {isShopPremise(customer) ? "Move unit" : "Move apartment"}
                 </Menu.Item>
                 <Menu.Item value="convertType">
                   <FiRepeat />
@@ -114,14 +127,14 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
                 </Menu.Item>
                 <Menu.Item value="cancel" color="fg.error">
                   <FiXCircle />
-                  Cancel & release apartment
+                  {isShopPremise(customer) ? "Cancel & release shop" : "Cancel & release apartment"}
                 </Menu.Item>
               </>
             )}
             <Menu.Separator />
             <Menu.Item value="history">
               <FiClock />
-              Apartment history
+              {isShopPremise(customer) ? "Occupancy history" : "Apartment history"}
             </Menu.Item>
             {showPermanentDelete ? (
               <>

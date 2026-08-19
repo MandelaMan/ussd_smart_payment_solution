@@ -6,6 +6,9 @@ const {
   publicCors,
   getLeadFormConfig,
   submitLead,
+  getSignupFormConfig,
+  getSignupPackages,
+  submitSignup,
   whatsappWebhookVerify,
   whatsappWebhook,
   whatsappStatus,
@@ -33,6 +36,22 @@ router.options("/leads/config", (req, res) => {
 });
 router.get("/leads/config", getLeadFormConfig);
 router.post("/leads", leadSubmitLimiter, submitLead);
+
+router.options("/leads/signup", (req, res) => {
+  publicCors(res);
+  res.sendStatus(204);
+});
+router.options("/leads/signup/config", (req, res) => {
+  publicCors(res);
+  res.sendStatus(204);
+});
+router.options("/leads/signup/packages", (req, res) => {
+  publicCors(res);
+  res.sendStatus(204);
+});
+router.get("/leads/signup/config", getSignupFormConfig);
+router.get("/leads/signup/packages", getSignupPackages);
+router.post("/leads/signup", leadSubmitLimiter, submitSignup);
 
 router.get("/whatsapp/webhook", whatsappWebhookVerify);
 router.post("/whatsapp/webhook", whatsappWebhook);

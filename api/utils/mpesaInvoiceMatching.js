@@ -1,3 +1,5 @@
+const { compactCustomerNumber } = require("./customerNumber");
+
 /** Pure helpers for matching M-Pesa payments to open Zoho invoices. */
 
 function roundMoney(value) {
@@ -39,18 +41,30 @@ function invoiceBalanceMatchesPayment(inv, paymentAmount) {
   return bal > 0 && amountsEqual(bal, paymentAmount);
 }
 
+function invoiceFieldMatchesRef(field, ref, compactRef) {
+  const value = String(field || "").trim().toUpperCase();
+  if (!value || !ref) return false;
+  if (value === ref || value.includes(ref)) return true;
+  const compactField = compactCustomerNumber(value);
+  return Boolean(
+    compactRef &&
+      compactField &&
+      (compactField === compactRef || compactField.includes(compactRef))
+  );
+}
+
 function invoiceMatchesCustomerRef(inv, customerNumber) {
   const ref = String(customerNumber || "").trim().toUpperCase();
   if (!ref) return false;
+  const compactRef = compactCustomerNumber(ref);
 
-  const orderRef = invoiceOrderRef(inv);
-  if (orderRef === ref || orderRef.includes(ref)) return true;
+  if (invoiceFieldMatchesRef(invoiceOrderRef(inv), ref, compactRef)) return true;
 
   const invoiceNum = String(inv?.invoice_number || "").trim().toUpperCase();
-  if (invoiceNum.includes(ref)) return true;
+  if (invoiceFieldMatchesRef(invoiceNum, ref, compactRef)) return true;
 
   const referenceNum = String(inv?.reference_number || "").trim().toUpperCase();
-  if (referenceNum === ref || referenceNum.includes(ref)) return true;
+  if (invoiceFieldMatchesRef(referenceNum, ref, compactRef)) return true;
 
   return false;
 }

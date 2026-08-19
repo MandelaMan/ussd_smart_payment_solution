@@ -273,7 +273,7 @@ export function ProductsPage() {
       ...buildings.map((b) => ({
         value: String(b.id),
         label: b.name,
-        description: `${b.ipSetup} · C2B ${b.c2bCode}`,
+        description: `${b.ipSetup} · ${b.dstvSetup === "headend_coax" ? "Headend" : "Decoder"} · C2B ${b.c2bCode}`,
         keywords: `${b.c2bCode} ${b.b2bCode}`,
       })),
     ],
@@ -284,7 +284,7 @@ export function ProductsPage() {
     setCategoryId("");
     setPlanId("");
     setPaymentFrequency("monthly");
-    setBuildingId("");
+    setBuildingId(filterBuildingId || "");
     setMbps("");
     setPrice("");
     setMonthlyPrice("");
@@ -845,11 +845,20 @@ function ProductForm({
       buildings.map((b) => ({
         value: String(b.id),
         label: b.name,
-        description: `${b.ipSetup} · C2B ${b.c2bCode}`,
+        description: `${b.ipSetup} · ${b.dstvSetup === "headend_coax" ? "Headend" : "Decoder"} · C2B ${b.c2bCode}`,
         keywords: `${b.c2bCode} ${b.b2bCode}`,
       })),
     [buildings]
   );
+
+  const selectedBuilding = buildings.find((b) => String(b.id) === buildingId);
+  const buildingUsesDecoder = selectedBuilding?.dstvSetup === "decoder";
+  const categoryHasDecoderFee = Boolean(
+    selectedCategory?.requiresDecoderFee || selectedCategory?.hasDstv
+  );
+  const showDecoderFeeNotice = categoryHasDecoderFee && buildingUsesDecoder;
+  const showHeadendNoDecoderNotice =
+    categoryHasDecoderFee && selectedBuilding?.dstvSetup === "headend_coax";
 
   return (
     <form onSubmit={onSubmit}>
@@ -981,10 +990,17 @@ function ProductForm({
             <Field.HelperText>Extra bandwidth is not used for DSTV Only.</Field.HelperText>
           ) : null}
         </Field.Root>
-        {selectedCategory?.requiresDecoderFee && (
+        {showDecoderFeeNotice && (
           <Box gridColumn={{ md: "1 / -1" }} bg="orange.50" borderRadius="md" px={3} py={2}>
             <Text fontSize="sm" color="orange.800">
-              One-off decoder fee: {formatCurrency(selectedCategory.decoderFeeAmount || 2900)}.
+              One-off decoder fee: {formatCurrency(selectedCategory?.decoderFeeAmount || 2900)}. Applies to this building because it uses individual DSTV decoders.
+            </Text>
+          </Box>
+        )}
+        {showHeadendNoDecoderNotice && (
+          <Box gridColumn={{ md: "1 / -1" }} bg="bg.subtle" borderRadius="md" px={3} py={2}>
+            <Text fontSize="sm" color="fg.muted">
+              No decoder fee — {selectedBuilding?.name || "this building"} uses headend coax (shared DSTV), not individual decoders.
             </Text>
           </Box>
         )}

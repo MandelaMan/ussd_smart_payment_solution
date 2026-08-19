@@ -63,7 +63,9 @@ module.exports = {
     "buildings.view",
     "pops.view",
     "apartments.view",
-    "agencies.view"
+    "agencies.view",
+    "campaigns.view",
+    "installations.view"
   ),
   requireConfigWrite: requirePermission(
     "packages.create",

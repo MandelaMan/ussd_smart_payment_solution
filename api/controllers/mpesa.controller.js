@@ -9,6 +9,7 @@ const {
   upsertByCheckoutId,
   findLatestTxnByCheckoutOrPhone,
   recordC2BConfirmation,
+  updateAccountReferenceById,
 } = require("../services/transactionStore");
 const { logSetIspPaymentAttempt } = require("../utils/tispSetIspLogger");
 const { insertIntegrationEvent } = require("../services/integrationEventStore");
@@ -25,7 +26,7 @@ const {
   findTargetOpenInvoice,
 } = require("../utils/mpesaInvoiceMatching");
 const { planInvoicePayment } = require("../utils/mpesaPaymentPlan");
-const { isValidPaybillAccountRef } = require("../utils/customerNumber");
+const { isValidPaybillAccountRef, normalizePaybillAccountRef } = require("../utils/customerNumber");
 
 // 👇 ADD: import Zoho helpers (adjust path if needed)
 const {
@@ -424,6 +425,33 @@ async function recordLastPaymentForAccount(accountRef, transTime) {
   } catch (e) {
     console.error("last payment update failed:", e.message);
   }
+}
+
+/**
+ * Map a typed paybill BillRefNumber onto the live customer number.
+ * Falls back to hyphen-normalized text when no unique customer is found.
+ */
+async function resolveMpesaAccountRef(rawRef, msisdn) {
+  const raw = String(rawRef || "").trim();
+  const normalized = normalizePaybillAccountRef(raw) || raw;
+  if (!raw) return { raw, canonical: "", customer: null };
+  try {
+    const customer = await customerStore.resolveCustomerByPaybillRef(raw, {
+      msisdn,
+    });
+    if (customer?.customerNumber) {
+      if (customer.customerNumber !== raw.toUpperCase()) {
+        console.log("[mpesa] resolved BillRefNumber", {
+          typed: raw,
+          canonical: customer.customerNumber,
+        });
+      }
+      return { raw, canonical: customer.customerNumber, customer };
+    }
+  } catch (e) {
+    console.warn("[mpesa] customer resolve failed:", e.message);
+  }
+  return { raw, canonical: normalized, customer: null };
 }
 
 /** Convert 2547xxxxxxxx -> 07xxxxxxxx (optional cosmetic) */
@@ -832,8 +860,10 @@ async function applyZohoPaymentForMpesa({
   transactionId,
   source,
   forceInvoiceId = null,
+  msisdn = null,
 }) {
-  const companyName = String(customerNumber || "").trim();
+  const resolved = await resolveMpesaAccountRef(customerNumber, msisdn);
+  const companyName = resolved.canonical || String(customerNumber || "").trim();
   const paymentAmount = roundMoney(amount);
   if (!companyName || paymentAmount <= 0) {
     return { paid: false, reason: "invalid_input" };
@@ -843,7 +873,7 @@ async function applyZohoPaymentForMpesa({
   let billedViaAgency = false;
   let agencyName = null;
 
-  const dbCustomer = await customerStore.findCustomerByNumber(companyName);
+  const dbCustomer = resolved.customer;
   if (dbCustomer && isB2BCustomer(dbCustomer)) {
     try {
       const agency = await resolveAgencyForCustomer(dbCustomer, customerStore);
@@ -1098,8 +1128,8 @@ function buildISPPayloadFromStoredPayment(row) {
 }
 
 async function processUnallocatedMpesaPayment(row, meta = {}) {
-  const accountRef = String(row.account_reference || "").trim();
-  if (!accountRef) {
+  const rawRef = String(row.account_reference || "").trim();
+  if (!rawRef) {
     return { ok: false, reason: "no_account_reference", message: "Payment has no account reference" };
   }
 
@@ -1109,11 +1139,23 @@ async function processUnallocatedMpesaPayment(row, meta = {}) {
     return { ok: false, reason: "invalid_payment", message: "Invalid M-Pesa payment record" };
   }
 
+  const resolved = await resolveMpesaAccountRef(rawRef, row.phone);
+  const accountRef = resolved.canonical || rawRef;
+  if (row.id && accountRef && accountRef !== rawRef) {
+    try {
+      await updateAccountReferenceById(row.id, accountRef);
+      row.account_reference = accountRef;
+    } catch (e) {
+      console.warn("[mpesa-allocation] account_reference rewrite failed:", e.message);
+    }
+  }
+
   const zohoResult = await applyZohoPaymentForMpesa({
     customerNumber: accountRef,
     amount,
     transactionId: receipt,
     source: row.channel || meta.source || "reconciliation",
+    msisdn: row.phone,
   });
 
   await logZohoMpesaPaymentResult(zohoResult, {
@@ -1149,7 +1191,12 @@ async function processUnallocatedMpesaPayment(row, meta = {}) {
 
   let customer = null;
   try {
-    customer = await customerStore.findCustomerByNumber(accountRef);
+    customer = resolved.customer;
+    if (!customer) {
+      customer = await customerStore.resolveCustomerByPaybillRef(accountRef, {
+        msisdn: row.phone,
+      });
+    }
     if (customer) {
       const tisp = await getTISPCustomer(customer.customerNumber);
       const status = tisp?.status ?? tisp?.Status ?? null;
@@ -1246,12 +1293,14 @@ const mpesaConfirmation = async (req, res) => {
     const transTime =
       tx.TransTime || tx.TransDate || tx.TransactionDate || null;
     const shortCode = tx.BusinessShortCode || MPESA_SHORTCODE || "";
-    const accountRef =
+    const accountRefRaw =
       tx.BillRefNumber ||
       tx.AccountReference ||
       tx.accountReference ||
       process.env.DEFAULT_ACCOUNT_REFERENCE ||
       "Starlynx Utility";
+    const resolved = await resolveMpesaAccountRef(accountRefRaw, msisdn);
+    const accountRef = resolved.canonical || accountRefRaw;
 
     try {
       await logActivity({
@@ -1301,6 +1350,7 @@ const mpesaConfirmation = async (req, res) => {
         amount,
         transactionId,
         source: "C2B",
+        msisdn,
       });
       console.log("Zoho result (C2B):", zohoResult);
       await logZohoMpesaPaymentResult(zohoResult, {
@@ -1535,10 +1585,15 @@ const mpesaCallback = async (req, res) => {
           transaction.PhoneNumber
         )) || {};
 
-      // Use the exact same AccountReference from STK initiation
-      const accountRef = existing.AccountReference
+      // Use the AccountReference from STK initiation, then map typing mistakes
+      const accountRefRaw = existing.AccountReference
         ? String(existing.AccountReference)
         : process.env.DEFAULT_ACCOUNT_REFERENCE || "Starlynx Utility";
+      const resolvedStk = await resolveMpesaAccountRef(
+        accountRefRaw,
+        transaction.PhoneNumber
+      );
+      const accountRef = resolvedStk.canonical || accountRefRaw;
 
       await recordLastPaymentForAccount(
         accountRef,
@@ -1579,6 +1634,7 @@ const mpesaCallback = async (req, res) => {
           transactionId: transaction.MpesaReceiptNumber,
           source: "STK",
           forceInvoiceId,
+          msisdn: transaction.PhoneNumber,
         });
         console.log("Zoho result (STK):", zohoResult);
         await logZohoMpesaPaymentResult(zohoResult, {

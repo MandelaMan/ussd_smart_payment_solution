@@ -53,6 +53,18 @@ const CUSTOMER_EMAIL_TEMPLATE_META: Array<{
     description: "Sent when a customer signs up with a free trial.",
   },
   {
+    key: "referral_recorded",
+    label: "Referral recorded",
+    description:
+      "Sent to a referrer when a new customer is onboarded using their apartment as the referral.",
+  },
+  {
+    key: "referral_reward",
+    label: "Referral reward",
+    description:
+      "Sent to a referrer when their referral discount is applied to the next subscription cycle.",
+  },
+  {
     key: "upgrade",
     label: "Upgrade plan",
     description: "Sent after a package upgrade is completed.",
@@ -82,6 +94,17 @@ const CUSTOMER_EMAIL_TEMPLATE_META: Array<{
     key: "disconnect",
     label: "Service disconnect",
     description: "Sent when service is disconnected / suspended on the network.",
+  },
+  {
+    key: "action_opened",
+    label: "Reminder opened",
+    description:
+      "Sent when staff create a customer-linked reminder (move-out, fault, collections, etc.).",
+  },
+  {
+    key: "action_completed",
+    label: "Reminder completed",
+    description: "Sent when a customer-linked reminder is marked complete.",
   },
 ];
 
@@ -267,6 +290,95 @@ function SettingsAccordionSection({
   );
 }
 
+/** Nested tree branch — collapsed by default so long lists stay scannable. */
+function SettingsTreeBranch({
+  title,
+  subtitle,
+  open,
+  onToggle,
+  badges,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  open: boolean;
+  onToggle: () => void;
+  badges?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Box
+      borderBottom="1px solid"
+      borderColor="border.muted"
+      _last={{ borderBottom: "none" }}
+    >
+      <Flex
+        align="center"
+        gap={2}
+        px={3}
+        py={2}
+        cursor="pointer"
+        bg={open ? "brand.50" : "transparent"}
+        _hover={{ bg: "brand.50" }}
+        onClick={onToggle}
+        role="button"
+        aria-expanded={open}
+      >
+        <Box color="brand.600" flexShrink={0} lineHeight={0}>
+          {open ? <FiChevronDown size={14} /> : <FiChevronRight size={14} />}
+        </Box>
+        <Box flex={1} minW={0}>
+          <Text
+            fontSize="sm"
+            fontWeight="semibold"
+            color="brand.800"
+            whiteSpace="nowrap"
+            overflow="hidden"
+            textOverflow="ellipsis"
+          >
+            {title}
+          </Text>
+          {subtitle && !open ? (
+            <Text
+              fontSize="xs"
+              color="fg.muted"
+              whiteSpace="nowrap"
+              overflow="hidden"
+              textOverflow="ellipsis"
+            >
+              {subtitle}
+            </Text>
+          ) : null}
+        </Box>
+        {badges ? (
+          <Flex gap={1.5} flexShrink={0}>
+            {badges}
+          </Flex>
+        ) : null}
+      </Flex>
+      {open ? (
+        <Box
+          px={3}
+          pb={3}
+          pt={1}
+          ml={3}
+          mb={2}
+          pl={5}
+          borderLeft="2px solid"
+          borderLeftColor="brand.300"
+        >
+          {subtitle ? (
+            <Text fontSize="xs" color="fg.muted" mb={3}>
+              {subtitle}
+            </Text>
+          ) : null}
+          {children}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
 function CommunicationPanel({
   settings,
   onUpdated,
@@ -297,6 +409,7 @@ function CommunicationPanel({
   const [templates, setTemplates] = useState(() =>
     templatesFromSettings(customerEmail)
   );
+  const [openTemplateKey, setOpenTemplateKey] = useState<string | null>(null);
 
   const [phoneNumberId, setPhoneNumberId] = useState(whatsapp?.phoneNumberId || "");
   const [accessToken, setAccessToken] = useState("");
@@ -664,6 +777,14 @@ function CommunicationPanel({
           <Text as="span" fontFamily="mono" fontSize="xs">
             {"{{fullName}}"}
           </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{referredCustomerNumber}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{referralDiscountPercent}}"}
+          </Text>
           .
         </Text>
 
@@ -684,75 +805,98 @@ function CommunicationPanel({
             </Field.HelperText>
           </Field.Root>
 
-          {CUSTOMER_EMAIL_TEMPLATE_META.map((meta) => {
-            const draft = templates[meta.key] || emptyTemplateDraft();
-            const apiMeta = customerEmail?.templates?.[meta.key];
-            const label = apiMeta?.label || meta.label;
-            const description = apiMeta?.description || meta.description;
-            return (
-              <Box
-                key={meta.key}
-                borderWidth="1px"
-                borderColor="border.muted"
-                borderRadius="lg"
-                p={4}
-              >
-                <Heading size="xs" mb={1}>
-                  {label}
-                </Heading>
-                <Text fontSize="xs" color="fg.muted" mb={3}>
-                  {description}
-                </Text>
-                <Stack gap={3}>
-                  <Flex align="center" gap={2}>
-                    <RowCheckbox
-                      checked={draft.enabled}
-                      onChange={() =>
-                        patchTemplate(meta.key, { enabled: !draft.enabled })
-                      }
-                      aria-label={`Enable ${label}`}
-                    />
-                    <Text fontSize="sm">Send this email automatically</Text>
-                  </Flex>
-                  <Field.Root>
-                    <Field.Label>Subject</Field.Label>
-                    <Input
-                      value={draft.subject}
-                      onChange={(e) =>
-                        patchTemplate(meta.key, { subject: e.target.value })
-                      }
-                      placeholder={`${label} — {{customerNumber}}`}
-                    />
-                  </Field.Root>
-                  <Field.Root>
-                    <Field.Label>Body</Field.Label>
-                    <RichTextEditor
-                      value={draft.bodyHtml}
-                      onChange={(bodyHtml) =>
-                        patchTemplate(meta.key, { bodyHtml })
-                      }
-                      placeholder={`${label} message…`}
-                      minH="160px"
-                    />
-                  </Field.Root>
-                  <Field.Root>
-                    <Field.Label>CC emails</Field.Label>
-                    <Textarea
-                      value={draft.ccEmails}
-                      onChange={(e) =>
-                        patchTemplate(meta.key, { ccEmails: e.target.value })
-                      }
-                      placeholder={"support@sulsolutions.biz"}
-                      rows={2}
-                      fontFamily="mono"
-                      fontSize="sm"
-                    />
-                    <Field.HelperText>One address per line.</Field.HelperText>
-                  </Field.Root>
-                </Stack>
-              </Box>
-            );
-          })}
+          <Box>
+            <Text fontSize="sm" fontWeight="medium" mb={1}>
+              Email templates
+            </Text>
+            <Text fontSize="xs" color="fg.muted" mb={2}>
+              Expand a template name to edit its subject, body, and CC list.
+            </Text>
+            <Box
+              borderWidth="1px"
+              borderColor="border.muted"
+              borderRadius="md"
+              overflow="hidden"
+            >
+            {CUSTOMER_EMAIL_TEMPLATE_META.map((meta) => {
+              const draft = templates[meta.key] || emptyTemplateDraft();
+              const apiMeta = customerEmail?.templates?.[meta.key];
+              const label = apiMeta?.label || meta.label;
+              const description = apiMeta?.description || meta.description;
+              const open = openTemplateKey === meta.key;
+              return (
+                <SettingsTreeBranch
+                  key={meta.key}
+                  title={label}
+                  subtitle={description}
+                  open={open}
+                  onToggle={() =>
+                    setOpenTemplateKey((current) =>
+                      current === meta.key ? null : meta.key
+                    )
+                  }
+                  badges={
+                    <Badge
+                      colorPalette={draft.enabled ? "green" : "gray"}
+                      variant="subtle"
+                      size="sm"
+                    >
+                      {draft.enabled ? "On" : "Off"}
+                    </Badge>
+                  }
+                >
+                  <Stack gap={3}>
+                    <Flex align="center" gap={2}>
+                      <RowCheckbox
+                        checked={draft.enabled}
+                        onChange={() =>
+                          patchTemplate(meta.key, { enabled: !draft.enabled })
+                        }
+                        aria-label={`Enable ${label}`}
+                      />
+                      <Text fontSize="sm">Send this email automatically</Text>
+                    </Flex>
+                    <Field.Root>
+                      <Field.Label>Subject</Field.Label>
+                      <Input
+                        value={draft.subject}
+                        onChange={(e) =>
+                          patchTemplate(meta.key, { subject: e.target.value })
+                        }
+                        placeholder={`${label} — {{customerNumber}}`}
+                      />
+                    </Field.Root>
+                    <Field.Root>
+                      <Field.Label>Body</Field.Label>
+                      <RichTextEditor
+                        value={draft.bodyHtml}
+                        onChange={(bodyHtml) =>
+                          patchTemplate(meta.key, { bodyHtml })
+                        }
+                        placeholder={`${label} message…`}
+                        minH="160px"
+                      />
+                    </Field.Root>
+                    <Field.Root>
+                      <Field.Label>CC emails</Field.Label>
+                      <Textarea
+                        value={draft.ccEmails}
+                        onChange={(e) =>
+                          patchTemplate(meta.key, { ccEmails: e.target.value })
+                        }
+                        placeholder={"support@sulsolutions.biz"}
+                        rows={2}
+                        fontFamily="mono"
+                        fontSize="sm"
+                      />
+                      <Field.HelperText>One address per line.</Field.HelperText>
+                    </Field.Root>
+                  </Stack>
+                </SettingsTreeBranch>
+              );
+            })}
+            </Box>
+          </Box>
 
           <Button
             colorPalette="brand"
@@ -976,7 +1120,12 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
         }
       >
         <Stack gap={2}>
-          <ConfigRow label="Public form" value={webhooks.leads.publicForm} />
+          <ConfigRow
+            label="Customer signup (share this)"
+            value={webhooks.leads.signupForm || `${webhooks.leads.publicForm.replace(/\/leads$/, "")}/signup`}
+            hint="Always share this link. Signups land in Leads as Interested — pending conversion until staff verify and create the customer."
+          />
+          <ConfigRow label="Public enquiry form" value={webhooks.leads.publicForm} />
           <ConfigRow
             label="Embed script"
             value={webhooks.leads.embedScript}

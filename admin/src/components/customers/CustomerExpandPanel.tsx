@@ -39,8 +39,12 @@ import {
   type CustomerZohoStatus,
   type ZohoInvoice,
 } from "../../lib/api";
-import { summarizeOverdueZohoInvoices } from "../../lib/zohoInvoiceStatus";
+import {
+  isOverdueZohoInvoice,
+  summarizeOverdueZohoInvoices,
+} from "../../lib/zohoInvoiceStatus";
 import { formatCustomerPackageLabel, formatTitleCase } from "../../lib/formatText";
+import { customerDisplayTitle, isShopPremise } from "../../lib/premise";
 import { displayCustomerStatus, normalizeSubscriptionStatus } from "../../lib/customerStatus";
 import {
   parseRetryAfterSeconds,
@@ -57,7 +61,7 @@ import {
   type CustomerAction,
 } from "./CustomerActionMenu";
 import { TabStrip } from "../ui/TabStrip";
-import { DataTable, DataTableSortHeader, dataTableCellProps, DataTableColumnHeader } from "../ui/DataTable";
+import { DataTable, DataTableSortHeader, dataTableCellProps } from "../ui/DataTable";
 import { TextStatus } from "../ui/TextStatus";
 import { DetailCard, DetailGrid } from "../module/EntityExpandShell";
 import { DstvSerialMissingBadge } from "./DstvSerialMissingBadge";
@@ -233,6 +237,7 @@ type StatusNarration = {
   label: string;
   text: string;
   tone: StatusTone;
+  detail?: string | null;
 };
 
 function narrationToneColor(tone: StatusTone) {
@@ -310,6 +315,34 @@ function toneBadgeIcon(tone: StatusTone): IconType {
   return FiInfo;
 }
 
+function formatInvoiceDateLabel(value: string | null | undefined): string | null {
+  const formatted = value ? formatDateOnly(value) : null;
+  return formatted && formatted !== "—" ? formatted : null;
+}
+
+function formatInvoiceDateDetail(invoice: ZohoInvoice | null | undefined): string | null {
+  if (!invoice) return null;
+  const sent = formatInvoiceDateLabel(invoice.date);
+  const due = formatInvoiceDateLabel(invoice.dueDate);
+  const parts: string[] = [];
+  if (sent) parts.push(`Sent ${sent}`);
+  if (due) parts.push(`Due ${due}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function pickInvoiceForStatus(invoices: ZohoInvoice[]): ZohoInvoice | null {
+  if (!invoices.length) return null;
+  const overdue = invoices.filter(isOverdueZohoInvoice);
+  if (overdue.length) {
+    return [...overdue].sort(
+      (a, b) =>
+        new Date(a.dueDate || a.date || 0).getTime() -
+        new Date(b.dueDate || b.date || 0).getTime()
+    )[0];
+  }
+  return invoices[0];
+}
+
 function buildTispDueNarration(
   dueLabel: string | null,
   expires: boolean
@@ -340,7 +373,7 @@ function buildTispNarrations(
     return [
       {
         label: "Internet status",
-        text: "Not applicable — DSTV Only (no bandwidth). Billed in Zoho Books only.",
+        text: "DSTV Only — billed in Zoho, not TISP.",
         tone: "ok",
       },
     ];
@@ -358,8 +391,8 @@ function buildTispNarrations(
   if (customer.status === "cancelled" || service.toLowerCase().includes("cancel")) {
     return [
       {
-        label: "Internet status",
-        text: "Cancelled — churned and no longer counted as a current customer. TISP keeps the live apartment account for the new tenant.",
+        label: "TISP",
+        text: "Cancelled. Apartment stays on TISP for the next tenant.",
         tone: "bad",
       },
     ];
@@ -369,7 +402,7 @@ function buildTispNarrations(
     return [
       {
         label: "Internet status",
-        text: "Not on TISP yet — still on Books as Suspended until they are created and connected.",
+        text: "Not on TISP yet — still Suspended in Books.",
         tone: "bad",
       },
     ];
@@ -389,10 +422,9 @@ function buildTispNarrations(
         label: "Internet status",
         text: [
           pauseRange
-            ? `Paused (away ${pauseRange}). Internet stopped; billing resumes after return.`
-            : "Paused at customer request (away). Internet stopped until they return.",
+            ? `Paused ${pauseRange}. Internet stopped until return.`
+            : "Paused. Internet stopped until they return.",
           pauseNote,
-          "Still counted as a customer.",
         ]
           .filter(Boolean)
           .join(" "),
@@ -405,7 +437,7 @@ function buildTispNarrations(
     return [
       {
         label: "Internet status",
-        text: "Suspended — on Books but not active on TISP (or service stopped).",
+        text: "Suspended — not active on TISP.",
         tone: "warn",
       },
       buildTispDueNarration(dueLabel, false),
@@ -451,7 +483,7 @@ function buildZohoNarrations(
     return [
       {
         label: "Zoho",
-        text: "B2B customer — billing goes through the agency Zoho contact, not an individual contact.",
+        text: "Billed through the agency Zoho contact.",
         tone: "ok",
       },
     ];
@@ -468,8 +500,8 @@ function buildZohoNarrations(
         {
           label: "Zoho",
           text: archivedAs
-            ? `Former tenant — Zoho contact archived as ${archivedAs} (inactive). Invoices stay on that old contact.`
-            : "Former tenant — Zoho contact is inactive/archived.",
+            ? `Archived as ${archivedAs} (inactive).`
+            : "Former tenant contact is inactive.",
           tone: "warn",
         },
       ];
@@ -478,8 +510,8 @@ function buildZohoNarrations(
       {
         label: "Zoho",
         text: archivedAs
-          ? `Cancelled in BIX as ${archivedAs}. Open the new active tenant and use Retry billing setup so Zoho renames this old contact and creates a fresh one for the new customer.`
-          : "Cancelled in BIX. Open the new active tenant and use Retry billing setup to archive the old Zoho contact and create a new one.",
+          ? `Cancelled as ${archivedAs}. Retry billing from the new tenant.`
+          : "Cancelled. Retry billing from the new tenant to archive this contact.",
         tone: "warn",
       },
     ];
@@ -490,19 +522,19 @@ function buildZohoNarrations(
   if (!integrations?.onZoho && !zohoStatus?.linked) {
     rows.push({
       label: "Contact",
-      text: "No Zoho contact was found for this customer.",
+      text: "No Zoho contact found.",
       tone: "bad",
     });
   } else if (integrations?.zohoInactive) {
     rows.push({
       label: "Contact",
-      text: "Contact exists in Zoho but is inactive. Edit and save the customer to reactivate it.",
+      text: "Inactive. Edit and save to reactivate.",
       tone: "warn",
     });
   } else {
     rows.push({
       label: "Contact",
-      text: "Contact exists in Zoho and is active.",
+      text: "Active Zoho contact.",
       tone: "ok",
     });
   }
@@ -511,43 +543,47 @@ function buildZohoNarrations(
   const balanceDue = zohoStatus?.totalBalanceDue ?? 0;
   const invoiceCount =
     integrations?.invoiceCount ?? zohoStatus?.invoiceCount ?? 0;
+  const statusInvoice = pickInvoiceForStatus(zohoStatus?.invoices || []);
+  const invoiceDates = formatInvoiceDateDetail(statusInvoice);
 
   if (!integrations?.onZoho && !zohoStatus?.linked) {
     rows.push({
       label: "Invoice",
-      text: "Cannot check invoices until a Zoho contact is linked.",
+      text: "Link a contact to see invoices.",
       tone: "neutral",
     });
   } else if (invoiceCount === 0) {
     rows.push({
       label: "Invoice",
-      text: "No invoices found in Zoho for this customer.",
+      text: "No invoices yet.",
       tone: "warn",
     });
   } else if (unpaidCount > 0 || balanceDue > 0) {
     rows.push({
       label: "Invoice",
-      text: `Customer has ${unpaidCount} overdue invoice${unpaidCount === 1 ? "" : "s"} totaling ${formatCurrency(balanceDue)}.`,
+      text: `${unpaidCount} overdue · ${formatCurrency(balanceDue)}.`,
       tone: "bad",
+      detail: invoiceDates,
     });
   } else {
     rows.push({
       label: "Invoice",
-      text: "No overdue invoices — no outstanding invoice balance.",
+      text: "No overdue invoices.",
       tone: "ok",
+      detail: invoiceDates,
     });
   }
 
   if (!integrations?.onZoho && !zohoStatus?.linked) {
     rows.push({
       label: "Payment",
-      text: "Cannot check payments until a Zoho contact is linked.",
+      text: "Link a contact to see payments.",
       tone: "neutral",
     });
   } else if (unpaidCount > 0 || balanceDue > 0) {
     rows.push({
       label: "Payment",
-      text: `Customer has overdue payments of ${formatCurrency(balanceDue)}.`,
+      text: `Overdue ${formatCurrency(balanceDue)}.`,
       tone: "bad",
     });
   } else if (integrations && !integrations.paymentsInSync) {
@@ -556,7 +592,7 @@ function buildZohoNarrations(
       : "none";
     rows.push({
       label: "Payment",
-      text: `Last payment is being aligned to Zoho (${zoho}). Refresh if this still looks wrong.`,
+      text: `Aligning last payment to Zoho (${zoho}).`,
       tone: "warn",
     });
   } else if (integrations?.zohoLastPaymentDate || integrations?.lastPaymentDate) {
@@ -565,13 +601,13 @@ function buildZohoNarrations(
     );
     rows.push({
       label: "Payment",
-      text: `Last payment on ${paid} (from Zoho). No outstanding payments.`,
+      text: `Last payment ${paid}.`,
       tone: "ok",
     });
   } else {
     rows.push({
       label: "Payment",
-      text: "Customer has no outstanding payments.",
+      text: "No outstanding payments.",
       tone: "ok",
     });
   }
@@ -579,14 +615,14 @@ function buildZohoNarrations(
   if (!integrations?.onZoho && !zohoStatus?.linked) {
     rows.push({
       label: "Recurring invoice",
-      text: "Cannot check recurring billing until a Zoho contact is linked.",
+      text: "Link a contact to see recurring billing.",
       tone: "neutral",
     });
   } else if (integrations?.hasActiveRecurring) {
     rows.push({
       label: "Recurring invoice",
       text: integrations.nextRecurringDate
-        ? `Recurring invoice is active. Next invoice date is ${formatDateOnly(integrations.nextRecurringDate)}.`
+        ? `Active. Next invoice ${formatDateOnly(integrations.nextRecurringDate)}.`
         : "Recurring invoice is active.",
       tone: "ok",
     });
@@ -700,6 +736,11 @@ function StatusTile({
           >
             {item.text}
           </Text>
+          {item.detail ? (
+            <Text fontSize="xs" color="fg.muted" mt={0.5} lineHeight="1.4">
+              {item.detail}
+            </Text>
+          ) : null}
         </Box>
       </Flex>
     </Box>
@@ -744,6 +785,10 @@ function StatusTileSkeleton() {
   );
 }
 
+function statusTileColumns(count: number) {
+  return count <= 1 ? "1fr" : { base: "1fr", sm: "1fr 1fr" };
+}
+
 function StatusNarrationBlock({
   title,
   items,
@@ -757,7 +802,9 @@ function StatusNarrationBlock({
   featured?: boolean;
   skeletonCount?: number;
 }) {
-  const useFeatured = featured || items.length <= 1;
+  const tileCount = loading ? skeletonCount : items.length;
+  const useFeatured = Boolean(featured) || tileCount <= 1;
+  const columns = statusTileColumns(tileCount);
 
   return (
     <Box>
@@ -767,11 +814,7 @@ function StatusNarrationBlock({
       {loading ? (
         <Box
           display="grid"
-          gridTemplateColumns={
-            skeletonCount <= 1
-              ? "1fr"
-              : { base: "1fr", sm: "1fr 1fr" }
-          }
+          gridTemplateColumns={columns}
           gap={{ base: 2, md: 2.5 }}
           alignItems="stretch"
           w="full"
@@ -784,11 +827,7 @@ function StatusNarrationBlock({
       ) : (
         <Box
           display="grid"
-          gridTemplateColumns={
-            useFeatured
-              ? "1fr"
-              : { base: "1fr", sm: "1fr 1fr" }
-          }
+          gridTemplateColumns={columns}
           gap={{ base: 2, md: 2.5 }}
           alignItems="stretch"
           w="full"
@@ -856,14 +895,14 @@ export function CustomerExpandPanel({
   const {
     sorts: invoiceSorts,
     toggleSort: toggleInvoiceSort,
-  } = useTableSort<"invoiceNumber" | "date" | "status" | "total" | "balanceDue">({
+  } = useTableSort<"invoiceNumber" | "date" | "dueDate" | "status" | "total" | "balanceDue">({
     sortBy: "date",
     sortDir: "desc",
   });
   const {
     sorts: paymentSorts,
     toggleSort: togglePaymentSort,
-  } = useTableSort<"source" | "referenceId" | "amount" | "paidAt">({
+  } = useTableSort<"source" | "referenceId" | "amount" | "invoiceNumber" | "paidAt">({
     sortBy: "paidAt",
     sortDir: "desc",
   });
@@ -873,6 +912,7 @@ export function CustomerExpandPanel({
       sortRows(zohoStatus?.invoices || [], invoiceSorts, {
         invoiceNumber: (invoice) => invoice.invoiceNumber,
         date: (invoice) => invoice.date,
+        dueDate: (invoice) => invoice.dueDate,
         status: (invoice) => invoice.status,
         total: (invoice) => invoice.total,
         balanceDue: (invoice) => invoice.balanceDue,
@@ -889,6 +929,7 @@ export function CustomerExpandPanel({
         source: (payment) => payment.source,
         referenceId: (payment) => payment.referenceId,
         amount: (payment) => payment.amount,
+        invoiceNumber: (payment) => payment.invoiceNumber,
         paidAt: (payment) => payment.paidAt,
       }),
     [payments, paymentSorts]
@@ -1353,7 +1394,7 @@ export function CustomerExpandPanel({
               textTransform="none"
               overflowWrap="anywhere"
             >
-              {formatTitleCase(customer.fullName)}
+              {formatTitleCase(customerDisplayTitle(customer) || customer.fullName)}
             </Text>
             <TextStatus status={statusLabel} />
           </Flex>
@@ -1373,6 +1414,11 @@ export function CustomerExpandPanel({
             >
               {customer.customerType}
             </Badge>
+            {isShopPremise(customer) ? (
+              <Badge colorPalette="orange" variant="subtle">
+                Shop
+              </Badge>
+            ) : null}
             {customer.customerType === "B2B" &&
             customer.agencyId &&
             customer.agencyName ? (
@@ -1474,7 +1520,7 @@ export function CustomerExpandPanel({
 
       <Box p={{ base: 2.5, md: 4 }} minH={{ base: "auto", md: "280px" }} minW={0}>
         <Box hidden={activeTab !== "status"}>
-          <Stack gap={3}>
+          <Stack gap={{ base: 3, md: 4 }}>
             <StatusNarrationBlock
               title="TISP"
               items={tispNarrations}
@@ -1504,7 +1550,25 @@ export function CustomerExpandPanel({
               value={formatTitleCase(customer.buildingName)}
               span={{ base: "1 / -1", sm: "span 1" }}
             />
-            <DetailCard label="Apartment number" value={customer.apartmentNumber} mono />
+            {isShopPremise(customer) ? (
+              <>
+                <DetailCard
+                  label="Business name"
+                  value={customer.businessName || "—"}
+                />
+                <DetailCard
+                  label="Shop location"
+                  value={customer.shopLocation || "—"}
+                />
+                <DetailCard
+                  label="Unit code"
+                  value={customer.apartmentNumber}
+                  mono
+                />
+              </>
+            ) : (
+              <DetailCard label="Apartment number" value={customer.apartmentNumber} mono />
+            )}
             <DetailCard label="Payment frequency" value={paymentFrequencyLabel} />
             {customer.trialPeriodEnabled && customer.trialEndsAt ? (
               <DetailCard
@@ -1798,7 +1862,7 @@ export function CustomerExpandPanel({
               </Box>
             )}
             {zohoLoading ? (
-              <DataTableLoadingSkeleton columns={5} rows={4} fill={false} showHeader={false} />
+              <DataTableLoadingSkeleton columns={6} rows={4} fill={false} showHeader={false} />
             ) : !zohoStatus?.linked ? (
               <Box textAlign="center">
                 <EmptyState>
@@ -1865,7 +1929,9 @@ export function CustomerExpandPanel({
                           {invoice.invoiceNumber || invoice.id}
                         </Text>
                         <Text fontSize="2xs" color="fg.muted" mt={0.5}>
-                          {invoice.date ? formatDate(invoice.date) : "—"}
+                          Sent {invoice.date ? formatDate(invoice.date) : "—"}
+                          {" · "}
+                          Due {invoice.dueDate ? formatDate(invoice.dueDate) : "—"}
                         </Text>
                       </Box>
                       <Box textAlign="right" flexShrink={0}>
@@ -1884,7 +1950,8 @@ export function CustomerExpandPanel({
                     <Table.Header>
                       <Table.Row>
                         <DataTableSortHeader label="Invoice" column="invoiceNumber" sorts={invoiceSorts} onSort={toggleInvoiceSort} />
-                        <DataTableSortHeader label="Date" column="date" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
+                        <DataTableSortHeader label="Date sent" column="date" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
+                        <DataTableSortHeader label="Due date" column="dueDate" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
                         <DataTableSortHeader label="Status" column="status" sorts={invoiceSorts} onSort={toggleInvoiceSort} />
                         <DataTableSortHeader label="Total" column="total" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
                         <DataTableSortHeader label="Balance" column="balanceDue" sorts={invoiceSorts} onSort={toggleInvoiceSort} defaultDir="desc" />
@@ -1898,6 +1965,9 @@ export function CustomerExpandPanel({
                           </Table.Cell>
                           <Table.Cell {...dataTableCellProps} color="fg.muted">
                             {invoice.date ? formatDate(invoice.date) : "—"}
+                          </Table.Cell>
+                          <Table.Cell {...dataTableCellProps} color="fg.muted">
+                            {invoice.dueDate ? formatDate(invoice.dueDate) : "—"}
                           </Table.Cell>
                           <Table.Cell {...dataTableCellProps}>
                             <TextStatus status={invoice.status} />
@@ -1955,9 +2025,12 @@ export function CustomerExpandPanel({
                           {payment.referenceId || "—"}
                         </Text>
                         <Text fontSize="2xs" color="fg.muted" mt={0.5}>
-                          {[payment.invoiceNumber, payment.paidAt ? formatDate(payment.paidAt) : null]
+                          {[
+                            paymentAppliedInvoice(payment) || "No invoice",
+                            payment.paidAt ? formatDate(payment.paidAt) : null,
+                          ]
                             .filter(Boolean)
-                            .join(" · ") || "—"}
+                            .join(" · ")}
                         </Text>
                       </Box>
                       <Text fontSize="xs" fontWeight="semibold" whiteSpace="nowrap" flexShrink={0}>
@@ -1973,7 +2046,7 @@ export function CustomerExpandPanel({
                         <DataTableSortHeader label="Source" column="source" sorts={paymentSorts} onSort={togglePaymentSort} />
                         <DataTableSortHeader label="Reference" column="referenceId" sorts={paymentSorts} onSort={togglePaymentSort} />
                         <DataTableSortHeader label="Amount" column="amount" sorts={paymentSorts} onSort={togglePaymentSort} defaultDir="desc" />
-                        <DataTableColumnHeader>Invoice</DataTableColumnHeader>
+                        <DataTableSortHeader label="Invoice" column="invoiceNumber" sorts={paymentSorts} onSort={togglePaymentSort} />
                         <DataTableSortHeader label="Date" column="paidAt" sorts={paymentSorts} onSort={togglePaymentSort} defaultDir="desc" />
                       </Table.Row>
                     </Table.Header>
@@ -1994,8 +2067,12 @@ export function CustomerExpandPanel({
                           <Table.Cell {...dataTableCellProps} fontWeight="semibold">
                             {payment.amount != null ? formatCurrency(payment.amount) : "—"}
                           </Table.Cell>
-                          <Table.Cell {...dataTableCellProps} color="fg.muted">
-                            {payment.invoiceNumber || "—"}
+                          <Table.Cell
+                            {...dataTableCellProps}
+                            fontFamily={paymentAppliedInvoice(payment) ? "mono" : undefined}
+                            color={paymentAppliedInvoice(payment) ? "brand.700" : "fg.muted"}
+                          >
+                            {paymentAppliedInvoice(payment) || "None"}
                           </Table.Cell>
                           <Table.Cell {...dataTableCellProps} color="fg.muted">
                             {payment.paidAt ? formatDate(payment.paidAt) : "—"}
@@ -2171,4 +2248,9 @@ function EmptyState({ children }: { children: ReactNode }) {
       {children}
     </Text>
   );
+}
+
+function paymentAppliedInvoice(payment: { invoiceNumber?: string | null }) {
+  const value = String(payment.invoiceNumber || "").trim();
+  return value || null;
 }

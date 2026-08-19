@@ -3,12 +3,14 @@ const { resolveListSort } = require("../utils/listSort");
 
 const LEAD_STATUSES = [
   "new",
+  "interested",
   "contacted",
   "qualified",
   "converted",
   "closed",
 ];
-const LEAD_SOURCES = ["whatsapp", "web", "embed", "email"];
+const LEAD_SOURCES = ["whatsapp", "web", "embed", "email", "signup"];
+const TERMINAL_LEAD_STATUSES = ["converted", "closed"];
 
 function parseMetadata(row) {
   if (!row) return row;
@@ -255,6 +257,75 @@ async function getWhatsAppLeadByPhone(phone) {
   return null;
 }
 
+async function getOpenLeadByPhone(phone) {
+  const variants = phoneMatchVariants(phone);
+  if (!variants.length) return null;
+  const local9 = new Set(
+    variants.filter((v) => v.length >= 9).map((v) => v.slice(-9))
+  );
+  const placeholders = variants.map(() => "?").join(", ");
+  const terminal = TERMINAL_LEAD_STATUSES.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
+            l.building_interest AS buildingInterest,
+            l.apartment_number AS apartmentNumber,
+            l.building_id AS buildingId,
+            b.name AS buildingName,
+            l.message, l.notes,
+            l.whatsapp_wa_id AS whatsappWaId,
+            l.conversation_state AS conversationState,
+            l.metadata, l.converted_customer_id AS convertedCustomerId,
+            l.assigned_to AS assignedTo,
+            l.created_at AS createdAt, l.updated_at AS updatedAt
+     FROM leads l
+     LEFT JOIN buildings b ON b.id = l.building_id
+     WHERE l.status NOT IN (${terminal})
+       AND (
+         l.phone IN (${placeholders})
+         OR l.whatsapp_wa_id IN (${placeholders})
+       )
+     ORDER BY (l.source = 'signup') DESC, l.updated_at DESC, l.id DESC
+     LIMIT 1`,
+    [...TERMINAL_LEAD_STATUSES, ...variants, ...variants]
+  );
+  if (rows[0]) return parseMetadata(rows[0]);
+
+  const recent = await query(
+    `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
+            l.building_interest AS buildingInterest,
+            l.apartment_number AS apartmentNumber,
+            l.building_id AS buildingId,
+            b.name AS buildingName,
+            l.message, l.notes,
+            l.whatsapp_wa_id AS whatsappWaId,
+            l.conversation_state AS conversationState,
+            l.metadata, l.converted_customer_id AS convertedCustomerId,
+            l.assigned_to AS assignedTo,
+            l.created_at AS createdAt, l.updated_at AS updatedAt
+     FROM leads l
+     LEFT JOIN buildings b ON b.id = l.building_id
+     WHERE l.status NOT IN (${terminal})
+     ORDER BY l.updated_at DESC, l.id DESC
+     LIMIT 300`,
+    TERMINAL_LEAD_STATUSES
+  );
+
+  for (const row of recent) {
+    const candidate = [
+      ...phoneMatchVariants(row.phone),
+      ...phoneMatchVariants(row.whatsappWaId),
+    ];
+    if (
+      candidate.some(
+        (v) => variants.includes(v) || (v.length >= 9 && local9.has(v.slice(-9)))
+      )
+    ) {
+      return parseMetadata(row);
+    }
+  }
+  return null;
+}
+
 async function createLead(data) {
   const source = LEAD_SOURCES.includes(data.source) ? data.source : "web";
   const metadata =
@@ -293,6 +364,7 @@ async function updateLead(id, patch = {}) {
   const params = [];
 
   const map = {
+    source: "source",
     status: "status",
     name: "name",
     phone: "phone",
@@ -312,6 +384,9 @@ async function updateLead(id, patch = {}) {
   for (const [key, column] of Object.entries(map)) {
     if (patch[key] === undefined) continue;
     if (key === "status" && patch.status != null && !LEAD_STATUSES.includes(patch.status)) {
+      continue;
+    }
+    if (key === "source" && patch.source != null && !LEAD_SOURCES.includes(patch.source)) {
       continue;
     }
     fields.push(`${column} = ?`);
@@ -395,6 +470,7 @@ async function getLeadStats() {
     `SELECT
        COUNT(*) AS total,
        SUM(status = 'new') AS newCount,
+       SUM(status = 'interested') AS interestedCount,
        SUM(status = 'contacted') AS contactedCount,
        SUM(status = 'qualified') AS qualifiedCount,
        SUM(status = 'converted') AS convertedCount,
@@ -403,6 +479,7 @@ async function getLeadStats() {
        SUM(source = 'web') AS webCount,
        SUM(source = 'embed') AS embedCount,
        SUM(source = 'email') AS emailCount,
+       SUM(source = 'signup') AS signupCount,
        SUM(email IS NOT NULL AND TRIM(email) <> '') AS withEmailCount
      FROM leads`
   );
@@ -411,6 +488,7 @@ async function getLeadStats() {
     total: Number(r.total || 0),
     byStatus: {
       new: Number(r.newCount || 0),
+      interested: Number(r.interestedCount || 0),
       contacted: Number(r.contactedCount || 0),
       qualified: Number(r.qualifiedCount || 0),
       converted: Number(r.convertedCount || 0),
@@ -421,6 +499,7 @@ async function getLeadStats() {
       web: Number(r.webCount || 0),
       embed: Number(r.embedCount || 0),
       email: Number(r.emailCount || 0),
+      signup: Number(r.signupCount || 0),
     },
     withEmail: Number(r.withEmailCount || 0),
   };
@@ -429,10 +508,13 @@ async function getLeadStats() {
 module.exports = {
   LEAD_STATUSES,
   LEAD_SOURCES,
+  TERMINAL_LEAD_STATUSES,
+  phoneMatchVariants,
   listLeads,
   getLeadById,
   getLeadByWhatsAppWaId,
   getWhatsAppLeadByPhone,
+  getOpenLeadByPhone,
   getLeadByEmail,
   createLead,
   updateLead,

@@ -7,6 +7,7 @@ import {
   MOBILE_BOTTOM_NAV_H,
 } from "../lib/mobileNav";
 import { routePrefetchHandlers } from "../lib/routePrefetch";
+import { useNotifications } from "./notifications/NotificationProvider";
 
 export { MOBILE_BOTTOM_NAV_H };
 
@@ -18,10 +19,12 @@ function TabVisual({
   active,
   icon: Icon,
   label,
+  badge,
 }: {
   active: boolean;
   icon: typeof import("react-icons/fi").FiGrid;
   label: string;
+  badge?: number;
 }) {
   return (
     <Flex
@@ -38,9 +41,29 @@ function TabVisual({
       color={active ? "white" : "fg.muted"}
       boxShadow={active ? "0 2px 10px rgba(22, 106, 130, 0.32)" : "none"}
       transition="background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease"
+      position="relative"
     >
-      <Box lineHeight={0} aria-hidden flexShrink={0}>
+      <Box lineHeight={0} aria-hidden flexShrink={0} position="relative">
         <Icon size={18} strokeWidth={active ? 2.5 : 2} />
+        {badge ? (
+          <Box
+            position="absolute"
+            top="-6px"
+            right="-8px"
+            minW="14px"
+            h="14px"
+            px="3px"
+            bg="red.500"
+            color="white"
+            borderRadius="full"
+            fontSize="8px"
+            fontWeight="bold"
+            lineHeight="14px"
+            textAlign="center"
+          >
+            {badge > 9 ? "9+" : badge}
+          </Box>
+        ) : null}
       </Box>
       <Text
         fontSize="9px"
@@ -63,6 +86,7 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
   const { user } = useAuth();
   const location = useLocation();
   const tabs = buildMobileNavTabs(user);
+  const { unreadCount } = useNotifications();
 
   return (
     <Box
@@ -104,7 +128,12 @@ export function MobileBottomNav({ onOpenMenu }: Props) {
                 _active={{ bg: "transparent", transform: "scale(0.96)" }}
                 transition="transform 0.15s ease"
               >
-                <TabVisual active={false} icon={Icon} label={tab.label} />
+                <TabVisual
+                  active={false}
+                  icon={Icon}
+                  label={tab.label}
+                  badge={unreadCount}
+                />
               </Button>
             );
           }

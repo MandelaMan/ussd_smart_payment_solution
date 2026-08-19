@@ -59,13 +59,15 @@ async function getCollectionPerformance(filters, months = 12) {
 function buildLeadFunnel(leadStats) {
   const s = leadStats?.byStatus || {};
   const contacted = Number(s.contacted || 0);
+  const interested = Number(s.interested || 0);
   const qualified = Number(s.qualified || 0);
   const converted = Number(s.converted || 0);
   const closed = Number(s.closed || 0);
   const total = Number(leadStats?.total || 0);
   return [
     { stage: "All Leads", count: total },
-    { stage: "Contacted+", count: contacted + qualified + converted + closed },
+    { stage: "Interested+", count: interested + converted },
+    { stage: "Contacted+", count: interested + contacted + qualified + converted + closed },
     { stage: "Qualified+", count: qualified + converted + closed },
     { stage: "Converted", count: converted },
   ];
@@ -75,6 +77,7 @@ function buildLeadSources(leadStats) {
   const bySource = leadStats?.bySource || {};
   return [
     { source: "WhatsApp", count: Number(bySource.whatsapp || 0) },
+    { source: "Signup", count: Number(bySource.signup || 0) },
     { source: "Website", count: Number(bySource.web || 0) },
     { source: "Embed Form", count: Number(bySource.embed || 0) },
   ].filter((r) => r.count > 0);

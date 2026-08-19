@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -39,6 +39,8 @@ import {
   isBillingAddressEmpty,
 } from "../../lib/buildingBillingAddress";
 import { buildCustomerNumberPreview } from "../../lib/customerNumber";
+import { isShopPremise, type PremiseType } from "../../lib/premise";
+import { shouldUseAgencyContactForSkynestPlaceholder } from "../../lib/b2bAgencyContact";
 import { embeddedFieldInputStyles } from "../../theme";
 import { FormSection } from "./FormSection";
 import { InstallationScheduleFields } from "../installations/InstallationScheduleFields";
@@ -48,6 +50,7 @@ import { formatCustomerPackageLabel } from "../../lib/formatText";
 import { useAuth } from "../../lib/authContext";
 import { canEditCustomerPackage } from "../../lib/rbac";
 import { DateField } from "../ui/DateField";
+import type { LeadSignupPrefill } from "../../lib/leadSignup";
 import { TextStatus } from "../ui/TextStatus";
 import { normalizeSubscriptionStatus } from "../../lib/customerStatus";
 import { TISP_STANDARD_DUE_DATE } from "../../lib/tispConstants";
@@ -181,6 +184,7 @@ function parseIpFromAddress(ipAddress: string | null, building?: Building) {
 type Props = {
   customer?: Customer | null;
   embedded?: boolean;
+  leadPrefill?: LeadSignupPrefill | null;
   onCreated?: (customer: Customer) => void;
   onUpdated?: (
     customer: Customer,
@@ -192,6 +196,7 @@ type Props = {
 export function CustomerForm({
   customer,
   embedded = false,
+  leadPrefill = null,
   onCreated,
   onUpdated,
   onCancel,
@@ -199,6 +204,7 @@ export function CustomerForm({
   const { user } = useAuth();
   const canEditPackage = canEditCustomerPackage(user);
   const isEdit = Boolean(customer);
+  const isLeadConvert = Boolean(leadPrefill);
   const isActive = !customer || customer.status === "active";
   const showPackageEditor = !isEdit || canEditPackage;
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -224,7 +230,11 @@ export function CustomerForm({
   const [ipLastOctet, setIpLastOctet] = useState("");
   const [isVatExempt, setIsVatExempt] = useState(false);
   const [customerType, setCustomerType] = useState<"C2B" | "B2B">("C2B");
+  const [premiseType, setPremiseType] = useState<PremiseType>("apartment");
   const [apartmentNumber, setApartmentNumber] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const [shopLocation, setShopLocation] = useState("");
+  const [shopUnitCode, setShopUnitCode] = useState("");
   const [paymentFrequency, setPaymentFrequency] = useState("monthly");
   const [customPeriodDays, setCustomPeriodDays] = useState("");
   const [buildingId, setBuildingId] = useState("");
@@ -320,8 +330,7 @@ export function CustomerForm({
             ? [campaignRes.campaign]
             : [];
         setActiveCampaigns(live);
-        // Single live campaign can be pre-selected; multiple requires an explicit choice.
-        setSelectedCampaignId(live.length === 1 ? String(live[0].id) : "");
+        setSelectedCampaignId("");
       })
       .catch(() => {})
       .finally(() => setLookupsLoading(false));
@@ -520,7 +529,10 @@ export function CustomerForm({
     setBillingCountry(customer.billingCountry || "Kenya");
     setIsVatExempt(customer.isVatExempt);
     setCustomerType(customer.customerType);
+    setPremiseType(isShopPremise(customer) ? "shop" : "apartment");
     setApartmentNumber(customer.apartmentNumber);
+    setBusinessName(customer.businessName || "");
+    setShopLocation(customer.shopLocation || "");
     setPaymentFrequency(customer.paymentFrequency);
     setCustomPeriodDays(
       customer.customPeriodDays != null ? String(customer.customPeriodDays) : ""
@@ -545,6 +557,25 @@ export function CustomerForm({
     // not when the parent replaces the same customer object reference mid-edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: customer.id
   }, [customer?.id, buildings]);
+
+  useEffect(() => {
+    if (!leadPrefill || isEdit || !buildings.length) return;
+    setFirstName(leadPrefill.firstName);
+    setLastName(leadPrefill.lastName);
+    setPhone(leadPrefill.phone);
+    setEmail(leadPrefill.email);
+    setApartmentNumber(leadPrefill.apartmentNumber);
+    if (leadPrefill.buildingId) setBuildingId(String(leadPrefill.buildingId));
+    if (leadPrefill.paymentFrequency) {
+      setPaymentFrequency(leadPrefill.paymentFrequency);
+    }
+    if (leadPrefill.categoryId) setCategoryId(String(leadPrefill.categoryId));
+    if (leadPrefill.planId) setPlanId(String(leadPrefill.planId));
+    if (leadPrefill.productId) setProductId(String(leadPrefill.productId));
+    if (leadPrefill.dstvDecoderSerial) {
+      setDstvDecoderSerial(leadPrefill.dstvDecoderSerial);
+    }
+  }, [leadPrefill?.id, buildings.length, isEdit]);
 
   useEffect(() => {
     if (!customer?.planId || !catalog.length) return;
@@ -597,6 +628,48 @@ export function CustomerForm({
     customerType === "B2B" &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b2bAgencyEmail);
 
+  const b2bAgencyAutofillKeyRef = useRef("");
+  const selectedBuildingForContact = buildings.find((b) => String(b.id) === buildingId);
+  const skynestPlaceholderContact = shouldUseAgencyContactForSkynestPlaceholder({
+    customerType,
+    firstName,
+    middleName,
+    lastName,
+    buildingName: selectedBuildingForContact?.name || customer?.buildingName,
+    popName: selectedBuildingForContact?.popName,
+    customerNumber: customer?.customerNumber,
+    c2bCode: selectedBuildingForContact?.c2bCode,
+    b2bCode: selectedBuildingForContact?.b2bCode,
+  });
+
+  useEffect(() => {
+    b2bAgencyAutofillKeyRef.current = "";
+  }, [customer?.id]);
+
+  useEffect(() => {
+    if (customerType !== "B2B") return;
+    if (isEdit && initializingEdit) return;
+    if (!agencyId) return;
+    if (!skynestPlaceholderContact) return;
+    if (!b2bAgencyPhone && !b2bAgencyEmail) return;
+
+    const key = `${isEdit ? String(customer?.id ?? "edit") : "new"}:${agencyId}:skynest`;
+    if (b2bAgencyAutofillKeyRef.current === key) return;
+
+    if (b2bAgencyPhone) setPhone(b2bAgencyPhone);
+    if (b2bAgencyEmail) setEmail(b2bAgencyEmail);
+    b2bAgencyAutofillKeyRef.current = key;
+  }, [
+    customerType,
+    agencyId,
+    b2bAgencyPhone,
+    b2bAgencyEmail,
+    initializingEdit,
+    isEdit,
+    customer?.id,
+    skynestPlaceholderContact,
+  ]);
+
   const selectedCategory = catalog.find((c) => String(c.id) === categoryId);
   const isDstvOnly = selectedCategory?.code === "dstv_only";
 
@@ -613,7 +686,7 @@ export function CustomerForm({
     if (isEdit && !canEditPackage) return;
     if (!buildingId || !planId) {
       setPackages([]);
-      if (!isEdit) setProductId("");
+      if (!isEdit && !isLeadConvert) setProductId("");
       setPackagesLoading(false);
       return;
     }
@@ -632,19 +705,23 @@ export function CustomerForm({
       .then((res) => {
         setPackages(res.products);
         setProductId((prev) =>
-          prev && res.products.some((p) => String(p.id) === prev) ? prev : ""
+          prev && res.products.some((p) => String(p.id) === prev)
+            ? prev
+            : isEdit || isLeadConvert
+              ? prev
+              : ""
         );
       })
       .catch(() => {
         setPackages([]);
-        if (!isEdit) setProductId("");
+        if (!isEdit && !isLeadConvert) setProductId("");
       })
       .finally(() => setPackagesLoading(false));
-  }, [buildingId, paymentFrequency, categoryId, planId, isEdit, canEditPackage]);
+  }, [buildingId, paymentFrequency, categoryId, planId, isEdit, isLeadConvert, canEditPackage]);
 
   useEffect(() => {
     const apt = apartmentNumber.trim();
-    if (!buildingId || !apt) {
+    if (premiseType === "shop" || !buildingId || !apt) {
       setOccupancy(null);
       return;
     }
@@ -663,22 +740,47 @@ export function CustomerForm({
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [buildingId, apartmentNumber, isEdit, customer?.id]);
+  }, [buildingId, apartmentNumber, isEdit, customer?.id, premiseType]);
 
   const selectedBuilding = buildings.find((b) => String(b.id) === buildingId);
   const ipRules = getBuildingIpRules(selectedBuilding);
   const needsIp = ipRules?.ipSetup === "STATIC";
   const isPpoe = selectedBuilding?.ipSetup === "PPOE";
+  const unitCodeForPreview =
+    premiseType === "shop"
+      ? isEdit
+        ? apartmentNumber
+        : shopUnitCode
+      : apartmentNumber;
 
   const previewCustomerNumber = useMemo(
     () =>
       buildCustomerNumberPreview(
         selectedBuilding,
         customerType,
-        apartmentNumber
+        unitCodeForPreview
       ),
-    [selectedBuilding, apartmentNumber, customerType]
+    [selectedBuilding, unitCodeForPreview, customerType]
   );
+
+  useEffect(() => {
+    if (isEdit || premiseType !== "shop" || !buildingId) {
+      if (premiseType !== "shop") setShopUnitCode("");
+      return;
+    }
+    let cancelled = false;
+    api
+      .previewShopCustomerNumber(Number(buildingId), customerType)
+      .then((res) => {
+        if (!cancelled) setShopUnitCode(res.unitCode);
+      })
+      .catch(() => {
+        if (!cancelled) setShopUnitCode("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit, premiseType, buildingId, customerType]);
 
   useEffect(() => {
     if (!selectedBuilding) {
@@ -730,19 +832,23 @@ export function CustomerForm({
   /** Show IUC/serial only for DSTV packages in decoder buildings (hidden for headend). */
   const showDstvSerialField = Boolean(packageHasDstv && buildingRequiresDecoderSerial);
   const requiresDstvSerial = showDstvSerialField;
+  /** One-off decoder fee only for DSTV plans in decoder buildings, never headend. */
+  const asksDecoderFee = Boolean(
+    packageHasDstv &&
+      buildingRequiresDecoderSerial &&
+      (selectedCategory?.requiresDecoderFee || selectedPackage?.hasDstv)
+  );
   const packageAmount =
     isEdit && !canEditPackage
       ? customer?.packagePrice
       : paymentFrequency === "custom" && selectedPackage && customPeriodDays
         ? Math.round((selectedPackage.monthlyPrice * Number(customPeriodDays)) / 30)
         : selectedPackage?.price ?? (isEdit ? customer?.packagePrice : undefined);
-  const decoderFee =
-    packageHasDstv &&
-    (selectedCategory?.requiresDecoderFee || selectedPackage?.hasDstv)
-      ? selectedCategory?.decoderFeeAmount ||
-        customer?.decoderFeeAmount ||
-        2900
-      : 0;
+  const decoderFee = asksDecoderFee
+    ? selectedCategory?.decoderFeeAmount ||
+      customer?.decoderFeeAmount ||
+      2900
+    : 0;
   const campaignDiscountPercent =
     !isEdit &&
     customerType === "C2B" &&
@@ -769,7 +875,7 @@ export function CustomerForm({
   const previewCode = buildCustomerNumberPreview(
     buildings.find((x) => String(x.id) === buildingId),
     customerType,
-    apartmentNumber
+    unitCodeForPreview
   );
 
   const previewIpResult = validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
@@ -847,7 +953,7 @@ export function CustomerForm({
     if (!paymentAlreadyMade) return "No payment";
     const covers: string[] = [];
     if (paymentCoversInternet) covers.push("Internet");
-    if (packageHasDstv && paymentCoversDecoder) covers.push("decoder");
+    if (asksDecoderFee && paymentCoversDecoder) covers.push("decoder");
     const coverSuffix = covers.length ? ` · ${covers.join(" + ")}` : "";
     if (advancePaymentMethod === "mpesa") {
       return `Paid · M-Pesa ${mpesaCode.trim().toUpperCase() || "—"}${coverSuffix}`;
@@ -870,7 +976,7 @@ export function CustomerForm({
       paystackReference,
       bankReference,
       coversInternet: paymentCoversInternet,
-      coversDecoder: packageHasDstv ? paymentCoversDecoder : false,
+      coversDecoder: asksDecoderFee ? paymentCoversDecoder : false,
     });
     setPaymentStatusOpen(true);
   }
@@ -908,10 +1014,10 @@ export function CustomerForm({
         });
         return;
       }
-      if (!coversInternet && !(packageHasDstv && coversDecoder)) {
+      if (!coversInternet && !(asksDecoderFee && coversDecoder)) {
         toaster.create({
           title: "What did the payment cover?",
-          description: packageHasDstv
+          description: asksDecoderFee
             ? "Check Internet/package and/or DSTV decoder for this plan."
             : "Check Internet/package — payment must cover the selected plan.",
           type: "error",
@@ -924,7 +1030,7 @@ export function CustomerForm({
       setPaystackReference(method === "paystack" ? paystack.trim() : "");
       setBankReference(method === "bank" ? bank.trim() : "");
       setPaymentCoversInternet(coversInternet);
-      setPaymentCoversDecoder(packageHasDstv ? coversDecoder : false);
+      setPaymentCoversDecoder(asksDecoderFee ? coversDecoder : false);
       setTrialPeriod(false);
     } else if (!paymentAlreadyMade) {
       // Cancelled before completing — stay on No payment
@@ -975,8 +1081,19 @@ export function CustomerForm({
         label: "Building",
         value: selectedBuilding?.name || customer?.buildingName || "—",
       },
-      { label: "Apartment", value: apartmentNumber.trim() || "—" },
+      {
+        label: "Premise",
+        value: premiseType === "shop" ? "Shop" : "Apartment",
+      },
     ];
+    if (premiseType === "shop") {
+      items.push(
+        { label: "Business name", value: businessName.trim() || "—" },
+        { label: "Shop location", value: shopLocation.trim() || "—" }
+      );
+    } else {
+      items.push({ label: "Apartment", value: apartmentNumber.trim() || "—" });
+    }
 
     if (!isEdit) {
       items.push({
@@ -1038,7 +1155,7 @@ export function CustomerForm({
       });
       if (
         paymentAlreadyMade &&
-        packageHasDstv &&
+        asksDecoderFee &&
         paymentCoversInternet &&
         !paymentCoversDecoder
       ) {
@@ -1048,7 +1165,7 @@ export function CustomerForm({
         });
       } else if (
         paymentAlreadyMade &&
-        packageHasDstv &&
+        asksDecoderFee &&
         !paymentCoversInternet &&
         paymentCoversDecoder
       ) {
@@ -1143,6 +1260,7 @@ export function CustomerForm({
     billingAddress,
     billingCity,
     billingCountry,
+    businessName,
     customer,
     customer?.buildingName,
     customer?.customerNumber,
@@ -1171,17 +1289,20 @@ export function CustomerForm({
     ppoeUsername,
     previewCode,
     previewIp,
+    premiseType,
     requiresDstvSerial,
     showDstvSerialField,
     selectedBuilding?.name,
     selectedPackage,
     selectedCategory?.code,
     isDstvOnly,
+    shopLocation,
     trialPeriod,
     paymentAlreadyMade,
     paymentCoversInternet,
     paymentCoversDecoder,
     packageHasDstv,
+    asksDecoderFee,
     decoderFee,
     advancePaymentMethod,
     mpesaCode,
@@ -1231,23 +1352,25 @@ export function CustomerForm({
       });
       return false;
     }
-    if (isActive && (!isEdit || canEditPackage) && !productId) {
-      toaster.create({ title: "Select a package", type: "error" });
+    if (!isEdit && premiseType === "shop") {
+      if (!businessName.trim()) {
+        toaster.create({ title: "Enter the shop business name", type: "error" });
+        return false;
+      }
+      if (!shopLocation.trim()) {
+        toaster.create({
+          title: "Enter the shop location in this building",
+          type: "error",
+        });
+        return false;
+      }
+    }
+    if (!isEdit && premiseType === "apartment" && !apartmentNumber.trim()) {
+      toaster.create({ title: "Enter the apartment number", type: "error" });
       return false;
     }
-    if (
-      !isEdit &&
-      customerType === "C2B" &&
-      !trialPeriod &&
-      activeCampaigns.length > 0 &&
-      !selectedCampaignId
-    ) {
-      toaster.create({
-        title: "Select a campaign",
-        description:
-          "Choose which live campaign this customer was added under so the correct discount applies.",
-        type: "error",
-      });
+    if (isActive && (!isEdit || canEditPackage) && !productId) {
+      toaster.create({ title: "Select a package", type: "error" });
       return false;
     }
     if (
@@ -1376,11 +1499,11 @@ export function CustomerForm({
         }
         if (
           !paymentCoversInternet &&
-          !(packageHasDstv && paymentCoversDecoder)
+          !(asksDecoderFee && paymentCoversDecoder)
         ) {
           toaster.create({
             title: "What did the payment cover?",
-            description: packageHasDstv
+            description: asksDecoderFee
               ? "Check Internet/package and/or DSTV decoder for this plan."
               : "Check Internet/package — payment must cover the selected plan.",
             type: "error",
@@ -1439,6 +1562,10 @@ export function CustomerForm({
           customerType,
           agencyId: customerType === "B2B" ? Number(agencyId) : undefined,
           apartmentNumber: isActive ? apartmentNumber : undefined,
+          businessName:
+            premiseType === "shop" ? businessName.trim() : undefined,
+          shopLocation:
+            premiseType === "shop" ? shopLocation.trim() : undefined,
           // Explicitly clear serial when building is not decoder.
           dstvDecoderSerial: !buildingRequiresDecoderSerial
             ? null
@@ -1564,7 +1691,12 @@ export function CustomerForm({
         ipAddress: ipResult.ip || undefined,
         isVatExempt,
         customerType,
-        apartmentNumber,
+        premiseType,
+        apartmentNumber: premiseType === "apartment" ? apartmentNumber : undefined,
+        businessName:
+          premiseType === "shop" ? businessName.trim() : undefined,
+        shopLocation:
+          premiseType === "shop" ? shopLocation.trim() : undefined,
         paymentFrequency,
         customPeriodDays:
           paymentFrequency === "custom" ? Number(customPeriodDays) : undefined,
@@ -1639,9 +1771,10 @@ export function CustomerForm({
         paymentCoversDecoder:
           customerType === "C2B" &&
           paymentAlreadyMade === true &&
-          packageHasDstv
+          asksDecoderFee
             ? paymentCoversDecoder
             : undefined,
+        leadId: leadPrefill?.id || undefined,
       });
 
       if (!res.tisp.ok) {
@@ -1782,8 +1915,45 @@ export function CustomerForm({
       <Stack gap={4}>
         <FormSection
           title="Location"
+          description={
+            premiseType === "shop"
+              ? "Shops sit under the same building and POP as apartments. The customer number is assigned automatically."
+              : undefined
+          }
           sideBySide
         >
+          <Field.Root required w="full">
+            <Field.Label>Premise</Field.Label>
+            {isEdit ? (
+              <Input
+                value={premiseType === "shop" ? "Shop" : "Apartment"}
+                readOnly
+                bg="bg.subtle"
+              />
+            ) : (
+              <SelectField
+                disabled={fieldsDisabled}
+                fieldProps={{
+                  value: premiseType,
+                  onChange: (e) => {
+                    const next = e.target.value as PremiseType;
+                    setPremiseType(next);
+                    if (next === "shop") {
+                      setApartmentNumber("");
+                      setOccupancy(null);
+                    } else {
+                      setBusinessName("");
+                      setShopLocation("");
+                      setShopUnitCode("");
+                    }
+                  },
+                }}
+              >
+                <option value="apartment">Apartment</option>
+                <option value="shop">Shop</option>
+              </SelectField>
+            )}
+          </Field.Root>
           <Field.Root required w="full">
             <Field.Label>Building</Field.Label>
             {isEdit ? (
@@ -1805,6 +1975,41 @@ export function CustomerForm({
               />
             )}
           </Field.Root>
+          {premiseType === "shop" ? (
+            <>
+              <Field.Root required w="full">
+                <Field.Label>Business name</Field.Label>
+                <Input
+                  w="full"
+                  value={businessName}
+                  onChange={(e) => setBusinessName(e.target.value)}
+                  placeholder="e.g. Mama Njeri Hardware"
+                  disabled={fieldsDisabled}
+                />
+              </Field.Root>
+              <Field.Root required w="full">
+                <Field.Label>Location in building</Field.Label>
+                <Input
+                  w="full"
+                  value={shopLocation}
+                  onChange={(e) => setShopLocation(e.target.value)}
+                  placeholder="e.g. Ground floor, shop 3"
+                  disabled={fieldsDisabled}
+                />
+              </Field.Root>
+              {isEdit ? (
+                <Field.Root w="full">
+                  <Field.Label>Customer number</Field.Label>
+                  <Input
+                    value={customer?.customerNumber || apartmentNumber}
+                    readOnly
+                    bg="bg.subtle"
+                    fontFamily="mono"
+                  />
+                </Field.Root>
+              ) : null}
+            </>
+          ) : (
           <Field.Root required w="full">
             <Field.Label>Apartment number</Field.Label>
             <Input
@@ -1839,6 +2044,7 @@ export function CustomerForm({
               </Text>
             ) : null}
           </Field.Root>
+          )}
         </FormSection>
 
         {!isEdit ? (
@@ -2121,7 +2327,7 @@ export function CustomerForm({
           !trialPeriod &&
           activeCampaigns.length > 0 ? (
             <>
-              <Field.Root required>
+              <Field.Root>
                 <Field.Label>Campaign</Field.Label>
                 <SelectField
                   disabled={fieldsDisabled || !isActive}
@@ -2130,9 +2336,7 @@ export function CustomerForm({
                     onChange: (e) => setSelectedCampaignId(e.target.value),
                   }}
                 >
-                  {activeCampaigns.length > 1 ? (
-                    <option value="">Select campaign…</option>
-                  ) : null}
+                  <option value="">No campaign</option>
                   {activeCampaigns.map((c) => (
                     <option key={c.id} value={String(c.id)}>
                       {c.name} ({c.newCustomerDiscountPercent}% off first
@@ -2463,7 +2667,14 @@ export function CustomerForm({
           </FormSection>
         ) : null}
 
-        <FormSection title="Contact details">
+        <FormSection
+          title="Contact details"
+          description={
+            premiseType === "shop"
+              ? "Person we should contact at the shop."
+              : undefined
+          }
+        >
           <Field.Root required>
             <Field.Label>First name</Field.Label>
             <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} disabled={fieldsDisabled} />
@@ -2489,7 +2700,11 @@ export function CustomerForm({
               disabled={fieldsDisabled}
             />
             {b2bUsesAgencyPhone ? (
-              <Field.HelperText>Leave blank to use agency phone</Field.HelperText>
+              <Field.HelperText>
+                Optional. Invoices always go to the agency. Enter a personal
+                number for service updates, or leave blank to use the agency
+                phone.
+              </Field.HelperText>
             ) : null}
           </Field.Root>
           <Field.Root required={!b2bUsesAgencyEmail}>
@@ -2508,7 +2723,11 @@ export function CustomerForm({
               disabled={fieldsDisabled}
             />
             {b2bUsesAgencyEmail ? (
-              <Field.HelperText>Leave blank to use agency email</Field.HelperText>
+              <Field.HelperText>
+                Optional. Invoices always go to the agency. Enter a personal
+                email for upgrade, move, and other service notices, or leave
+                blank to use the agency email.
+              </Field.HelperText>
             ) : null}
           </Field.Root>
         </FormSection>
@@ -2826,17 +3045,17 @@ export function CustomerForm({
               : trialPeriod
                 ? "Creates with a 30-day trial — no signup invoice."
                 : paymentAlreadyMade === true
-                  ? packageHasDstv &&
+                  ? asksDecoderFee &&
                     paymentCoversInternet &&
                     !paymentCoversDecoder
                     ? `Creates the customer, marks the Internet invoice paid (${formatCurrency(packageAmount || 0)}), and issues a separate unpaid DSTV decoder invoice (${formatCurrency(decoderFee || 2900)}) to the customer.`
-                    : packageHasDstv &&
+                    : asksDecoderFee &&
                         !paymentCoversInternet &&
                         paymentCoversDecoder
                       ? `Creates the customer, marks the decoder invoice paid (${formatCurrency(decoderFee || 2900)}), and issues a separate unpaid Internet/package invoice (${formatCurrency(packageAmount || 0)}).`
                       : `Creates the customer, marks the package invoice paid (${formatCurrency(
                           (paymentCoversInternet ? Number(packageAmount || 0) : 0) +
-                            (packageHasDstv && paymentCoversDecoder
+                            (asksDecoderFee && paymentCoversDecoder
                               ? Number(decoderFee || 2900)
                               : 0)
                         )} from the payment reference). If the payment is short of the plan total, a separate balance invoice is issued.`
@@ -2857,27 +3076,27 @@ export function CustomerForm({
             borderRadius="md"
           >
             <Text fontSize="sm" fontWeight="semibold" color="orange.900">
-              {packageHasDstv &&
+              {asksDecoderFee &&
               paymentCoversInternet &&
               !paymentCoversDecoder
                 ? "Confirm: Internet paid only — decoder billed separately"
-                : packageHasDstv &&
+                : asksDecoderFee &&
                     !paymentCoversInternet &&
                     paymentCoversDecoder
                   ? "Confirm: Decoder paid only — package billed separately"
                   : "Confirm advance payment against this package"}
             </Text>
             <Text fontSize="xs" color="orange.800" mt={1}>
-              {packageHasDstv &&
+              {asksDecoderFee &&
               paymentCoversInternet &&
               !paymentCoversDecoder
                 ? `This customer is on a DSTV package but payment covers Internet only. We will mark the package invoice paid and create a separate unpaid decoder invoice for ${formatCurrency(decoderFee || 2900)} (emailed to the customer).`
-                : packageHasDstv &&
+                : asksDecoderFee &&
                     !paymentCoversInternet &&
                     paymentCoversDecoder
                   ? `Payment covers the DSTV decoder only. We will mark the decoder invoice paid and create a separate unpaid Internet/package invoice for ${formatCurrency(packageAmount || 0)}.`
                   : `Selected plan: ${formatCurrency(packageAmount || 0)}${
-                      packageHasDstv && paymentCoversDecoder
+                      asksDecoderFee && paymentCoversDecoder
                         ? ` + decoder ${formatCurrency(decoderFee || 2900)}`
                         : ""
                     }. We will create the Zoho invoice from this package, attach the payment reference, and mark it paid. Any shortfall vs the plan total gets a separate unpaid balance invoice.`}
@@ -2902,7 +3121,7 @@ export function CustomerForm({
           {isEdit
             ? "Confirm update"
             : paymentAlreadyMade
-              ? packageHasDstv &&
+              ? asksDecoderFee &&
                 ((paymentCoversInternet && !paymentCoversDecoder) ||
                   (!paymentCoversInternet && paymentCoversDecoder))
                 ? "Confirm — create with separate invoice"
@@ -3058,7 +3277,7 @@ export function CustomerForm({
                     </Text>
                   </Box>
                 </Checkbox.Root>
-                {packageHasDstv ? (
+                {asksDecoderFee ? (
                   <Checkbox.Root
                     checked={paymentStatusDraft.coversDecoder}
                     onCheckedChange={(details) =>
@@ -3085,14 +3304,14 @@ export function CustomerForm({
                 ) : null}
               </Stack>
               {(paymentStatusDraft.coversInternet ||
-                (packageHasDstv && paymentStatusDraft.coversDecoder)) && (
+                (asksDecoderFee && paymentStatusDraft.coversDecoder)) && (
                 <Text fontSize="xs" color="orange.900" mt={2} fontWeight="medium">
                   Invoice total:{" "}
                   {formatCurrency(
                     (paymentStatusDraft.coversInternet
                       ? Number(packageAmount || 0)
                       : 0) +
-                      (packageHasDstv && paymentStatusDraft.coversDecoder
+                      (asksDecoderFee && paymentStatusDraft.coversDecoder
                         ? Number(decoderFee || 2900)
                         : 0)
                   )}
@@ -3137,7 +3356,21 @@ export function CustomerForm({
               Back to customers
             </Link>
           </Button>
-          <Heading size="lg">New customer</Heading>
+          <Heading size="lg">
+            {leadPrefill
+              ? "Verify signup & create customer"
+              : isEdit
+                ? "Edit customer"
+                : premiseType === "shop"
+                  ? "New shop"
+                  : "New customer"}
+          </Heading>
+          {leadPrefill ? (
+            <Text fontSize="sm" color="fg.muted" mt={1} maxW="640px">
+              Details came from the public signup link. Confirm building, package,
+              and contact information before creating the full customer.
+            </Text>
+          ) : null}
         </Box>
         {previewCode && (
           <Box

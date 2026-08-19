@@ -23,6 +23,13 @@ describe("process: M-Pesa C2B validation webhook", () => {
     }
   });
 
+  it("accepts common customer typing mistakes", () => {
+    for (const ref of ["ET T506", "et T506", "et-t506", "t506"]) {
+      const state = validate({ BillRefNumber: ref, TransAmount: 100 });
+      assert.equal(state.body.ResultCode, 0, ref);
+    }
+  });
+
   it("rejects archived cancel numbers, free text, and zero amount", () => {
     assert.equal(
       validate({ BillRefNumber: "ET-H302-CXL-12", TransAmount: 100 }).body

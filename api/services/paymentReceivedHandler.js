@@ -71,7 +71,10 @@ async function handleSubscriptionPaymentReceived({
 
   const paidOn = formatDateOnly(paymentDate) || moment.tz(DEFAULT_TZ).format("YYYY-MM-DD");
 
-  const customerRow = await customerStore.findCustomerByNumber(accountRef);
+  const customerRow = await customerStore.resolveCustomerByPaybillRef(accountRef, {
+    msisdn: phone,
+  });
+  const canonicalRef = customerRow?.customerNumber || accountRef;
   let subscriptionStatus = null;
   let skipTispForDstvOnly = false;
   if (customerRow?.id) {
@@ -83,14 +86,14 @@ async function handleSubscriptionPaymentReceived({
       isDstvOnlyCategory(ctx?.category_name);
   }
 
-  await customerStore.recordCustomerLastPayment(accountRef, paidOn);
+  await customerStore.recordCustomerLastPayment(canonicalRef, paidOn);
 
   // If this payment settled a campaign referee's signup invoice, qualify referrer reward.
   try {
     const { onRefereeSignupPaid } = require("./referralRewardService");
     await onRefereeSignupPaid({
       customerId: customerRow?.id || null,
-      customerNumber: accountRef,
+      customerNumber: canonicalRef,
       invoiceId: meta.invoiceId || meta.invoice_id || null,
       source: source || "payment",
     });
@@ -105,7 +108,7 @@ async function handleSubscriptionPaymentReceived({
   const effectiveSkipTisp = skipTisp || skipTispForDstvOnly;
   if (!effectiveSkipTisp && Number(amount) > 0) {
     const payload = buildExternalTispPaymentPayload({
-      customerNumber: accountRef,
+      customerNumber: canonicalRef,
       amount,
       referenceId,
       source,
@@ -113,7 +116,7 @@ async function handleSubscriptionPaymentReceived({
     });
     try {
       await postSetISPPayment(payload, {
-        customerNumber: accountRef,
+        customerNumber: canonicalRef,
         referenceId,
         amount,
         channel: source,
@@ -136,7 +139,7 @@ async function handleSubscriptionPaymentReceived({
     const ctx = await customerStore.getCustomerContext(customerRow.id);
     olt = await oltEmsService.activateOnuForCustomer(ctx, {
       customerId: customerRow.id,
-      customerNumber: accountRef,
+      customerNumber: canonicalRef,
     });
   }
 
@@ -150,12 +153,12 @@ async function handleSubscriptionPaymentReceived({
         : "Payment recorded (TISP sync failed)",
       message: tispOk
         ? skipTispForDstvOnly
-          ? `${accountRef}: ${source} payment applied — DSTV Only (no TISP)`
-          : `${accountRef}: ${source} payment applied — service extended`
-        : `${accountRef}: ${tispError || "TISP update pending"}`,
+          ? `${canonicalRef}: ${source} payment applied — DSTV Only (no TISP)`
+          : `${canonicalRef}: ${source} payment applied — service extended`
+        : `${canonicalRef}: ${tispError || "TISP update pending"}`,
       source: source.toLowerCase().includes("zoho") ? "zoho" : "mpesa",
       status: tispOk && (olt.ok || olt.skipped) ? "success" : "failed",
-      customerRef: accountRef,
+      customerRef: canonicalRef,
       amount: amount != null ? Number(amount) : null,
       referenceId: referenceId ? String(referenceId) : null,
     });
@@ -168,7 +171,7 @@ async function handleSubscriptionPaymentReceived({
     tispOk,
     tispError,
     olt,
-    customerNumber: accountRef,
+    customerNumber: canonicalRef,
     paymentDate: paidOn,
   };
 }

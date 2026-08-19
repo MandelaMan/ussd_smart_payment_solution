@@ -10,7 +10,7 @@ const {
   buildTemplateContext,
 } = require("../utils/billingCommunicationTemplates");
 const { findContactByLookupKeys_JS } = require("../controllers/zoho.controller");
-const { getZohoContactLookupKeys, resolveEffectiveCustomerEmail, isB2BCustomer } = require("../utils/b2bBilling");
+const { getZohoContactLookupKeys, resolveInvoiceEmail, isB2BCustomer } = require("../utils/b2bBilling");
 
 const COMMUNICABLE_STATUSES = new Set([
   "overdue",
@@ -31,13 +31,15 @@ const COMMUNICABLE_STATUSES = new Set([
 ]);
 
 async function resolveCustomerEmail(customer, record) {
-  if (customer?.email && String(customer.email).includes("@")) {
-    return { email: String(customer.email).trim(), source: "dashboard" };
+  if (isB2BCustomer(customer)) {
+    const agencyEmail = resolveInvoiceEmail(customer);
+    if (agencyEmail.includes("@")) {
+      return { email: agencyEmail, source: "agency" };
+    }
   }
 
-  const agencyEmail = resolveEffectiveCustomerEmail(customer);
-  if (agencyEmail.includes("@") && isB2BCustomer(customer)) {
-    return { email: agencyEmail, source: "agency" };
+  if (customer?.email && String(customer.email).includes("@")) {
+    return { email: String(customer.email).trim(), source: "dashboard" };
   }
 
   try {

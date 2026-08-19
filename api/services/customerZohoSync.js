@@ -65,6 +65,7 @@ function mapContextToCustomer(ctx, agencyName = null) {
     buildingCode:
       ctx.customer_type === "B2B" ? ctx.b2b_code : ctx.c2b_code,
     hasDstv: Boolean(ctx.product_has_dstv),
+    buildingDstvSetup: ctx.dstv_setup || ctx.building_dstv_setup || "decoder",
     decoderFeeAmount:
       ctx.decoder_fee_amount != null ? Number(ctx.decoder_fee_amount) : null,
     decoderFeeRequired: Boolean(ctx.decoder_fee_required),

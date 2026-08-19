@@ -5,6 +5,7 @@ const { describe, it } = require("node:test");
 const { assert } = require("../helpers");
 const {
   buildTispCreateClientPayload,
+  buildTispUpdateClientDetailsPayload,
   stringifyTispCreatePayload,
   resolveTispNetworkFields,
   resolveTispPackageType,
@@ -115,5 +116,41 @@ describe("TISP placeholder IPs are not treated as real static IPs", () => {
     assert.equal(isTispPlaceholderIp("0.0.0.0"), true);
     assert.equal(isTispPlaceholderIp("10.2.2.2"), true);
     assert.equal(isTispPlaceholderIp("10.10.10.25"), false);
+  });
+});
+
+describe("TISP B2B Skynest placeholder names", () => {
+  it("keeps First/Middle/Last as lowercase user on UPDATE", () => {
+    const payload = buildTispUpdateClientDetailsPayload({
+      ...baseInput,
+      firstName: "user",
+      middleName: "user",
+      lastName: "user",
+      buildingName: "Skynest",
+      customerNumber: "SKYB-302",
+      customerType: "B2B",
+      ipSetup: "STATIC",
+      ipAddress: "192.168.88.10",
+    });
+    assert.equal(payload.TransactionType, "UPDATE");
+    assert.equal(payload.FirstName, "user");
+    assert.equal(payload.MiddleName, "user");
+    assert.equal(payload.LastName, "user");
+  });
+
+  it("still uppercases names for other B2B houses", () => {
+    const payload = buildTispUpdateClientDetailsPayload({
+      ...baseInput,
+      firstName: "Jane",
+      middleName: "Q",
+      lastName: "Doe",
+      buildingName: "Azalea",
+      customerNumber: "AZEB-TGA-401A",
+      customerType: "B2B",
+      ipSetup: "PPOE",
+      ppoeUsername: "AZEB-TGA-401A",
+    });
+    assert.equal(payload.FirstName, "JANE");
+    assert.equal(payload.LastName, "DOE");
   });
 });

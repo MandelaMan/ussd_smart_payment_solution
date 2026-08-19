@@ -159,6 +159,14 @@ app.get("/leads/embed", (_req, res) => {
   res.sendFile(path.join(publicLeadsDir, "embed.html"));
 });
 
+const publicSignupDir = path.join(__dirname, "public", "signup");
+app.use(
+  "/signup",
+  express.static(publicSignupDir, {
+    index: "index.html",
+  })
+);
+
 const adminDist = path.join(__dirname, "admin", "dist");
 const adminIndex = path.join(adminDist, "index.html");
 const fs = require("fs");

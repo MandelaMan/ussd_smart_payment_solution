@@ -28,7 +28,10 @@ const CUSTOMER_ACTIVITY_EVENT_TYPES = Object.freeze([
 ]);
 
 /** Admin Activity audit only — not shown on the team Recent Activity rail. */
-const ADMIN_AUDIT_EXTRA_EVENT_TYPES = Object.freeze(["user_login"]);
+const ADMIN_AUDIT_EXTRA_EVENT_TYPES = Object.freeze([
+  "user_login",
+  "user_recovery_requested",
+]);
 
 const ADMIN_AUDIT_EVENT_TYPES = Object.freeze([
   ...CUSTOMER_ACTIVITY_EVENT_TYPES,

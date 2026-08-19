@@ -4,10 +4,12 @@ const {
   logout,
   me,
   changePassword,
+  requestAccountRecovery,
 } = require("../controllers/auth.controller");
 const { authenticate } = require("../middleware/auth");
 const {
   loginLimiter,
+  recoverAccountLimiter,
   authApiLimiter,
   authMeLimiter,
 } = require("../middleware/rateLimit");
@@ -33,6 +35,12 @@ function noStoreCache(_req, res, next) {
 
 router.use(noStoreCache);
 router.post("/login", authApiLimiter, loginLimiter, login);
+router.post(
+  "/recover-account",
+  authApiLimiter,
+  recoverAccountLimiter,
+  requestAccountRecovery
+);
 router.post("/logout", authApiLimiter, logout);
 // Session probes run on focus/visibility — allow more headroom than mutations.
 router.get("/me", authMeLimiter, authenticate, me);

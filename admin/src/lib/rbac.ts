@@ -101,6 +101,9 @@ function legacyHasPermission(role: string, key: string): boolean {
     "settings.sync",
     "agencies.view",
     "leads.view",
+    "campaigns.view",
+    "installations.view",
+    "action_items.view",
   ]);
   const financeWrite = new Set([
     ...financeRead,
@@ -109,6 +112,8 @@ function legacyHasPermission(role: string, key: string): boolean {
     "billing.actions",
     "billing.communicate",
     "billing.refund",
+    "action_items.create",
+    "action_items.edit",
   ]);
   const support = new Set([
     "dashboard.view",
@@ -136,10 +141,15 @@ function legacyHasPermission(role: string, key: string): boolean {
     "agencies.view",
     "agencies.create",
     "agencies.edit",
+    "campaigns.view",
     "reports.view",
     "installations.view",
     "installations.assign",
     "installations.edit",
+    "action_items.view",
+    "action_items.create",
+    "action_items.assign",
+    "action_items.edit",
   ]);
   const partner = new Set([
     "dashboard.view",
@@ -229,6 +239,7 @@ export function canAccessConfig(user: User | null): boolean {
     "agencies.view",
     "campaigns.view",
     "installations.view",
+    "action_items.view",
   ]);
 }
 

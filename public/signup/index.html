@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Get Connected — Starlynx Utility</title>
+    <meta name="theme-color" content="#156981" />
+    <meta
+      name="description"
+      content="Sign up for Starlynx fibre internet and DStv. Share your details and we will verify them before activating your service."
+    />
+    <link rel="icon" type="image/png" href="/signup/images/logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --text: #0b1b24;
+        --teal-900: #035160;
+        --teal-850: #065768;
+        --teal-800: #156981;
+        --teal-700: #0b6a7f;
+        --teal-600: #117e99;
+        --yellow: #f3c316;
+        --cyan-pill: #8fd0e3;
+        --ink: #0b2e37;
+        --muted: #5a6b72;
+        --soft-gray: #e4edee;
+        --field: #dedede;
+        --radius: 14px;
+        --shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+        --container: 1120px;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; overflow-x: hidden; }
+      body {
+        margin: 0;
+        font-family: Montserrat, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      img { max-width: 100%; display: block; }
+      a { color: inherit; text-decoration: none; }
+      button, input, select, textarea { font: inherit; }
+      .container {
+        width: min(var(--container), calc(100% - 32px));
+        margin-inline: auto;
+      }
+
+      .top-mini {
+        background: #fff;
+        border-bottom: 1px solid rgba(11, 27, 36, 0.08);
+      }
+      .top-mini__inner {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 18px;
+        padding: 7px 0;
+        font-size: 12px;
+        font-weight: 600;
+        color: #1a2b33;
+      }
+      .top-mini__inner a:hover { color: var(--teal-700); }
+
+      .site-header { position: sticky; top: 0; z-index: 40; }
+      .nav-bar {
+        background: var(--teal-800);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+      }
+      .nav-bar__wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 64px;
+      }
+      .logo-block {
+        display: flex;
+        align-items: center;
+        background: #fff;
+        padding: 8px 12px;
+        margin: 8px 0;
+        box-shadow: 0 10px 18px rgba(0, 0, 0, 0.12);
+        min-width: 148px;
+      }
+      .logo-block img { width: 132px; height: auto; }
+      .nav-desktop {
+        display: none;
+        align-items: center;
+        gap: 22px;
+      }
+      .nav-desktop a {
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+        opacity: 0.95;
+      }
+      .nav-desktop a:hover,
+      .nav-desktop a.active { color: var(--yellow); opacity: 1; }
+      .cta {
+        background: var(--yellow);
+        color: #1b1b1b !important;
+        padding: 10px 18px;
+        border-radius: 3px;
+        font-weight: 800;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .cta:hover { filter: brightness(1.05); }
+      .nav-toggle {
+        display: inline-flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 5px;
+        background: transparent;
+        border: 0;
+        padding: 12px;
+        min-width: 44px;
+        min-height: 44px;
+        cursor: pointer;
+      }
+      .nav-toggle span {
+        display: block;
+        width: 22px;
+        height: 2px;
+        background: #fff;
+      }
+      .nav-mobile {
+        display: none;
+        background: var(--teal-900);
+        padding: 10px 16px 18px;
+      }
+      .nav-mobile.open { display: grid; gap: 4px; }
+      .nav-mobile a {
+        color: #fff;
+        font-weight: 600;
+        font-size: 15px;
+        padding: 12px 8px;
+      }
+      .nav-mobile .cta { text-align: center; margin-top: 8px; }
+
+      .band {
+        position: relative;
+        overflow: hidden;
+        background: var(--teal-700);
+        padding: 48px 0 72px;
+      }
+      .band__bg {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(180deg, rgba(8, 72, 88, 0.78), rgba(11, 106, 127, 0.72)),
+          url("/signup/images/starlynx-hero-bg.jpg") center / cover no-repeat;
+      }
+      .band__inner {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 36px;
+        align-items: start;
+      }
+      .intro h1 {
+        margin: 0 0 14px;
+        color: #fff;
+        font-size: clamp(28px, 4vw, 48px);
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        line-height: 1.2;
+      }
+      .intro p {
+        margin: 0 0 22px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 15px;
+        font-weight: 600;
+        line-height: 1.85;
+        max-width: 52ch;
+      }
+      .intro-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .chip {
+        display: inline-block;
+        background: rgba(143, 208, 227, 0.22);
+        color: #e8f7fb;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        font-size: 11px;
+        font-weight: 700;
+        padding: 6px 12px;
+        border-radius: 999px;
+      }
+
+      .signup-card {
+        background: #fff;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 22px 22px 18px;
+        min-width: 0;
+      }
+      .tag {
+        display: inline-block;
+        font-size: 11px;
+        padding: 5px 12px;
+        border-radius: 99px;
+        background: var(--cyan-pill);
+        color: #083a48;
+        font-weight: 700;
+      }
+      .signup-card h2 {
+        margin: 10px 0 6px;
+        color: var(--teal-700);
+        font-size: clamp(24px, 3vw, 34px);
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.15;
+      }
+      .signup-card .lead {
+        margin: 0 0 16px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #516168;
+        line-height: 1.7;
+      }
+      form { display: grid; gap: 12px; }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      label { display: grid; gap: 6px; min-width: 0; }
+      label span,
+      .field-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: #22323a;
+      }
+      input, select, textarea {
+        width: 100%;
+        max-width: 100%;
+        background: var(--field);
+        border: 0;
+        border-radius: 10px;
+        padding: 12px;
+        font-size: 16px;
+        color: var(--ink);
+        outline: none;
+      }
+      input:focus, select:focus, textarea:focus {
+        box-shadow: 0 0 0 2px rgba(11, 106, 127, 0.28);
+        background: #e8e8e8;
+      }
+      textarea { min-height: 78px; resize: vertical; }
+      .hp { position: absolute; left: -9999px; opacity: 0; height: 0; overflow: hidden; }
+      .btn-yellow {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        margin-top: 4px;
+        background: var(--yellow);
+        color: #1b1b1b;
+        font-weight: 800;
+        border: 0;
+        min-height: 48px;
+        padding: 14px 18px;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: transform 0.16s ease, filter 0.16s ease;
+      }
+      .btn-yellow:hover { filter: brightness(1.04); transform: translateY(-1px); }
+      .btn-yellow:disabled { opacity: 0.65; cursor: wait; transform: none; }
+      .hint {
+        margin: 0;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .msg {
+        display: none;
+        padding: 12px 14px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.45;
+      }
+      .msg.ok {
+        display: block;
+        background: #e7f6d8;
+        color: #1f4d12;
+      }
+      .msg.err {
+        display: block;
+        background: #fde8d4;
+        color: #8a3b00;
+      }
+
+      .pkg-block { display: grid; gap: 10px; }
+      .pkg-filters {
+        display: none;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pkg-filters.show { display: flex; }
+      .pkg-filter {
+        border: 0;
+        background: var(--soft-gray);
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 700;
+        padding: 8px 12px;
+        border-radius: 999px;
+        cursor: pointer;
+        min-height: 36px;
+      }
+      .pkg-filter.is-on {
+        background: var(--teal-700);
+        color: #fff;
+      }
+      .pkg-empty {
+        background: #f4f8f9;
+        border-radius: 12px;
+        padding: 16px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+        text-align: center;
+      }
+      .pkg-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .pkg-card {
+        display: grid;
+        gap: 4px;
+        text-align: left;
+        background: #f7fbfc;
+        border: 2px solid transparent;
+        border-radius: 12px;
+        padding: 12px;
+        cursor: pointer;
+        min-height: 92px;
+        color: inherit;
+        width: 100%;
+      }
+      .pkg-card:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .pkg-card.is-on {
+        border-color: var(--teal-700);
+        background: #e7f6fb;
+        box-shadow: 0 8px 18px rgba(11, 106, 127, 0.12);
+      }
+      .pkg-card__top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .pkg-card__speed {
+        font-size: 16px;
+        font-weight: 800;
+        color: var(--teal-700);
+        letter-spacing: -0.03em;
+      }
+      .pkg-card__badge {
+        font-size: 10px;
+        font-weight: 800;
+        background: var(--yellow);
+        color: #1b1b1b;
+        padding: 3px 7px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .pkg-card__name {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--ink);
+        line-height: 1.35;
+      }
+      .pkg-card__meta {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .pkg-card__price {
+        margin-top: 4px;
+        font-size: 14px;
+        font-weight: 800;
+        color: var(--ink);
+      }
+      .pkg-freq {
+        display: none;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .pkg-freq.show { display: flex; }
+      .pkg-freq button {
+        flex: 1 1 30%;
+        min-width: 96px;
+        border: 2px solid transparent;
+        background: var(--soft-gray);
+        border-radius: 10px;
+        padding: 10px 8px;
+        cursor: pointer;
+        min-height: 52px;
+      }
+      .pkg-freq button.is-on {
+        border-color: var(--teal-700);
+        background: #e7f6fb;
+      }
+      .pkg-freq strong {
+        display: block;
+        font-size: 12px;
+        color: var(--ink);
+      }
+      .pkg-freq span {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--teal-700);
+      }
+
+      .benefits {
+        background: #fff;
+        padding: 36px 0 48px;
+      }
+      .benefits__grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-top: -52px;
+        position: relative;
+        z-index: 2;
+      }
+      .info-box {
+        background: #fff;
+        border-radius: 6px;
+        box-shadow: 0 10px 18px rgba(0, 0, 0, 0.12);
+        padding: 22px 18px 18px;
+        text-align: center;
+      }
+      .info-box__icon {
+        width: 52px;
+        height: 52px;
+        margin: 0 auto 10px;
+        border-radius: 999px;
+        background: var(--cyan-pill);
+        color: var(--teal-700);
+        display: grid;
+        place-items: center;
+      }
+      .info-box__icon svg { width: 22px; height: 22px; fill: currentColor; }
+      .info-box h3 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        color: var(--ink);
+      }
+      .info-box p {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: #38484f;
+        line-height: 1.65;
+      }
+
+      footer {
+        position: relative;
+        overflow: hidden;
+        background: var(--teal-700);
+        color: rgba(255, 255, 255, 0.92);
+        padding: 46px 0 22px;
+      }
+      footer::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.35;
+        background:
+          linear-gradient(135deg, transparent 58%, rgba(0, 0, 0, 0.18) 58%),
+          linear-gradient(225deg, transparent 62%, rgba(0, 0, 0, 0.14) 62%);
+      }
+      .footer__inner {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr 1fr;
+        gap: 36px;
+        align-items: start;
+      }
+      .footer-logo {
+        width: 120px;
+        filter: brightness(0) invert(1);
+        margin-bottom: 14px;
+      }
+      .footer-brand p {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.8;
+        font-style: italic;
+        color: rgba(255, 255, 255, 0.78);
+        max-width: 220px;
+      }
+      .footer-col h4,
+      .footer-contact h4 {
+        margin: 0 0 12px;
+        font-size: 11px;
+        font-weight: 800;
+        color: rgba(255, 255, 255, 0.72);
+        letter-spacing: 0.02em;
+      }
+      .footer-col a,
+      .footer-contact a,
+      .footer-contact p {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.88);
+        margin: 0 0 10px;
+        line-height: 1.45;
+        word-break: break-word;
+      }
+      .footer-copy {
+        position: relative;
+        margin: 28px 0 0;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.14);
+        font-size: 11px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.7);
+        text-align: center;
+      }
+
+      @media (max-width: 900px) {
+        .nav-desktop { display: none; }
+        .band { padding: 22px 0 28px; }
+        .band__inner,
+        .benefits__grid,
+        .footer__inner,
+        .row,
+        .pkg-grid { grid-template-columns: 1fr; }
+        .intro { text-align: center; margin-bottom: 4px; }
+        .intro h1 { font-size: 26px; }
+        .intro p { margin: 0 auto 12px; font-size: 13px; line-height: 1.6; }
+        .intro-pills { justify-content: center; }
+        .signup-card { padding: 16px 14px 14px; }
+        .benefits { padding: 16px 0 36px; }
+        .benefits__grid { margin-top: 0; }
+        .footer__inner { justify-items: center; text-align: center; }
+        .footer-brand p { margin-inline: auto; }
+        .logo-block { min-width: 0; padding: 6px 8px; margin: 6px 0; }
+        .logo-block img { width: 108px; }
+        .nav-bar__wrap { min-height: 56px; gap: 8px; }
+        .container { width: min(var(--container), calc(100% - 24px)); }
+        .top-mini__inner { justify-content: space-between; gap: 8px; font-size: 11px; }
+      }
+      @media (max-width: 560px) {
+        .top-mini__email { display: none; }
+        .intro p { display: none; }
+      }
+      @media (min-width: 901px) {
+        .nav-desktop { display: flex; }
+        .nav-toggle, .nav-mobile { display: none !important; }
+        input, select, textarea { font-size: 13px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="top-mini">
+        <div class="container top-mini__inner">
+          <a class="top-mini__email" href="mailto:support@sulsolutions.biz">support@sulsolutions.biz</a>
+          <a href="tel:+254713400200">+254 713 400 200</a>
+        </div>
+      </div>
+      <div class="nav-bar">
+        <div class="container nav-bar__wrap">
+          <a class="logo-block" href="https://sulsolutions.biz/" aria-label="Starlynx Utility">
+            <img src="/signup/images/logo.png" alt="Starlynx Utility" />
+          </a>
+          <nav class="nav-desktop" aria-label="Primary navigation">
+            <a href="https://sulsolutions.biz/">Home</a>
+            <a href="https://sulsolutions.biz/about">About Us</a>
+            <a href="https://sulsolutions.biz/aparto-net">Aparto Net</a>
+            <a href="https://sulsolutions.biz/infrastructure">Infrastructure</a>
+            <a href="https://sulsolutions.biz/contact-us">Contact Us</a>
+            <a class="cta" href="#signup-form">Get Started</a>
+          </nav>
+          <button class="nav-toggle" type="button" id="nav-toggle" aria-expanded="false" aria-label="Open menu">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+        <nav class="nav-mobile" id="nav-mobile" aria-label="Mobile navigation">
+          <a href="https://sulsolutions.biz/">Home</a>
+          <a href="https://sulsolutions.biz/about">About Us</a>
+          <a href="https://sulsolutions.biz/aparto-net">Aparto Net</a>
+          <a href="https://sulsolutions.biz/infrastructure">Infrastructure</a>
+          <a href="https://sulsolutions.biz/contact-us">Contact Us</a>
+          <a class="cta" href="#signup-form">Get Started</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="band">
+      <div class="band__bg" aria-hidden="true"></div>
+      <div class="container band__inner">
+        <div class="intro">
+          <h1>Stay connected<br />the easy way.</h1>
+          <p>
+            From home internet to DStv and hotel TV solutions, everything is designed
+            to work smoothly from the moment you sign up.
+          </p>
+          <div class="intro-pills">
+            <span class="chip">High-speed fibre</span>
+            <span class="chip">Internet + DStv</span>
+            <span class="chip">Free installation</span>
+          </div>
+        </div>
+
+        <div class="signup-card">
+          <div class="tag">Subscribe</div>
+          <h2 id="brand">Get Connected Now</h2>
+          <p class="lead" id="subtitle">
+            24/7 Telephone, WhatsApp and onsite support Monday to Saturday.
+          </p>
+          <form id="signup-form" novalidate>
+            <div class="hp" aria-hidden="true">
+              <label>Company website</label>
+              <input type="text" name="companyWebsite" tabindex="-1" autocomplete="off" />
+            </div>
+            <div class="row">
+              <label>
+                <span>First name</span>
+                <input id="firstName" name="firstName" required autocomplete="given-name" placeholder="First name" />
+              </label>
+              <label>
+                <span>Last name</span>
+                <input id="lastName" name="lastName" required autocomplete="family-name" placeholder="Last name" />
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                <span>WhatsApp Number</span>
+                <input id="phone" name="phone" type="tel" inputmode="tel" required autocomplete="tel" placeholder="07XX XXX XXX" />
+              </label>
+              <label>
+                <span>Email</span>
+                <input id="email" name="email" type="email" inputmode="email" required autocomplete="email" placeholder="Email" />
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                <span>Building / estate</span>
+                <select id="buildingId" name="buildingId" required>
+                  <option value="">Loading buildings…</option>
+                </select>
+              </label>
+              <label>
+                <span>Apartment / unit</span>
+                <input id="apartmentNumber" name="apartmentNumber" required autocomplete="off" placeholder="e.g. B12" />
+              </label>
+            </div>
+
+            <div class="pkg-block" id="pkg-block">
+              <span class="field-label">Choose a package</span>
+              <div class="pkg-filters" id="pkg-filters" hidden></div>
+              <div class="pkg-empty" id="pkg-empty">Select your building to see available packages.</div>
+              <div class="pkg-grid" id="pkg-grid" hidden></div>
+              <div class="pkg-freq" id="pkg-freq" hidden></div>
+              <input type="hidden" id="productId" name="productId" value="" />
+            </div>
+
+            <label id="dstv-field" hidden>
+              <span>DSTV decoder serial</span>
+              <input
+                id="dstvDecoderSerial"
+                name="dstvDecoderSerial"
+                autocomplete="off"
+                placeholder="Required for DSTV packages"
+              />
+            </label>
+            <label>
+              <span>Notes</span>
+              <textarea id="message" name="message" placeholder="Anything we should know?"></textarea>
+            </label>
+            <p class="hint">
+              Submitting this form does not activate service yet. We verify your details first, then convert you into a full customer.
+            </p>
+            <button class="btn-yellow" type="submit" id="submit">Get Connected Now</button>
+            <div class="msg" id="feedback" role="status"></div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="benefits">
+      <div class="container benefits__grid">
+        <article class="info-box">
+          <div class="info-box__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8l0-7z"/></svg>
+          </div>
+          <h3>Lightning-Fast Speeds</h3>
+          <p>Internet speeds of up to 100 Mbps for seamless streaming, gaming, and downloading.</p>
+        </article>
+        <article class="info-box">
+          <div class="info-box__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 2 4 6v6c0 5 3.4 9.4 8 10.5C16.6 21.4 20 17 20 12V6l-8-4zm-1 13.2-3.2-3.2 1.4-1.4L11 12.4l4.8-4.8 1.4 1.4L11 15.2z"/></svg>
+          </div>
+          <h3>Free Easy Installation</h3>
+          <p>Our technicians take care of setup so your fibre connection is hassle-free from day one.</p>
+        </article>
+        <article class="info-box">
+          <div class="info-box__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5z"/></svg>
+          </div>
+          <h3>24/7 Support</h3>
+          <p>Telephone, WhatsApp and onsite support Monday to Saturday — we stay with you after you sign up.</p>
+        </article>
+      </div>
+    </section>
+
+    <footer>
+      <div class="container footer__inner">
+        <div class="footer-brand">
+          <img class="footer-logo" src="/signup/images/logo.png" alt="Starlynx Utility" />
+          <p>
+            Your trusted one-stop partner<br />
+            for ICT consultation,<br />
+            infrastructure, and ISP<br />
+            services.
+          </p>
+        </div>
+        <div class="footer-col">
+          <h4>Company</h4>
+          <a href="https://sulsolutions.biz/about">About Us</a>
+          <a href="https://sulsolutions.biz/aparto-net">Aparto Net</a>
+          <a href="https://sulsolutions.biz/hotel-net">Hotel Net</a>
+          <a href="https://sulsolutions.biz/contact-us">Contact Us</a>
+        </div>
+        <div class="footer-contact">
+          <h4>Visit Us</h4>
+          <p>
+            Ground Floor, Azalea Square<br />
+            General Mathenge Drive,<br />
+            Westlands Nairobi, Kenya
+          </p>
+          <a href="mailto:support@sulsolutions.biz">support@sulsolutions.biz</a>
+          <a href="tel:+254713400200">+254 713 400 200</a>
+        </div>
+      </div>
+      <p class="footer-copy">Copyright © 2026 Starlynx Utility Limited</p>
+    </footer>
+
+    <script>
+      (function () {
+        var API = "/api/public/leads/signup";
+        var FREQ_ORDER = ["monthly", "quarterly", "yearly"];
+        var FREQ_LABEL = { monthly: "Monthly", quarterly: "Quarterly", yearly: "Yearly" };
+        var form = document.getElementById("signup-form");
+        var feedback = document.getElementById("feedback");
+        var submit = document.getElementById("submit");
+        var building = document.getElementById("buildingId");
+        var product = document.getElementById("productId");
+        var dstvField = document.getElementById("dstv-field");
+        var dstvInput = document.getElementById("dstvDecoderSerial");
+        var pkgEmpty = document.getElementById("pkg-empty");
+        var pkgGrid = document.getElementById("pkg-grid");
+        var pkgFreq = document.getElementById("pkg-freq");
+        var pkgFilters = document.getElementById("pkg-filters");
+        var packages = [];
+        var groups = [];
+        var typeFilter = "all";
+        var selectedKey = "";
+        var toggle = document.getElementById("nav-toggle");
+        var mobile = document.getElementById("nav-mobile");
+
+        toggle.addEventListener("click", function () {
+          var open = mobile.classList.toggle("open");
+          toggle.setAttribute("aria-expanded", open ? "true" : "false");
+          toggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+        });
+        mobile.querySelectorAll("a").forEach(function (link) {
+          link.addEventListener("click", function () {
+            mobile.classList.remove("open");
+            toggle.setAttribute("aria-expanded", "false");
+          });
+        });
+
+        function show(type, text) {
+          feedback.className = "msg " + type;
+          feedback.textContent = text;
+        }
+
+        function kes(n) {
+          return "KES " + Number(n || 0).toLocaleString("en-KE");
+        }
+
+        function freqLabel(f) {
+          return FREQ_LABEL[f] || (f ? String(f) : "Plan");
+        }
+
+        function groupKey(p) {
+          if (p.planId) return "plan-" + p.planId;
+          return [p.name, p.mbps, p.hasDstv ? 1 : 0].join("|");
+        }
+
+        function cheapest(variants) {
+          return variants.slice().sort(function (a, b) { return a.price - b.price; })[0];
+        }
+
+        function buildGroups(list) {
+          var map = {};
+          var order = [];
+          (list || []).forEach(function (p) {
+            var key = groupKey(p);
+            if (!map[key]) {
+              map[key] = {
+                key: key,
+                name: p.planName || p.name,
+                mbps: p.mbps,
+                hasDstv: Boolean(p.hasDstv),
+                categoryName: p.categoryName,
+                variants: [],
+              };
+              order.push(key);
+            }
+            map[key].variants.push(p);
+          });
+          return order.map(function (key) {
+            var g = map[key];
+            g.variants.sort(function (a, b) {
+              return FREQ_ORDER.indexOf(a.paymentFrequency) - FREQ_ORDER.indexOf(b.paymentFrequency);
+            });
+            return g;
+          });
+        }
+
+        function selectedPackage() {
+          var id = Number(product.value);
+          return packages.find(function (p) { return p.id === id; }) || null;
+        }
+
+        function selectedGroup() {
+          return groups.find(function (g) { return g.key === selectedKey; }) || null;
+        }
+
+        function toggleDstv() {
+          var pkg = selectedPackage();
+          var need = Boolean(pkg && pkg.hasDstv);
+          dstvField.hidden = !need;
+          dstvInput.required = need;
+          if (!need) dstvInput.value = "";
+        }
+
+        function setProduct(id) {
+          product.value = id ? String(id) : "";
+          toggleDstv();
+        }
+
+        function visibleGroups() {
+          if (typeFilter === "dstv") return groups.filter(function (g) { return g.hasDstv; });
+          if (typeFilter === "internet") return groups.filter(function (g) { return !g.hasDstv; });
+          return groups;
+        }
+
+        function renderFilters() {
+          var hasNet = groups.some(function (g) { return !g.hasDstv; });
+          var hasDstv = groups.some(function (g) { return g.hasDstv; });
+          pkgFilters.innerHTML = "";
+          if (!hasNet || !hasDstv) {
+            pkgFilters.hidden = true;
+            pkgFilters.classList.remove("show");
+            typeFilter = "all";
+            return;
+          }
+          pkgFilters.hidden = false;
+          pkgFilters.classList.add("show");
+          [
+            { id: "all", label: "All packages" },
+            { id: "internet", label: "Internet only" },
+            { id: "dstv", label: "Internet + DStv" },
+          ].forEach(function (opt) {
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "pkg-filter" + (typeFilter === opt.id ? " is-on" : "");
+            btn.textContent = opt.label;
+            btn.addEventListener("click", function () {
+              typeFilter = opt.id;
+              if (selectedGroup() && !visibleGroups().some(function (g) { return g.key === selectedKey; })) {
+                selectedKey = "";
+                setProduct("");
+              }
+              renderPackages();
+            });
+            pkgFilters.appendChild(btn);
+          });
+        }
+
+        function renderFreq() {
+          var group = selectedGroup();
+          pkgFreq.innerHTML = "";
+          if (!group || group.variants.length < 2) {
+            pkgFreq.hidden = true;
+            pkgFreq.classList.remove("show");
+            return;
+          }
+          pkgFreq.hidden = false;
+          pkgFreq.classList.add("show");
+          group.variants.forEach(function (v) {
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = Number(product.value) === v.id ? "is-on" : "";
+            btn.innerHTML = "<strong>" + freqLabel(v.paymentFrequency) + "</strong><span>" + kes(v.price) + "</span>";
+            btn.addEventListener("click", function () {
+              setProduct(v.id);
+              renderPackages();
+            });
+            pkgFreq.appendChild(btn);
+          });
+        }
+
+        function renderPackages() {
+          var list = visibleGroups();
+          pkgGrid.innerHTML = "";
+          if (!packages.length) {
+            pkgGrid.hidden = true;
+            pkgEmpty.hidden = false;
+            pkgFilters.hidden = true;
+            pkgFilters.classList.remove("show");
+            pkgFreq.hidden = true;
+            pkgFreq.classList.remove("show");
+            return;
+          }
+          pkgEmpty.hidden = true;
+          pkgGrid.hidden = false;
+          list.forEach(function (g) {
+            var low = cheapest(g.variants);
+            var selected = g.key === selectedKey;
+            var current = selected ? selectedPackage() : null;
+            var price = current || low;
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "pkg-card" + (selected ? " is-on" : "");
+            btn.setAttribute("aria-pressed", selected ? "true" : "false");
+            btn.innerHTML =
+              '<div class="pkg-card__top">' +
+                '<div class="pkg-card__speed">' + (g.mbps ? g.mbps + " Mbps" : "Package") + "</div>" +
+                (g.hasDstv ? '<span class="pkg-card__badge">+ DStv</span>' : "") +
+              "</div>" +
+              '<div class="pkg-card__name">' + g.name + "</div>" +
+              '<div class="pkg-card__meta">' +
+                (g.variants.length > 1 ? g.variants.length + " billing options" : freqLabel(low.paymentFrequency)) +
+              "</div>" +
+              '<div class="pkg-card__price">' +
+                (g.variants.length > 1 && !selected ? "From " : "") + kes(price.price) +
+              "</div>";
+            btn.addEventListener("click", function () {
+              selectedKey = g.key;
+              if (g.variants.length === 1) {
+                setProduct(g.variants[0].id);
+              } else {
+                var keep = g.variants.find(function (v) { return v.id === Number(product.value); });
+                setProduct((keep || low).id);
+              }
+              renderPackages();
+            });
+            pkgGrid.appendChild(btn);
+          });
+          renderFreq();
+        }
+
+        function setPackages(list) {
+          packages = list || [];
+          groups = buildGroups(packages);
+          typeFilter = "all";
+          selectedKey = "";
+          setProduct("");
+          if (!packages.length) {
+            pkgEmpty.hidden = false;
+            pkgEmpty.textContent = building.value
+              ? "No packages for this building."
+              : "Select your building to see available packages.";
+            pkgGrid.hidden = true;
+            pkgGrid.innerHTML = "";
+            pkgFilters.hidden = true;
+            pkgFilters.classList.remove("show");
+            pkgFreq.hidden = true;
+            pkgFreq.classList.remove("show");
+            return;
+          }
+          renderFilters();
+          renderPackages();
+        }
+
+        function loadPackages(buildingId) {
+          if (!buildingId) {
+            setPackages([]);
+            return;
+          }
+          pkgEmpty.hidden = false;
+          pkgEmpty.textContent = "Loading packages…";
+          pkgGrid.hidden = true;
+          fetch(API + "/packages?buildingId=" + encodeURIComponent(buildingId))
+            .then(function (r) { return r.json(); })
+            .then(function (body) { setPackages(body.packages || []); })
+            .catch(function () {
+              setPackages([]);
+              show("err", "Could not load packages. Please retry.");
+            });
+        }
+
+        fetch(API + "/config")
+          .then(function (r) { return r.json(); })
+          .then(function (cfg) {
+            if (cfg.title) document.title = cfg.title;
+            if (cfg.subtitle) document.getElementById("subtitle").textContent = cfg.subtitle;
+            building.innerHTML = "";
+            var placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "Select your building";
+            building.appendChild(placeholder);
+            (cfg.buildings || []).forEach(function (b) {
+              var opt = document.createElement("option");
+              opt.value = String(b.id);
+              opt.textContent = b.name;
+              building.appendChild(opt);
+            });
+          })
+          .catch(function () {
+            building.innerHTML = "";
+            var opt = document.createElement("option");
+            opt.value = "";
+            opt.textContent = "Could not load buildings";
+            building.appendChild(opt);
+            show("err", "Could not load the signup form. Please refresh.");
+          });
+
+        building.addEventListener("change", function () {
+          loadPackages(building.value);
+        });
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          if (!product.value) {
+            show("err", "Please choose a package.");
+            document.getElementById("pkg-block").scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+          }
+          submit.disabled = true;
+          feedback.className = "msg";
+          var pkg = selectedPackage();
+          var data = {
+            firstName: form.firstName.value,
+            lastName: form.lastName.value,
+            phone: form.phone.value,
+            email: form.email.value,
+            buildingId: form.buildingId.value,
+            apartmentNumber: form.apartmentNumber.value,
+            productId: form.productId.value,
+            dstvDecoderSerial: form.dstvDecoderSerial.value,
+            message: form.message.value,
+            companyWebsite: form.companyWebsite.value,
+            pageUrl: window.location.href,
+            paymentFrequency: pkg ? pkg.paymentFrequency : null,
+          };
+          fetch(API, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Lead-Source": "signup" },
+            body: JSON.stringify(data),
+          })
+            .then(function (r) {
+              return r.json().then(function (body) {
+                if (!r.ok) throw new Error(body.error || "Submission failed");
+                return body;
+              });
+            })
+            .then(function (body) {
+              form.reset();
+              setPackages([]);
+              show("ok", body.message || "Thanks! We will verify your details shortly.");
+            })
+            .catch(function (err) {
+              show("err", err.message || "Something went wrong");
+            })
+            .finally(function () {
+              submit.disabled = false;
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>

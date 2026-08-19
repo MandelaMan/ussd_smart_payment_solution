@@ -239,6 +239,23 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
 <p>After the trial, billing continues on your selected plan. Use your account number as the M-Pesa Paybill reference.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
+  referral_recorded: {
+    label: "Referral recorded",
+    description:
+      "Sent to a referrer when a new customer is onboarded using their apartment as the referral.",
+    defaultEnabled: true,
+    defaultSubject: "A new customer used your referral — {{customerNumber}}",
+    defaultBodyHtml: `<p>Dear {{firstName}},</p>
+<p>A new Starlynx customer has been registered using your referral.</p>
+<p>
+  <strong>Referred customer:</strong> {{referredCustomerName}} ({{referredCustomerNumber}})<br/>
+  <strong>Your account:</strong> {{customerNumber}}<br/>
+  <strong>Pending reward:</strong> {{referralDiscountPercent}}% off your next subscription after they complete their first payment
+</p>
+<p>We will email you again when the discount is applied to your next billing cycle.</p>
+<p>This is a no-reply email. If you have any questions, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
+<p>Thank you,<br/>Starlynx Customer Support</p>`,
+  },
   referral_reward: {
     label: "Referral reward",
     description:
@@ -260,6 +277,42 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
       "{{#referredCustomerNumber}} (<strong>{{referredCustomerNumber}}</strong>){{/referredCustomerNumber}}",
       " (<strong>{{referredCustomerNumber}}</strong>)"
     ),
+  },
+  action_opened: {
+    label: "Reminder opened",
+    description:
+      "Sent when staff create a customer-linked reminder (move-out, fault, collections, etc.).",
+    defaultEnabled: true,
+    defaultSubject: "{{actionTypeName}} — {{customerNumber}}",
+    defaultBodyHtml: `<p>Dear {{firstName}},</p>
+<p>Our team has opened a follow-up on your Starlynx account <strong>{{customerNumber}}</strong>.</p>
+<p>
+  <strong>Type:</strong> {{actionTypeName}}<br/>
+  <strong>Details:</strong> {{actionTitle}}<br/>
+  <strong>Scheduled for:</strong> {{dueDate}}<br/>
+  <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}
+</p>
+<p>{{actionNotes}}</p>
+<p>{{checklistSummary}}</p>
+<p>A team member may contact you if we need access to the apartment or equipment.</p>
+<p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
+<p>Thank you,<br/>Starlynx Customer Support</p>`,
+  },
+  action_completed: {
+    label: "Reminder completed",
+    description: "Sent when a customer-linked reminder is marked complete.",
+    defaultEnabled: true,
+    defaultSubject: "{{actionTypeName}} complete — {{customerNumber}}",
+    defaultBodyHtml: `<p>Dear {{firstName}},</p>
+<p>We have completed the following follow-up on your Starlynx account <strong>{{customerNumber}}</strong>.</p>
+<p>
+  <strong>Type:</strong> {{actionTypeName}}<br/>
+  <strong>Details:</strong> {{actionTitle}}<br/>
+  <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}
+</p>
+<p>{{actionNotes}}</p>
+<p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
+<p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
 };
 

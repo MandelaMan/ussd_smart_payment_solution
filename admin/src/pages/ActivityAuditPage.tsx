@@ -38,6 +38,7 @@ const PAGE_SIZE = 30;
 
 function eventLabel(value: string): string {
   if (value === "user_login") return "User signed in";
+  if (value === "user_recovery_requested") return "Account recovery requested";
   return value
     .replace(/^customer_/, "")
     .replace(/^tisp_/, "TISP ")

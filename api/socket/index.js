@@ -48,6 +48,9 @@ function initSocket(server, env) {
 
   io.on("connection", (socket) => {
     socket.join("sync-updates");
+    if (socket.user?.id) {
+      socket.join(`user:${socket.user.id}`);
+    }
     socket.emit("sync:connected", { ok: true });
   });
 
@@ -59,8 +62,18 @@ function emitSyncEvent(event, payload) {
   io.to("sync-updates").emit(event, payload);
 }
 
+function emitToUser(userId, event, payload) {
+  if (!io || userId == null) return;
+  io.to(`user:${Number(userId)}`).emit(event, payload);
+}
+
+function emitToUsers(userIds, event, payload) {
+  const ids = [...new Set((userIds || []).map((id) => Number(id)).filter((id) => id > 0))];
+  for (const id of ids) emitToUser(id, event, payload);
+}
+
 function getIO() {
   return io;
 }
 
-module.exports = { initSocket, emitSyncEvent, getIO };
+module.exports = { initSocket, emitSyncEvent, emitToUser, emitToUsers, getIO };

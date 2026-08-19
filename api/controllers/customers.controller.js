@@ -90,6 +90,8 @@ const {
   filterAgencyInvoicesForCustomer,
   resolveEffectiveCustomerEmail,
   resolveEffectiveCustomerPhone,
+  resolveInvoiceEmail,
+  resolveInvoicePhone,
   b2bBillingMeta,
 } = require("../utils/b2bBilling");
 const {
@@ -348,8 +350,8 @@ async function buildZohoContactPayload(customer, existingContact = null) {
     );
     if (agency) {
       phone =
-        formatZohoPhone(resolveEffectiveCustomerPhone(customer, agency)) || phone;
-      email = resolveEffectiveCustomerEmail(customer, agency) || email;
+        formatZohoPhone(resolveInvoicePhone(customer, agency)) || phone;
+      email = resolveInvoiceEmail(customer, agency) || email;
     }
   }
 
@@ -1428,6 +1430,25 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     (String(ipSetup || "").toUpperCase() === "PPOE"
       ? customerNumber
       : apartmentNumber);
+  const agencyContact = {
+    email: ctx.agency_email ?? ctx.agencyEmail,
+    phone: ctx.agency_phone ?? ctx.agencyPhone,
+  };
+  const tispContactCustomer = {
+    email: ctx.email,
+    phone: ctx.phone,
+    firstName,
+    middleName,
+    lastName,
+    buildingName,
+    customerNumber,
+    customer_type: ctx.customer_type ?? ctx.customerType,
+    pop_name: ctx.pop_name ?? ctx.popName,
+    c2b_code: ctx.c2b_code ?? ctx.c2bCode,
+    b2b_code: ctx.b2b_code ?? ctx.b2bCode,
+    agencyEmail: agencyContact.email,
+    agencyPhone: agencyContact.phone,
+  };
   return {
     firstName,
     middleName,
@@ -1444,20 +1465,8 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     tispPassword: ctx.tisp_password ?? ctx.tispPassword,
     ppoeUsername,
     ipAddress: ctx.ip_address ?? ctx.ipAddress,
-    email: resolveEffectiveCustomerEmail(
-      {
-        email: ctx.email,
-        customer_type: ctx.customer_type ?? ctx.customerType,
-      },
-      { email: ctx.agency_email ?? ctx.agencyEmail }
-    ),
-    phone: resolveEffectiveCustomerPhone(
-      {
-        phone: ctx.phone,
-        customer_type: ctx.customer_type ?? ctx.customerType,
-      },
-      { phone: ctx.agency_phone ?? ctx.agencyPhone }
-    ),
+    email: resolveEffectiveCustomerEmail(tispContactCustomer, agencyContact),
+    phone: resolveEffectiveCustomerPhone(tispContactCustomer, agencyContact),
     // Do not pass paymentFrequency — TISP BillingCycle is always Monthly.
     isVatExempt: Boolean(ctx.is_vat_exempt ?? ctx.isVatExempt),
     agencyName: ctx.agency_name ?? ctx.agencyName ?? null,
@@ -2834,6 +2843,7 @@ async function listCustomers(req, res, next) {
       refresh,
       categoryId,
       customerType,
+      premiseType,
       sortBy,
       sortDir,
     } = req.query;
@@ -2846,6 +2856,7 @@ async function listCustomers(req, res, next) {
       limit,
       categoryId: categoryId ? Number(categoryId) : undefined,
       customerType,
+      premiseType,
       sortBy,
       sortDir,
     };
@@ -2918,8 +2929,11 @@ const CUSTOMER_EXPORT_COLUMNS = [
   { key: "customerNumber", label: "Customer #" },
   { key: "fullName", label: "Name" },
   { key: "customerType", label: "Type" },
+  { key: "premiseType", label: "Premise" },
   { key: "buildingName", label: "Building" },
-  { key: "apartmentNumber", label: "Apartment" },
+  { key: "apartmentNumber", label: "Unit" },
+  { key: "businessName", label: "Business name" },
+  { key: "shopLocation", label: "Shop location" },
   { key: "productName", label: "Package" },
   { key: "paymentFrequency", label: "Billing" },
   { key: "subscriptionStatus", label: "Status" },
@@ -2958,8 +2972,11 @@ function mapCustomerExportRow(row) {
     customerNumber: row.customerNumber,
     fullName: row.fullName,
     customerType: row.customerType,
+    premiseType: row.premiseType || "apartment",
     buildingName: row.buildingName,
     apartmentNumber: row.apartmentNumber,
+    businessName: row.businessName || "",
+    shopLocation: row.shopLocation || "",
     productName: row.productName,
     paymentFrequency: row.paymentFrequency,
     subscriptionStatus: row.subscriptionStatus,
@@ -3001,6 +3018,7 @@ async function exportCustomers(req, res, next) {
       limit,
       categoryId,
       customerType,
+      premiseType,
       sortBy,
       sortDir,
       format,
@@ -3027,6 +3045,7 @@ async function exportCustomers(req, res, next) {
       limit: limitNum,
       categoryId: categoryId ? Number(categoryId) : undefined,
       customerType,
+      premiseType,
       sortBy,
       sortDir,
       forExport: exportScope === "all",
@@ -3163,7 +3182,24 @@ async function createCustomer(req, res, next) {
     if (!body.firstName || !body.lastName) {
       return res.status(400).json({ error: "First name and last name are required" });
     }
-    if (!body.customerType || !body.apartmentNumber) {
+    if (!body.customerType) {
+      return res.status(400).json({ error: "Customer type is required" });
+    }
+    const premiseType =
+      String(body.premiseType || body.premise_type || "apartment")
+        .trim()
+        .toLowerCase() === "shop"
+        ? "shop"
+        : "apartment";
+    body.premiseType = premiseType;
+    if (premiseType === "shop") {
+      if (!String(body.businessName || "").trim()) {
+        return res.status(400).json({ error: "Business name is required for a shop" });
+      }
+      if (!String(body.shopLocation || "").trim()) {
+        return res.status(400).json({ error: "Shop location is required" });
+      }
+    } else if (!body.apartmentNumber) {
       return res
         .status(400)
         .json({ error: "Customer type and apartment number are required" });
@@ -3251,29 +3287,15 @@ async function createCustomer(req, res, next) {
       }
     }
 
-    // Multiple live campaigns → staff must pick which one applies on onboard.
+    // Campaign is optional; if one is chosen it must currently be live.
     if (
       String(body.customerType).toUpperCase() === "C2B" &&
       body.trialPeriod !== true
     ) {
       const campaignStore = require("../services/campaignStore");
-      const liveCampaigns = await campaignStore.listActiveCampaigns();
-      if (liveCampaigns.length > 0) {
-        const requestedId = body.campaignId != null ? Number(body.campaignId) : null;
-        if (!requestedId) {
-          return res.status(400).json({
-            error:
-              liveCampaigns.length > 1
-                ? "Select which campaign this customer was added under"
-                : "Campaign is required for this signup",
-            code: "CAMPAIGN_REQUIRED",
-            campaigns: liveCampaigns.map((c) => ({
-              id: c.id,
-              code: c.code,
-              name: c.name,
-            })),
-          });
-        }
+      const requestedId = body.campaignId != null ? Number(body.campaignId) : null;
+      if (requestedId) {
+        const liveCampaigns = await campaignStore.listActiveCampaigns();
         const selected = liveCampaigns.find((c) => c.id === requestedId);
         if (!selected) {
           return res.status(400).json({
@@ -3297,6 +3319,34 @@ async function createCustomer(req, res, next) {
     }
 
     const created = await store.createCustomer(body);
+
+    const leadId = body.leadId != null ? Number(body.leadId) : null;
+    if (Number.isFinite(leadId) && leadId > 0) {
+      try {
+        const leadStore = require("../services/leadStore");
+        const existingLead = await leadStore.getLeadById(leadId);
+        if (existingLead && !existingLead.convertedCustomerId) {
+          await leadStore.updateLead(leadId, {
+            status: "converted",
+            convertedCustomerId: created.customerId,
+          });
+          await leadStore.addMessage({
+            leadId,
+            direction: "outbound",
+            channel: "system",
+            body: `Verified and converted to customer ${created.customerNumber}`,
+          });
+          emitAdminUpdate("leads", {
+            action: "updated",
+            leadId,
+            status: "converted",
+            convertedCustomerId: created.customerId,
+          });
+        }
+      } catch (e) {
+        console.warn("lead conversion link failed:", e.message);
+      }
+    }
 
     // Acquisition campaign + referral attribution (non-trial C2B only).
     let campaignAttach = { attached: false };
@@ -3680,9 +3730,13 @@ async function buildUpgradeQuote(customerId, productId, billingOverrides = {}) {
     customerType: current.customer_type,
   });
 
-  // First-time DSTV on this account → include one-time decoder charge in the top-up.
+  // First-time DSTV on this account → include one-time decoder charge in the top-up
+  // only when the building uses individual decoders (not headend coax).
+  const { buildingUsesDecoder } = require("../utils/dstvSetup");
   const addingDstv =
-    !Boolean(current.product_has_dstv) && Boolean(newProduct.has_dstv);
+    !Boolean(current.product_has_dstv) &&
+    Boolean(newProduct.has_dstv) &&
+    buildingUsesDecoder(current);
   let decoderFee = 0;
   if (addingDstv) {
     const fromCustomer =
@@ -5999,6 +6053,8 @@ async function updateCustomer(req, res, next) {
         customerType: body.customerType,
         agencyId: body.agencyId,
         apartmentNumber: body.apartmentNumber,
+        businessName: body.businessName,
+        shopLocation: body.shopLocation,
         paymentFrequency: body.paymentFrequency,
         customPeriodDays: body.customPeriodDays,
         productId: body.productId,
@@ -6389,11 +6445,20 @@ async function getCustomerPayments(req, res, next) {
       paidAt: row.transaction_date || row.created_at,
     }));
 
-    const mpesaRefs = new Set(
-      payments
-        .map((payment) => payment.referenceId?.trim().toLowerCase())
-        .filter(Boolean)
-    );
+    const mpesaByRef = new Map();
+    for (const payment of payments) {
+      const key = payment.referenceId?.trim().toLowerCase();
+      if (key && !mpesaByRef.has(key)) mpesaByRef.set(key, payment);
+    }
+
+    const applyInvoiceToMpesa = (reference, invoiceNumber) => {
+      const key = String(reference || "").trim().toLowerCase();
+      if (!key || !invoiceNumber) return false;
+      const mpesa = mpesaByRef.get(key);
+      if (!mpesa || mpesa.invoiceNumber) return false;
+      mpesa.invoiceNumber = invoiceNumber;
+      return true;
+    };
 
     const linked = await loadZohoContactForCustomer(customer);
     const zohoContact = linked?.contact;
@@ -6413,16 +6478,14 @@ async function getCustomerPayments(req, res, next) {
       });
 
       for (const payment of zohoPayments || []) {
+        const invoiceRef = integrationSnapshot.extractZohoAppliedInvoiceNumbers(payment);
         const ref = payment.reference_number || payment.payment_number || null;
-        if (ref && mpesaRefs.has(String(ref).trim().toLowerCase())) {
+        if (applyInvoiceToMpesa(payment.reference_number, invoiceRef)) {
           continue;
         }
-
-        const invoiceRef = Array.isArray(payment.invoices)
-          ? payment.invoices.find((inv) => inv.invoice_number)?.invoice_number ||
-            payment.invoices[0]?.invoice_number ||
-            null
-          : null;
+        if (ref && mpesaByRef.has(String(ref).trim().toLowerCase())) {
+          continue;
+        }
 
         payments.push({
           id: `zoho-${payment.payment_id}`,
@@ -6436,6 +6499,15 @@ async function getCustomerPayments(req, res, next) {
           paidAt: payment.date || payment.payment_date || payment.created_time,
         });
       }
+    }
+
+    try {
+      const storedPayments = await integrationSnapshot.listZohoPayments(customer.id);
+      for (const stored of storedPayments || []) {
+        applyInvoiceToMpesa(stored.referenceId, stored.invoiceNumber);
+      }
+    } catch {
+      /* snapshot is a best-effort fallback for M-Pesa invoice links */
     }
 
     payments.sort(
@@ -6526,14 +6598,16 @@ async function retryBillingOnboarding(req, res, next) {
           error: "Enter the Paystack / Zoho payment REFERENCE#",
         });
       }
-      const hasDstv = Boolean(
-        customer.hasDstv || customer.decoderFeeRequired
+      const { buildingUsesDecoder } = require("../utils/dstvSetup");
+      const hasDecoderFee = Boolean(
+        buildingUsesDecoder(customer) &&
+          (customer.hasDstv || customer.decoderFeeRequired)
       );
-      if (!paymentCoversInternet && !(hasDstv && paymentCoversDecoder)) {
+      if (!paymentCoversInternet && !(hasDecoderFee && paymentCoversDecoder)) {
         return res.status(400).json({
           error:
             "Select what the payment covers (Internet/package" +
-            (hasDstv ? ", and/or DSTV decoder)" : ")"),
+            (hasDecoderFee ? ", and/or DSTV decoder)" : ")"),
         });
       }
     }
@@ -6817,6 +6891,33 @@ async function refreshCustomerStatus(req, res, next) {
   }
 }
 
+async function previewShopCustomerNumber(req, res, next) {
+  try {
+    const buildingId = Number(req.query.buildingId);
+    const customerType = String(req.query.customerType || "C2B")
+      .trim()
+      .toUpperCase();
+    if (!buildingId) {
+      return res.status(400).json({ error: "buildingId is required" });
+    }
+    if (!["C2B", "B2B"].includes(customerType)) {
+      return res.status(400).json({ error: "customerType must be C2B or B2B" });
+    }
+    const building = await store.getBuildingById(buildingId);
+    if (!building) {
+      return res.status(404).json({ error: "Building not found" });
+    }
+    const { buildCustomerNumber } = require("../utils/customerNumber");
+    const unitCode = await store.nextShopUnitCodeForBuilding(buildingId);
+    return res.json({
+      unitCode,
+      customerNumber: buildCustomerNumber(building, customerType, unitCode),
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function getCustomerTransactions(req, res, next) {
   try {
     const customer = await store.getCustomerById(Number(req.params.id));
@@ -6835,6 +6936,7 @@ module.exports = {
   lookupCustomerByNumber,
   exportCustomers,
   getCustomer,
+  previewShopCustomerNumber,
   getCustomerTransactions,
   getCustomerInvoices,
   getCustomerPayments,

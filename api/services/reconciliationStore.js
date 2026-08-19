@@ -758,7 +758,9 @@ async function loadUnmatchedMpesa() {
     let customer = null;
     if (accountRef) {
       try {
-        customer = await customerStore.findCustomerByNumber(accountRef);
+        customer = await customerStore.resolveCustomerByPaybillRef(accountRef, {
+          msisdn: row.phone,
+        });
       } catch {
         customer = null;
       }
@@ -771,7 +773,7 @@ async function loadUnmatchedMpesa() {
       accountReference: accountRef,
       channel: row.channel || null,
       paidAt: row.transaction_date || row.created_at,
-      suggestedCustomerNumber: accountRef,
+      suggestedCustomerNumber: customer?.customerNumber || accountRef,
       customerId: customer?.id ?? null,
       customerName: customer
         ? [customer.firstName, customer.lastName].filter(Boolean).join(" ") || customer.customerNumber
@@ -826,7 +828,9 @@ async function getUnmatchedMpesaDetail(paymentId) {
   let canAllocate = false;
 
   if (accountRef) {
-    customer = await customerStore.findCustomerByNumber(accountRef);
+    customer = await customerStore.resolveCustomerByPaybillRef(accountRef, {
+      msisdn: row.phone,
+    });
     if (!customer) {
       plannedAction = "Customer not found in dashboard — verify account reference";
     } else {
@@ -848,7 +852,9 @@ async function getUnmatchedMpesaDetail(paymentId) {
         if (openInvoices.length) {
           const target = openInvoices.find(
             (inv) =>
-              String(inv.invoiceNumber || "").toUpperCase().includes(String(accountRef).toUpperCase()) ||
+              String(inv.invoiceNumber || "")
+                .toUpperCase()
+                .includes(String(customer.customerNumber || accountRef).toUpperCase()) ||
               roundMoney(inv.balanceDue) === roundMoney(row.amount)
           );
           const pick = target || openInvoices[0];
@@ -1614,13 +1620,14 @@ async function executeAction(customerId, action, payload, user) {
         throw new Error("Payment is already allocated in Zoho");
       }
 
-      const accountRef = String(mpesa.account_reference || customer.customerNumber || "").trim();
+      const accountRef = String(customer.customerNumber || mpesa.account_reference || "").trim();
       const zohoResult = await applyZohoPaymentForMpesa({
         customerNumber: accountRef,
         amount: Number(mpesa.amount),
         transactionId: mpesa.mpesa_receipt,
         source: "reconciliation",
         forceInvoiceId: invoiceId,
+        msisdn: mpesa.phone,
       });
       await logZohoMpesaPaymentResult(zohoResult, {
         channel: "reconciliation",

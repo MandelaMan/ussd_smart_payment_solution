@@ -28,7 +28,10 @@ export const CUSTOMER_ACTIVITY_EVENT_TYPES = [
 ] as const;
 
 /** Admin Activity audit extras (not on the team Recent Activity rail). */
-export const ADMIN_AUDIT_EXTRA_EVENT_TYPES = ["user_login"] as const;
+export const ADMIN_AUDIT_EXTRA_EVENT_TYPES = [
+  "user_login",
+  "user_recovery_requested",
+] as const;
 
 export const ADMIN_AUDIT_EVENT_TYPES = [
   ...CUSTOMER_ACTIVITY_EVENT_TYPES,

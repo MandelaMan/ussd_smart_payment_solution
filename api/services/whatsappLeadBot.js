@@ -121,6 +121,15 @@ async function findOrCreateWhatsAppLead(waId, displayName) {
     return lead;
   }
 
+  lead = await leadStore.getOpenLeadByPhone(waId);
+  if (lead) {
+    await leadStore.updateLead(lead.id, {
+      whatsappWaId: waId,
+      phone: lead.phone || waId,
+    });
+    return (await leadStore.getLeadById(lead.id)) || lead;
+  }
+
   const id = await leadStore.createLead({
     source: "whatsapp",
     status: "new",

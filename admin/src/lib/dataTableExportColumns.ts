@@ -81,10 +81,13 @@ export const customerListExportColumns = (
   hidePricing: boolean
 ): ExportColumn<Customer>[] => [
   { header: "Type", value: (row) => row.customerType },
+  { header: "Premise", value: (row) => row.premiseType || "apartment" },
   { header: "Customer Number", value: (row) => row.customerNumber },
   { header: "Name", value: (row) => row.fullName },
+  { header: "Business name", value: (row) => row.businessName || "" },
   { header: "Building", value: (row) => row.buildingName },
-  { header: "Apartment", value: (row) => row.apartmentNumber },
+  { header: "Unit", value: (row) => row.apartmentNumber },
+  { header: "Shop location", value: (row) => row.shopLocation || "" },
   { header: "Package", value: (row) => formatTitleCase(row.productName) },
   { header: "Mbps", value: (row) => row.productMbps },
   { header: "Frequency", value: (row) => row.paymentFrequency },

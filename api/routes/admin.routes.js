@@ -54,6 +54,7 @@ const {
   lookupCustomerByNumber,
   exportCustomers,
   getCustomer,
+  previewShopCustomerNumber,
   getCustomerTransactions,
   getCustomerInvoices,
   getCustomerPayments,
@@ -371,6 +372,53 @@ router.post(
 );
 router.patch("/installations/:id", requirePermission("installations.edit"), updateInstallation);
 
+const {
+  listTypes: listActionTypes,
+  listAssignees: listActionAssignees,
+  listActionItems,
+  getActionItem,
+  createActionItem,
+  updateActionItem,
+  assignActionItem,
+  updateStep: updateActionStep,
+  addStep: addActionStep,
+  listNotifications,
+  unreadCount: notificationUnreadCount,
+  markNotificationsRead,
+  getVapidPublicKey,
+  subscribePush,
+  unsubscribePush,
+} = require("../controllers/actionItems.controller");
+
+router.get("/action-items/types", requirePermission("action_items.view", "action_items.create"), listActionTypes);
+router.get(
+  "/action-items/assignees",
+  requirePermission("action_items.view", "action_items.create", "action_items.assign"),
+  listActionAssignees
+);
+router.get("/action-items", requirePermission("action_items.view"), listActionItems);
+router.get("/action-items/:id", requirePermission("action_items.view"), getActionItem);
+router.post("/action-items", requirePermission("action_items.create"), createActionItem);
+router.patch("/action-items/:id", requirePermission("action_items.edit"), updateActionItem);
+router.post(
+  "/action-items/:id/assign",
+  requirePermission("action_items.assign", "action_items.edit"),
+  assignActionItem
+);
+router.post("/action-items/:id/steps", requirePermission("action_items.edit"), addActionStep);
+router.patch(
+  "/action-items/:id/steps/:stepId",
+  requirePermission("action_items.edit"),
+  updateActionStep
+);
+
+router.get("/notifications", listNotifications);
+router.get("/notifications/unread-count", notificationUnreadCount);
+router.post("/notifications/read", markNotificationsRead);
+router.get("/push/vapid-public-key", getVapidPublicKey);
+router.post("/push/subscribe", subscribePush);
+router.delete("/push/subscribe", unsubscribePush);
+
 router.get("/apartments/history", requirePermission("apartments.view"), listApartmentHistoryRecords);
 router.get("/apartments/check", requirePermission("apartments.view"), checkApartmentOccupancy);
 router.get("/apartments", requirePermission("apartments.view"), listApartments);
@@ -399,6 +447,11 @@ router.get(
   lookupCustomerByNumber
 );
 router.get("/customers/export", requirePermission("customers.export"), exportCustomers);
+router.get(
+  "/customers/shop-number-preview",
+  requirePermission("customers.create"),
+  previewShopCustomerNumber
+);
 router.post("/customers", requirePermission("customers.create"), createCustomer);
 router.post("/customers/refresh-batch", requirePermission("customers.view"), refreshCustomersBatch);
 router.patch("/customers/:id", requirePermission("customers.edit"), updateCustomer);

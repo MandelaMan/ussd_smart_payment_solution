@@ -16,6 +16,7 @@ const prefetchers: Record<string, Prefetcher> = {
   "/agencies": () => import("../pages/AgenciesPage"),
   "/campaigns": () => import("../pages/CampaignsPage"),
   "/installations": () => import("../pages/InstallationsPage"),
+  "/reminders": () => import("../pages/RemindersPage"),
   "/apartments": () => import("../pages/ApartmentsPage"),
   "/transactions": () => import("../pages/TransactionsPage"),
   "/analytics": () => import("../pages/BusinessIntelligencePage"),

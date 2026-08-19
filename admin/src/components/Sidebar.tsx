@@ -25,8 +25,10 @@ import {
   FiActivity,
   FiGift,
   FiTool,
+  FiCheckSquare,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
+import { NotificationBell } from "./notifications/NotificationBell";
 import { useAuth } from "../lib/authContext";
 import { routePrefetchHandlers } from "../lib/routePrefetch";
 import {
@@ -107,6 +109,12 @@ export function Sidebar({ open, onClose }: Props) {
       label: "Installations",
       icon: FiTool,
       visible: hasPermission(user, "installations.view"),
+    },
+    {
+      to: "/reminders",
+      label: "Reminders",
+      icon: FiCheckSquare,
+      visible: hasPermission(user, "action_items.view"),
     },
     {
       to: "/activity-audit",
@@ -283,17 +291,22 @@ export function Sidebar({ open, onClose }: Props) {
             lg: 3,
           }}
         >
-          <Text fontSize="xs" color="sidebar.muted" truncate>
-            {user?.email}
-          </Text>
-          <Text
-            fontSize="xs"
-            color="brand.600"
-            fontWeight="medium"
-            mt={0.5}
-          >
-            {roleLabel(user?.role)}
-          </Text>
+          <Flex align="center" justify="space-between" gap={2.5}>
+            <Box minW={0} flex="1">
+              <Text fontSize="xs" color="sidebar.muted" truncate>
+                {user?.email}
+              </Text>
+              <Text
+                fontSize="xs"
+                color="brand.600"
+                fontWeight="medium"
+                mt={0.5}
+              >
+                {roleLabel(user?.role)}
+              </Text>
+            </Box>
+            <NotificationBell />
+          </Flex>
           <Button
             size="sm"
             colorPalette="brand"

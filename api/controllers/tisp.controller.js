@@ -25,6 +25,10 @@ const {
   TISP_RELEASE_PLACEHOLDER_IP,
   TISP_PPOE_PLACEHOLDER_STATIC_IP,
 } = require("../utils/tispConstants");
+const {
+  SKYNEST_PLACEHOLDER_PERSON_NAME,
+  shouldUseAgencyContactForSkynestPlaceholder,
+} = require("../utils/b2bBilling");
 
 /** TISP expects compact JSON: no space after colons or commas. */
 function stringifyTispPayload(data) {
@@ -255,7 +259,13 @@ function isTispErrorText(text) {
     lower.includes("parameter name") ||
     lower.includes("invalid") ||
     lower.includes("failed") ||
-    lower.includes("error")
+    lower.includes("error") ||
+    // TISP often returns HTTP 200 with a MySQL body, e.g.
+    // "Duplicate entry '…' for key 'client_account.PRIMARY'"
+    lower.includes("duplicate") ||
+    lower.includes("for key '") ||
+    lower.includes("sqlstate") ||
+    lower.includes("exception")
   );
 }
 
@@ -764,12 +774,22 @@ function buildTispSetClientPayload(input, transactionType) {
 
   const { packageType, staticIpAddress, pppoeRemoteAddress } =
     resolveTispNetworkFields(ipSetup, ipAddress);
-  const first = tispPersonName(firstName).toUpperCase();
+  const keepSkynestPlaceholderNames =
+    shouldUseAgencyContactForSkynestPlaceholder(input);
+  const first = keepSkynestPlaceholderNames
+    ? SKYNEST_PLACEHOLDER_PERSON_NAME
+    : tispPersonName(firstName).toUpperCase();
   // TISP rejects blank MiddleName/LastName — send "-" when empty (not for Zoho).
   const middleRaw = tispPersonName(middleName);
   const lastRaw = tispPersonName(lastName);
-  const middle = middleRaw || "-";
-  const last = lastRaw ? lastRaw.toUpperCase() : "-";
+  const middle = keepSkynestPlaceholderNames
+    ? SKYNEST_PLACEHOLDER_PERSON_NAME
+    : middleRaw || "-";
+  const last = keepSkynestPlaceholderNames
+    ? SKYNEST_PLACEHOLDER_PERSON_NAME
+    : lastRaw
+      ? lastRaw.toUpperCase()
+      : "-";
   const routerLocation = tispRouterLocation(buildingName);
   const packageLabel = buildTispPackageLabel({
     planName,

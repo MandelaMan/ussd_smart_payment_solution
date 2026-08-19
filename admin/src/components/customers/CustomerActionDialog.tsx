@@ -9,6 +9,7 @@ import {
   Text,
 } from "@chakra-ui/react";
 import { formatTitleCase } from "../../lib/formatText";
+import { isShopPremise } from "../../lib/premise";
 import {
   api,
   type ApartmentHistoryEntry,
@@ -221,7 +222,9 @@ function MoveApartmentForm({
   return (
     <Stack gap={4}>
       <Field.Root required w="full">
-        <Field.Label>New apartment number</Field.Label>
+        <Field.Label>
+          {isShopPremise(customer) ? "New unit code" : "New apartment number"}
+        </Field.Label>
         <Input
           value={newApartment}
           onChange={(e) => onApartmentChange(e.target.value.toUpperCase())}
@@ -232,7 +235,7 @@ function MoveApartmentForm({
 
       {checking && newApartment.trim() ? (
         <Text fontSize="xs" color="fg.muted">
-          Checking apartment…
+          Checking {isShopPremise(customer) ? "unit" : "apartment"}…
         </Text>
       ) : null}
 
@@ -253,7 +256,9 @@ function MoveApartmentForm({
 
       {occupancy?.available && needsIp && ipRules ? (
         <Field.Root required w="full">
-          <Field.Label>IP address for new apartment</Field.Label>
+          <Field.Label>
+            IP address for new {isShopPremise(customer) ? "unit" : "apartment"}
+          </Field.Label>
           <Flex
             direction={{ base: "column", sm: "row" }}
             gap={3}
@@ -431,13 +436,21 @@ export function CustomerActionDialog({
   if (actionType === "upgrade") title = "Upgrade package";
   if (actionType === "downgrade") title = "Downgrade package";
   if (actionType === "changePaymentFrequency") title = "Update frequency";
-  if (actionType === "switch") title = "Move apartment";
+  if (actionType === "switch") {
+    title = isShopPremise(customer) ? "Move unit" : "Move apartment";
+  }
   if (actionType === "disconnect") title = "Suspend on TISP";
   if (actionType === "pause") title = "Pause service";
-  if (actionType === "cancel") title = "Cancel & release apartment";
+  if (actionType === "cancel") {
+    title = isShopPremise(customer)
+      ? "Cancel & release shop"
+      : "Cancel & release apartment";
+  }
   if (actionType === "deletePermanent") title = "Wipe local records";
   if (actionType === "history") {
-    title = `Apartment history — ${customer?.apartmentNumber ?? ""}`;
+    title = isShopPremise(customer)
+      ? `Occupancy history — ${customer?.apartmentNumber ?? ""}`
+      : `Apartment history — ${customer?.apartmentNumber ?? ""}`;
   }
 
   const isPackageChange = actionType === "upgrade" || actionType === "downgrade";
@@ -590,7 +603,8 @@ export function CustomerActionDialog({
             <Stack gap={4}>
               <Text fontSize="sm" color="fg.muted">
                 Ends the subscription, marks Zoho inactive, stops TISP access, and
-                frees this apartment number for a new tenant. Customer history is kept.
+                frees this {isShopPremise(customer) ? "shop unit" : "apartment number"} for a new
+                occupant. Customer history is kept.
               </Text>
               <Field.Root w="full" required>
                 <Field.Label>Reason for cancellation</Field.Label>
@@ -635,7 +649,8 @@ export function CustomerActionDialog({
             <Stack gap={4}>
               <Text fontSize="sm" color="fg.muted">
                 Cancel <strong>{formatTitleCase(customer?.fullName)}</strong> (
-                {customer?.customerNumber})? The apartment number is released for
+                {customer?.customerNumber})? The{" "}
+                {isShopPremise(customer) ? "shop unit" : "apartment number"} is released for
                 reuse. This cannot be undone from here.
               </Text>
               <Flex justify="flex-end" gap={2}>
@@ -695,7 +710,7 @@ export function CustomerActionDialog({
               <ApartmentHistoryTimeline
                 entries={apartmentHistory}
                 highlightCustomerId={customer?.id}
-                emptyMessage={`No occupancy history for apartment ${customer?.apartmentNumber ?? ""}`}
+                emptyMessage={`No occupancy history for ${isShopPremise(customer) ? "shop" : "apartment"} ${customer?.apartmentNumber ?? ""}`}
               />
             )}
 

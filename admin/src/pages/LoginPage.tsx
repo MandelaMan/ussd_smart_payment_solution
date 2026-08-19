@@ -11,6 +11,7 @@ import {
   InputGroup,
   Stack,
   Text,
+  Textarea,
 } from "@chakra-ui/react";
 import { Navigate, useLocation } from "react-router-dom";
 import {
@@ -29,6 +30,7 @@ import { BRAND } from "../theme";
 
 const BRAND_NAME = "SUL Bix";
 const COPYRIGHT = "© 2026 SUL Solutions. All rights reserved.";
+const RECOVERY_INBOX = "it@sulsolutions.biz";
 const HERO_HEADLINE = "A unified hub for customer service management and billing";
 const HERO_SUBCOPY =
   "Manage subscribers, packages, and buildings; track collections; and keep integrations in sync — all in one place.";
@@ -589,6 +591,9 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [mode, setMode] = useState<"login" | "recover">("login");
+  const [recoverNote, setRecoverNote] = useState("");
+  const [recoverSent, setRecoverSent] = useState(false);
   const [heroStats, setHeroStats] = useState<LoginHeroStats>(EMPTY_HERO_STATS);
 
   useEffect(() => {
@@ -632,19 +637,52 @@ export function LoginPage() {
     }
   }
 
+  function openRecovery() {
+    setError("");
+    setRecoverSent(false);
+    setMode("recover");
+  }
+
+  function backToLogin() {
+    setError("");
+    setRecoverSent(false);
+    setRecoverNote("");
+    setMode("login");
+  }
+
+  async function handleRecoverSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+    try {
+      await api.recoverAccount(email, recoverNote);
+      setRecoverSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send recovery request");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const statusBanner = (
+    <>
+      {sessionExpired && mode === "login" ? (
+        <Box bg="orange.50" color="orange.800" px={3} py={2.5} borderRadius="lg" fontSize="sm">
+          Your session has expired. Please sign in again.
+        </Box>
+      ) : null}
+      {error ? (
+        <Box bg="red.50" color="red.700" px={3} py={2.5} borderRadius="lg" fontSize="sm">
+          {error}
+        </Box>
+      ) : null}
+    </>
+  );
+
   const loginForm = (
     <Box as="form" onSubmit={handleSubmit} w="full">
       <Stack gap={{ base: 5, md: 4 }}>
-        {sessionExpired ? (
-          <Box bg="orange.50" color="orange.800" px={3} py={2.5} borderRadius="lg" fontSize="sm">
-            Your session has expired. Please sign in again.
-          </Box>
-        ) : null}
-        {error ? (
-          <Box bg="red.50" color="red.700" px={3} py={2.5} borderRadius="lg" fontSize="sm">
-            {error}
-          </Box>
-        ) : null}
+        {statusBanner}
 
         <Field.Root required>
           <Field.Label
@@ -723,9 +761,145 @@ export function LoginPage() {
         >
           Sign in
         </Button>
+
+        <Button
+          type="button"
+          variant="ghost"
+          w="full"
+          h="auto"
+          py={1}
+          color={BRAND.cerulean}
+          fontWeight="medium"
+          fontSize="sm"
+          _hover={{ bg: "transparent", textDecoration: "underline" }}
+          onClick={openRecovery}
+        >
+          Can't access your account?
+        </Button>
       </Stack>
     </Box>
   );
+
+  const recoverForm = recoverSent ? (
+    <Stack gap={4} w="full">
+      <Box bg="green.50" color="green.800" px={3} py={2.5} borderRadius="lg" fontSize="sm">
+        If an account exists for that email, IT has been notified at {RECOVERY_INBOX} and will
+        restore access, including administrator accounts.
+      </Box>
+      <Button
+        type="button"
+        w="full"
+        bg={BRAND.cerulean}
+        color="white"
+        _hover={{ bg: "brand.700" }}
+        size="md"
+        h="44px"
+        borderRadius="lg"
+        fontWeight="semibold"
+        fontSize="sm"
+        onClick={backToLogin}
+      >
+        Back to sign in
+      </Button>
+    </Stack>
+  ) : (
+    <Box as="form" onSubmit={handleRecoverSubmit} w="full">
+      <Stack gap={{ base: 5, md: 4 }}>
+        {statusBanner}
+        <Text fontSize="sm" color="fg.muted" lineHeight="1.55">
+          Enter the email on your staff account. IT ({RECOVERY_INBOX}) will restore access for
+          users and administrators.
+        </Text>
+
+        <Field.Root required>
+          <Field.Label
+            display={{ base: "none", md: "block" }}
+            fontWeight="medium"
+            color="fg"
+            fontSize="sm"
+            mb={1}
+          >
+            Email address <Field.RequiredIndicator />
+          </Field.Label>
+          <InputGroup startElement={<FiMail color="gray" size={16} />}>
+            <Input
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              placeholder="Enter email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              {...loginInputProps}
+            />
+          </InputGroup>
+        </Field.Root>
+
+        <Field.Root>
+          <Field.Label
+            display={{ base: "none", md: "block" }}
+            fontWeight="medium"
+            color="fg"
+            fontSize="sm"
+            mb={1}
+          >
+            What happened? (optional)
+          </Field.Label>
+          <Textarea
+            placeholder="Forgot password, locked out, or another issue"
+            value={recoverNote}
+            onChange={(e) => setRecoverNote(e.target.value)}
+            rows={3}
+            maxLength={1000}
+            fontSize={{ base: "16px", md: "sm" }}
+            borderRadius="lg"
+            bg="bg.panel"
+            border="1px solid"
+            borderColor="border"
+            _placeholder={{ color: "fg.subtle" }}
+            _focusVisible={{
+              borderColor: BRAND.cerulean,
+              boxShadow: "none",
+              outline: "none",
+            }}
+          />
+        </Field.Root>
+
+        <Button
+          type="submit"
+          w="full"
+          bg={BRAND.cerulean}
+          color="white"
+          _hover={{ bg: "brand.700" }}
+          size="md"
+          h="44px"
+          borderRadius="lg"
+          fontWeight="semibold"
+          fontSize="sm"
+          loading={submitting}
+        >
+          Request recovery
+        </Button>
+
+        <Button
+          type="button"
+          variant="ghost"
+          w="full"
+          h="auto"
+          py={1}
+          color={BRAND.cerulean}
+          fontWeight="medium"
+          fontSize="sm"
+          _hover={{ bg: "transparent", textDecoration: "underline" }}
+          onClick={backToLogin}
+        >
+          Back to sign in
+        </Button>
+      </Stack>
+    </Box>
+  );
+
+  const authPanel = mode === "recover" ? recoverForm : loginForm;
+  const panelTitle = mode === "recover" ? "Recover account" : "Welcome back";
 
   return (
     <Flex
@@ -863,10 +1037,10 @@ export function LoginPage() {
             mb={1}
             flexShrink={0}
           >
-            Welcome back
+            {panelTitle}
           </Heading>
 
-          <Box flexShrink={0} mt={5}>{loginForm}</Box>
+          <Box flexShrink={0} mt={5}>{authPanel}</Box>
 
           <Text mt={4} mb={1} fontSize="2xs" color="fg.subtle" textAlign="center" flexShrink={0}>
             {COPYRIGHT}
@@ -991,9 +1165,9 @@ export function LoginPage() {
             letterSpacing="-0.02em"
             mb={1.5}
           >
-            Welcome back
+            {panelTitle}
           </Heading>
-          <Box mt={7}>{loginForm}</Box>
+          <Box mt={7}>{authPanel}</Box>
           <Text mt={8} fontSize="xs" color="fg.subtle" textAlign="center">
             {COPYRIGHT}
           </Text>

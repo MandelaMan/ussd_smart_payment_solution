@@ -20,6 +20,12 @@ const {
   filterAgencyInvoicesForCustomer,
   resolveEffectiveCustomerEmail,
   resolveEffectiveCustomerPhone,
+  resolveInvoiceEmail,
+  resolveInvoicePhone,
+  resolveOperationalEmailRecipients,
+  isSkynestLocation,
+  isPlaceholderUserFullName,
+  shouldUseAgencyContactForSkynestPlaceholder,
   applyAgencyUnitDiscount,
   normalizeAgencyDiscountPercent,
   buildManagedHouseLineItemName,
@@ -220,6 +226,54 @@ describe("B2B agency billing rules", () => {
       "billing@agency.co.ke"
     );
     assert.equal(resolveEffectiveCustomerPhone(customer, agency), "0700111222");
+  });
+
+  it("uses agency phone/email for Skynest B2B houses named user/user/user", () => {
+    const customer = {
+      customerType: "B2B",
+      firstName: "user",
+      middleName: "user",
+      lastName: "user",
+      buildingName: "Skynest",
+      customerNumber: "SKYB-302",
+      email: "tenant@example.com",
+      phone: "0711111111",
+    };
+    const agency = { email: "agency@skynest.co.ke", phone: "0700222333" };
+    assert.equal(isSkynestLocation(customer), true);
+    assert.equal(isPlaceholderUserFullName(customer), true);
+    assert.equal(shouldUseAgencyContactForSkynestPlaceholder(customer), true);
+    assert.equal(
+      resolveEffectiveCustomerEmail(customer, agency),
+      "agency@skynest.co.ke"
+    );
+    assert.equal(resolveEffectiveCustomerPhone(customer, agency), "0700222333");
+    assert.equal(resolveInvoiceEmail(customer, agency), "agency@skynest.co.ke");
+    assert.deepEqual(resolveOperationalEmailRecipients(customer, agency), {
+      toAddress: "agency@skynest.co.ke",
+      ccAddresses: [],
+    });
+  });
+
+  it("keeps personal B2B contact; invoices stay on the agency and service notices CC both", () => {
+    const customer = {
+      customerType: "B2B",
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      phone: "0712345678",
+      agencyEmail: "billing@agency.co.ke",
+      agencyPhone: "0700111222",
+    };
+    const agency = { email: "billing@agency.co.ke", phone: "0700111222" };
+    assert.equal(resolveEffectiveCustomerEmail(customer, agency), "jane@example.com");
+    assert.equal(resolveEffectiveCustomerPhone(customer, agency), "0712345678");
+    assert.equal(resolveInvoiceEmail(customer, agency), "billing@agency.co.ke");
+    assert.equal(resolveInvoicePhone(customer, agency), "0700111222");
+    assert.deepEqual(resolveOperationalEmailRecipients(customer, agency), {
+      toAddress: "jane@example.com",
+      ccAddresses: ["billing@agency.co.ke"],
+    });
   });
 
   it("applies agency unit discount", () => {

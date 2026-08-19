@@ -4,7 +4,8 @@
  * 2) Qualify when referee signup invoice is paid
  * 3) Apply one-cycle Zoho recurring rate discount (or queue if already applied)
  * 4) Restore full rates after the discounted child invoice cycle, then drain queue
- * 5) Email referrer when discount is applied
+ * 5) Email referrer when attribution is recorded at onboard
+ * 6) Email referrer when discount is applied to the next cycle
  */
 const moment = require("moment-timezone");
 const campaignStore = require("./campaignStore");
@@ -82,18 +83,13 @@ async function resolveOnboardingCampaignContext(customer, options = {}) {
   let campaign = null;
   const explicitId = options.campaignId || customer?.campaignId || null;
   const explicitCode = options.campaignCode || null;
-  if (explicitId || explicitCode) {
-    campaign = await campaignStore.resolveActiveCampaign({
-      campaignId: explicitId,
-      campaignCode: explicitCode,
-    });
-  } else {
-    const live = await campaignStore.listActiveCampaigns();
-    if (live.length > 1) {
-      return { eligible: false, reason: "campaign_required" };
-    }
-    campaign = live[0] || null;
+  if (!explicitId && !explicitCode) {
+    return { eligible: false, reason: "no_campaign_selected" };
   }
+  campaign = await campaignStore.resolveActiveCampaign({
+    campaignId: explicitId,
+    campaignCode: explicitCode,
+  });
   if (!campaign) {
     return { eligible: false, reason: "no_active_campaign" };
   }
@@ -154,12 +150,22 @@ async function attachCampaignOnOnboard(customerId, options = {}) {
   });
 
   let attribution = null;
+  let referrerEmail = null;
   if (ctx.referrer?.id) {
     attribution = await campaignStore.createAttribution({
       campaignId: ctx.campaign.id,
       refereeCustomerId: customerId,
       referrerCustomerId: ctx.referrer.id,
     });
+    try {
+      referrerEmail = await notifyReferrerRecordedEmail(ctx.referrer, {
+        referee: customer,
+        campaign: ctx.campaign,
+      });
+    } catch (e) {
+      console.warn("referrer recorded email failed:", e.message);
+      referrerEmail = { ok: false, error: e.message };
+    }
   }
 
   return {
@@ -167,6 +173,7 @@ async function attachCampaignOnOnboard(customerId, options = {}) {
     campaign: ctx.campaign,
     referrer: ctx.referrer,
     attribution,
+    referrerEmail,
     packageDiscountPercent: ctx.packageDiscountPercent,
     appliesToDecoder: ctx.appliesToDecoder,
     referralSkippedReason: ctx.referralSkippedReason || null,
@@ -527,6 +534,26 @@ async function applyReferralReward(rewardId, { source = "system" } = {}) {
   }
 
   return { ok: true, applied: true, reward: applied, email };
+}
+
+async function notifyReferrerRecordedEmail(referrer, { referee, campaign } = {}) {
+  const { sendCustomerLifecycleEmail } = require("./customerWelcomeEmail");
+  const rewardPercent =
+    Number(campaign?.referrerRewardPercent) > 0
+      ? Number(campaign.referrerRewardPercent)
+      : "";
+  return sendCustomerLifecycleEmail("referral_recorded", referrer, {
+    extraVars: {
+      campaignName: campaign?.name || "",
+      referralDiscountPercent:
+        rewardPercent === "" ? "" : String(rewardPercent),
+      referredCustomerNumber: referee?.customerNumber || "",
+      referredCustomerName:
+        [referee?.firstName, referee?.lastName].filter(Boolean).join(" ") ||
+        referee?.fullName ||
+        "",
+    },
+  });
 }
 
 async function notifyReferrerRewardEmail(referrer, reward, { referee } = {}) {

@@ -106,9 +106,152 @@ function resolveCustomerFullName(customer) {
     .trim();
 }
 
+/** Skynest B2B houses were bulk-created on TISP as first/middle/last = "user". */
+const SKYNEST_PLACEHOLDER_PERSON_NAME = "user";
+
+function personNamePart(customer, camel, snake) {
+  return customer?.[camel] ?? customer?.[snake] ?? "";
+}
+
+function isPlaceholderUserPersonName(value) {
+  return (
+    String(value || "")
+      .trim()
+      .toLowerCase() === SKYNEST_PLACEHOLDER_PERSON_NAME
+  );
+}
+
+function isPlaceholderUserFullName(customer) {
+  return (
+    isPlaceholderUserPersonName(
+      personNamePart(customer, "firstName", "first_name")
+    ) &&
+    isPlaceholderUserPersonName(
+      personNamePart(customer, "middleName", "middle_name")
+    ) &&
+    isPlaceholderUserPersonName(personNamePart(customer, "lastName", "last_name"))
+  );
+}
+
+function isSkynestLocation(customer) {
+  const building = String(
+    customer?.buildingName ?? customer?.building_name ?? ""
+  )
+    .trim()
+    .toLowerCase();
+  const pop = String(customer?.popName ?? customer?.pop_name ?? "")
+    .trim()
+    .toLowerCase();
+  const number = String(
+    customer?.customerNumber ?? customer?.customer_number ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  const c2b = String(customer?.c2bCode ?? customer?.c2b_code ?? "")
+    .trim()
+    .toUpperCase();
+  const b2b = String(customer?.b2bCode ?? customer?.b2b_code ?? "")
+    .trim()
+    .toUpperCase();
+  return (
+    building.includes("skynest") ||
+    pop.includes("skynest") ||
+    number.startsWith("SKY-") ||
+    number.startsWith("SKYB-") ||
+    c2b === "SKY" ||
+    b2b === "SKYB"
+  );
+}
+
+/**
+ * Skynest B2B records named user/user/user should never use personal phone/email —
+ * those fields belong to the managing agency (same contact used on TISP).
+ */
+function shouldUseAgencyContactForSkynestPlaceholder(customer) {
+  return (
+    isB2BCustomer(customer) &&
+    isSkynestLocation(customer) &&
+    isPlaceholderUserFullName(customer)
+  );
+}
+
+function agencyEmailOf(customer, agency = null) {
+  return String(
+    agency?.email || customer?.agencyEmail || customer?.agency_email || ""
+  ).trim();
+}
+
+function agencyPhoneOf(customer, agency = null) {
+  return String(
+    agency?.phone || customer?.agencyPhone || customer?.agency_phone || ""
+  ).trim();
+}
+
+/** B2B TISP / service contact: personal first, agency only when the house has none. */
+function resolveTispCustomerEmail(customer, agency = null) {
+  return resolveEffectiveCustomerEmail(customer, agency);
+}
+
+function resolveTispCustomerPhone(customer, agency = null) {
+  return resolveEffectiveCustomerPhone(customer, agency);
+}
+
+function personalCustomerEmail(customer) {
+  if (shouldUseAgencyContactForSkynestPlaceholder(customer)) return "";
+  const email = String(customer?.email || "").trim();
+  return email.includes("@") ? email : "";
+}
+
+function personalCustomerPhone(customer) {
+  if (shouldUseAgencyContactForSkynestPlaceholder(customer)) return "";
+  const phone = String(customer?.phone || "").trim();
+  return hasUsablePhone(phone) ? phone : "";
+}
+
+/**
+ * Zoho invoices and billing collection — always the agency for B2B.
+ * Residents never receive invoices on their personal address.
+ */
+function resolveInvoiceEmail(customer, agency = null) {
+  if (isB2BCustomer(customer)) {
+    const agencyEmail = agencyEmailOf(customer, agency);
+    if (agencyEmail.includes("@")) return agencyEmail;
+  }
+  return resolveEffectiveCustomerEmail(customer, agency);
+}
+
+function resolveInvoicePhone(customer, agency = null) {
+  if (isB2BCustomer(customer)) {
+    const agencyPhone = agencyPhoneOf(customer, agency);
+    if (hasUsablePhone(agencyPhone)) return agencyPhone;
+  }
+  return resolveEffectiveCustomerPhone(customer, agency);
+}
+
+/**
+ * Service notices (upgrade, downgrade, apartment move, pause, etc.).
+ * B2B: send to the resident when they gave a personal email, and CC the agency.
+ */
+function resolveOperationalEmailRecipients(customer, agency = null) {
+  const personal = personalCustomerEmail(customer);
+  const agencyEmail = isB2BCustomer(customer)
+    ? agencyEmailOf(customer, agency)
+    : "";
+  const toAddress = personal || (agencyEmail.includes("@") ? agencyEmail : "");
+  const ccAddresses = [];
+  if (
+    agencyEmail.includes("@") &&
+    agencyEmail.toLowerCase() !== String(toAddress).toLowerCase()
+  ) {
+    ccAddresses.push(agencyEmail);
+  }
+  return { toAddress, ccAddresses };
+}
+
 /** B2B customers without an email fall back to the linked agency's email. */
 function resolveEffectiveCustomerEmail(customer, agency = null) {
-  const customerEmail = String(customer?.email || "").trim();
+  const skipPersonal = shouldUseAgencyContactForSkynestPlaceholder(customer);
+  const customerEmail = skipPersonal ? "" : String(customer?.email || "").trim();
   if (customerEmail.includes("@")) {
     return customerEmail;
   }
@@ -117,9 +260,7 @@ function resolveEffectiveCustomerEmail(customer, agency = null) {
     return customerEmail;
   }
 
-  const agencyEmail = String(
-    agency?.email || customer?.agencyEmail || customer?.agency_email || ""
-  ).trim();
+  const agencyEmail = agencyEmailOf(customer, agency);
   return agencyEmail.includes("@") ? agencyEmail : customerEmail;
 }
 
@@ -134,7 +275,8 @@ function hasUsablePhone(value) {
 
 /** B2B customers without a phone fall back to the linked agency's phone. */
 function resolveEffectiveCustomerPhone(customer, agency = null) {
-  const customerPhone = String(customer?.phone || "").trim();
+  const skipPersonal = shouldUseAgencyContactForSkynestPlaceholder(customer);
+  const customerPhone = skipPersonal ? "" : String(customer?.phone || "").trim();
   if (hasUsablePhone(customerPhone)) {
     return customerPhone;
   }
@@ -143,9 +285,7 @@ function resolveEffectiveCustomerPhone(customer, agency = null) {
     return customerPhone;
   }
 
-  const agencyPhone = String(
-    agency?.phone || customer?.agencyPhone || customer?.agency_phone || ""
-  ).trim();
+  const agencyPhone = agencyPhoneOf(customer, agency);
   return hasUsablePhone(agencyPhone) ? agencyPhone : customerPhone;
 }
 
@@ -241,6 +381,16 @@ module.exports = {
   filterAgencyInvoicesForCustomer,
   b2bBillingMeta,
   resolveCustomerFullName,
+  SKYNEST_PLACEHOLDER_PERSON_NAME,
+  isPlaceholderUserPersonName,
+  isPlaceholderUserFullName,
+  isSkynestLocation,
+  shouldUseAgencyContactForSkynestPlaceholder,
+  resolveTispCustomerEmail,
+  resolveTispCustomerPhone,
+  resolveInvoiceEmail,
+  resolveInvoicePhone,
+  resolveOperationalEmailRecipients,
   resolveEffectiveCustomerEmail,
   hasEffectiveCustomerEmail,
   resolveEffectiveCustomerPhone,

@@ -1,4 +1,4 @@
-const { emitSyncEvent } = require("../socket");
+const { emitSyncEvent, emitToUser, emitToUsers } = require("../socket");
 
 /**
  * Broadcast admin data changes to all connected admin clients.
@@ -12,4 +12,4 @@ function emitAdminUpdate(resource, payload = {}) {
   });
 }
 
-module.exports = { emitAdminUpdate };
+module.exports = { emitAdminUpdate, emitToUser, emitToUsers };
