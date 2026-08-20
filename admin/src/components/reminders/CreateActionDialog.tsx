@@ -393,7 +393,6 @@ export function CreateActionDialog({ open, onClose, onCreated, customer }: Props
                   <Box
                     key={u.id}
                     as="button"
-                    type="button"
                     aria-pressed={selected}
                     aria-label={`Tag ${u.name}`}
                     title={u.jobTitle || u.email}

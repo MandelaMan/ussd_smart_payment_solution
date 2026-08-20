@@ -303,7 +303,6 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
                       <Box
                         key={u.id}
                         as="button"
-                        type="button"
                         aria-pressed={selected}
                         aria-label={`Tag ${u.name}`}
                         title={u.email}
