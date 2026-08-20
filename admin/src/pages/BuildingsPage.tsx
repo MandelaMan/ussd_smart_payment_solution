@@ -27,6 +27,7 @@ import { useAuth } from "../lib/authContext";
 import { canMutateConfig, hasPermission } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
 import { cacheKeyFromParams } from "../lib/moduleDataCache";
+import { getCachedPops, invalidateSharedLookups } from "../lib/sharedLookups";
 import { ZOHO_BILLING_FIELD_MAX } from "../lib/buildingBillingAddress";
 import {
   beginListLoad,
