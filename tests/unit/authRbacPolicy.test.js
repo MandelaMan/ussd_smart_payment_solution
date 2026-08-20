@@ -131,9 +131,40 @@ describe("RBAC permission catalog integrity", () => {
     assert.ok(bySlug.support.includes("action_items.assign"));
     assert.ok(bySlug.sales.includes("action_items.create"));
     assert.ok(bySlug.technician.includes("installations.edit"));
-    assert.ok(USER_ROLE_DEFAULTS.includes("action_items.view"));
-    assert.ok(USER_ROLE_DEFAULTS.includes("action_items.assign"));
-    assert.ok(USER_ROLE_DEFAULTS.includes("installations.view"));
+  });
+
+  it("User role defaults are dashboard.view only", () => {
+    assert.deepEqual([...USER_ROLE_DEFAULTS], ["dashboard.view"]);
+  });
+
+  it("group presets stay narrow for dangerous or out-of-role actions", () => {
+    const bySlug = Object.fromEntries(
+      GROUP_PRESETS.map((g) => [g.slug, new Set(g.permissions)])
+    );
+    const allGroupPerms = new Set(GROUP_PRESETS.flatMap((g) => g.permissions));
+
+    for (const key of [
+      "billing.refund",
+      "billing.reverse",
+      "customers.cancel",
+      "customers.delete",
+      "customers.import",
+      "campaigns.create",
+      "campaigns.edit",
+      "settings.view",
+      "settings.sync",
+    ]) {
+      assert.equal(allGroupPerms.has(key), false, `${key} should not be in any preset`);
+    }
+
+    assert.equal(bySlug.support.has("customers.cancel"), false);
+    assert.equal(bySlug.support.has("customers.disconnect"), false);
+    assert.equal(bySlug.support.has("agencies.create"), false);
+    assert.equal(bySlug.installations.has("buildings.create"), false);
+    assert.equal(bySlug.installations.has("pops.create"), false);
+    assert.equal(bySlug.finance.has("billing.refund"), false);
+    assert.equal(bySlug["customer-relations"].has("customers.financials"), false);
+    assert.ok(bySlug["network-operations"].has("customers.disconnect"));
   });
 
   it("every operational module view is granted by a preset or role default", () => {

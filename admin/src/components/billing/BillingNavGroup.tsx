@@ -8,7 +8,7 @@ import {
   BILLING_NAV_LABEL,
   billingModulePath,
 } from "../../lib/billingReconciliationNav";
-import { canAccessFinance } from "../../lib/rbac";
+import { canAccessBilling } from "../../lib/rbac";
 import { useAuth } from "../../lib/authContext";
 
 type Props = { onNavigate?: () => void };
@@ -25,7 +25,7 @@ export function BillingNavGroup({ onNavigate }: Props) {
     setOpen(location.pathname.startsWith(BILLING_BASE_PATH));
   }, [location.pathname]);
 
-  if (!canAccessFinance(user)) return null;
+  if (!canAccessBilling(user)) return null;
 
   return (
     <Collapsible.Root open={open} onOpenChange={(e) => setOpen(e.open)}>

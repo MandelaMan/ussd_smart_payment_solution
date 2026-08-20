@@ -170,6 +170,30 @@ async function findRecurringForCustomer(
   return matched[0] || null;
 }
 
+async function applyRecurringInvoiceEmailCcs(recurringInvoiceId) {
+  if (!recurringInvoiceId) return false;
+  try {
+    const { resolveInvoiceCcMailIds } = require("./appSettingsStore");
+    const ccMailIds = await resolveInvoiceCcMailIds();
+    if (!ccMailIds.length) {
+      console.warn(
+        "Zoho recurring invoice CC skipped: invoice CC emails are required"
+      );
+      return false;
+    }
+    await updateRecurringInvoice_JS(String(recurringInvoiceId), {
+      cc_mail_ids: ccMailIds,
+    });
+    return true;
+  } catch (e) {
+    console.warn(
+      "Zoho recurring invoice CC update skipped:",
+      e.message || e
+    );
+    return false;
+  }
+}
+
 async function updateRecurringProfileFields(
   recurringInvoiceId,
   { recurrenceName, referenceNumber, lineItems = null }
@@ -324,6 +348,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         referenceNumber,
         lineItems: syncLineItems ? lineItem : null,
       });
+      await applyRecurringInvoiceEmailCcs(id);
       return {
         created: false,
         updated: true,
@@ -371,6 +396,8 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
   if (!created?.recurring_invoice_id) {
     throw new Error("Zoho recurring invoice creation failed");
   }
+
+  await applyRecurringInvoiceEmailCcs(created.recurring_invoice_id);
 
   return {
     created: true,

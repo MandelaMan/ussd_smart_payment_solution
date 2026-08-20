@@ -91,13 +91,13 @@ async function getSettings(req, res, next) {
           id: "admin",
           label: "Administrator",
           description:
-            "System role with full access by default. Permissions can still be revoked via individual denies. Administrator accounts cannot be deactivated.",
+            "System role with full access. Groups and individual overrides are ignored. Administrator accounts cannot be deactivated.",
         },
         {
           id: "user",
           label: "User",
           description:
-            "Standard employee role with least-privilege defaults. Access is granted through User Groups and individual permission overrides.",
+            "Authenticated only. Access is granted through User Groups and individual permission overrides.",
         },
       ],
       permissionModel: {

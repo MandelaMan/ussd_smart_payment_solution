@@ -1,6 +1,44 @@
-import { defineConfig } from "vite";
+import { defineConfig, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+
+const API_ORIGIN = "http://127.0.0.1:4000";
+
+/** Nodemon restarts drop the API briefly; retry instead of returning 502. */
+function apiProxy(extra: ProxyOptions = {}): ProxyOptions {
+  return {
+    target: API_ORIGIN,
+    changeOrigin: true,
+    ...extra,
+    configure(proxy) {
+      extra.configure?.(proxy, extra);
+      const originalWeb = proxy.web.bind(proxy);
+      proxy.web = ((req, res, options, callback) => {
+        const tryOnce = (attempt: number) => {
+          originalWeb(req, res, options, (error) => {
+            const code = (error as NodeJS.ErrnoException | undefined)?.code;
+            const canRetry =
+              Boolean(error) &&
+              (code === "ECONNREFUSED" || code === "ECONNRESET") &&
+              attempt < 8 &&
+              Boolean(res) &&
+              "headersSent" in res &&
+              !res.headersSent;
+            if (canRetry) {
+              setTimeout(
+                () => tryOnce(attempt + 1),
+                Math.min(150 * 2 ** attempt, 1500)
+              );
+              return;
+            }
+            callback?.(error);
+          });
+        };
+        tryOnce(0);
+      }) as typeof proxy.web;
+    },
+  };
+}
 
 export default defineConfig({
   base: "/admin/",
@@ -73,21 +111,13 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      "/api": {
-        target: "http://127.0.0.1:4000",
-        changeOrigin: true,
+      "/api": apiProxy({
         ws: true,
         timeout: 60000,
         proxyTimeout: 60000,
-      },
-      "/leads": {
-        target: "http://127.0.0.1:4000",
-        changeOrigin: true,
-      },
-      "/signup": {
-        target: "http://127.0.0.1:4000",
-        changeOrigin: true,
-      },
+      }),
+      "/leads": apiProxy(),
+      "/signup": apiProxy(),
     },
   },
   optimizeDeps: {

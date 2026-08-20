@@ -89,6 +89,18 @@ export function FinanceRoute() {
   );
 }
 
+export function TransactionsRoute() {
+  return <PermissionRoute permissions={["transactions.view"]} />;
+}
+
+export function BillingRoute() {
+  return <PermissionRoute permissions={["billing.view"]} />;
+}
+
+export function AnalyticsRoute() {
+  return <PermissionRoute permissions={["analytics.view"]} />;
+}
+
 export function ReportsRoute() {
   return <PermissionRoute permissions={["reports.view"]} />;
 }
@@ -101,20 +113,24 @@ export function CustomerReadRoute() {
   return <PermissionRoute permissions={["customers.view"]} />;
 }
 
-export function ConfigRoute() {
-  return (
-    <PermissionRoute
-      permissions={[
-        "packages.view",
-        "buildings.view",
-        "pops.view",
-        "apartments.view",
-        "agencies.view",
-        "campaigns.view",
-        "installations.view",
-      ]}
-    />
-  );
+export function ApartmentsRoute() {
+  return <PermissionRoute permissions={["apartments.view"]} />;
+}
+
+export function BuildingsRoute() {
+  return <PermissionRoute permissions={["buildings.view"]} />;
+}
+
+export function PackagesRoute() {
+  return <PermissionRoute permissions={["packages.view"]} />;
+}
+
+export function AgenciesRoute() {
+  return <PermissionRoute permissions={["agencies.view"]} />;
+}
+
+export function CampaignsRoute() {
+  return <PermissionRoute permissions={["campaigns.view"]} />;
 }
 
 export function InstallationsRoute() {

@@ -178,6 +178,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
       const [usersRes, groupsRes, catalogRes] = await Promise.all([
         api.listUsers(),
@@ -775,7 +776,19 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           <MobilePageChrome title="Users" />
         ) : null}
 
-        {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
+        {error ? (
+          <VStack align="stretch" gap={2}>
+            <PageErrorBanner>{error}</PageErrorBanner>
+            <Button
+              size="sm"
+              variant="outline"
+              alignSelf="flex-start"
+              onClick={() => void load()}
+            >
+              Retry
+            </Button>
+          </VStack>
+        ) : null}
 
         {section === "groups" ? (
           <DataTableCard>
@@ -976,6 +989,10 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                   mobile={<MobileCardListSkeleton fill variant="card" fieldCount={2} />}
                   desktop={<DataTableLoadingSkeleton columns={7} fill />}
                 />
+              ) : error ? (
+                <EmptyState>
+                  Users could not be loaded. Use Retry above.
+                </EmptyState>
               ) : sortedUsers.length === 0 ? (
                 <EmptyState>No users yet. Create the first admin user to get started.</EmptyState>
               ) : (

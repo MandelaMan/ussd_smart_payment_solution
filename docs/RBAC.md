@@ -9,9 +9,9 @@ Only two system roles exist:
 | Role | Meaning |
 |------|---------|
 | **Administrator** | Full access to every module automatically. Groups and individual overrides do not limit access. |
-| **User** | Least-privilege baseline. Access comes from groups and overrides. |
+| **User** | Authenticated only (`dashboard.view`). All other access comes from groups and overrides. |
 
-Roles set the baseline only. Day-to-day access is controlled by **permissions**.
+Roles set the baseline only. Day-to-day access is controlled by **permissions**. Do not put operational keys on the User role — groups can only add access, they cannot take User defaults away.
 
 ## Permission keys
 
@@ -26,15 +26,33 @@ The catalog lives in `api/rbac/permissionCatalog.js`. Adding a new module permis
 
 ## Inheritance order
 
-1. **System role defaults** (Administrator = all modules, always; User = safe baseline)
+1. **System role defaults** (Administrator = all modules; User = `dashboard.view` only)
 2. **User group permissions** (union across all groups; ignored for Administrators)
 3. **Individual overrides** (grant or deny) — apply to Users only; Administrators ignore overrides
 
+Prefer one primary group per person. Stacking groups always expands access.
+
 ## User groups
 
-Preset groups (Sales, Finance, Support, Network Operations, Management, Installations, Customer Relations, Billing) ship with recommended permission sets.
+Preset groups ship with recommended permission sets:
 
-Assign one or more groups when creating or editing a user. Group permissions merge.
+| Group | Typical job | Notes |
+|-------|-------------|--------|
+| Sales | Acquisition | Customers + leads; no financials |
+| Finance | CFO / accounts | Billing ops; **no refund**, no Settings |
+| Billing | Collections | Allocate / communicate; no refund, no sync |
+| Support | Help desk | Pause and OLT; **no cancel, disconnect, or agencies** |
+| Technician | Field tech | View customers; update installation jobs |
+| Installations | Onboarding coordinators | Jobs + occupancy; **no building/POP create** |
+| Network Operations | NOC | Disconnect, pause, equipment edit |
+| Management | PM / exec | Read-heavy finance and reports |
+| Customer Relations | Partner | Customer list + reports; **no financials** |
+
+Dangerous actions (`customers.cancel`, `billing.refund`, `customers.delete`) are not in any preset. Grant them individually or use the Administrator role.
+
+Assign one or more groups when creating or editing a user. Group permissions merge (union).
+
+When `GROUP_PRESETS` in the catalog are intentionally narrowed, bump `SYSTEM_GROUP_PRESET_REVISION` so existing databases replace system-group grants on next boot. Custom (non-system) groups are not overwritten.
 
 ## Managing access (administrators)
 
@@ -61,7 +79,7 @@ Current design (keep these):
 | Redis | Still used as shared cache; fails open to memory/DB if Redis is slow |
 | `warmSharedLookups` | Only runs when `canAccessConfig(user)` is true |
 
-Do **not** re-seed system group permissions on every boot — that wiped admin group edits. Boot sync only seeds **new** or empty groups.
+Do **not** re-seed system group permissions on every boot — that wiped admin group edits. Boot sync only seeds **new** or empty groups. Narrowing presets is applied once per `SYSTEM_GROUP_PRESET_REVISION` bump.
 
 ## Migration from legacy roles
 
@@ -94,4 +112,4 @@ Permission and membership changes are written to `rbac_permission_audit` with ac
 - Administrators cannot be deactivated
 - Password resets invalidate all sessions via `token_version`
 - Temporary passwords force `must_change_password` until a strong password is set
-- System group **permission lists** are owned by admins after first seed; boot sync must not overwrite them
+- System group **permission lists** are replaced only when `SYSTEM_GROUP_PRESET_REVISION` is bumped; day-to-day boot sync must not overwrite them

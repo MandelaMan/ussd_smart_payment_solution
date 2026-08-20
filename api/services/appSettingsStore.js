@@ -434,6 +434,24 @@ function readLegacyWelcomeTemplate(saved = {}) {
 }
 
 /**
+ * Invoice CC list used on every Zoho invoice / payment email.
+ * Settings first, then env, then the built-in SUL addresses. Never returns
+ * an empty list when defaults are available — callers must still refuse to
+ * send if this is empty.
+ */
+async function resolveInvoiceCcMailIds() {
+  try {
+    const settings = await getCustomerEmailSettings();
+    if (settings?.invoiceCcEmails?.length) {
+      return [...settings.invoiceCcEmails];
+    }
+  } catch (e) {
+    console.warn("resolveInvoiceCcMailIds settings lookup failed:", e.message);
+  }
+  return [...DEFAULT_INVOICE_CC_EMAILS];
+}
+
+/**
  * Customer-facing email settings (templates, CC lists, etc.).
  * Stored separately from Zoho Mail identity (communication.email).
  */
@@ -699,6 +717,7 @@ module.exports = {
   getCommunicationEmailSettings,
   saveCommunicationEmailSettings,
   getCustomerEmailSettings,
+  resolveInvoiceCcMailIds,
   saveCustomerEmailSettings,
   getCommunicationWhatsAppSettings,
   saveCommunicationWhatsAppSettings,

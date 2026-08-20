@@ -9,9 +9,10 @@ import {
   ProtectedRoute,
   AdminRoute,
   SettingsRoute,
-  FinanceRoute,
+  TransactionsRoute,
+  BillingRoute,
+  AnalyticsRoute,
   ReportsRoute,
-  ConfigRoute,
   CustomerWriteRoute,
   CustomerReadRoute,
   ActivityRoute,
@@ -19,6 +20,11 @@ import {
   RemindersRoute,
   LeadsRoute,
   CommunicationRoute,
+  ApartmentsRoute,
+  BuildingsRoute,
+  PackagesRoute,
+  AgenciesRoute,
+  CampaignsRoute,
 } from "./components/ProtectedRoute";
 import { BootSplashGate } from "./components/BootSplashGate";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
@@ -143,7 +149,7 @@ export default function App() {
                     }
                   />
                 </Route>
-                <Route element={<FinanceRoute />}>
+                <Route element={<TransactionsRoute />}>
                   <Route
                     path="transactions"
                     element={
@@ -152,10 +158,12 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
-                  <Route
-                    path="synchronization"
-                    element={<Navigate to="/settings?tab=synchronization" replace />}
-                  />
+                </Route>
+                <Route
+                  path="synchronization"
+                  element={<Navigate to="/settings?tab=synchronization" replace />}
+                />
+                <Route element={<AnalyticsRoute />}>
                   <Route
                     path="analytics"
                     element={
@@ -164,6 +172,8 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
+                </Route>
+                <Route element={<BillingRoute />}>
                   <Route
                     path="billing"
                     element={
@@ -321,7 +331,7 @@ export default function App() {
                     }
                   />
                 </Route>
-                <Route element={<ConfigRoute />}>
+                <Route element={<ApartmentsRoute />}>
                   <Route
                     path="apartments"
                     element={
@@ -363,6 +373,8 @@ export default function App() {
                       }
                     />
                   </Route>
+                </Route>
+                <Route element={<BuildingsRoute />}>
                   <Route
                     path="buildings"
                     element={
@@ -371,6 +383,8 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
+                </Route>
+                <Route element={<PackagesRoute />}>
                   <Route
                     path="products"
                     element={
@@ -379,6 +393,8 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
+                </Route>
+                <Route element={<AgenciesRoute />}>
                   <Route
                     path="agencies"
                     element={
@@ -395,6 +411,8 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
+                </Route>
+                <Route element={<CampaignsRoute />}>
                   <Route
                     path="campaigns"
                     element={

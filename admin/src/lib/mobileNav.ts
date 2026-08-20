@@ -8,17 +8,16 @@ import {
   FiHome,
   FiMenu,
   FiPackage,
+  FiTool,
   FiUser,
 } from "react-icons/fi";
 import type { User } from "./api";
 import {
-  canAccessConfig,
   canAccessFinance,
   canAccessReports,
   hasPermission,
   isPartner,
   useCeoDashboard,
-  useSupportDashboard,
 } from "./rbac";
 import { BILLING_BASE_PATH } from "./billingReconciliationNav";
 
@@ -46,49 +45,117 @@ export const MOBILE_BOTTOM_NAV_GAP = "8px";
  */
 export const MOBILE_BOTTOM_NAV_OFFSET = `calc(${MOBILE_BOTTOM_NAV_H} + ${MOBILE_BOTTOM_NAV_GAP} + 16px)`;
 
+function tabIf(
+  allowed: boolean,
+  tab: MobileNavTab
+): MobileNavTab | null {
+  return allowed ? tab : null;
+}
+
 /** Build exactly four navigation destinations before the More tab. */
 export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
   const tabs: MobileNavTab[] = [
     { key: "home", to: "/", label: "Home", icon: FiGrid, end: true },
-    { key: "customers", to: "/customers", label: "Customers", icon: FiUser },
   ];
 
+  const customers = tabIf(hasPermission(user, "customers.view"), {
+    key: "customers",
+    to: "/customers",
+    label: "Customers",
+    icon: FiUser,
+  });
+  if (customers) tabs.push(customers);
+
+  const extras: Array<MobileNavTab | null> = [];
   if (isPartner(user)) {
-    tabs.push(
-      { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 },
-      {
+    extras.push(
+      tabIf(canAccessReports(user), {
+        key: "reports",
+        to: "/reports",
+        label: "Reports",
+        icon: FiBarChart2,
+      }),
+      tabIf(hasPermission(user, "customers.view"), {
         key: "active-customers",
         to: "/customers?status=Active",
         label: "Active",
         icon: FiCheckCircle,
-      }
+      })
     );
   } else if (useCeoDashboard(user)) {
-    tabs.push(
-      { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },
-      { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 }
+    extras.push(
+      tabIf(hasPermission(user, "transactions.view"), {
+        key: "payments",
+        to: "/transactions",
+        label: "Payments",
+        icon: FiCreditCard,
+      }),
+      tabIf(canAccessReports(user), {
+        key: "reports",
+        to: "/reports",
+        label: "Reports",
+        icon: FiBarChart2,
+      })
     );
   } else if (canAccessFinance(user)) {
-    tabs.push(
-      { key: "payments", to: "/transactions", label: "Payments", icon: FiCreditCard },
-      { key: "billing", to: BILLING_BASE_PATH, label: "Billing", icon: FiGitMerge }
+    extras.push(
+      tabIf(hasPermission(user, "transactions.view"), {
+        key: "payments",
+        to: "/transactions",
+        label: "Payments",
+        icon: FiCreditCard,
+      }),
+      tabIf(hasPermission(user, "billing.view"), {
+        key: "billing",
+        to: BILLING_BASE_PATH,
+        label: "Billing",
+        icon: FiGitMerge,
+      })
     );
-  } else if (useSupportDashboard(user) || hasPermission(user, "dashboard.support")) {
-    tabs.push(
-      { key: "activity", to: "/activity", label: "Activity", icon: FiActivity },
-      { key: "packages", to: "/products", label: "Packages", icon: FiPackage }
+  } else {
+    extras.push(
+      tabIf(hasPermission(user, "installations.view"), {
+        key: "installations",
+        to: "/installations",
+        label: "Installs",
+        icon: FiTool,
+      }),
+      tabIf(hasPermission(user, "dashboard.activity"), {
+        key: "activity",
+        to: "/activity",
+        label: "Activity",
+        icon: FiActivity,
+      }),
+      tabIf(hasPermission(user, "packages.view"), {
+        key: "packages",
+        to: "/products",
+        label: "Packages",
+        icon: FiPackage,
+      }),
+      tabIf(hasPermission(user, "buildings.view"), {
+        key: "buildings",
+        to: "/buildings",
+        label: "Buildings",
+        icon: FiHome,
+      }),
+      tabIf(canAccessReports(user), {
+        key: "reports",
+        to: "/reports",
+        label: "Reports",
+        icon: FiBarChart2,
+      })
     );
-  } else if (canAccessConfig(user)) {
-    tabs.push(
-      { key: "packages", to: "/products", label: "Packages", icon: FiPackage },
-      { key: "buildings", to: "/buildings", label: "Buildings", icon: FiHome }
-    );
-  } else if (canAccessReports(user)) {
-    tabs.push({ key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 });
+  }
+
+  for (const extra of extras) {
+    if (!extra) continue;
+    if (tabs.some((t) => t.to === extra.to)) continue;
+    tabs.push(extra);
+    if (tabs.length >= 4) break;
   }
 
   while (tabs.length < 4) {
-    const fallback = configFallbackTab(tabs);
+    const fallback = configFallbackTab(user, tabs);
     if (!fallback) break;
     tabs.push(fallback);
   }
@@ -98,15 +165,33 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
   return tabs.slice(0, 5);
 }
 
-function configFallbackTab(existing: MobileNavTab[]): MobileNavTab | null {
+function configFallbackTab(
+  user: User | null,
+  existing: MobileNavTab[]
+): MobileNavTab | null {
   const used = new Set(existing.map((t) => t.to));
-  const options: MobileNavTab[] = [
-    { key: "activity", to: "/activity", label: "Activity", icon: FiActivity },
-    { key: "packages", to: "/products", label: "Packages", icon: FiPackage },
-    { key: "buildings", to: "/buildings", label: "Buildings", icon: FiHome },
-    { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 },
+  const options: Array<{ perm: string; tab: MobileNavTab }> = [
+    {
+      perm: "dashboard.activity",
+      tab: { key: "activity", to: "/activity", label: "Activity", icon: FiActivity },
+    },
+    {
+      perm: "packages.view",
+      tab: { key: "packages", to: "/products", label: "Packages", icon: FiPackage },
+    },
+    {
+      perm: "buildings.view",
+      tab: { key: "buildings", to: "/buildings", label: "Buildings", icon: FiHome },
+    },
+    {
+      perm: "reports.view",
+      tab: { key: "reports", to: "/reports", label: "Reports", icon: FiBarChart2 },
+    },
   ];
-  return options.find((o) => o.to && !used.has(o.to)) ?? null;
+  const match = options.find(
+    (o) => o.tab.to && !used.has(o.tab.to) && hasPermission(user, o.perm)
+  );
+  return match?.tab ?? null;
 }
 
 export function isMobileNavTabActive(

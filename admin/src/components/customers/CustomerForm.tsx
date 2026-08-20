@@ -1606,8 +1606,9 @@ export function CustomerForm({
           else if (res.zoho?.updated || res.zoho?.contactUpdated) {
             zohoParts.push("Zoho contact updated");
           }
-          if (res.zoho?.invoice?.created) zohoParts.push("invoice sent");
-          else if (res.zoho?.invoice?.reused) zohoParts.push("invoice emailed");
+          if (res.zoho?.invoice?.emailed) zohoParts.push("invoice emailed with CCs");
+          else if (res.zoho?.invoice?.created) zohoParts.push("invoice created");
+          else if (res.zoho?.invoice?.reused) zohoParts.push("existing invoice reused");
           if (res.zoho?.recurring?.created) zohoParts.push("recurring created");
           else if (res.zoho?.recurring?.updated) zohoParts.push("recurring updated");
           toaster.create({
@@ -2566,6 +2567,10 @@ export function CustomerForm({
                     <option value="no">No — create contact only</option>
                     <option value="yes">Yes — create signup invoice</option>
                   </SelectField>
+                  <Field.HelperText>
+                    Emailed with Invoice CC addresses from Settings. Will not
+                    send if those CCs are missing.
+                  </Field.HelperText>
                 </Field.Root>
                 <Field.Root>
                   <Field.Label>Recurring invoice</Field.Label>
@@ -2603,7 +2608,9 @@ export function CustomerForm({
                   initial invoice was skipped.
                   {zohoInvoiceCount > 0
                     ? ` (${zohoInvoiceCount} invoice${zohoInvoiceCount === 1 ? "" : "s"} already on Zoho)`
-                    : null}
+                    : null}{" "}
+                  The invoice is emailed with Invoice CC addresses from Settings
+                  and will not send if those CCs are missing.
                 </Field.HelperText>
               </Field.Root>
             ) : null}

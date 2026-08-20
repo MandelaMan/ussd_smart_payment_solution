@@ -33,9 +33,11 @@ import { useAuth } from "../lib/authContext";
 import { routePrefetchHandlers } from "../lib/routePrefetch";
 import {
   canAccessActivityAudit,
-  canAccessFinance,
+  canAccessAnalytics,
+  canAccessBilling,
   canAccessReports,
   canAccessSettings,
+  canAccessTransactions,
   canViewCampaigns,
   hasPermission,
   roleLabel,
@@ -47,6 +49,7 @@ type NavLinkDef = {
   icon: typeof FiGrid;
   end?: boolean;
   visible?: boolean;
+  kind?: "link" | "billing";
 };
 
 type Props = { open: boolean; onClose: () => void };
@@ -55,12 +58,12 @@ export function Sidebar({ open, onClose }: Props) {
   const { user, logout } = useAuth();
 
   const links: NavLinkDef[] = [
-    { to: "/", label: "Dashboard", icon: FiGrid, end: true, visible: true },
+    { to: "/", label: "Dashboard", icon: FiGrid, end: true, visible: hasPermission(user, "dashboard.view") },
     {
       to: "/customers",
       label: "Customers",
       icon: FiUser,
-      visible: true,
+      visible: hasPermission(user, "customers.view"),
     },
     {
       to: "/leads",
@@ -126,13 +129,20 @@ export function Sidebar({ open, onClose }: Props) {
       to: "/transactions",
       label: "Transactions",
       icon: FiCreditCard,
-      visible: canAccessFinance(user),
+      visible: canAccessTransactions(user),
+    },
+    {
+      to: "/billing",
+      label: "Billing",
+      icon: FiCreditCard,
+      visible: canAccessBilling(user),
+      kind: "billing",
     },
     {
       to: "/analytics",
       label: "Analytics",
       icon: FiPieChart,
-      visible: canAccessFinance(user),
+      visible: canAccessAnalytics(user),
     },
     {
       to: "/reports",
@@ -231,7 +241,12 @@ export function Sidebar({ open, onClose }: Props) {
           {links
             .filter((l) => l.visible !== false)
             .map((link) => {
-              const items = [
+              if (link.kind === "billing") {
+                return (
+                  <BillingNavGroup key="billing-nav" onNavigate={onClose} />
+                );
+              }
+              return (
                 <NavLink
                   key={link.to}
                   to={link.to}
@@ -266,16 +281,9 @@ export function Sidebar({ open, onClose }: Props) {
                       </Text>
                     </Flex>
                   )}
-                </NavLink>,
-              ];
-
-              if (link.to === "/transactions" && canAccessFinance(user)) {
-                items.push(<BillingNavGroup key="billing-nav" onNavigate={onClose} />);
-              }
-
-              return items;
-            })
-            .flat()}
+                </NavLink>
+              );
+            })}
           </VStack>
         </Box>
 

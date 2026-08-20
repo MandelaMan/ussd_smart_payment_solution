@@ -168,8 +168,8 @@ function legacyHasPermission(role: string, key: string): boolean {
   if (role === "ceo") return ceo.has(key);
   if (role === "partner") return partner.has(key);
   if (role === "support" || role === "viewer") return support.has(key);
-  // Generic "user" without hydration: support-like baseline
-  return support.has(key);
+  // Generic "user" without hydration: fail closed (dashboard only).
+  return key === "dashboard.view";
 }
 
 export function isPartner(user: User | null): boolean {
@@ -200,6 +200,18 @@ export function canAccessFinance(user: User | null): boolean {
     "billing.view",
     "analytics.view",
   ]);
+}
+
+export function canAccessAnalytics(user: User | null): boolean {
+  return hasPermission(user, "analytics.view");
+}
+
+export function canAccessTransactions(user: User | null): boolean {
+  return hasPermission(user, "transactions.view");
+}
+
+export function canAccessBilling(user: User | null): boolean {
+  return hasPermission(user, "billing.view");
 }
 
 /** Activity feed */
@@ -238,8 +250,6 @@ export function canAccessConfig(user: User | null): boolean {
     "apartments.view",
     "agencies.view",
     "campaigns.view",
-    "installations.view",
-    "action_items.view",
   ]);
 }
 
@@ -323,6 +333,5 @@ export function canAccessSettings(user: User | null): boolean {
     "settings.sync",
     "users.view",
     "system_logs.view",
-    "billing.sync",
   ]);
 }

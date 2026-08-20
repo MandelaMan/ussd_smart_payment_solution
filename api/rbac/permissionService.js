@@ -3,6 +3,7 @@ const { getCache, setCache, invalidateNamespace } = require("../lib/cache");
 const {
   MODULES,
   USER_ROLE_DEFAULTS,
+  SYSTEM_GROUP_PRESET_REVISION,
   GROUP_PRESETS,
   LEGACY_ROLE_GROUPS,
   allPermissionKeys,
@@ -332,6 +333,87 @@ function clientMeta(req) {
 }
 
 /**
+ * Known accounts from the Users table: collapse stacked groups to one
+ * primary group that matches the job. Runs once with the preset revision.
+ * Accounts not listed are left unchanged.
+ */
+const RECOMMENDED_PRIMARY_GROUP_BY_EMAIL = Object.freeze({
+  "enaki.support@sulsolutions.biz": "technician",
+  "accounts@sulsolutions.biz": "finance",
+  "digitalmarketing@sulsolutions.biz": "support",
+  "pm@sulsolutions.biz": "management",
+  "cfo@sulsolutions.biz": "finance",
+  "support@sulsolutions.biz": "support",
+  "tvsupport@sulsolutions.biz": "technician",
+  "partner@sulsolutions.biz": "customer-relations",
+});
+
+async function applyRecommendedPrimaryGroups() {
+  const users = await query(`SELECT id, email, role FROM admin_users`);
+  for (const user of users) {
+    const email = String(user.email || "").trim().toLowerCase();
+    if (user.role === "admin") {
+      await query(`DELETE FROM rbac_user_groups WHERE user_id = ?`, [user.id]);
+      continue;
+    }
+    const slug = RECOMMENDED_PRIMARY_GROUP_BY_EMAIL[email];
+    if (!slug) continue;
+    const groups = await query(
+      `SELECT id FROM rbac_groups WHERE slug = ? LIMIT 1`,
+      [slug]
+    );
+    if (!groups[0]) continue;
+    await query(`DELETE FROM rbac_user_groups WHERE user_id = ?`, [user.id]);
+    await query(
+      `INSERT IGNORE INTO rbac_user_groups (user_id, group_id) VALUES (?, ?)`,
+      [user.id, groups[0].id]
+    );
+  }
+}
+
+/**
+ * Replace system-group permission lists with current GROUP_PRESETS when the
+ * catalog revision advances. Custom (non-system) groups are not touched.
+ */
+async function applySystemGroupPresetRevision() {
+  const { getSetting, setSetting } = require("../services/appSettingsStore");
+  const saved = await getSetting("rbac.system_group_preset_revision");
+  const applied = Number(saved?.revision) || 0;
+  if (applied >= SYSTEM_GROUP_PRESET_REVISION) return false;
+
+  for (const preset of GROUP_PRESETS) {
+    const existing = await query(
+      `SELECT id FROM rbac_groups WHERE slug = ? AND is_system = 1 LIMIT 1`,
+      [preset.slug]
+    );
+    if (!existing[0]) continue;
+    const groupId = existing[0].id;
+    await query(`DELETE FROM rbac_group_permissions WHERE group_id = ?`, [
+      groupId,
+    ]);
+    for (const permKey of preset.permissions) {
+      if (!getPermission(permKey)) continue;
+      await query(
+        `INSERT IGNORE INTO rbac_group_permissions (group_id, perm_key) VALUES (?, ?)`,
+        [groupId, permKey]
+      );
+    }
+    await query(
+      `UPDATE rbac_groups SET name = ?, description = ? WHERE id = ?`,
+      [preset.name, preset.description, groupId]
+    );
+  }
+
+  await applyRecommendedPrimaryGroups();
+
+  await setSetting("rbac.system_group_preset_revision", {
+    revision: SYSTEM_GROUP_PRESET_REVISION,
+  });
+  await invalidateUserPermissionCache();
+  return true;
+}
+
+/**
  * One-time assignment of legacy role → preset groups for users who have
  * legacy_role set but no group membership yet.
  */
@@ -367,6 +449,7 @@ async function assignLegacyGroupsToUsers() {
  */
 async function initializeRbac() {
   await syncPermissionsToDb();
+  await applySystemGroupPresetRevision();
   await assignLegacyGroupsToUsers();
 }
 

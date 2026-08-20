@@ -1508,19 +1508,42 @@ const createCreditNote_JS = async ({
   }
 };
 
-/** Email a Zoho Books invoice to the customer (1 API call). */
+function normalizeZohoMailIds(value) {
+  const list = (Array.isArray(value) ? value : [value])
+    .map((e) => String(e || "").trim().toLowerCase())
+    .filter((e) => e.includes("@"));
+  return [...new Set(list)];
+}
+
+async function resolveRequiredInvoiceCcMailIds(cc_mail_ids) {
+  let cc = normalizeZohoMailIds(cc_mail_ids);
+  if (cc.length) return cc;
+  try {
+    const { resolveInvoiceCcMailIds } = require("../services/appSettingsStore");
+    cc = normalizeZohoMailIds(await resolveInvoiceCcMailIds());
+  } catch (e) {
+    console.warn("invoice CC lookup failed:", e.message);
+  }
+  return cc;
+}
+
+/** Email a Zoho Books invoice to the customer (1 API call). Never sends without CCs. */
 const emailInvoice_JS = async ({ invoice_id, to_mail_ids, cc_mail_ids, subject, body }) => {
   try {
     if (!invoice_id) return false;
-    const recipients = (Array.isArray(to_mail_ids) ? to_mail_ids : [to_mail_ids])
-      .map((e) => String(e || "").trim())
-      .filter(Boolean);
+    const recipients = normalizeZohoMailIds(to_mail_ids);
     if (!recipients.length) return false;
+
+    const cc = await resolveRequiredInvoiceCcMailIds(cc_mail_ids);
+    if (!cc.length) {
+      console.warn("emailInvoice_JS skipped: invoice CC emails are required");
+      return false;
+    }
 
     const payload = {
       to_mail_ids: recipients,
+      cc_mail_ids: cc,
     };
-    if (cc_mail_ids?.length) payload.cc_mail_ids = cc_mail_ids;
     if (subject) payload.subject = subject;
     if (body) payload.body = body;
 
@@ -1552,13 +1575,18 @@ const emailCustomerPayment_JS = async ({
 }) => {
   try {
     if (!payment_id) return false;
-    const recipients = (Array.isArray(to_mail_ids) ? to_mail_ids : [to_mail_ids])
-      .map((e) => String(e || "").trim())
-      .filter(Boolean);
+    const recipients = normalizeZohoMailIds(to_mail_ids);
     if (!recipients.length) return false;
 
-    const payload = { to_mail_ids: recipients };
-    if (cc_mail_ids?.length) payload.cc_mail_ids = cc_mail_ids;
+    const cc = await resolveRequiredInvoiceCcMailIds(cc_mail_ids);
+    if (!cc.length) {
+      console.warn(
+        "emailCustomerPayment_JS skipped: invoice CC emails are required"
+      );
+      return false;
+    }
+
+    const payload = { to_mail_ids: recipients, cc_mail_ids: cc };
     if (subject) payload.subject = subject;
     if (body) payload.body = body;
 

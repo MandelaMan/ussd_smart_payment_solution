@@ -26,6 +26,7 @@ import {
   type BiDashboard,
 } from "../lib/api";
 import { useAuth } from "../lib/authContext";
+import { canAccessAnalytics } from "../lib/rbac";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { DashboardSkeleton } from "../components/PageSkeletons";
 import { PageErrorBanner, PAGE_STACK_GAP } from "../components/ui/pageLayout";
@@ -533,9 +534,11 @@ export function CeoDashboardPage() {
               <RouterLink to="/reports" style={{ color: BRAND.cerulean, fontWeight: 600 }}>
                 Reports
               </RouterLink>
-              <RouterLink to="/analytics" style={{ color: BRAND.cerulean, fontWeight: 600 }}>
-                Analytics
-              </RouterLink>
+              {canAccessAnalytics(user) ? (
+                <RouterLink to="/analytics" style={{ color: BRAND.cerulean, fontWeight: 600 }}>
+                  Analytics
+                </RouterLink>
+              ) : null}
               <RouterLink to="/customers" style={{ color: BRAND.cerulean, fontWeight: 600 }}>
                 Customers
               </RouterLink>

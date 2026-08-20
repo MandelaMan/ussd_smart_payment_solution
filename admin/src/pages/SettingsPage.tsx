@@ -811,7 +811,7 @@ function CommunicationPanel({
             />
             <Field.HelperText>
               One address per line (or comma-separated). Applied to Zoho invoice
-              emails.
+              emails. Invoices are never sent without at least one CC.
             </Field.HelperText>
           </Field.Root>
 
@@ -1343,6 +1343,7 @@ export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(canLoadSettings);
   const [error, setError] = useState("");
+  const [usersReloadKey, setUsersReloadKey] = useState(0);
 
   useEffect(() => {
     if (!canLoadSettings) {
@@ -1383,6 +1384,7 @@ export function SettingsPage() {
   function retryLoad() {
     setLoading(true);
     setError("");
+    setUsersReloadKey((n) => n + 1);
     void api
       .getSettings()
       .then((res) => setSettings(res))
@@ -1446,7 +1448,7 @@ export function SettingsPage() {
                 </Stack>
               )}
               <SettingsAccordionSection title="Users" defaultOpen={!settings}>
-                <UsersPage embedded />
+                <UsersPage embedded key={usersReloadKey} />
               </SettingsAccordionSection>
             </Stack>
           ) : null}

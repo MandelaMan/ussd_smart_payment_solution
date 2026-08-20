@@ -46,10 +46,16 @@ type Props = {
 export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }: Props) {
   const { user } = useAuth();
   const canCreateReminder = hasPermission(user, "action_items.create");
+  const canEdit = hasPermission(user, "customers.edit");
+  const canPause = hasPermission(user, "customers.pause");
+  const canDisconnect = hasPermission(user, "customers.disconnect");
+  const canCancel = hasPermission(user, "customers.cancel");
+  const canDelete = hasPermission(user, "customers.delete");
   const active = customer.status === "active";
   const cancelled = customer.status === "cancelled";
   // Permanent delete is a local wipe only — only after cancel so integrations are stopped.
-  const showPermanentDelete = Boolean(allowPermanentDelete) && cancelled;
+  const showPermanentDelete =
+    Boolean(allowPermanentDelete) && cancelled && canDelete;
 
   return (
     <Menu.Root
@@ -86,58 +92,69 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            <Menu.Item value="edit">
-              <FiEdit2 />
-              Edit customer details
-            </Menu.Item>
+            {canEdit ? (
+              <Menu.Item value="edit">
+                <FiEdit2 />
+                Edit customer details
+              </Menu.Item>
+            ) : null}
             {canCreateReminder ? (
               <Menu.Item value="createReminder">
                 <FiCheckSquare />
                 Create reminder
               </Menu.Item>
             ) : null}
-            {active && (
+            {active && (canEdit || canPause || canDisconnect || canCancel) && (
               <>
                 <Menu.Separator />
-                <Menu.Item value="upgrade">
-                  <FiArrowUp />
-                  Upgrade package
-                </Menu.Item>
-                <Menu.Item value="downgrade">
-                  <FiArrowDown />
-                  Downgrade package
-                </Menu.Item>
-                <Menu.Item value="changePaymentFrequency">
-                  <FiCalendar />
-                  Update frequency
-                </Menu.Item>
-                <Menu.Item value="switch">
-                  <FiMove />
-                  {isShopPremise(customer) ? "Move unit" : "Move apartment"}
-                </Menu.Item>
-                <Menu.Item value="convertType">
-                  <FiRepeat />
-                  {customer.customerType === "C2B" ? "Convert to B2B" : "Convert to C2B"}
-                </Menu.Item>
-                <Menu.Separator />
-                {canCreateCustomerOnTisp(customer) ? (
-                  <Menu.Item value="createOnTisp">
-                    <FiWifi />
-                    Create on TISP
+                {canEdit ? (
+                  <>
+                    <Menu.Item value="upgrade">
+                      <FiArrowUp />
+                      Upgrade package
+                    </Menu.Item>
+                    <Menu.Item value="downgrade">
+                      <FiArrowDown />
+                      Downgrade package
+                    </Menu.Item>
+                    <Menu.Item value="changePaymentFrequency">
+                      <FiCalendar />
+                      Update frequency
+                    </Menu.Item>
+                    <Menu.Item value="switch">
+                      <FiMove />
+                      {isShopPremise(customer) ? "Move unit" : "Move apartment"}
+                    </Menu.Item>
+                    <Menu.Item value="convertType">
+                      <FiRepeat />
+                      {customer.customerType === "C2B" ? "Convert to B2B" : "Convert to C2B"}
+                    </Menu.Item>
+                    {canCreateCustomerOnTisp(customer) ? (
+                      <Menu.Item value="createOnTisp">
+                        <FiWifi />
+                        Create on TISP
+                      </Menu.Item>
+                    ) : null}
+                  </>
+                ) : null}
+                {canPause ? (
+                  <Menu.Item value="pause">
+                    <FiPauseCircle />
+                    Pause service (away)
                   </Menu.Item>
                 ) : null}
-                <Menu.Item value="pause">
-                  <FiPauseCircle />
-                  Pause service (away)
-                </Menu.Item>
-                <Menu.Item value="disconnect" color="fg.error">
-                  <FiWifiOff />
-                  Suspend on TISP
-                </Menu.Item>
-                <Menu.Item value="cancel" color="fg.error">
-                  <FiXCircle />
-                  {isShopPremise(customer) ? "Cancel & release shop" : "Cancel & release apartment"}
-                </Menu.Item>
+                {canDisconnect ? (
+                  <Menu.Item value="disconnect" color="fg.error">
+                    <FiWifiOff />
+                    Suspend on TISP
+                  </Menu.Item>
+                ) : null}
+                {canCancel ? (
+                  <Menu.Item value="cancel" color="fg.error">
+                    <FiXCircle />
+                    {isShopPremise(customer) ? "Cancel & release shop" : "Cancel & release apartment"}
+                  </Menu.Item>
+                ) : null}
               </>
             )}
             <Menu.Separator />

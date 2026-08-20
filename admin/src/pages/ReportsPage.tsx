@@ -33,7 +33,7 @@ import { PAGE_STACK_GAP, PageErrorBanner, PageHeader } from "../components/ui/pa
 import { toaster } from "../components/ui/toaster";
 import { AppDialog } from "../components/ui/AppDialog";
 import { useAuth } from "../lib/authContext";
-import { canAccessFinance, isPartner } from "../lib/rbac";
+import { canAccessAnalytics, isPartner } from "../lib/rbac";
 import {
   getFavoriteReportIds,
   toggleFavoriteReport,
@@ -543,7 +543,7 @@ function ReportRunnerDialog({
 export function ReportsPage() {
   const { user } = useAuth();
   const partnerView = isPartner(user);
-  const showAnalyticsLink = canAccessFinance(user);
+  const showAnalyticsLink = canAccessAnalytics(user);
 
   const [reports, setReports] = useState<ReportDefinition[]>([]);
   const [loading, setLoading] = useState(true);

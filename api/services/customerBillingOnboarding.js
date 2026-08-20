@@ -38,16 +38,8 @@ const SIGNUP_INVOICE_EMAIL_ENABLED =
   "true";
 
 async function resolveInvoiceCcMailIds() {
-  try {
-    const appSettingsStore = require("./appSettingsStore");
-    const settings = await appSettingsStore.getCustomerEmailSettings();
-    if (settings?.invoiceCcEmails?.length) {
-      return settings.invoiceCcEmails;
-    }
-  } catch (e) {
-    console.warn("resolveInvoiceCcMailIds settings lookup failed:", e.message);
-  }
-  return [...(require("./appSettingsStore").DEFAULT_INVOICE_CC_EMAILS || [])];
+  const { resolveInvoiceCcMailIds: resolve } = require("./appSettingsStore");
+  return resolve();
 }
 
 const EMAILED_INVOICE_STATUSES = new Set([
@@ -175,6 +167,12 @@ async function emailSignupInvoiceOnce(invoice, customer, tracking = null, option
     return { emailed: false, reason: "no_email" };
   }
 
+  const ccMailIds = await resolveInvoiceCcMailIds();
+  if (!ccMailIds.length) {
+    console.warn("signup invoice email skipped: invoice CC emails are required");
+    return { emailed: false, reason: "no_cc" };
+  }
+
   if (
     tracking?.zohoSignupInvoiceEmailedAt &&
     tracking?.zohoSignupInvoiceId === invoiceId
@@ -182,7 +180,10 @@ async function emailSignupInvoiceOnce(invoice, customer, tracking = null, option
     return { emailed: false, reason: "already_recorded" };
   }
 
-  if (invoiceWasEmailed(invoice)) {
+  // Zoho Books may auto-send without our Invoice CC list. When the caller
+  // explicitly requested email (edit-customer signup invoice), still send
+  // via API so CCs are included.
+  if (options.forceEmail !== true && invoiceWasEmailed(invoice)) {
     await customerStore.recordSignupInvoiceDelivery(customer.id, invoiceId, {
       emailed: true,
     });
@@ -193,7 +194,7 @@ async function emailSignupInvoiceOnce(invoice, customer, tracking = null, option
     const sent = await emailInvoice_JS({
       invoice_id: invoice.invoice_id,
       to_mail_ids: [toEmail],
-      cc_mail_ids: await resolveInvoiceCcMailIds(),
+      cc_mail_ids: ccMailIds,
     });
     if (sent) {
       await customerStore.recordSignupInvoiceDelivery(customer.id, invoiceId, {
@@ -1933,6 +1934,14 @@ async function emailAdvancePaymentReceipt({
     return { emailed: false, reason: "no_email" };
   }
 
+  const ccMailIds = await resolveInvoiceCcMailIds();
+  if (!ccMailIds.length) {
+    console.warn(
+      "advance payment receipt email skipped: invoice CC emails are required"
+    );
+    return { emailed: false, reason: "no_cc" };
+  }
+
   const invoiceId = String(
     invoice.invoiceId || payResult.invoice_id || ""
   ).trim();
@@ -1969,7 +1978,7 @@ async function emailAdvancePaymentReceipt({
       emailed = await emailInvoice_JS({
         invoice_id: invoiceId,
         to_mail_ids: [toEmail],
-        cc_mail_ids: await resolveInvoiceCcMailIds(),
+        cc_mail_ids: ccMailIds,
         subject,
         body,
       });
@@ -1991,7 +2000,7 @@ async function emailAdvancePaymentReceipt({
       const paymentEmailed = await emailCustomerPayment_JS({
         payment_id: paymentId,
         to_mail_ids: [toEmail],
-        cc_mail_ids: await resolveInvoiceCcMailIds(),
+        cc_mail_ids: ccMailIds,
         subject,
         body,
       });

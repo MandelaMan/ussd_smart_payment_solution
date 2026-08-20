@@ -249,31 +249,16 @@ function getPermission(key) {
 }
 
 /**
- * Baseline permissions for the User system role (least privilege).
- * Groups and individual overrides add/remove from this set.
+ * Baseline for the User system role: authenticated, nothing else.
+ * Operational access comes only from groups and individual grants.
+ * Do not put module access here — groups cannot subtract role defaults.
+ *
+ * When narrowing GROUP_PRESETS, bump SYSTEM_GROUP_PRESET_REVISION so existing
+ * databases replace system-group grants on next boot.
  */
-const USER_ROLE_DEFAULTS = Object.freeze([
-  "dashboard.view",
-  "dashboard.support",
-  "dashboard.activity",
-  "customers.view",
-  "customers.create",
-  "customers.edit",
-  "customers.financials",
-  "customers.olt",
-  "leads.view",
-  "leads.create",
-  "leads.edit",
-  "leads.message",
-  "communication.view",
-  "communication.send",
-  "reports.view",
-  "installations.view",
-  "action_items.view",
-  "action_items.create",
-  "action_items.assign",
-  "action_items.edit",
-]);
+const SYSTEM_GROUP_PRESET_REVISION = 2;
+
+const USER_ROLE_DEFAULTS = Object.freeze(["dashboard.view"]);
 
 /**
  * Preset groups — seeded on migration / sync. Slugs are stable identifiers.
@@ -309,7 +294,8 @@ const GROUP_PRESETS = [
   {
     slug: "finance",
     name: "Finance",
-    description: "Financial operations, billing, and reconciliation",
+    description:
+      "Financial operations, billing, and reconciliation. Refunds are not included — grant billing.refund individually.",
     permissions: [
       "dashboard.view",
       "dashboard.finance",
@@ -326,18 +312,13 @@ const GROUP_PRESETS = [
       "billing.actions",
       "billing.communicate",
       "billing.export",
-      "billing.refund",
       "analytics.view",
       "analytics.export",
       "reports.view",
       "reports.export",
       "reports.schedule",
-      "settings.view",
-      "settings.sync",
       "agencies.view",
       "campaigns.view",
-      "buildings.view",
-      "installations.view",
       "action_items.view",
       "action_items.create",
       "action_items.edit",
@@ -346,7 +327,8 @@ const GROUP_PRESETS = [
   {
     slug: "support",
     name: "Support",
-    description: "Customer support and service management",
+    description:
+      "Customer support and service management. Cancel, disconnect, and agency management are not included.",
     permissions: [
       "dashboard.view",
       "dashboard.support",
@@ -354,11 +336,8 @@ const GROUP_PRESETS = [
       "customers.view",
       "customers.create",
       "customers.edit",
-      "customers.import",
       "customers.financials",
-      "customers.disconnect",
       "customers.pause",
-      "customers.cancel",
       "customers.olt",
       "leads.view",
       "leads.create",
@@ -368,12 +347,7 @@ const GROUP_PRESETS = [
       "communication.send",
       "packages.view",
       "buildings.view",
-      "pops.view",
       "apartments.view",
-      "agencies.view",
-      "agencies.create",
-      "agencies.edit",
-      "campaigns.view",
       "reports.view",
       "installations.view",
       "installations.assign",
@@ -430,7 +404,7 @@ const GROUP_PRESETS = [
   {
     slug: "management",
     name: "Management",
-    description: "Executive reports, analytics, and revenue oversight",
+    description: "Executive reports, analytics, and revenue oversight (read)",
     permissions: [
       "dashboard.view",
       "dashboard.executive",
@@ -459,22 +433,18 @@ const GROUP_PRESETS = [
   {
     slug: "installations",
     name: "Installations",
-    description: "Buildings, apartments, and onboarding infrastructure",
+    description:
+      "Field onboarding jobs and occupancy. Does not grant building or POP create/edit.",
     permissions: [
       "dashboard.view",
+      "dashboard.support",
       "customers.view",
       "customers.create",
       "customers.edit",
       "customers.olt",
       "buildings.view",
-      "buildings.create",
-      "buildings.edit",
-      "pops.view",
-      "pops.create",
-      "pops.edit",
       "apartments.view",
       "apartments.edit",
-      "packages.view",
       "installations.view",
       "installations.assign",
       "installations.edit",
@@ -533,6 +503,7 @@ const LEGACY_ROLE_GROUPS = Object.freeze({
 module.exports = {
   MODULES,
   USER_ROLE_DEFAULTS,
+  SYSTEM_GROUP_PRESET_REVISION,
   GROUP_PRESETS,
   LEGACY_ROLE_GROUPS,
   allPermissionKeys,

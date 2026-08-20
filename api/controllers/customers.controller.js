@@ -2592,6 +2592,8 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       if (createInitialInvoice) {
         invoice = await createSignupInvoice(customer, contact, {
           disregardExistingInvoices,
+          // Explicit edit action: email via Zoho API with Invoice CC addresses.
+          forceEmail: true,
         });
       }
 
