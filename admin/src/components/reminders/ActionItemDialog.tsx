@@ -241,32 +241,27 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
               </Text>
             ) : null}
 
-            <Text fontSize="sm" fontWeight="medium" mb={2}>
+            <Text fontSize="sm" fontWeight="medium" mb={1.5}>
               Checklist ({item.stepsDone}/{item.stepCount || item.steps?.length || 0})
             </Text>
-            <Stack gap={1.5} mb={4}>
+            <Stack gap={1} mb={3}>
               {(item.steps || []).map((step) => (
-                <Flex key={step.id} align="flex-start" gap={2}>
+                <Flex key={step.id} align="center" gap={2} minH="28px">
                   <RowCheckbox
                     checked={step.status === "done"}
                     disabled={!canEdit || saving}
                     onChange={() => void toggleStep(step)}
                     aria-label={step.label}
                   />
-                  <Box minW={0}>
-                    <Text
-                      fontSize="sm"
-                      textDecoration={step.status === "done" ? "line-through" : undefined}
-                      color={step.status === "skipped" ? "fg.muted" : "fg"}
-                    >
-                      {step.label}
-                    </Text>
-                    {step.description ? (
-                      <Text fontSize="xs" color="fg.muted">
-                        {step.description}
-                      </Text>
-                    ) : null}
-                  </Box>
+                  <Text
+                    fontSize="sm"
+                    lineHeight="1.3"
+                    title={step.description || undefined}
+                    textDecoration={step.status === "done" ? "line-through" : undefined}
+                    color={step.status === "skipped" || step.status === "done" ? "fg.muted" : "fg"}
+                  >
+                    {step.label}
+                  </Text>
                 </Flex>
               ))}
             </Stack>
@@ -293,33 +288,63 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
 
             {canAssign ? (
               <Box mb={4}>
-                <Text fontSize="sm" fontWeight="medium" mb={2}>
-                  Tagged users
-                </Text>
-                <Stack gap={1} maxH="140px" overflowY="auto">
-                  {allUsers.map((u) => (
-                    <Flex key={u.id} align="center" gap={2}>
-                      <RowCheckbox
-                        checked={assigneeIds.includes(u.id)}
-                        onChange={() =>
+                <Flex align="center" justify="space-between" gap={2} mb={1.5}>
+                  <Text fontSize="sm" fontWeight="medium">
+                    Tagged users
+                  </Text>
+                  <Button size="xs" variant="outline" loading={saving} onClick={() => void saveAssignees()}>
+                    Save tags
+                  </Button>
+                </Flex>
+                <Flex wrap="wrap" gap={1.5}>
+                  {allUsers.map((u) => {
+                    const selected = assigneeIds.includes(u.id);
+                    return (
+                      <Box
+                        key={u.id}
+                        as="button"
+                        type="button"
+                        aria-pressed={selected}
+                        aria-label={`Tag ${u.name}`}
+                        title={u.email}
+                        onClick={() =>
                           setAssigneeIds((prev) =>
                             prev.includes(u.id) ? prev.filter((x) => x !== u.id) : [...prev, u.id]
                           )
                         }
-                        aria-label={`Tag ${u.name}`}
-                      />
-                      <Text fontSize="sm">{u.name}</Text>
-                    </Flex>
-                  ))}
-                </Stack>
-                <Button size="xs" mt={2} variant="outline" loading={saving} onClick={() => void saveAssignees()}>
-                  Save tags
-                </Button>
+                        h="28px"
+                        px={2.5}
+                        display="inline-flex"
+                        alignItems="center"
+                        borderRadius="full"
+                        borderWidth="1px"
+                        borderColor={selected ? "brand.500" : "border"}
+                        bg={selected ? "brand.50" : "bg.panel"}
+                        color={selected ? "brand.800" : "fg.muted"}
+                        fontSize="xs"
+                        fontWeight={selected ? "medium" : "normal"}
+                        lineHeight="1"
+                        cursor="pointer"
+                        _hover={{
+                          borderColor: "brand.400",
+                          bg: selected ? "brand.100" : "bg.muted",
+                          color: selected ? "brand.800" : "fg",
+                        }}
+                      >
+                        {u.name}
+                      </Box>
+                    );
+                  })}
+                </Flex>
               </Box>
             ) : item.assigneeNames ? (
-              <Text fontSize="sm" color="fg.muted" mb={4}>
-                Tagged: {item.assigneeNames}
-              </Text>
+              <Flex wrap="wrap" gap={1.5} mb={4}>
+                {item.assigneeNames.split(", ").filter(Boolean).map((name) => (
+                  <Badge key={name} colorPalette="brand" variant="subtle" borderRadius="full">
+                    {name}
+                  </Badge>
+                ))}
+              </Flex>
             ) : null}
 
             {canEdit ? (

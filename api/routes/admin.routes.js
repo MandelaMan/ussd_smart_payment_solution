@@ -22,6 +22,7 @@ const {
   updateUser,
   resetUserPassword,
   emailTemporaryPassword,
+  impersonateUser,
 } = require("../controllers/auth.controller");
 const { listBuildings, createBuilding, updateBuilding, listBuildingOlts, createBuildingOlt, updateBuildingOlt, deleteBuildingOlt } = require("../controllers/buildings.controller");
 const {
@@ -81,6 +82,8 @@ const {
   downloadImportTemplate,
   importCustomers,
   bulkCancelSubscriptions,
+  createOnTisp,
+  bulkCreateOnTisp,
 } = require("../controllers/customers.controller");
 const {
   listLogs,
@@ -278,6 +281,11 @@ router.post(
   requirePermission("users.reset_password"),
   emailTemporaryPassword
 );
+router.post(
+  "/users/:id/impersonate",
+  requireAdministrator,
+  impersonateUser
+);
 
 router.get("/rbac/catalog", requirePermission("users.view", "users.manage_permissions"), listPermissionCatalog);
 router.get("/rbac/groups", requirePermission("users.view", "users.manage_groups"), listGroups);
@@ -361,7 +369,12 @@ const {
 router.get("/installations", requirePermission("installations.view"), listInstallations);
 router.get(
   "/installations/technicians",
-  requirePermission("installations.view", "installations.assign", "customers.create"),
+  requirePermission(
+    "installations.view",
+    "installations.assign",
+    "customers.create",
+    "customers.edit"
+  ),
   listInstallationTechnicians
 );
 router.get("/installations/:id", requirePermission("installations.view"), getInstallation);
@@ -457,6 +470,8 @@ router.post("/customers/refresh-batch", requirePermission("customers.view"), ref
 router.patch("/customers/:id", requirePermission("customers.edit"), updateCustomer);
 router.post("/customers/:id/convert-type", requirePermission("customers.edit"), convertCustomerType);
 router.post("/customers/bulk-cancel", requirePermission("customers.cancel"), bulkCancelSubscriptions);
+router.post("/customers/bulk-create-on-tisp", requirePermission("customers.edit"), bulkCreateOnTisp);
+router.post("/customers/:id/create-on-tisp", requirePermission("customers.edit"), createOnTisp);
 router.get("/customers/:id/transactions", requirePermission("customers.financials"), getCustomerTransactions);
 router.get("/customers/:id/invoices", requirePermission("customers.financials"), getCustomerInvoices);
 router.get("/customers/:id/payments", requirePermission("customers.financials"), getCustomerPayments);

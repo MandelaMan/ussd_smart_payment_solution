@@ -2,6 +2,7 @@ const { describe, it } = require("node:test");
 const { assert } = require("../helpers");
 const {
   formatDueDisplay,
+  notificationRecipientIds,
   VALID_STATUSES,
   VALID_PRIORITIES,
 } = require("../../api/services/actionItemStore");
@@ -27,8 +28,36 @@ describe("action item reminders", () => {
   it("registers customer emails for opened and completed reminders", () => {
     assert.ok(CUSTOMER_EMAIL_TEMPLATE_KEYS.includes("action_opened"));
     assert.ok(CUSTOMER_EMAIL_TEMPLATE_KEYS.includes("action_completed"));
+    assert.ok(CUSTOMER_EMAIL_TEMPLATE_KEYS.includes("installation_completed"));
+    assert.ok(CUSTOMER_EMAIL_TEMPLATE_KEYS.includes("installation_cancelled"));
     assert.match(CUSTOMER_EMAIL_TEMPLATE_DEFS.action_opened.defaultBodyHtml, /actionTypeName/);
     assert.match(CUSTOMER_EMAIL_TEMPLATE_DEFS.action_completed.defaultSubject, /customerNumber/);
+    assert.match(
+      CUSTOMER_EMAIL_TEMPLATE_DEFS.installation_cancelled.defaultBodyHtml,
+      /cancellationReason/
+    );
+    assert.match(
+      CUSTOMER_EMAIL_TEMPLATE_DEFS.installation_completed.defaultBodyHtml,
+      /wecare@sulsolutions\.biz/
+    );
+  });
+
+  it("notifies every tagged user on assign, including the person who created it", () => {
+    assert.deepEqual(
+      notificationRecipientIds([4, 7, 4], { type: "action_assigned", actorId: 4 }),
+      [4, 7]
+    );
+    assert.deepEqual(
+      notificationRecipientIds(["4", 7], { type: "action_assigned" }),
+      [4, 7]
+    );
+  });
+
+  it("does not ping the person who just completed a reminder", () => {
+    assert.deepEqual(
+      notificationRecipientIds([4, 7], { type: "action_completed", actorId: 4 }),
+      [7]
+    );
   });
 
   it("exposes reminder permissions and support group access", () => {

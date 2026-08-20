@@ -34,6 +34,13 @@ function formatInstallationDisplay(scheduledAt) {
   };
 }
 
+function parseTechnicianId(body = {}) {
+  const raw = body.installationTechnicianId ?? body.technicianId;
+  if (raw == null || raw === "") return null;
+  const id = Number(raw);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
 function parseInstallationInput(body = {}, { required = false } = {}) {
   const date = String(body.installationDate || "").trim().slice(0, 10);
   const timeRaw = String(body.installationTime || "").trim();
@@ -49,7 +56,9 @@ function parseInstallationInput(body = {}, { required = false } = {}) {
   )
     .trim()
     .toLowerCase();
-  const assignmentMode = VALID_MODES.has(mode) ? mode : "auto";
+  let assignmentMode = VALID_MODES.has(mode) ? mode : "auto";
+  const technicianId = parseTechnicianId(body);
+  if (technicianId) assignmentMode = "manual";
 
   if (!scheduledAt) {
     if (date && !timeRaw) {
@@ -61,7 +70,7 @@ function parseInstallationInput(body = {}, { required = false } = {}) {
     if (required) {
       throw new Error("Installation date and time are required");
     }
-    return { scheduledAt: null, assignmentMode };
+    return { scheduledAt: null, assignmentMode, technicianId };
   }
 
   scheduledAt = scheduledAt.replace("T", " ").slice(0, 19);
@@ -75,7 +84,7 @@ function parseInstallationInput(body = {}, { required = false } = {}) {
     throw new Error("Invalid installation date and time");
   }
 
-  return { scheduledAt, assignmentMode };
+  return { scheduledAt, assignmentMode, technicianId };
 }
 
 function mapRow(row) {
@@ -108,6 +117,7 @@ function mapRow(row) {
     technicianEmail: row.technician_email || null,
     status: row.status,
     notes: row.notes || null,
+    cancellationReason: row.cancellation_reason || null,
     createdBy: row.created_by != null ? Number(row.created_by) : null,
     assignedAt: wallClockFromMysql(row.assigned_at) || null,
     completedAt: wallClockFromMysql(row.completed_at) || null,
@@ -192,6 +202,7 @@ async function createInstallation({
   kind,
   scheduledAt,
   assignmentMode = "auto",
+  technicianId: requestedTechnicianId = null,
   durationMinutes = 120,
   notes = null,
   createdBy = null,
@@ -204,7 +215,14 @@ async function createInstallation({
   let status = "unassigned";
   let assignedAt = null;
 
-  if (mode === "auto" && scheduledAt) {
+  if (requestedTechnicianId) {
+    const techs = await listTechnicians();
+    const tech = techs.find((t) => t.id === Number(requestedTechnicianId));
+    if (!tech) throw new Error("Technician not found");
+    technicianId = tech.id;
+    status = "assigned";
+    assignedAt = moment.tz(DEFAULT_TZ).format("YYYY-MM-DD HH:mm:ss");
+  } else if (mode === "auto" && scheduledAt) {
     const tech = await pickTechnicianForSlot(scheduledAt);
     if (tech) {
       technicianId = tech.id;
@@ -362,6 +380,17 @@ async function assignTechnician(id, technicianId) {
   return getInstallationById(id);
 }
 
+function requireCancellationReason(reason) {
+  const value = String(reason || "").trim();
+  if (!value) {
+    throw new Error("A cancellation reason is required");
+  }
+  if (value.length > 500) {
+    throw new Error("Cancellation reason must be 500 characters or less");
+  }
+  return value;
+}
+
 async function updateInstallation(id, patch = {}) {
   const existing = await getInstallationById(id);
   if (!existing) throw new Error("Installation not found");
@@ -377,6 +406,11 @@ async function updateInstallation(id, patch = {}) {
     if (status === "completed") {
       updates.push("completed_at = ?");
       params.push(moment.tz(DEFAULT_TZ).format("YYYY-MM-DD HH:mm:ss"));
+    }
+    if (status === "cancelled") {
+      const reason = requireCancellationReason(patch.cancellationReason);
+      updates.push("cancellation_reason = ?");
+      params.push(reason);
     }
     if (status === "unassigned") {
       updates.push("technician_id = NULL");
@@ -424,6 +458,7 @@ function emailVarsFromInstallation(installation) {
       installationTime: "",
       installationDateTime: "",
       technicianName: "",
+      cancellationReason: installation?.cancellationReason || "",
     };
   }
   return {
@@ -431,6 +466,7 @@ function emailVarsFromInstallation(installation) {
     installationTime: installation.displayTime || "",
     installationDateTime: installation.displayDateTime || "",
     technicianName: installation.technicianName || "",
+    cancellationReason: installation.cancellationReason || "",
   };
 }
 
@@ -445,6 +481,7 @@ async function scheduleCustomerInstallation(customer, body, { kind, createdBy, n
     kind,
     scheduledAt: parsed.scheduledAt,
     assignmentMode: parsed.assignmentMode,
+    technicianId: parsed.technicianId,
     createdBy,
     notes:
       notes ||
@@ -456,6 +493,7 @@ module.exports = {
   OPEN_STATUSES,
   parseInstallationInput,
   formatInstallationDisplay,
+  requireCancellationReason,
   createInstallation,
   getInstallationById,
   listInstallations,

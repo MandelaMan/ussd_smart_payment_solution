@@ -5,6 +5,7 @@ const {
   me,
   changePassword,
   requestAccountRecovery,
+  stopImpersonation,
 } = require("../controllers/auth.controller");
 const { authenticate } = require("../middleware/auth");
 const {
@@ -42,6 +43,7 @@ router.post(
   requestAccountRecovery
 );
 router.post("/logout", authApiLimiter, logout);
+router.post("/stop-impersonation", authApiLimiter, stopImpersonation);
 // Session probes run on focus/visibility — allow more headroom than mutations.
 router.get("/me", authMeLimiter, authenticate, me);
 router.post("/change-password", authApiLimiter, authenticate, changePassword);

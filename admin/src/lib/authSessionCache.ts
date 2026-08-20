@@ -14,6 +14,9 @@ export type CachedUser = {
   mustChangePassword?: boolean;
   permissions?: string[];
   groups?: Array<{ id: number; slug: string; name: string }>;
+  impersonating?: {
+    impersonator: { id: number; name: string; email: string };
+  } | null;
 };
 
 export type SessionCache = {

@@ -1901,7 +1901,7 @@ async function getCustomerById(id) {
 
 async function getCustomerContext(id) {
   const rows = await query(
-    `SELECT c.*, b.name AS building_name, b.pop_id,
+    `SELECT c.*, b.name AS building_name, b.building_code, b.pop_id,
             pop.name AS pop_name,
             pop.c2b_code, pop.b2b_code, pop.ip_setup, pop.dstv_setup,
             bo.id AS linked_building_olt_id,
@@ -2545,7 +2545,7 @@ async function createCustomer(data) {
     const s = v == null ? "" : String(v).trim();
     return s || null;
   };
-  const { buildingToBillingAddress } = require("../utils/buildingBillingAddress");
+  const { buildingToBillingAddress, isBillingAddressEmpty } = require("../utils/buildingBillingAddress");
   let billingAttention = trimOrNull(data.billingAttention);
   let billingAddress = trimOrNull(data.billingAddress);
   let billingStreet2 = trimOrNull(data.billingStreet2);
@@ -2553,14 +2553,15 @@ async function createCustomer(data) {
   let billingState = trimOrNull(data.billingState);
   let billingZip = trimOrNull(data.billingZip);
   let billingCountry = trimOrNull(data.billingCountry);
-  let hasBilling =
-    billingAttention ||
-    billingAddress ||
-    billingStreet2 ||
-    billingCity ||
-    billingState ||
-    billingZip ||
-    billingCountry;
+  let hasBilling = !isBillingAddressEmpty({
+    billingAttention,
+    billingAddress,
+    billingStreet2,
+    billingCity,
+    billingState,
+    billingZip,
+    billingCountry,
+  });
   if (!hasBilling) {
     const fromBuilding = buildingToBillingAddress(building);
     if (fromBuilding) {
@@ -3472,7 +3473,7 @@ async function updateCustomerDetails(id, data, options = {}) {
     const s = v == null ? "" : String(v).trim();
     return s || null;
   };
-  const { buildingToBillingAddress } = require("../utils/buildingBillingAddress");
+  const { buildingToBillingAddress, isBillingAddressEmpty } = require("../utils/buildingBillingAddress");
   let billingAttention =
     data.billingAttention !== undefined
       ? trimOrNull(data.billingAttention)
@@ -3501,14 +3502,15 @@ async function updateCustomerDetails(id, data, options = {}) {
     data.billingCountry !== undefined
       ? trimOrNull(data.billingCountry)
       : existing.billingCountry || null;
-  let hasBilling =
-    billingAttention ||
-    billingAddress ||
-    billingStreet2 ||
-    billingCity ||
-    billingState ||
-    billingZip ||
-    billingCountry;
+  let hasBilling = !isBillingAddressEmpty({
+    billingAttention,
+    billingAddress,
+    billingStreet2,
+    billingCity,
+    billingState,
+    billingZip,
+    billingCountry,
+  });
   if (!hasBilling) {
     const fromBuilding = buildingToBillingAddress(building);
     if (fromBuilding) {

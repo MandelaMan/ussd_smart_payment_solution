@@ -44,6 +44,7 @@ type Props = {
   switchInstallationDate: string;
   switchInstallationTime: string;
   switchAssignmentMode: "auto" | "manual";
+  switchTechnicianId: number | null;
   cancelNotes: string;
   cancelOnuCollectedAt: string;
   cancelDstvDecoderCollectedAt: string;
@@ -74,6 +75,7 @@ type Props = {
   onSwitchInstallationDateChange: (value: string) => void;
   onSwitchInstallationTimeChange: (value: string) => void;
   onSwitchAssignmentModeChange: (value: "auto" | "manual") => void;
+  onSwitchTechnicianIdChange: (value: number | null) => void;
   onNotesChange: (value: string) => void;
   onOnuCollectedAtChange: (value: string) => void;
   onDstvDecoderCollectedAtChange: (value: string) => void;
@@ -120,12 +122,14 @@ function MoveApartmentForm({
   installationDate,
   installationTime,
   assignmentMode,
+  technicianId,
   loading,
   onApartmentChange,
   onSwitchIpChange,
   onInstallationDateChange,
   onInstallationTimeChange,
   onAssignmentModeChange,
+  onTechnicianIdChange,
   onSubmit,
   onClose,
 }: {
@@ -136,12 +140,14 @@ function MoveApartmentForm({
   installationDate: string;
   installationTime: string;
   assignmentMode: "auto" | "manual";
+  technicianId: number | null;
   loading: boolean;
   onApartmentChange: (value: string) => void;
   onSwitchIpChange: (value: string) => void;
   onInstallationDateChange: (value: string) => void;
   onInstallationTimeChange: (value: string) => void;
   onAssignmentModeChange: (value: "auto" | "manual") => void;
+  onTechnicianIdChange: (value: number | null) => void;
   onSubmit: () => void;
   onClose: () => void;
 }) {
@@ -336,9 +342,11 @@ function MoveApartmentForm({
         date={installationDate}
         time={installationTime}
         assignmentMode={assignmentMode}
+        technicianId={technicianId}
         onDateChange={onInstallationDateChange}
         onTimeChange={onInstallationTimeChange}
         onAssignmentModeChange={onAssignmentModeChange}
+        onTechnicianIdChange={onTechnicianIdChange}
         disabled={loading}
       />
 
@@ -369,6 +377,7 @@ export function CustomerActionDialog({
   switchInstallationDate,
   switchInstallationTime,
   switchAssignmentMode,
+  switchTechnicianId,
   cancelNotes,
   cancelOnuCollectedAt,
   cancelDstvDecoderCollectedAt,
@@ -399,6 +408,7 @@ export function CustomerActionDialog({
   onSwitchInstallationDateChange,
   onSwitchInstallationTimeChange,
   onSwitchAssignmentModeChange,
+  onSwitchTechnicianIdChange,
   onNotesChange,
   onOnuCollectedAtChange,
   onDstvDecoderCollectedAtChange,
@@ -525,12 +535,14 @@ export function CustomerActionDialog({
             installationDate={switchInstallationDate}
             installationTime={switchInstallationTime}
             assignmentMode={switchAssignmentMode}
+            technicianId={switchTechnicianId}
             loading={loading}
             onApartmentChange={onApartmentChange}
             onSwitchIpChange={onSwitchIpChange}
             onInstallationDateChange={onSwitchInstallationDateChange}
             onInstallationTimeChange={onSwitchInstallationTimeChange}
             onAssignmentModeChange={onSwitchAssignmentModeChange}
+            onTechnicianIdChange={onSwitchTechnicianIdChange}
             onSubmit={onSubmit}
             onClose={onClose}
           />

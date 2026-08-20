@@ -76,6 +76,7 @@ async function processCustomerSyncJob(job) {
       try {
         const result = await ispService.fetchCustomerStatus(customer.customerNumber, {
           correlationId,
+          alternateCustomerNumber: ispService.alternateNumberForCustomer(customer),
         });
 
         if (result.ok) {

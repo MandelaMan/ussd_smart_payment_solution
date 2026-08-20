@@ -2,6 +2,7 @@ const { describe, it } = require("node:test");
 const { assert } = require("../helpers");
 const {
   buildCustomerNumber,
+  alternateTypeCustomerNumber,
   liveCustomerNumber,
   archiveCancelledCustomerNumber,
   compactCustomerNumber,
@@ -43,6 +44,23 @@ describe("customer numbering (signup / move / convert / cancel)", () => {
     assert.equal(
       buildCustomerNumber(multiBuilding, "B2B", "401A"),
       "AZEB-TGA-401A"
+    );
+  });
+
+  it("alternate type number is CL-DLG1 ↔ CLB-DLG1", () => {
+    const colo = { c2b_code: "CL", b2b_code: "CLB", building_code: "" };
+    assert.equal(alternateTypeCustomerNumber(colo, "C2B", "DLG1"), "CLB-DLG1");
+    assert.equal(alternateTypeCustomerNumber(colo, "B2B", "DLG1"), "CL-DLG1");
+  });
+
+  it("alternate type number keeps the building segment", () => {
+    assert.equal(
+      alternateTypeCustomerNumber(multiBuilding, "C2B", "401A"),
+      "AZEB-TGA-401A"
+    );
+    assert.equal(
+      alternateTypeCustomerNumber(multiBuilding, "B2B", "401A"),
+      "AZE-TGA-401A"
     );
   });
 

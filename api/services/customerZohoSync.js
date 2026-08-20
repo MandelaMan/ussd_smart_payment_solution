@@ -420,6 +420,76 @@ async function updateZohoContactDetails(customer, zohoContact) {
 }
 
 /**
+ * C2B ↔ B2B conversion: rename Zoho company_name and recurring profile
+ * identity (name + order number) onto the new customer number.
+ */
+async function renumberZohoContactCustomerNumber(contact, options = {}) {
+  const previousCustomerNumber = String(options.previousCustomerNumber || "")
+    .trim()
+    .toUpperCase();
+  const newCustomerNumber = String(options.newCustomerNumber || "")
+    .trim()
+    .toUpperCase();
+  if (!contact?.contact_id || !newCustomerNumber) {
+    return { updated: false, skipped: true, reason: "missing_contact_or_number" };
+  }
+  if (previousCustomerNumber && previousCustomerNumber === newCustomerNumber) {
+    return { updated: false, skipped: true, reason: "unchanged" };
+  }
+
+  const {
+    enforceZohoCompanyName,
+  } = require("../controllers/customers.controller");
+  const { updateContact_JS, getContactFull_JS } = require("../controllers/zoho.controller");
+
+  const updatedContact =
+    (await enforceZohoCompanyName(
+      contact.contact_id,
+      newCustomerNumber,
+      getContactFull_JS,
+      updateContact_JS
+    )) || contact;
+
+  const recurrenceName = buildRecurringProfileName(
+    newCustomerNumber,
+    options.paymentFrequency,
+    options.customPeriodDays
+  );
+  const matched = await listActiveRecurringForCustomer(
+    contact.contact_id,
+    newCustomerNumber,
+    previousCustomerNumber || null
+  );
+  let profilesRenamed = 0;
+  for (const row of matched) {
+    const id = String(row.recurring_invoice_id || row.recurringinvoice_id || "");
+    if (!id) continue;
+    try {
+      await updateRecurringProfileFields(id, {
+        recurrenceName,
+        referenceNumber: newCustomerNumber,
+        lineItems: null,
+      });
+      profilesRenamed += 1;
+    } catch (e) {
+      console.warn(
+        "Zoho recurring rename during type conversion failed:",
+        e.message || e
+      );
+    }
+  }
+
+  return {
+    updated: true,
+    contact: updatedContact,
+    companyName: updatedContact?.company_name || newCustomerNumber,
+    profilesRenamed,
+    previousCustomerNumber: previousCustomerNumber || undefined,
+    newCustomerNumber,
+  };
+}
+
+/**
  * Push customer changes to Zoho Books (contact + recurring subscription).
  * When previousCustomerNumber is set (apartment move / type renumber), forces
  * company_name + recurring profile name/order number onto the new number.
@@ -534,6 +604,7 @@ module.exports = {
   buildRecurringProfileName,
   ensureRecurringSubscription,
   updateZohoContactDetails,
+  renumberZohoContactCustomerNumber,
   pushCustomerBillingToZoho,
   isActiveRecurring,
 };

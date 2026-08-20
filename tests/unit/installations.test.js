@@ -14,6 +14,25 @@ describe("installation schedule parsing", () => {
     });
     assert.equal(parsed.scheduledAt, "2026-08-14 09:30:00");
     assert.equal(parsed.assignmentMode, "manual");
+    assert.equal(parsed.technicianId, null);
+  });
+
+  it("keeps an explicitly chosen technician", () => {
+    const parsed = parseInstallationInput({
+      installationDate: "2026-08-14",
+      installationTime: "09:30",
+      installationAssignmentMode: "auto",
+      installationTechnicianId: 12,
+    });
+    assert.equal(parsed.assignmentMode, "manual");
+    assert.equal(parsed.technicianId, 12);
+  });
+
+  it("requires a cancellation reason", () => {
+    const { requireCancellationReason } = require("../../api/services/installationStore");
+    assert.equal(requireCancellationReason("  Customer not home  "), "Customer not home");
+    assert.throws(() => requireCancellationReason(""), /cancellation reason is required/i);
+    assert.throws(() => requireCancellationReason("   "), /cancellation reason is required/i);
   });
 
   it("allows an empty slot", () => {

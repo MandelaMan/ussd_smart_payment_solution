@@ -9,6 +9,7 @@ import {
   Stack,
   Table,
   Text,
+  Textarea,
 } from "@chakra-ui/react";
 import { FiRefreshCw } from "react-icons/fi";
 import {
@@ -82,6 +83,8 @@ export function InstallationsPage() {
   const [scheduleTarget, setScheduleTarget] = useState<Installation | null>(null);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
+  const [cancelTarget, setCancelTarget] = useState<Installation | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(
@@ -130,6 +133,35 @@ export function InstallationsPage() {
     } catch (e) {
       toaster.create({
         title: e instanceof Error ? e.message : "Update failed",
+        type: "error",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitCancel() {
+    if (!cancelTarget) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      toaster.create({ title: "Enter a reason for cancellation", type: "error" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api.updateInstallation(cancelTarget.id, {
+        status: "cancelled",
+        cancellationReason: reason,
+      });
+      setRows((prev) =>
+        prev.map((r) => (r.id === cancelTarget.id ? res.installation : r))
+      );
+      toaster.create({ title: "Installation cancelled", type: "success" });
+      setCancelTarget(null);
+      setCancelReason("");
+    } catch (e) {
+      toaster.create({
+        title: e instanceof Error ? e.message : "Cancel failed",
         type: "error",
       });
     } finally {
@@ -387,7 +419,10 @@ export function InstallationsPage() {
                           size="xs"
                           variant="ghost"
                           disabled={saving}
-                          onClick={() => void setStatusFor(row, "cancelled")}
+                          onClick={() => {
+                            setCancelTarget(row);
+                            setCancelReason("");
+                          }}
                         >
                           Cancel
                         </Button>
@@ -499,6 +534,54 @@ export function InstallationsPage() {
               onClick={() => void submitSchedule()}
             >
               Save
+            </Button>
+          </Flex>
+        </Box>
+      </AppDialog>
+
+      <AppDialog
+        open={Boolean(cancelTarget)}
+        onOpenChange={(d) => {
+          if (!d.open) {
+            setCancelTarget(null);
+            setCancelReason("");
+          }
+        }}
+      >
+        <Box px={5} py={4}>
+          <Text fontWeight="semibold" mb={1}>
+            Cancel installation
+          </Text>
+          <Text fontSize="sm" color="fg.muted" mb={4}>
+            {cancelTarget
+              ? `${cancelTarget.customerNumber} · ${cancelTarget.displayDateTime}`
+              : ""}
+          </Text>
+          <Field.Root required>
+            <Field.Label>Reason for cancellation</Field.Label>
+            <Textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Why is this visit being cancelled?"
+              rows={3}
+            />
+          </Field.Root>
+          <Flex justify="flex-end" gap={2} mt={5}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setCancelTarget(null);
+                setCancelReason("");
+              }}
+            >
+              Keep installation
+            </Button>
+            <Button
+              colorPalette="red"
+              loading={saving}
+              onClick={() => void submitCancel()}
+            >
+              Cancel installation
             </Button>
           </Flex>
         </Box>

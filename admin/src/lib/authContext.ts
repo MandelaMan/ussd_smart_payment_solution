@@ -8,6 +8,8 @@ export type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  impersonate: (userId: number) => Promise<void>;
+  stopImpersonation: () => Promise<void>;
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
@@ -30,6 +32,12 @@ export function useAuth(): AuthContextValue {
       },
       logout: async () => {},
       refresh: async () => {},
+      impersonate: async () => {
+        throw new Error("Auth is still loading — refresh the page and try again");
+      },
+      stopImpersonation: async () => {
+        throw new Error("Auth is still loading — refresh the page and try again");
+      },
     };
   }
   return ctx;

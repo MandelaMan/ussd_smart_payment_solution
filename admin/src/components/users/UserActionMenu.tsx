@@ -2,6 +2,7 @@ import { Box, IconButton, Menu, Portal } from "@chakra-ui/react";
 import {
   FiCheck,
   FiEdit3,
+  FiEye,
   FiKey,
   FiMoreVertical,
   FiShield,
@@ -20,6 +21,7 @@ export type UserAction =
   | { type: "editName" }
   | { type: "editUser" }
   | { type: "permissions" }
+  | { type: "impersonate" }
   | { type: "role"; role: string }
   | { type: "resetPassword" }
   | { type: "toggleActive" };
@@ -28,9 +30,17 @@ type Props = {
   user: AdminUser;
   onAction: (action: UserAction) => void;
   isProtectedAdmin?: boolean;
+  showImpersonate?: boolean;
+  impersonateDisabledReason?: string | null;
 };
 
-export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
+export function UserActionMenu({
+  user,
+  onAction,
+  isProtectedAdmin,
+  showImpersonate,
+  impersonateDisabledReason,
+}: Props) {
   const currentRole = user.role === "admin" ? "admin" : "user";
 
   return (
@@ -49,6 +59,10 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
           }
           if (value === "permissions") {
             onAction({ type: "permissions" });
+            return;
+          }
+          if (value === "impersonate") {
+            onAction({ type: "impersonate" });
             return;
           }
           if (value.startsWith("role:")) {
@@ -95,6 +109,16 @@ export function UserActionMenu({ user, onAction, isProtectedAdmin }: Props) {
               <FiShield />
               Permissions
             </Menu.Item>
+            {showImpersonate ? (
+              <Menu.Item
+                value="impersonate"
+                disabled={Boolean(impersonateDisabledReason)}
+                title={impersonateDisabledReason || undefined}
+              >
+                <FiEye />
+                Impersonate
+              </Menu.Item>
+            ) : null}
             <Menu.Separator />
             <Menu.ItemGroup>
               <Menu.ItemGroupLabel fontSize="xs" color="fg.muted" px={3} py={1}>

@@ -31,6 +31,8 @@ const CUSTOMER_ACTIVITY_EVENT_TYPES = Object.freeze([
 const ADMIN_AUDIT_EXTRA_EVENT_TYPES = Object.freeze([
   "user_login",
   "user_recovery_requested",
+  "user_impersonation_started",
+  "user_impersonation_stopped",
 ]);
 
 const ADMIN_AUDIT_EVENT_TYPES = Object.freeze([

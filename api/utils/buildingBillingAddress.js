@@ -49,6 +49,7 @@ function buildingToBillingAddress(building) {
   const state = pick(building, "addressState", "address_state");
   const zip = pick(building, "addressZip", "address_zip");
   let country = pick(building, "addressCountry", "address_country");
+  const buildingName = pick(building, "name");
 
   if (poBox) {
     if (!address) {
@@ -59,6 +60,7 @@ function buildingToBillingAddress(building) {
       street2 = `${street2}; ${poBox}`;
     }
   }
+  if (!address) address = buildingName;
 
   const hasAny =
     attention || address || street2 || city || state || zip || country;
@@ -74,6 +76,17 @@ function buildingToBillingAddress(building) {
     billingZip: zip || null,
     billingCountry: country || null,
   };
+}
+
+function isBillingAddressEmpty(fields = {}) {
+  return !(
+    trimOrEmpty(fields.billingAttention) ||
+    trimOrEmpty(fields.billingAddress) ||
+    trimOrEmpty(fields.billingStreet2) ||
+    trimOrEmpty(fields.billingCity) ||
+    trimOrEmpty(fields.billingState) ||
+    trimOrEmpty(fields.billingZip)
+  );
 }
 
 function normalizeBuildingAddressFields(data = {}) {
@@ -95,6 +108,7 @@ function normalizeBuildingAddressFields(data = {}) {
 
 module.exports = {
   buildingToBillingAddress,
+  isBillingAddressEmpty,
   normalizeBuildingAddressFields,
   formatPoBox,
 };

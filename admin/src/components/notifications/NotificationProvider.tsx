@@ -74,6 +74,25 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
   }, []);
 
+  const applyIncoming = useCallback(
+    (payload?: { notification?: UserNotification | null }) => {
+      const note = payload?.notification;
+      if (!note || Number(note.userId) !== Number(userId)) {
+        void refresh();
+        return;
+      }
+      setNotifications((prev) => {
+        if (prev.some((item) => item.id === note.id)) return prev;
+        return [note, ...prev];
+      });
+      if (!note.isRead) {
+        setUnreadCount((count) => count + 1);
+      }
+      void refresh();
+    },
+    [userId, refresh]
+  );
+
   useEffect(() => {
     if (!userId) {
       setUnreadCount(0);
@@ -82,6 +101,22 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
     void refresh();
     void subscribeToPushNotifications();
+  }, [userId, refresh]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    function onVisible() {
+      if (document.visibilityState === "visible") void refresh();
+    }
+    function onFocus() {
+      void refresh();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [userId, refresh]);
 
   useEffect(() => {
@@ -96,15 +131,22 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     } catch {
       return undefined;
     }
-    const onNotify = () => {
+    const onNotify = (payload?: { notification?: UserNotification | null }) => {
+      applyIncoming(payload);
+    };
+    const onActionItems = () => {
       void refresh();
     };
+    socket.on("connect", onActionItems);
     socket.on("admin:notifications", onNotify);
+    socket.on("admin:action_items", onActionItems);
     return () => {
+      socket?.off("connect", onActionItems);
       socket?.off("admin:notifications", onNotify);
+      socket?.off("admin:action_items", onActionItems);
       socket?.disconnect();
     };
-  }, [userId, refresh]);
+  }, [userId, refresh, applyIncoming]);
 
   const value = useMemo(
     () => ({

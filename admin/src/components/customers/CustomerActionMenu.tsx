@@ -9,6 +9,7 @@ import {
   FiMove,
   FiRepeat,
   FiTrash2,
+  FiWifi,
   FiWifiOff,
   FiPauseCircle,
   FiXCircle,
@@ -19,6 +20,7 @@ import { isShopPremise } from "../../lib/premise";
 import { FLOATING_MENU_Z_INDEX } from "../ui/floatingMenu";
 import { useAuth } from "../../lib/authContext";
 import { hasPermission } from "../../lib/rbac";
+import { canCreateCustomerOnTisp } from "../../lib/customerStatus";
 
 export type CustomerAction =
   | "edit"
@@ -32,7 +34,8 @@ export type CustomerAction =
   | "history"
   | "convertType"
   | "deletePermanent"
-  | "createReminder";
+  | "createReminder"
+  | "createOnTisp";
 
 type Props = {
   customer: Customer;
@@ -117,6 +120,12 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
                   {customer.customerType === "C2B" ? "Convert to B2B" : "Convert to C2B"}
                 </Menu.Item>
                 <Menu.Separator />
+                {canCreateCustomerOnTisp(customer) ? (
+                  <Menu.Item value="createOnTisp">
+                    <FiWifi />
+                    Create on TISP
+                  </Menu.Item>
+                ) : null}
                 <Menu.Item value="pause">
                   <FiPauseCircle />
                   Pause service (away)

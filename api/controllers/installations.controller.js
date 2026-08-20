@@ -1,5 +1,26 @@
 const store = require("../services/installationStore");
 const { logActivity } = require("../services/activityLogStore");
+const customerStore = require("../services/customerModuleStore");
+const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+
+async function notifyInstallationCustomer(installation, templateKey, extraVars = {}) {
+  if (!installation?.customerId) return;
+  try {
+    const customer = await customerStore.getCustomerById(installation.customerId);
+    if (!customer) return;
+    await sendCustomerLifecycleEmail(templateKey, customer, {
+      extraVars: {
+        ...store.emailVarsFromInstallation(installation),
+        ...extraVars,
+      },
+    });
+  } catch (e) {
+    console.warn(
+      `${templateKey} email failed for installation ${installation.id}:`,
+      e.message
+    );
+  }
+}
 
 async function listInstallations(req, res, next) {
   try {
@@ -70,10 +91,18 @@ async function assignInstallation(req, res, next) {
 
 async function updateInstallation(req, res, next) {
   try {
+    const previous = await store.getInstallationById(req.params.id);
+    if (!previous) return res.status(404).json({ error: "Installation not found" });
+
+    const nextStatus = req.body?.status
+      ? String(req.body.status).toLowerCase()
+      : null;
     const installation = await store.updateInstallation(req.params.id, {
       status: req.body?.status,
       scheduledAt: req.body?.scheduledAt || req.body?.installationScheduledAt,
       notes: req.body?.notes,
+      cancellationReason:
+        req.body?.cancellationReason || req.body?.cancellation_reason,
     });
     await logActivity({
       eventType: "installation_updated",
@@ -82,8 +111,22 @@ async function updateInstallation(req, res, next) {
       source: "admin",
       status: "success",
       customerRef: installation.customerNumber,
-      metadata: { installationId: installation.id, status: installation.status },
+      metadata: {
+        installationId: installation.id,
+        status: installation.status,
+        cancellationReason: installation.cancellationReason,
+      },
     }).catch(() => {});
+
+    if (nextStatus === "completed" && previous.status !== "completed") {
+      await notifyInstallationCustomer(installation, "installation_completed");
+    }
+    if (nextStatus === "cancelled" && previous.status !== "cancelled") {
+      await notifyInstallationCustomer(installation, "installation_cancelled", {
+        cancellationReason: installation.cancellationReason,
+      });
+    }
+
     return res.json({ ok: true, installation });
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });

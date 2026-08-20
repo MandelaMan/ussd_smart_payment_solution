@@ -18,6 +18,20 @@ export class AppErrorBoundary extends Component<Props, State> {
     console.error("[admin] render crash:", error, info.componentStack);
   }
 
+  componentDidMount() {
+    if (import.meta.hot) {
+      import.meta.hot.on("vite:afterUpdate", this.clearError);
+    }
+  }
+
+  componentWillUnmount() {
+    import.meta.hot?.off("vite:afterUpdate", this.clearError);
+  }
+
+  clearError = () => {
+    if (this.state.error) this.setState({ error: null });
+  };
+
   render() {
     if (!this.state.error) return this.props.children;
 

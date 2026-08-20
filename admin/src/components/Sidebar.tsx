@@ -298,11 +298,13 @@ export function Sidebar({ open, onClose }: Props) {
               </Text>
               <Text
                 fontSize="xs"
-                color="brand.600"
+                color={user?.impersonating ? "orange.300" : "brand.600"}
                 fontWeight="medium"
                 mt={0.5}
               >
-                {roleLabel(user?.role)}
+                {user?.impersonating
+                  ? `Viewing as ${roleLabel(user?.role)}`
+                  : roleLabel(user?.role)}
               </Text>
             </Box>
             <NotificationBell />

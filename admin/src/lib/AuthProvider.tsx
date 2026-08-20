@@ -150,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? nextUser.permissions
           : undefined,
         mustChangePassword: Boolean(nextUser.mustChangePassword),
+        impersonating: nextUser.impersonating || null,
       };
       setSessionCache({ user: normalized, expiresAt: expiresAt ?? null });
       setUser(normalized);
@@ -278,18 +279,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession]
   );
 
+  const impersonate = useCallback(
+    async (userId: number) => {
+      const session = await api.impersonateUser(userId);
+      cacheInvalidate();
+      applySession(session.user, session.expiresAt);
+    },
+    [applySession]
+  );
+
+  const stopImpersonation = useCallback(async () => {
+    try {
+      const session = await api.stopImpersonation();
+      cacheInvalidate();
+      applySession(session.user, session.expiresAt);
+    } catch (err) {
+      if (isUnauthorizedError(err)) {
+        forceLocalLogout();
+        return;
+      }
+      throw err;
+    }
+  }, [applySession, forceLocalLogout]);
+
   const logout = useCallback(async () => {
+    if (user?.impersonating) {
+      await stopImpersonation();
+      navigate("/", { replace: true });
+      return;
+    }
     clearSessionTimer();
     resetSessionState();
     setSessionCache(null);
     cacheInvalidate();
     await api.logout();
     setUser(null);
-  }, [clearSessionTimer, resetSessionState]);
+  }, [
+    user,
+    stopImpersonation,
+    navigate,
+    clearSessionTimer,
+    resetSessionState,
+  ]);
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refresh }),
-    [user, loading, login, logout, refresh]
+    () => ({
+      user,
+      loading,
+      login,
+      logout,
+      refresh,
+      impersonate,
+      stopImpersonation,
+    }),
+    [user, loading, login, logout, refresh, impersonate, stopImpersonation]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

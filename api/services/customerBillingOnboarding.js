@@ -2026,6 +2026,9 @@ async function provisionC2BBillingAfterB2BConversion(customerId, options = {}) {
   }
 
   const customer = mapContextToCustomer(ctx);
+  const previousCustomerNumber = options.previousCustomerNumber
+    ? String(options.previousCustomerNumber).trim().toUpperCase()
+    : null;
   const excludeContactIds = (options.excludeContactIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean);
@@ -2042,6 +2045,7 @@ async function provisionC2BBillingAfterB2BConversion(customerId, options = {}) {
       identityFallback: false,
       excludeContactIds,
       replaceFormerTenant: false,
+      previousCustomerNumber: previousCustomerNumber || undefined,
     }
   );
   if (!zohoContact?.contact_id) {
@@ -2051,11 +2055,33 @@ async function provisionC2BBillingAfterB2BConversion(customerId, options = {}) {
     throw new Error("Refusing to reuse the agency Zoho contact for C2B billing");
   }
 
-  const { updateZohoContactDetails } = require("./customerZohoSync");
+  const {
+    updateZohoContactDetails,
+    renumberZohoContactCustomerNumber,
+  } = require("./customerZohoSync");
   zohoContact = await updateZohoContactDetails(
     { ...customer, customerType: ctx.customer_type, agencyId: null },
     zohoContact
   );
+
+  if (previousCustomerNumber) {
+    try {
+      const renamed = await renumberZohoContactCustomerNumber(zohoContact, {
+        previousCustomerNumber,
+        newCustomerNumber: customer.customerNumber,
+        paymentFrequency: customer.paymentFrequency,
+        customPeriodDays: customer.customPeriodDays,
+      });
+      if (renamed?.contact?.contact_id) {
+        zohoContact = renamed.contact;
+      }
+    } catch (e) {
+      console.warn(
+        "Zoho customer-number update after C2B conversion failed:",
+        e.message || e
+      );
+    }
+  }
 
   const invoice = await createSignupInvoice(customer, zohoContact, {
     disregardExistingInvoices: true,
@@ -2078,6 +2104,7 @@ async function provisionC2BBillingAfterB2BConversion(customerId, options = {}) {
   try {
     recurring = await ensureRecurringSubscription(customer, zohoContact, {
       startDate: recurringStart,
+      previousCustomerNumber: previousCustomerNumber || undefined,
     });
     if (recurring && typeof recurring === "object") {
       recurring.serviceDueDate = initialDue;

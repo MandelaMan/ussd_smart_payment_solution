@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Badge,
   Box,
@@ -29,7 +30,9 @@ import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/
 import { useTableSort } from "../hooks/useTableSort";
 import { sortRows } from "../lib/tableSort";
 import { api, type AdminUser } from "../lib/api";
-import { roleLabel } from "../lib/rbac";
+import { isAdministrator, roleLabel } from "../lib/rbac";
+import { useAuth } from "../lib/authContext";
+import { PasswordStrengthMeter } from "../components/ui/PasswordStrengthMeter";
 import { toaster } from "../components/ui/toaster";
 import { DataTableExportButton } from "../components/ui/DataTableExportButton";
 import { userExportColumns } from "../lib/dataTableExportColumns";
@@ -95,6 +98,9 @@ function validateManualPassword(password: string, confirm: string): string | nul
 }
 
 export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
+  const navigate = useNavigate();
+  const { user: currentUser, impersonate } = useAuth();
+  const viewerIsAdmin = isAdministrator(currentUser);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [catalog, setCatalog] = useState<PermissionModule[]>([]);
@@ -127,6 +133,8 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [resetSetPassword, setResetSetPassword] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
   const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
+  const [impersonateUser, setImpersonateUser] = useState<AdminUser | null>(null);
+  const [impersonating, setImpersonating] = useState(false);
 
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
   const [editName, setEditName] = useState("");
@@ -469,6 +477,10 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       void openPermissions(user);
       return;
     }
+    if (action.type === "impersonate") {
+      setImpersonateUser(user);
+      return;
+    }
     if (action.type === "role") {
       void handleRoleChange(user.id, action.role);
       return;
@@ -480,6 +492,33 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
     }
     if (action.type === "toggleActive") {
       void handleToggleActive(user.id, !!user.is_active);
+    }
+  }
+
+  function impersonateDisabledReason(user: AdminUser) {
+    if (user.id === currentUser?.id) return "You cannot impersonate yourself";
+    if (!user.is_active) return "Cannot impersonate a disabled user";
+    return null;
+  }
+
+  async function handleConfirmImpersonate() {
+    if (!impersonateUser) return;
+    setImpersonating(true);
+    try {
+      await impersonate(impersonateUser.id);
+      toaster.create({
+        title: `Now viewing as ${impersonateUser.name}`,
+        type: "success",
+      });
+      setImpersonateUser(null);
+      navigate("/", { replace: true });
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Impersonation failed",
+        type: "error",
+      });
+    } finally {
+      setImpersonating(false);
     }
   }
 
@@ -890,9 +929,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                           autoComplete="new-password"
                           required
                         />
-                        <Field.HelperText>
-                          At least 8 characters with a letter and a number.
-                        </Field.HelperText>
+                        <PasswordStrengthMeter password={createPassword} />
                       </Field.Root>
                       <Field.Root required>
                         <Field.Label>Confirm password</Field.Label>
@@ -962,6 +999,8 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                             <UserActionMenu
                               user={user}
                               isProtectedAdmin={isProtectedAdmin(user)}
+                              showImpersonate={viewerIsAdmin}
+                              impersonateDisabledReason={impersonateDisabledReason(user)}
                               onAction={(action) => handleUserAction(user, action)}
                             />
                           }
@@ -1064,6 +1103,8 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                               <UserActionMenu
                                 user={user}
                                 isProtectedAdmin={isProtectedAdmin(user)}
+                                showImpersonate={viewerIsAdmin}
+                                impersonateDisabledReason={impersonateDisabledReason(user)}
                                 onAction={(action) => handleUserAction(user, action)}
                               />
                             </Table.Cell>
@@ -1253,6 +1294,51 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       </AppDialog>
 
       <AppDialog
+        open={!!impersonateUser}
+        onOpenChange={(details) => {
+          if (!details.open && !impersonating) setImpersonateUser(null);
+        }}
+        maxW="md"
+      >
+        <Dialog.Header pr={12}>
+          <Dialog.Title>
+            {impersonateUser
+              ? `Impersonate ${impersonateUser.name}`
+              : "Impersonate user"}
+          </Dialog.Title>
+        </Dialog.Header>
+        <Dialog.Body>
+          <Text fontSize="sm" color="fg.muted">
+            You will see the admin app exactly as{" "}
+            <Text as="span" fontWeight="medium" color="fg">
+              {impersonateUser?.name}
+            </Text>
+            {impersonateUser?.email ? ` (${impersonateUser.email})` : ""} does —
+            including menus, pages, and permissions. Your administrator session
+            is restored when you stop impersonating.
+          </Text>
+        </Dialog.Body>
+        <Dialog.Footer>
+          <Flex gap={2} justify="flex-end" w="full">
+            <Button
+              variant="outline"
+              onClick={() => setImpersonateUser(null)}
+              disabled={impersonating}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorPalette="brand"
+              loading={impersonating}
+              onClick={() => void handleConfirmImpersonate()}
+            >
+              Impersonate
+            </Button>
+          </Flex>
+        </Dialog.Footer>
+      </AppDialog>
+
+      <AppDialog
         open={!!resetUser}
         onOpenChange={(details) => {
           if (!details.open && !resetting) {
@@ -1303,9 +1389,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                   onChange={(e) => setResetPassword(e.target.value)}
                   autoComplete="new-password"
                 />
-                <Field.HelperText>
-                  At least 8 characters with a letter and a number.
-                </Field.HelperText>
+                <PasswordStrengthMeter password={resetPassword} />
               </Field.Root>
               <Field.Root required>
                 <Field.Label>Confirm password</Field.Label>

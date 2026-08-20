@@ -119,3 +119,33 @@ export function statusFiltersEqual(
   if (a.length !== b.length) return false;
   return a.every((value, index) => value === b[index]);
 }
+
+export function isDstvOnlyCustomer(customer: {
+  categoryCode?: string | null;
+  productName?: string | null;
+  tispSyncStatus?: string | null;
+}): boolean {
+  if (customer.tispSyncStatus === "skipped") return true;
+  if (String(customer.categoryCode || "").toLowerCase() === "dstv_only") {
+    return true;
+  }
+  return String(customer.productName || "")
+    .toLowerCase()
+    .includes("dstv only");
+}
+
+/** Active internet customers that are not yet live on TISP. */
+export function canCreateCustomerOnTisp(customer: {
+  status: "active" | "cancelled";
+  tispDueDate?: string | null;
+  tispSyncStatus?: string | null;
+  categoryCode?: string | null;
+  productName?: string | null;
+}): boolean {
+  if (customer.status !== "active") return false;
+  if (isDstvOnlyCustomer(customer)) return false;
+  if (customer.tispSyncStatus === "failed" || customer.tispSyncStatus === "pending") {
+    return true;
+  }
+  return !customer.tispDueDate;
+}

@@ -106,6 +106,16 @@ const CUSTOMER_EMAIL_TEMPLATE_META: Array<{
     label: "Reminder completed",
     description: "Sent when a customer-linked reminder is marked complete.",
   },
+  {
+    key: "installation_completed",
+    label: "Installation completed",
+    description: "Sent when a field installation visit is marked complete.",
+  },
+  {
+    key: "installation_cancelled",
+    label: "Installation cancelled",
+    description: "Sent when a scheduled installation visit is cancelled.",
+  },
 ];
 
 type CustomerEmailTemplateDraft = {

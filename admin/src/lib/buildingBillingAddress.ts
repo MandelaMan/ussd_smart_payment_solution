@@ -35,12 +35,14 @@ export function buildingToBillingAddress(
   const state = String(building.addressState || "").trim();
   const zip = String(building.addressZip || "").trim();
   let country = String(building.addressCountry || "").trim();
+  const buildingName = String(building.name || "").trim();
 
   if (poBox) {
     if (!address) address = poBox;
     else if (!street2) street2 = poBox;
     else street2 = `${street2}; ${poBox}`;
   }
+  if (!address) address = buildingName;
 
   if (!attention && !address && !street2 && !city && !state && !zip && !country) {
     return null;

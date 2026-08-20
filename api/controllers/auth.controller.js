@@ -4,10 +4,15 @@ const { query } = require("../config/db");
 const {
   signToken,
   setAuthCookie,
-  clearAuthCookie,
+  setOriginalAuthCookie,
+  clearOriginalAuthCookie,
+  clearAllAuthCookies,
   verifyToken,
+  loadUserFromToken,
   invalidateUserTokens,
   COOKIE_NAME,
+  ORIGINAL_COOKIE_NAME,
+  DEFAULT_IMPERSONATION_EXPIRES_IN,
 } = require("../middleware/auth");
 const { validatePassword } = require("../utils/passwordPolicy");
 const { generateTemporaryPassword } = require("../utils/tempPassword");
@@ -56,12 +61,12 @@ function escapeHtml(value) {
 
 function adminLoginUrl() {
   const origin = String(process.env.ADMIN_ORIGIN || "").replace(/\/$/, "");
-  return origin ? `${origin}/login` : "/admin/login";
+  return origin ? `${origin}/admin/login` : "/admin/login";
 }
 
 function adminUsersUrl() {
   const origin = String(process.env.ADMIN_ORIGIN || "").replace(/\/$/, "");
-  return origin ? `${origin}/settings` : "/admin/settings";
+  return origin ? `${origin}/admin/settings` : "/admin/settings";
 }
 
 async function sendTemporaryPasswordEmail({ name, email, temporaryPassword }) {
@@ -113,17 +118,34 @@ async function resetFailedLogins(userId) {
   );
 }
 
-async function buildAuthUserPayload(user) {
+async function buildAuthUserPayload(user, extras = {}) {
   const resolved = await resolveUserPermissions(user);
+  const impersonating = extras.impersonating || null;
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     role: normalizeSystemRole(user.role),
     jobTitle: user.job_title || null,
-    mustChangePassword: Boolean(user.must_change_password),
+    mustChangePassword: impersonating
+      ? false
+      : Boolean(user.must_change_password),
     permissions: resolved.permissions,
     groups: resolved.groups,
+    impersonating,
+  };
+}
+
+function impersonatorPayload(actor) {
+  if (!actor?.id) return {};
+  return {
+    impersonating: {
+      impersonator: {
+        id: Number(actor.id),
+        name: actor.name || "",
+        email: actor.email || "",
+      },
+    },
   };
 }
 
@@ -218,6 +240,7 @@ async function login(req, res, next) {
     });
     await enforceSessionLimit(user.id);
 
+    clearOriginalAuthCookie(res);
     setAuthCookie(res, token);
 
     await logAuthEvent({
@@ -361,29 +384,39 @@ async function requestAccountRecovery(req, res, next) {
   }
 }
 
-async function logout(req, res) {
+async function revokeCookieSession(token) {
+  if (!token) return null;
+  try {
+    const decoded = verifyToken(token);
+    if (decoded.jti) {
+      await revokeSession(decoded.jti, decoded.sub);
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+async function logout(req, res, next) {
+  if (req.cookies?.[ORIGINAL_COOKIE_NAME]) {
+    return stopImpersonation(req, res, next);
+  }
+
   try {
     const token = req.cookies?.[COOKIE_NAME];
-    if (token) {
-      try {
-        const decoded = verifyToken(token);
-        if (decoded.jti) {
-          await revokeSession(decoded.jti, decoded.sub);
-        }
-        await logAuthEvent({
-          email: decoded.email,
-          userId: decoded.sub,
-          outcome: "logout",
-          req,
-        });
-      } catch {
-        /* token already invalid — still clear cookie */
-      }
+    const decoded = await revokeCookieSession(token);
+    if (decoded) {
+      await logAuthEvent({
+        email: decoded.email,
+        userId: decoded.sub,
+        outcome: "logout",
+        req,
+      });
     }
   } catch {
     /* best-effort invalidation */
   }
-  clearAuthCookie(res);
+  clearAllAuthCookies(res);
   return res.json({ ok: true });
 }
 
@@ -395,7 +428,10 @@ async function me(req, res, next) {
       [req.user.id]
     );
     const user = rows[0] || req.user;
-    const authUser = await buildAuthUserPayload(user);
+    const authUser = await buildAuthUserPayload(
+      user,
+      impersonatorPayload(req.impersonator)
+    );
     return res.json({
       user: authUser,
       expiresAt: req.tokenExp ? req.tokenExp * 1000 : null,
@@ -410,6 +446,11 @@ async function me(req, res, next) {
  */
 async function changePassword(req, res, next) {
   try {
+    if (req.impersonator) {
+      return res.status(403).json({
+        error: "Stop impersonating before changing a password",
+      });
+    }
     const { currentPassword, newPassword } = req.body || {};
     if (!newPassword) {
       return res.status(400).json({ error: "New password is required" });
@@ -866,6 +907,186 @@ async function emailTemporaryPassword(req, res, next) {
   }
 }
 
+async function impersonateUser(req, res, next) {
+  try {
+    if (req.impersonator || req.cookies?.[ORIGINAL_COOKIE_NAME]) {
+      return res.status(400).json({
+        error: "Stop the current impersonation before starting another",
+      });
+    }
+
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: "Invalid user" });
+    }
+    if (id === Number(req.user.id)) {
+      return res.status(400).json({ error: "You cannot impersonate yourself" });
+    }
+
+    const rows = await query(
+      `SELECT id, name, email, role, job_title, is_active, token_version, must_change_password
+       FROM admin_users WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const target = rows[0];
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (!target.is_active) {
+      return res.status(400).json({ error: "Cannot impersonate a disabled user" });
+    }
+
+    const currentToken = req.cookies?.[COOKIE_NAME];
+    if (!currentToken) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    const jti = newSessionId();
+    const token = signToken(target, {
+      jti,
+      expiresIn:
+        process.env.IMPERSONATION_EXPIRES_IN || DEFAULT_IMPERSONATION_EXPIRES_IN,
+      claims: {
+        imp: true,
+        impersonatorId: req.user.id,
+        impersonatorEmail: req.user.email,
+        impersonatorName: req.user.name,
+      },
+    });
+    const decoded = jwt.decode(token);
+    const expiresAt = decoded?.exp
+      ? new Date(decoded.exp * 1000)
+      : new Date(Date.now() + 2 * 60 * 60 * 1000);
+
+    await createSession({
+      jti,
+      userId: target.id,
+      expiresAt,
+      req,
+    });
+
+    setOriginalAuthCookie(res, currentToken);
+    setAuthCookie(res, token);
+
+    await logActivitySafe({
+      eventType: "user_impersonation_started",
+      title: "User impersonation started",
+      message: `${req.user.name} started viewing as ${target.name}`,
+      source: "admin",
+      status: "success",
+      actor: { id: req.user.id, name: req.user.name },
+      referenceId: String(target.id),
+      metadata: {
+        impersonatorId: req.user.id,
+        impersonatorEmail: req.user.email,
+        targetUserId: target.id,
+        targetEmail: target.email,
+      },
+    });
+
+    const authUser = await buildAuthUserPayload(
+      target,
+      impersonatorPayload(req.user)
+    );
+    return res.json({
+      user: authUser,
+      expiresAt: decoded?.exp ? decoded.exp * 1000 : null,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function stopImpersonation(req, res, next) {
+  try {
+    const impersonationToken = req.cookies?.[COOKIE_NAME];
+    const originalToken = req.cookies?.[ORIGINAL_COOKIE_NAME];
+
+    if (!originalToken) {
+      if (impersonationToken) {
+        try {
+          const currentDecoded = verifyToken(impersonationToken);
+          if (!currentDecoded.imp) {
+            const currentUser = await loadUserFromToken(currentDecoded);
+            if (currentUser) {
+              const authUser = await buildAuthUserPayload(currentUser);
+              return res.json({
+                user: authUser,
+                expiresAt: currentDecoded.exp ? currentDecoded.exp * 1000 : null,
+              });
+            }
+          }
+        } catch {
+          /* fall through */
+        }
+      }
+      return res.status(400).json({ error: "You are not impersonating a user" });
+    }
+
+    let targetUserId = null;
+    let targetEmail = null;
+    let targetName = null;
+    if (impersonationToken) {
+      try {
+        const decoded = verifyToken(impersonationToken);
+        targetUserId = decoded.sub || null;
+        targetEmail = decoded.email || null;
+        targetName = decoded.name || null;
+        if (decoded.imp && decoded.jti) {
+          await revokeSession(decoded.jti, decoded.sub);
+        }
+      } catch {
+        /* expired impersonation token is fine — restore the original session */
+      }
+    }
+
+    let originalDecoded;
+    try {
+      originalDecoded = verifyToken(originalToken);
+    } catch {
+      clearAllAuthCookies(res);
+      return res.status(401).json({
+        error: "Administrator session expired. Please sign in again.",
+      });
+    }
+
+    const originalUser = await loadUserFromToken(originalDecoded);
+    if (!originalUser) {
+      clearAllAuthCookies(res);
+      return res.status(401).json({
+        error: "Administrator session expired. Please sign in again.",
+      });
+    }
+
+    setAuthCookie(res, originalToken);
+    clearOriginalAuthCookie(res);
+
+    await logActivitySafe({
+      eventType: "user_impersonation_stopped",
+      title: "User impersonation stopped",
+      message: targetName
+        ? `${originalUser.name} stopped viewing as ${targetName}`
+        : `${originalUser.name} stopped impersonating`,
+      source: "admin",
+      status: "success",
+      actor: { id: originalUser.id, name: originalUser.name },
+      referenceId: targetUserId != null ? String(targetUserId) : null,
+      metadata: {
+        impersonatorId: originalUser.id,
+        impersonatorEmail: originalUser.email,
+        targetUserId,
+        targetEmail,
+      },
+    });
+
+    const authUser = await buildAuthUserPayload(originalUser);
+    return res.json({
+      user: authUser,
+      expiresAt: originalDecoded.exp ? originalDecoded.exp * 1000 : null,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   login,
   logout,
@@ -877,4 +1098,6 @@ module.exports = {
   updateUser,
   resetUserPassword,
   emailTemporaryPassword,
+  impersonateUser,
+  stopImpersonation,
 };

@@ -314,6 +314,38 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
 <p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
   },
+  installation_completed: {
+    label: "Installation completed",
+    description: "Sent when a field installation visit is marked complete.",
+    defaultEnabled: true,
+    defaultSubject: "Installation complete — {{customerNumber}}",
+    defaultBodyHtml: `<p>Dear {{firstName}},</p>
+<p>Your Starlynx installation is complete.</p>
+<p>
+  <strong>Account:</strong> {{customerNumber}}<br/>
+  <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}<br/>
+  <strong>Visit:</strong> {{installationDateTime}}<br/>
+  <strong>Technician:</strong> {{technicianName}}
+</p>
+<p>Your service should now be ready to use.</p>
+<p>This is a no-reply email. If you would like to reply or need help, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
+<p>Thank you,<br/>Starlynx Customer Support</p>`,
+  },
+  installation_cancelled: {
+    label: "Installation cancelled",
+    description: "Sent when a scheduled installation visit is cancelled.",
+    defaultEnabled: true,
+    defaultSubject: "Installation cancelled — {{customerNumber}}",
+    defaultBodyHtml: `<p>Dear {{firstName}},</p>
+<p>The scheduled Starlynx installation for account <strong>{{customerNumber}}</strong> has been cancelled.</p>
+<p>
+  <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}<br/>
+  <strong>Scheduled visit:</strong> {{installationDateTime}}<br/>
+  <strong>Reason:</strong> {{cancellationReason}}
+</p>
+<p>If you would like to reschedule or reply, please email wecare@sulsolutions.biz or support@sulsolutions.biz. This is a no-reply email.</p>
+<p>Thank you,<br/>Starlynx Customer Support</p>`,
+  },
 };
 
 const CUSTOMER_EMAIL_TEMPLATE_KEYS = Object.keys(CUSTOMER_EMAIL_TEMPLATE_DEFS);

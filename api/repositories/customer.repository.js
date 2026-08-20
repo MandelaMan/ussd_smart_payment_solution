@@ -19,9 +19,11 @@ async function listCustomersPage({ page = 1, pageSize = DEFAULT_PAGE_SIZE, updat
   const offset = (Math.max(1, page) - 1) * limit;
   const params = [];
   let sql = `
-    SELECT c.*, b.name AS building_name
+    SELECT c.*, b.name AS building_name, b.building_code,
+           pop.c2b_code, pop.b2b_code
     FROM customers c
     LEFT JOIN buildings b ON b.id = c.building_id
+    LEFT JOIN pops pop ON pop.id = b.pop_id
     WHERE c.status != 'cancelled'`;
   if (updatedAfter) {
     sql += ` AND c.updated_at >= ?`;

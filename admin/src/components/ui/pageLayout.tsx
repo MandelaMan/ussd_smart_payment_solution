@@ -1,5 +1,6 @@
 import { Box, Flex, Heading, Text } from "@chakra-ui/react";
 import type { ReactNode } from "react";
+import { NotificationBell } from "../notifications/NotificationBell";
 import { MobileFixedHeader } from "./MobileFixedHeader";
 
 /** Standard vertical rhythm for admin list and detail pages. */
@@ -113,14 +114,19 @@ export function PageHeader({
     <>
       <MobileFixedHeader headerProps={mobileStickyHeaderProps}>
         <Flex justify="space-between" align="start" direction="column" gap={2} minW={0}>
-          <Box minW={0}>
-            <Heading size={headingSize}>{title}</Heading>
-            {description ? (
-              <Text fontSize="sm" color="fg.muted" mt={0.5} lineHeight="1.4">
-                {description}
-              </Text>
-            ) : null}
-          </Box>
+          <Flex justify="space-between" align="start" gap={3} w="full" minW={0}>
+            <Box minW={0} flex="1">
+              <Heading size={headingSize}>{title}</Heading>
+              {description ? (
+                <Text fontSize="sm" color="fg.muted" mt={0.5} lineHeight="1.4">
+                  {description}
+                </Text>
+              ) : null}
+            </Box>
+            <Box flexShrink={0} pt="2px">
+              <NotificationBell compact />
+            </Box>
+          </Flex>
           {actions ? <Box flexShrink={0} w="full">{actions}</Box> : null}
         </Flex>
       </MobileFixedHeader>

@@ -109,6 +109,14 @@ export type UserGroupRef = {
   name: string;
 };
 
+export type ImpersonationInfo = {
+  impersonator: {
+    id: number;
+    name: string;
+    email: string;
+  };
+};
+
 export type User = {
   id: number;
   name: string;
@@ -118,6 +126,7 @@ export type User = {
   mustChangePassword?: boolean;
   permissions?: string[];
   groups?: UserGroupRef[];
+  impersonating?: ImpersonationInfo | null;
 };
 
 export type AuthSession = {
@@ -1828,6 +1837,7 @@ export type Installation = {
   technicianEmail: string | null;
   status: "unassigned" | "assigned" | "in_progress" | "completed" | "cancelled";
   notes: string | null;
+  cancellationReason?: string | null;
   createdBy: number | null;
   assignedAt: string | null;
   completedAt: string | null;
@@ -1954,6 +1964,12 @@ export const api = {
     }),
 
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+
+  impersonateUser: (id: number) =>
+    request<AuthSession>(`/admin/users/${id}/impersonate`, { method: "POST" }),
+
+  stopImpersonation: () =>
+    request<AuthSession>("/auth/stop-impersonation", { method: "POST" }),
 
   me: () => {
     const controller = new AbortController();
@@ -3488,6 +3504,7 @@ export const api = {
       installationDate?: string;
       installationTime?: string;
       installationAssignmentMode?: "auto" | "manual";
+      installationTechnicianId?: number | null;
     } = {}
   ) =>
     request<{
@@ -3504,6 +3521,7 @@ export const api = {
         installationDate: options.installationDate,
         installationTime: options.installationTime,
         installationAssignmentMode: options.installationAssignmentMode,
+        installationTechnicianId: options.installationTechnicianId,
       }),
     }),
 
@@ -3587,6 +3605,42 @@ export const api = {
     }>("/admin/customers/bulk-cancel", {
       method: "POST",
       body: JSON.stringify({ ids, ...payload }),
+    }),
+
+  createCustomerOnTisp: (id: number, dueDate: string) =>
+    request<{
+      ok: boolean;
+      created: boolean;
+      updated: boolean;
+      dueDate: string;
+      customer: Customer;
+      tisp: { ok: boolean; created?: boolean; updated?: boolean; dueDate?: string; error?: string };
+    }>(`/admin/customers/${id}/create-on-tisp`, {
+      method: "POST",
+      body: JSON.stringify({ dueDate }),
+    }),
+
+  bulkCreateCustomersOnTisp: (ids: number[], dueDate: string) =>
+    request<{
+      ok: boolean;
+      total: number;
+      succeeded: number;
+      failed: number;
+      created: number;
+      updated: number;
+      dueDate: string;
+      results: Array<{
+        id: number;
+        ok: boolean;
+        created?: boolean;
+        updated?: boolean;
+        customerNumber?: string | null;
+        dueDate?: string;
+        error?: string;
+      }>;
+    }>("/admin/customers/bulk-create-on-tisp", {
+      method: "POST",
+      body: JSON.stringify({ ids, dueDate }),
     }),
 
   getApartmentHistory: (buildingId: number, apartmentNumber: string) =>
@@ -3867,7 +3921,7 @@ export const api = {
 
   updateInstallation: (
     id: number,
-    data: { status?: Installation["status"]; notes?: string; scheduledAt?: string }
+    data: { status?: Installation["status"]; notes?: string; scheduledAt?: string; cancellationReason?: string }
   ) =>
     request<{ ok: boolean; installation: Installation }>(`/admin/installations/${id}`, {
       method: "PATCH",

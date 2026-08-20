@@ -11,7 +11,9 @@ const {
 } = require("../services/adminSessionStore");
 
 const COOKIE_NAME = "admin_token";
+const ORIGINAL_COOKIE_NAME = "admin_token_original";
 const JWT_ALGORITHM = "HS256";
+const DEFAULT_IMPERSONATION_EXPIRES_IN = "2h";
 
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -31,10 +33,21 @@ function getCookieOptions() {
   };
 }
 
+function cookieMaxAgeMs(token) {
+  const decoded = jwt.decode(token);
+  if (decoded?.exp != null) {
+    return Math.max(0, decoded.exp * 1000 - Date.now());
+  }
+  return 7 * 24 * 60 * 60 * 1000;
+}
+
 function signToken(user, options = {}) {
   const jti = options.jti || crypto.randomUUID();
+  const claims =
+    options.claims && typeof options.claims === "object" ? options.claims : {};
   return jwt.sign(
     {
+      ...claims,
       sub: user.id,
       email: user.email,
       role: user.role,
@@ -44,26 +57,39 @@ function signToken(user, options = {}) {
     },
     getJwtSecret(),
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+      expiresIn:
+        options.expiresIn || process.env.JWT_EXPIRES_IN || "7d",
       algorithm: JWT_ALGORITHM,
     }
   );
 }
 
-function setAuthCookie(res, token) {
-  const decoded = jwt.decode(token);
-  const maxAge =
-    decoded?.exp != null
-      ? Math.max(0, decoded.exp * 1000 - Date.now())
-      : 7 * 24 * 60 * 60 * 1000;
-  res.cookie(COOKIE_NAME, token, {
+function setNamedAuthCookie(res, cookieName, token) {
+  res.cookie(cookieName, token, {
     ...getCookieOptions(),
-    maxAge,
+    maxAge: cookieMaxAgeMs(token),
   });
+}
+
+function setAuthCookie(res, token) {
+  setNamedAuthCookie(res, COOKIE_NAME, token);
+}
+
+function setOriginalAuthCookie(res, token) {
+  setNamedAuthCookie(res, ORIGINAL_COOKIE_NAME, token);
 }
 
 function clearAuthCookie(res) {
   res.clearCookie(COOKIE_NAME, getCookieOptions());
+}
+
+function clearOriginalAuthCookie(res) {
+  res.clearCookie(ORIGINAL_COOKIE_NAME, getCookieOptions());
+}
+
+function clearAllAuthCookies(res) {
+  clearAuthCookie(res);
+  clearOriginalAuthCookie(res);
 }
 
 function verifyToken(token) {
@@ -89,12 +115,67 @@ async function loadUserFromToken(decoded) {
   return user;
 }
 
+/**
+ * Validate the real administrator behind an impersonation JWT.
+ * @returns {Promise<{ id: number, name: string, email: string } | null>}
+ */
+async function loadImpersonator(decoded) {
+  if (!decoded?.imp) return null;
+  const impersonatorId = Number(decoded.impersonatorId);
+  if (!Number.isFinite(impersonatorId) || impersonatorId <= 0) return null;
+
+  const rows = await query(
+    `SELECT id, name, email, role, is_active
+     FROM admin_users WHERE id = ? LIMIT 1`,
+    [impersonatorId]
+  );
+  const actor = rows[0];
+  if (!actor || !actor.is_active) return null;
+  if (actor.role !== "admin") return null;
+  return { id: actor.id, name: actor.name, email: actor.email };
+}
+
 async function invalidateUserTokens(userId) {
   await query(
     `UPDATE admin_users SET token_version = token_version + 1 WHERE id = ?`,
     [userId]
   );
   await revokeAllSessionsForUser(userId);
+}
+
+/**
+ * If an impersonation cookie is gone, restore the stacked administrator session.
+ * @returns {Promise<boolean>}
+ */
+async function restoreOriginalSession(req, res) {
+  const originalToken = req.cookies?.[ORIGINAL_COOKIE_NAME];
+  if (!originalToken) return false;
+  try {
+    const originalDecoded = verifyToken(originalToken);
+    const originalUser = await loadUserFromToken(originalDecoded);
+    if (!originalUser) return false;
+    setAuthCookie(res, originalToken);
+    clearOriginalAuthCookie(res);
+    req.tokenExp = originalDecoded.exp;
+    req.sessionJti = originalDecoded.jti || null;
+    req.user = originalUser;
+    req.impersonator = null;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function bindActivityActor(req, next) {
+  const impersonator = req.impersonator;
+  const user = req.user;
+  const actor = impersonator
+    ? {
+        id: impersonator.id,
+        name: `${impersonator.name} (as ${user.name})`,
+      }
+    : user;
+  return runWithActivityActor(actorFromUser(actor), () => next());
 }
 
 async function authenticate(req, res, next) {
@@ -107,7 +188,8 @@ async function authenticate(req, res, next) {
   try {
     decoded = verifyToken(token);
   } catch {
-    // Only wipe the cookie when the JWT itself is invalid/expired.
+    const restored = await restoreOriginalSession(req, res);
+    if (restored) return bindActivityActor(req, next);
     clearAuthCookie(res);
     return res.status(401).json({ error: "Authentication required" });
   }
@@ -126,13 +208,32 @@ async function authenticate(req, res, next) {
   }
 
   if (!user) {
-    clearAuthCookie(res);
+    const restored = await restoreOriginalSession(req, res);
+    if (restored) return bindActivityActor(req, next);
+    clearAllAuthCookies(res);
     return res.status(401).json({ error: "Invalid or expired session" });
   }
 
+  let impersonator = null;
+  if (decoded.imp) {
+    try {
+      impersonator = await loadImpersonator(decoded);
+    } catch {
+      return res
+        .status(503)
+        .json({ error: "Authentication temporarily unavailable" });
+    }
+    if (!impersonator) {
+      const restored = await restoreOriginalSession(req, res);
+      if (restored) return bindActivityActor(req, next);
+      clearAllAuthCookies(res);
+      return res.status(401).json({ error: "Invalid or expired session" });
+    }
+  }
+
   req.user = user;
-  // Bind actor for activity logging across the request (including awaits).
-  return runWithActivityActor(actorFromUser(user), () => next());
+  req.impersonator = impersonator;
+  return bindActivityActor(req, next);
 }
 
 function requireRole(...roles) {
@@ -158,12 +259,18 @@ function requireRole(...roles) {
 
 module.exports = {
   COOKIE_NAME,
+  ORIGINAL_COOKIE_NAME,
   JWT_ALGORITHM,
+  DEFAULT_IMPERSONATION_EXPIRES_IN,
   signToken,
   setAuthCookie,
+  setOriginalAuthCookie,
   clearAuthCookie,
+  clearOriginalAuthCookie,
+  clearAllAuthCookies,
   verifyToken,
   loadUserFromToken,
+  loadImpersonator,
   invalidateUserTokens,
   authenticate,
   requireRole,

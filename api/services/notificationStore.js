@@ -1,5 +1,5 @@
 const { query } = require("../config/db");
-const { emitToUsers } = require("../lib/adminEvents");
+const { emitToUser } = require("../lib/adminEvents");
 const webPushService = require("./webPushService");
 
 function mapRow(row) {
@@ -28,6 +28,7 @@ async function createNotifications({
   if (!ids.length) return [];
 
   const created = [];
+  const createdAt = new Date().toISOString();
   for (const userId of ids) {
     const result = await query(
       `INSERT INTO user_notifications (user_id, type, title, body, action_item_id)
@@ -40,7 +41,7 @@ async function createNotifications({
         actionItemId != null ? Number(actionItemId) : null,
       ]
     );
-    created.push({
+    const notification = {
       id: Number(result.insertId),
       userId,
       type: String(type || "action_item"),
@@ -48,15 +49,17 @@ async function createNotifications({
       body: body || "",
       actionItemId: actionItemId != null ? Number(actionItemId) : null,
       isRead: false,
+      createdAt,
+    };
+    created.push(notification);
+    emitToUser(userId, "admin:notifications", {
+      action: "created",
+      type: notification.type,
+      actionItemId: notification.actionItemId,
+      title: notification.title,
+      notification,
     });
   }
-
-  emitToUsers(ids, "admin:notifications", {
-    action: "created",
-    type,
-    actionItemId,
-    title,
-  });
 
   if (push) {
     webPushService

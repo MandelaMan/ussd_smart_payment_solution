@@ -2,7 +2,9 @@ import { type FormEvent, useState } from "react";
 import { Box, Button, Field, Heading, Input, Text, VStack } from "@chakra-ui/react";
 import { Navigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { meetsPasswordPolicy } from "../lib/passwordStrength";
 import { useAuth } from "../lib/authContext";
+import { PasswordStrengthMeter } from "../components/ui/PasswordStrengthMeter";
 import { toaster } from "../components/ui/toaster";
 import { BRAND } from "../theme";
 
@@ -27,9 +29,9 @@ export function ChangePasswordPage() {
       toaster.create({ title: "Passwords do not match", type: "error" });
       return;
     }
-    if (newPassword.length < 8) {
+    if (!meetsPasswordPolicy(newPassword)) {
       toaster.create({
-        title: "Password must be at least 8 characters",
+        title: "Password must be at least 8 characters with a letter and a number",
         type: "error",
       });
       return;
@@ -107,9 +109,7 @@ export function ChangePasswordPage() {
               autoComplete="new-password"
               required
             />
-            <Field.HelperText>
-              At least 8 characters with a letter and a number.
-            </Field.HelperText>
+            <PasswordStrengthMeter password={newPassword} />
           </Field.Root>
 
           <Field.Root required>

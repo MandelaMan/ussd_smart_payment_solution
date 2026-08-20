@@ -1,4 +1,6 @@
-import { Field, Input } from "@chakra-ui/react";
+import { useEffect, useState } from "react";
+import { Field, Input, Text } from "@chakra-ui/react";
+import { api, type InstallationTechnician } from "../../lib/api";
 import { DateField } from "../ui/DateField";
 import { SelectField } from "../ui/SelectField";
 
@@ -19,23 +21,72 @@ type Props = {
   date: string;
   time: string;
   assignmentMode: "auto" | "manual";
+  technicianId?: number | null;
   onDateChange: (value: string) => void;
   onTimeChange: (value: string) => void;
   onAssignmentModeChange: (value: "auto" | "manual") => void;
+  onTechnicianIdChange: (value: number | null) => void;
   disabled?: boolean;
   required?: boolean;
 };
+
+function technicianLabel(tech: InstallationTechnician) {
+  return tech.jobTitle ? `${tech.name} (${tech.jobTitle})` : tech.name;
+}
 
 export function InstallationScheduleFields({
   date,
   time,
   assignmentMode,
+  technicianId = null,
   onDateChange,
   onTimeChange,
   onAssignmentModeChange,
+  onTechnicianIdChange,
   disabled,
   required = true,
 }: Props) {
+  const [technicians, setTechnicians] = useState<InstallationTechnician[]>([]);
+  const [loadingTechnicians, setLoadingTechnicians] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingTechnicians(true);
+    api
+      .listInstallationTechnicians()
+      .then((res) => {
+        if (!cancelled) setTechnicians(res.technicians || []);
+      })
+      .catch(() => {
+        if (!cancelled) setTechnicians([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTechnicians(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectValue =
+    technicianId && technicianId > 0 ? String(technicianId) : assignmentMode;
+
+  function applyAssignment(value: string) {
+    if (value === "auto") {
+      onAssignmentModeChange("auto");
+      onTechnicianIdChange(null);
+      return;
+    }
+    if (value === "manual") {
+      onAssignmentModeChange("manual");
+      onTechnicianIdChange(null);
+      return;
+    }
+    const id = Number(value);
+    onAssignmentModeChange("manual");
+    onTechnicianIdChange(Number.isFinite(id) && id > 0 ? id : null);
+  }
+
   return (
     <>
       <Field.Root required={required} w="full" minW={0}>
@@ -64,15 +115,26 @@ export function InstallationScheduleFields({
         <Field.Label>Technician assignment</Field.Label>
         <SelectField
           disabled={disabled}
+          isLoading={loadingTechnicians}
           fieldProps={{
-            value: assignmentMode,
-            onChange: (e) =>
-              onAssignmentModeChange(e.target.value === "manual" ? "manual" : "auto"),
+            value: selectValue,
+            onChange: (e) => applyAssignment(e.target.value),
           }}
         >
           <option value="auto">Auto-assign a technician</option>
           <option value="manual">Assign later</option>
+          {technicians.map((tech) => (
+            <option key={tech.id} value={String(tech.id)}>
+              {technicianLabel(tech)}
+            </option>
+          ))}
         </SelectField>
+        {!loadingTechnicians && !technicians.length ? (
+          <Text fontSize="xs" color="fg.muted" mt={2}>
+            No technicians are available yet. Add staff to the Technician group
+            in Settings → Users, or pick Assign later.
+          </Text>
+        ) : null}
       </Field.Root>
     </>
   );

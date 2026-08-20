@@ -77,6 +77,7 @@ const {
   invalidateCustomerZoho,
 } = require("../utils/zohoInvoiceCache");
 const { sendTableExport } = require("../utils/tableExportResponse");
+const { alternateTypeCustomerNumber } = require("../utils/customerNumber");
 const {
   formatDateOnly,
   pickLatestPaymentDate,
@@ -1294,6 +1295,40 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
   return result;
 }
 
+function buildingFromTispCtx(ctx) {
+  return {
+    c2b_code: ctx?.c2b_code ?? ctx?.c2bCode,
+    b2b_code: ctx?.b2b_code ?? ctx?.b2bCode,
+    building_code: ctx?.building_code ?? ctx?.buildingCode,
+  };
+}
+
+/** Alternate C2B/B2B account number for the same apartment (CL-DLG1 ↔ CLB-DLG1). */
+function alternateTypeAccountNumber(ctx) {
+  const apartment = String(
+    ctx?.apartment_number ?? ctx?.apartmentNumber ?? ""
+  ).trim();
+  const current = String(
+    ctx?.customer_number ?? ctx?.customerNumber ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  const alt = alternateTypeCustomerNumber(
+    buildingFromTispCtx(ctx),
+    ctx?.customer_type ?? ctx?.customerType,
+    apartment
+  );
+  return alt && alt !== current ? alt : null;
+}
+
+function isTypePrefixAccountRenumber(previousNumber, ctx) {
+  const prev = String(previousNumber || "")
+    .trim()
+    .toUpperCase();
+  const alt = alternateTypeAccountNumber(ctx);
+  return Boolean(prev && alt && prev === alt);
+}
+
 async function refreshTispStatus(customer, options = {}) {
   const preferredDueDate = options.preferredDueDate
     ? integrationSnapshot.normalizeTispDueDateValue(options.preferredDueDate)
@@ -1303,7 +1338,16 @@ async function refreshTispStatus(customer, options = {}) {
     normalizeSubscriptionStatus(customer.subscriptionStatus) === "Paused";
 
   try {
-    const tisp = await getTISPCustomer(customer.customerNumber);
+    let tisp;
+    try {
+      tisp = await getTISPCustomer(customer.customerNumber);
+    } catch (err) {
+      if (!customer?.id || !isTispAccountMissingError(err)) throw err;
+      const lookupCtx = await store.getCustomerContext(customer.id);
+      const alt = lookupCtx ? alternateTypeAccountNumber(lookupCtx) : null;
+      if (!alt) throw err;
+      tisp = await getTISPCustomer(alt);
+    }
     const status =
       tisp?.status ?? tisp?.Status ?? tisp?.subscriptionStatus ?? null;
     if (status) {
@@ -1762,7 +1806,7 @@ async function reclaimCustomerIpOnTisp(ctx, previousIp, meta = {}) {
     if (meta.skipStatusRefresh !== true) {
       try {
         await refreshTispStatus(
-          { id: ctx.id, customerNumber: ctx.customer_number },
+          { id: ctx.id, customerNumber: accountNumber },
           { preferredDueDate: meta.dueDate }
         );
       } catch {
@@ -1780,7 +1824,8 @@ async function reclaimCustomerIpOnTisp(ctx, previousIp, meta = {}) {
 
 /**
  * Move a TISP client from previousAccountNumber → ctx.customer_number
- * (apartment switch / C2B↔B2B conversion).
+ * (apartment switch only). C2B↔B2B conversion updates the existing TISP
+ * client in place instead of INSERT.
  *
  * TISP keys accounts by AccountNumber and does NOT rename it on UPDATE.
  * IP/PPPoE held by the old number also block INSERT of the new number, so we:
@@ -1917,21 +1962,6 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
   return result;
 }
 
-/** Alternate C2B/B2B account number for the same apartment (CL-A10 ↔ CLB-A10). */
-function alternateTypeAccountNumber(ctx) {
-  const apartment = String(ctx.apartment_number || "").trim().toUpperCase();
-  if (!apartment) return null;
-  const currentType = String(ctx.customer_type || "").toUpperCase();
-  const altCode =
-    currentType === "B2B"
-      ? String(ctx.c2b_code || "").trim()
-      : String(ctx.b2b_code || "").trim();
-  if (!altCode) return null;
-  const altNumber = `${altCode}-${apartment}`;
-  const current = String(ctx.customer_number || "").trim().toUpperCase();
-  return altNumber.toUpperCase() === current ? null : altNumber.toUpperCase();
-}
-
 async function pushCustomerToTisp(ctx, meta = {}) {
   // DSTV Only customers receive no bandwidth — never provision on TISP.
   if (
@@ -1977,9 +2007,40 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     Boolean(ctx.tisp_due_date);
 
   try {
-    // Customer number changed (apartment move / type convert). TISP UPDATE does
-    // not rename AccountNumber — migrate old → new via release + INSERT.
-    if (previousNumber && previousNumber !== currentNumber) {
+    const typeConvertInPlace =
+      meta.tispInPlaceUpdate === true ||
+      isTypePrefixAccountRenumber(previousNumber, pushCtx);
+
+    async function updateExistingTispIdentity(tispAccountNumber) {
+      const keyedMeta = { ...meta, accountNumber: tispAccountNumber };
+      if (ipIdentityChanged) {
+        return await reclaimCustomerIpOnTisp(pushCtx, previousIp, keyedMeta);
+      }
+      return await updateCustomerOnTisp(pushCtx, keyedMeta);
+    }
+
+    // C2B↔B2B: same TISP client. UPDATE package/contact/PPPoE in place.
+    // Zoho creates a new contact; TISP must not INSERT a second AccountNumber.
+    // Client Status can lie about presence, so UPDATE the previous/alt number
+    // directly rather than requiring accountExistsOnTisp first.
+    if (typeConvertInPlace) {
+      const altNumber = alternateTypeAccountNumber(pushCtx);
+      const tryNumbers = [previousNumber, altNumber]
+        .map((n) => String(n || "").trim().toUpperCase())
+        .filter(Boolean)
+        .filter((n, i, arr) => arr.indexOf(n) === i);
+      let lastErr = null;
+      for (const tispKey of tryNumbers) {
+        try {
+          return await updateExistingTispIdentity(tispKey);
+        } catch (err) {
+          lastErr = err;
+          if (!isTispAccountMissingError(err)) throw err;
+        }
+      }
+      if (lastErr && tryNumbers.length) throw lastErr;
+    } else if (previousNumber && previousNumber !== currentNumber) {
+      // Apartment move: TISP does not rename AccountNumber — migrate old → new.
       const onPrevious = await accountExistsOnTisp(previousNumber);
       if (onPrevious) {
         return await migrateTispAccountNumber(pushCtx, previousNumber, meta);
@@ -1995,17 +2056,13 @@ async function pushCustomerToTisp(ctx, meta = {}) {
       return await updateCustomerOnTisp(pushCtx, meta);
     }
 
-    // Recovery: local number already converted (CLB-A10) but TISP still has
-    // the other type code (CL-A10) for the same apartment.
+    // Recovery: local number already converted (CLB-DLG1) but TISP still has
+    // the other type code (CL-DLG1). Update that client — do not INSERT.
     const altNumber = alternateTypeAccountNumber(pushCtx);
     if (altNumber) {
       const onAlt = await accountExistsOnTisp(altNumber);
       if (onAlt) {
-        return await migrateTispAccountNumber(pushCtx, altNumber, {
-          ...meta,
-          previousApartmentNumber:
-            meta.previousApartmentNumber || altNumber,
-        });
+        return await updateExistingTispIdentity(altNumber);
       }
     }
 
@@ -2714,6 +2771,162 @@ async function syncNewCustomerToTisp(customerId, customerNumber, meta = {}) {
   }
 }
 
+function parseCreateOnTispDueDate(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  return raw;
+}
+
+/**
+ * Create (or update) a customer on TISP only — never touches Zoho / agency billing.
+ */
+async function provisionCustomerOnTispOnly(customerId, dueDateInput) {
+  const ctx = await store.getCustomerContext(customerId);
+  if (!ctx) {
+    const err = new Error("Customer not found");
+    err.statusCode = 404;
+    throw err;
+  }
+  if (String(ctx.status || "").toLowerCase() !== "active") {
+    throw new Error("Only active customers can be created on TISP");
+  }
+  if (
+    isDstvOnlyCategory(ctx.category_code) ||
+    isDstvOnlyCategory(ctx.category_name)
+  ) {
+    throw new Error("DSTV Only customers are not added on TISP");
+  }
+
+  const dueDate =
+    parseCreateOnTispDueDate(dueDateInput) ||
+    ctx.tisp_due_date ||
+    TISP_STANDARD_DUE_DATE;
+
+  const number = String(ctx.customer_number || "").trim().toUpperCase();
+  let alreadyOnTisp = false;
+  try {
+    alreadyOnTisp = number ? await accountExistsOnTisp(number) : false;
+    await pushCustomerToTisp(ctx, {
+      dueDate,
+      skipCooldown: true,
+      allowCreate: !alreadyOnTisp,
+      preferUpdate: alreadyOnTisp,
+    });
+    await store.updateCustomerTispSync(customerId, "synced", null);
+  } catch (e) {
+    const tispError = formatTispError(e) || e.message || "TISP create failed";
+    try {
+      await store.updateCustomerTispSync(customerId, "failed", tispError);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(tispError);
+  }
+
+  const customer = await attachTispDueDate(await store.getCustomerById(customerId));
+  notifyCustomersChanged(customerId, "updated");
+
+  try {
+    await logActivity({
+      eventType: "customer_tisp_created",
+      title: alreadyOnTisp ? "Update on TISP" : "Create on TISP",
+      message: `${customer?.customerNumber || number}: TISP due ${dueDate}`,
+      source: "admin",
+      status: "success",
+      customerRef: customer?.customerNumber || number,
+    });
+  } catch (logErr) {
+    console.error("activity log (create on TISP) failed:", logErr.message);
+  }
+
+  return {
+    ok: true,
+    created: !alreadyOnTisp,
+    updated: alreadyOnTisp,
+    dueDate,
+    customer,
+    tisp: { ok: true, created: !alreadyOnTisp, updated: alreadyOnTisp, dueDate },
+  };
+}
+
+async function createOnTispHandler(req, res, next) {
+  try {
+    const id = Number(req.params.id);
+    const dueDate = parseCreateOnTispDueDate(req.body?.dueDate);
+    if (!dueDate) {
+      return res.status(400).json({ error: "dueDate is required (YYYY-MM-DD)" });
+    }
+    const result = await provisionCustomerOnTispOnly(id, dueDate);
+    return res.json(result);
+  } catch (err) {
+    if (err.statusCode === 404) {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.message && !err.statusCode) {
+      return res.status(400).json({ error: err.message });
+    }
+    return next(err);
+  }
+}
+
+async function bulkCreateOnTispHandler(req, res, next) {
+  try {
+    const { ids, dueDate: dueDateRaw } = req.body || {};
+    const dueDate = parseCreateOnTispDueDate(dueDateRaw);
+    if (!dueDate) {
+      return res.status(400).json({ error: "dueDate is required (YYYY-MM-DD)" });
+    }
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "ids array is required" });
+    }
+
+    const uniqueIds = [
+      ...new Set(
+        ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+      ),
+    ];
+    if (!uniqueIds.length) {
+      return res.status(400).json({ error: "No valid customer ids provided" });
+    }
+
+    const results = [];
+    for (const id of uniqueIds) {
+      try {
+        const result = await provisionCustomerOnTispOnly(id, dueDate);
+        results.push({
+          id,
+          ok: true,
+          created: result.created,
+          updated: result.updated,
+          customerNumber: result.customer?.customerNumber || null,
+          dueDate: result.dueDate,
+        });
+      } catch (e) {
+        results.push({
+          id,
+          ok: false,
+          error: formatTispError(e) || e.message,
+        });
+      }
+    }
+
+    const succeeded = results.filter((r) => r.ok).length;
+    return res.json({
+      ok: true,
+      total: results.length,
+      succeeded,
+      failed: results.length - succeeded,
+      created: results.filter((r) => r.ok && r.created).length,
+      updated: results.filter((r) => r.ok && r.updated).length,
+      dueDate,
+      results,
+    });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
 async function lookupCustomerByNumber(req, res, next) {
   try {
     const apartmentNumber = String(
@@ -3385,6 +3598,7 @@ async function createCustomer(req, res, next) {
         {
           installationScheduledAt: installationInput.scheduledAt,
           installationAssignmentMode: installationInput.assignmentMode,
+          installationTechnicianId: installationInput.technicianId,
         },
         { kind: "onboarding", createdBy: req.user?.id || null }
       );
@@ -4672,6 +4886,7 @@ async function switchApartment(req, res, next) {
         {
           installationScheduledAt: installationInput.scheduledAt,
           installationAssignmentMode: installationInput.assignmentMode,
+          installationTechnicianId: installationInput.technicianId,
         },
         {
           kind: "apartment_switch",
@@ -6189,21 +6404,62 @@ async function convertCustomerTypeHandler(req, res, next) {
 
     const result = await store.convertCustomerType(id, targetType, agencyId);
 
-    // C2B → B2B: stop personal Zoho billing (agency takes over).
+    // C2B → B2B: rename personal Zoho company_name + recurring to the new
+    // number, then stop personal billing (agency takes over).
     if (result.previousType === "C2B" && result.newType === "B2B") {
       try {
-        const oldContact = await findZohoContactForCustomer({
+        const lookup = {
           customerNumber: result.previousCustomerNumber,
           customerType: "C2B",
           firstName: result.customer?.firstName,
           lastName: result.customer?.lastName,
           email: result.customer?.email,
+        };
+        let oldContact = await findZohoContactForCustomer(lookup, {
+          previousCustomerNumber: result.previousCustomerNumber,
         });
+        if (
+          !oldContact?.contact_id &&
+          result.newCustomerNumber &&
+          result.newCustomerNumber !== result.previousCustomerNumber
+        ) {
+          oldContact = await findZohoContactForCustomer({
+            ...lookup,
+            customerNumber: result.newCustomerNumber,
+          });
+        }
         if (oldContact?.contact_id) {
+          try {
+            const { renumberZohoContactCustomerNumber } = require("../services/customerZohoSync");
+            await renumberZohoContactCustomerNumber(oldContact, {
+              previousCustomerNumber: result.previousCustomerNumber,
+              newCustomerNumber:
+                result.newCustomerNumber || result.customer?.customerNumber,
+              paymentFrequency: result.customer?.paymentFrequency,
+              customPeriodDays: result.customer?.customPeriodDays,
+            });
+          } catch (renameErr) {
+            console.warn(
+              "Zoho customer-number update after B2B conversion failed:",
+              renameErr.message || renameErr
+            );
+          }
+          const newNumber =
+            result.newCustomerNumber || result.customer?.customerNumber;
           await stopZohoRecurringForCustomer(
             oldContact.contact_id,
-            result.previousCustomerNumber
+            newNumber || result.previousCustomerNumber
           );
+          if (
+            newNumber &&
+            String(newNumber).toUpperCase() !==
+              String(result.previousCustomerNumber || "").toUpperCase()
+          ) {
+            await stopZohoRecurringForCustomer(
+              oldContact.contact_id,
+              result.previousCustomerNumber
+            );
+          }
           await markContactInactive_JS(oldContact.contact_id);
         }
         await integrationSnapshot.clearZohoBillingSnapshot(id);
@@ -6268,55 +6524,36 @@ async function convertCustomerTypeHandler(req, res, next) {
 
     let tispError = null;
     if (result.customer?.status === "active") {
+      const dueForTisp =
+        result.customer?.tispDueDate || TISP_STANDARD_DUE_DATE;
       try {
         const ctx = await store.getCustomerContext(id);
-        const dueForMigrate =
-          result.customer?.tispDueDate ||
-          ctx?.tisp_due_date ||
-          TISP_STANDARD_DUE_DATE;
         await pushCustomerToTisp(ctx, {
           previousCustomerNumber: result.previousCustomerNumber,
-          // Free the old PPPoE username (usually the previous account number).
-          previousApartmentNumber:
-            result.previousPpoeUsername ||
-            result.previousCustomerNumber ||
-            ctx?.apartment_number,
-          dueDate: dueForMigrate,
+          dueDate: ctx?.tisp_due_date || dueForTisp,
           skipCooldown: true,
+          tispInPlaceUpdate: true,
+          preferUpdate: true,
+          allowCreate: false,
         });
         await store.updateCustomerTispSync(id, "synced", null);
       } catch (e) {
-        // Recovery: some TISP environments return stale/missing presence checks
-        // during account-number conversion. If UPDATE says "account missing",
-        // retry once with a create-biased sync on the new number.
+        // Retry UPDATE on the previous TISP account. Never INSERT a second client.
         const firstError = formatTispError(e);
-        const missing =
-          isTispAccountMissingError(e) ||
-          /account does not exist/i.test(firstError || "");
-        if (missing) {
-          try {
-            const freshCtx = await store.getCustomerContext(id);
-            await pushCustomerToTisp(
-              {
-                ...freshCtx,
-                // Prevent update-only preference on this recovery attempt.
-                tisp_sync_status: "pending",
-                tisp_due_date: null,
-              },
-              {
-                dueDate:
-                  freshCtx?.tisp_due_date || dueForMigrate || TISP_STANDARD_DUE_DATE,
-                skipCooldown: true,
-                allowCreate: true,
-              }
-            );
-            await store.updateCustomerTispSync(id, "synced", null);
-          } catch (retryErr) {
-            tispError = formatTispError(retryErr);
-            await store.updateCustomerTispSync(id, "failed", tispError);
-          }
-        } else {
-          tispError = firstError;
+        try {
+          const freshCtx = await store.getCustomerContext(id);
+          await pushCustomerToTisp(freshCtx, {
+            previousCustomerNumber: result.previousCustomerNumber,
+            dueDate:
+              freshCtx?.tisp_due_date || dueForTisp,
+            skipCooldown: true,
+            tispInPlaceUpdate: true,
+            preferUpdate: true,
+            allowCreate: false,
+          });
+          await store.updateCustomerTispSync(id, "synced", null);
+        } catch (retryErr) {
+          tispError = formatTispError(retryErr) || firstError;
           await store.updateCustomerTispSync(id, "failed", tispError);
         }
       }
@@ -6331,6 +6568,7 @@ async function convertCustomerTypeHandler(req, res, next) {
           zoho = await provisionC2BBillingAfterB2BConversion(id, {
             excludeContactIds: excludeAgencyContactIds,
             forceEmail: true,
+            previousCustomerNumber: result.previousCustomerNumber,
           });
         } catch (e) {
           const message = e.message || "Zoho C2B billing after conversion failed";
@@ -6832,17 +7070,16 @@ async function refreshCustomerStatus(req, res, next) {
                 : false;
 
               // Local number already converted but TISP still on the other
-              // type code (e.g. local CLB-A10, TISP still CL-A10).
+              // type code (e.g. local CLB-DLG1, TISP still CL-DLG1).
               if (!onCurrent) {
                 const altNumber = alternateTypeAccountNumber(ctx);
                 if (altNumber && (await accountExistsOnTisp(altNumber))) {
-                  await migrateTispAccountNumber(ctx, altNumber, {
+                  await updateCustomerOnTisp(ctx, {
+                    accountNumber: altNumber,
                     skipCooldown: true,
-                    // Release credentials on the old TISP account (altNumber),
-                    // not the already-renumbered local PPPoE username.
-                    previousApartmentNumber: altNumber,
                     dueDate:
                       ctx.tisp_due_date || TISP_STANDARD_DUE_DATE,
+                    preferUpdate: true,
                   });
                   tispMigrated = true;
                   await store.updateCustomerTispSync(id, "synced", null);
@@ -6959,6 +7196,8 @@ module.exports = {
   linkCustomerOlt,
   deleteCustomerPermanently,
   bulkCancelSubscriptions,
+  createOnTisp: createOnTispHandler,
+  bulkCreateOnTisp: bulkCreateOnTispHandler,
   apartmentHistory,
   downloadImportTemplate,
   importCustomers,

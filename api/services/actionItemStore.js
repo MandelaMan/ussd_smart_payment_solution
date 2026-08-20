@@ -29,6 +29,15 @@ function uniqueIds(list) {
   return [...new Set((list || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
 }
 
+/** Tagged users always get assignment pings, including the person who created the reminder. */
+function notificationRecipientIds(userIds, { type, actorId } = {}) {
+  const ids = uniqueIds(userIds);
+  if (type === "action_completed" && actorId != null && Number(actorId) > 0) {
+    return ids.filter((id) => id !== Number(actorId));
+  }
+  return ids;
+}
+
 function formatDueDisplay(dueDate) {
   const d = dateOnly(dueDate);
   if (!d) return "";
@@ -459,14 +468,19 @@ async function createActionItem(body, { actor } = {}) {
   const item = await getById(itemId);
   const notifyCustomer = Boolean(item.customerId) && body.notifyCustomer === true;
 
-  await notifyAssignees(item, {
-    type: "action_assigned",
-    title: `Reminder: ${item.title}`,
-    body: item.customerNumber
-      ? `${item.typeName} for ${item.customerNumber}${item.dueDisplay ? ` · due ${item.dueDisplay}` : ""}`
-      : `${item.typeName}${item.dueDisplay ? ` · due ${item.dueDisplay}` : ""}`,
-    actorId,
-  });
+  try {
+    await notifyAssignees(item, {
+      type: "action_assigned",
+      title: `Reminder: ${item.title}`,
+      body: item.customerNumber
+        ? `${item.typeName} for ${item.customerNumber}${item.dueDisplay ? ` · due ${item.dueDisplay}` : ""}`
+        : `${item.typeName}${item.dueDisplay ? ` · due ${item.dueDisplay}` : ""}`,
+      actorId,
+      onlyUserIds: assigneeIds,
+    });
+  } catch (err) {
+    console.error("action item notify failed:", err?.message || err);
+  }
 
   if (notifyCustomer) {
     await notifyCustomerOfAction(item, "action_opened", actorId).catch((err) =>
@@ -514,15 +528,19 @@ async function replaceAssignees(itemId, userIds, { actor } = {}) {
 
   const updated = await getById(item.id);
   if (added.length) {
-    await notifyAssignees(updated, {
-      type: "action_assigned",
-      title: `Assigned: ${updated.title}`,
-      body: updated.customerNumber
-        ? `${updated.typeName} for ${updated.customerNumber}`
-        : updated.typeName,
-      actorId: actor?.id,
-      onlyUserIds: added,
-    });
+    try {
+      await notifyAssignees(updated, {
+        type: "action_assigned",
+        title: `Assigned: ${updated.title}`,
+        body: updated.customerNumber
+          ? `${updated.typeName} for ${updated.customerNumber}`
+          : updated.typeName,
+        actorId: actor?.id,
+        onlyUserIds: added,
+      });
+    } catch (err) {
+      console.error("action item reassign notify failed:", err?.message || err);
+    }
   }
   emitAdminUpdate("action_items", { action: "assigned", id: updated.id });
   return updated;
@@ -595,14 +613,18 @@ async function updateActionItem(id, patch, { actor } = {}) {
     await notifyCustomerOfAction(updated, "action_completed", actor?.id).catch((err) =>
       console.warn("action completed email failed:", err?.message || err)
     );
-    await notifyAssignees(updated, {
-      type: "action_completed",
-      title: `Completed: ${updated.title}`,
-      body: updated.customerNumber
-        ? `${updated.typeName} for ${updated.customerNumber}`
-        : updated.typeName,
-      actorId: actor?.id,
-    });
+    try {
+      await notifyAssignees(updated, {
+        type: "action_completed",
+        title: `Completed: ${updated.title}`,
+        body: updated.customerNumber
+          ? `${updated.typeName} for ${updated.customerNumber}`
+          : updated.typeName,
+        actorId: actor?.id,
+      });
+    } catch (err) {
+      console.error("action item completed notify failed:", err?.message || err);
+    }
   }
 
   await logActivity({
@@ -698,10 +720,8 @@ function checklistSummary(item) {
 }
 
 async function notifyAssignees(item, { type, title, body, actorId, onlyUserIds } = {}) {
-  const ids = onlyUserIds
-    ? uniqueIds(onlyUserIds)
-    : uniqueIds((item.assignees || []).map((a) => a.id));
-  const filtered = ids.filter((id) => id !== Number(actorId));
+  const sourceIds = onlyUserIds || (item.assignees || []).map((a) => a.id);
+  const filtered = notificationRecipientIds(sourceIds, { type, actorId });
   if (!filtered.length) return;
   await notificationStore.createNotifications({
     userIds: filtered,
@@ -756,4 +776,5 @@ module.exports = {
   updateStep,
   addStep,
   formatDueDisplay,
+  notificationRecipientIds,
 };

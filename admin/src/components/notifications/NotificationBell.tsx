@@ -177,20 +177,30 @@ export function NotificationBell({ compact = false }: Props) {
           aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
           aria-expanded={open}
           aria-haspopup="dialog"
-          w={compact ? "36px" : "34px"}
-          h={compact ? "36px" : "34px"}
+          w={compact ? "40px" : "34px"}
+          h={compact ? "40px" : "34px"}
           display="inline-flex"
           alignItems="center"
           justifyContent="center"
           borderRadius="full"
-          borderWidth="1px"
+          borderWidth={compact ? "0px" : "1px"}
           borderColor={open || unreadCount ? "brand.200" : "border"}
-          bg={open ? "brand.50" : compact ? "bg.panel" : unreadCount ? "brand.50" : "white"}
-          color={unreadCount || open ? "brand.700" : "fg.muted"}
-          boxShadow={compact ? "0 4px 14px rgba(15, 23, 42, 0.12)" : "sm"}
+          bg={
+            open || unreadCount
+              ? "brand.50"
+              : compact
+                ? "gray.100"
+                : "white"
+          }
+          color={unreadCount || open ? "brand.700" : compact ? "gray.700" : "fg.muted"}
+          boxShadow={compact ? "none" : "sm"}
           cursor="pointer"
           transition="background 0.15s ease, border-color 0.15s ease, color 0.15s ease"
-          _hover={{ bg: "brand.50", color: "brand.700", borderColor: "brand.200" }}
+          _hover={{
+            bg: unreadCount || open ? "brand.100" : compact ? "gray.200" : "brand.50",
+            color: unreadCount || open ? "brand.700" : compact ? "gray.800" : "brand.700",
+            borderColor: "brand.200",
+          }}
           onClick={() => setOpen((value) => !value)}
         >
           <FiBell size={16} />

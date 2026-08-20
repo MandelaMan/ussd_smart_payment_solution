@@ -10,6 +10,11 @@ async function listCustomersForSync(options = {}) {
     id: row.id,
     customerNumber: row.customer_number,
     subscriptionStatus: row.subscription_status,
+    customerType: row.customer_type,
+    apartmentNumber: row.apartment_number,
+    buildingCode: row.building_code,
+    c2bCode: row.c2b_code,
+    b2bCode: row.b2b_code,
   }));
 }
 

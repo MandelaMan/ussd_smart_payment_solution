@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { useMobileSearchOptional } from "../../lib/mobileSearch";
 import { MOBILE_BOTTOM_NAV_OFFSET } from "../../lib/mobileNav";
 import { scrollAppToTop } from "../ScrollToTop";
+import { NotificationBell } from "../notifications/NotificationBell";
 import { MobileFixedHeader } from "./MobileFixedHeader";
 import { mobileStickyHeaderProps } from "./pageLayout";
 import { MobileFilterSheet } from "./MobileFilterSheet";
@@ -128,7 +129,7 @@ export function MobilePageChrome({
         }}
       >
         {searchOpen && hasSearch ? (
-          <Flex align="center" gap={2} py={1}>
+          <Flex align="center" gap={2} py={1} minW={0}>
             <IconButton
               aria-label="Back"
               {...iconBtnBase}
@@ -136,7 +137,7 @@ export function MobilePageChrome({
             >
               <FiArrowLeft size={20} />
             </IconButton>
-            <InputGroup flex={1} startElement={<FiSearch size={16} />}>
+            <InputGroup flex={1} minW={0} startElement={<FiSearch size={16} />}>
               <Input
                 size="md"
                 h="44px"
@@ -165,6 +166,7 @@ export function MobilePageChrome({
                 }}
               />
             </InputGroup>
+            <NotificationBell compact />
           </Flex>
         ) : (
           <>
@@ -181,6 +183,7 @@ export function MobilePageChrome({
               </Heading>
               <Flex align="center" gap={1} flexShrink={0}>
                 {headerActions}
+                <NotificationBell compact />
                 {hasSearch ? (
                   <IconButton
                     aria-label="Search"

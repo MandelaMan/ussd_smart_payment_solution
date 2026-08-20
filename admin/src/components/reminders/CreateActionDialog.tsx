@@ -22,7 +22,9 @@ import { SelectField } from "../ui/SelectField";
 import { RowCheckbox } from "../ui/RowCheckbox";
 import { toaster } from "../ui/toaster";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
+import { useAuth } from "../../lib/authContext";
 import { normalizeRole } from "../../lib/rbac";
+import { useNotifications } from "../notifications/NotificationProvider";
 
 type PrefillCustomer = {
   id: number;
@@ -38,6 +40,8 @@ type Props = {
 };
 
 export function CreateActionDialog({ open, onClose, onCreated, customer }: Props) {
+  const { user } = useAuth();
+  const { refresh: refreshNotifications } = useNotifications();
   const [types, setTypes] = useState<ActionType[]>([]);
   const [users, setUsers] = useState<ActionAssignee[]>([]);
   const [typeKey, setTypeKey] = useState("customer_move_out");
@@ -81,13 +85,15 @@ export function CreateActionDialog({ open, onClose, onCreated, customer }: Props
     void api.listActionAssignees().then((res) => {
       const list = res.users || [];
       setUsers(list);
-      setSelectedUserIds(
+      const tagged = new Set(
         list
-          .filter((user) => normalizeRole(user.role || undefined) === "admin")
-          .map((user) => user.id)
+          .filter((row) => normalizeRole(row.role || undefined) === "admin")
+          .map((row) => row.id)
       );
+      if (user?.id) tagged.add(user.id);
+      setSelectedUserIds([...tagged]);
     }).catch(() => setUsers([]));
-  }, [open, customer]);
+  }, [open, customer, user?.id]);
 
   useEffect(() => {
     if (!open || customer) return;
@@ -162,6 +168,7 @@ export function CreateActionDialog({ open, onClose, onCreated, customer }: Props
           : "Tagged users were notified.",
         type: "success",
       });
+      void refreshNotifications();
       onCreated?.();
       onClose();
     } catch (e) {
@@ -322,9 +329,9 @@ export function CreateActionDialog({ open, onClose, onCreated, customer }: Props
               <Text fontSize="sm" fontWeight="medium" mb={1}>
                 Checklist
               </Text>
-              <Stack gap={1}>
+              <Stack gap={0.5}>
                 {selectedType.steps.map((step) => (
-                  <Text key={step.key} fontSize="sm" color="fg.muted">
+                  <Text key={step.key} fontSize="sm" color="fg.muted" title={step.description || undefined}>
                     • {step.label}
                   </Text>
                 ))}
@@ -369,33 +376,52 @@ export function CreateActionDialog({ open, onClose, onCreated, customer }: Props
           </Field.Root>
 
           <Box>
-            <Text fontSize="sm" fontWeight="medium" mb={2}>
-              Tag users
-            </Text>
-            <Stack gap={1.5} maxH="180px" overflowY="auto" pr={1}>
-              {users.map((u) => (
-                <Flex key={u.id} align="center" gap={2}>
-                  <RowCheckbox
-                    checked={selectedUserIds.includes(u.id)}
-                    onChange={() => toggleUser(u.id)}
+            <Flex align="center" justify="space-between" gap={2} mb={1.5}>
+              <Text fontSize="sm" fontWeight="medium">
+                Tag users
+              </Text>
+              {selectedUserIds.length ? (
+                <Badge colorPalette="brand" variant="subtle">
+                  {selectedUserIds.length} tagged
+                </Badge>
+              ) : null}
+            </Flex>
+            <Flex wrap="wrap" gap={1.5}>
+              {users.map((u) => {
+                const selected = selectedUserIds.includes(u.id);
+                return (
+                  <Box
+                    key={u.id}
+                    as="button"
+                    type="button"
+                    aria-pressed={selected}
                     aria-label={`Tag ${u.name}`}
-                  />
-                  <Box minW={0}>
-                    <Text fontSize="sm" truncate>
-                      {u.name}
-                    </Text>
-                    <Text fontSize="xs" color="fg.muted" truncate>
-                      {u.jobTitle || u.email}
-                    </Text>
+                    title={u.jobTitle || u.email}
+                    onClick={() => toggleUser(u.id)}
+                    h="28px"
+                    px={2.5}
+                    display="inline-flex"
+                    alignItems="center"
+                    borderRadius="full"
+                    borderWidth="1px"
+                    borderColor={selected ? "brand.500" : "border"}
+                    bg={selected ? "brand.50" : "bg.panel"}
+                    color={selected ? "brand.800" : "fg.muted"}
+                    fontSize="xs"
+                    fontWeight={selected ? "medium" : "normal"}
+                    lineHeight="1"
+                    cursor="pointer"
+                    _hover={{
+                      borderColor: "brand.400",
+                      bg: selected ? "brand.100" : "bg.muted",
+                      color: selected ? "brand.800" : "fg",
+                    }}
+                  >
+                    {u.name}
                   </Box>
-                </Flex>
-              ))}
-            </Stack>
-            {selectedUserIds.length ? (
-              <Badge mt={2} colorPalette="brand">
-                {selectedUserIds.length} tagged
-              </Badge>
-            ) : null}
+                );
+              })}
+            </Flex>
           </Box>
 
           {picked ? (

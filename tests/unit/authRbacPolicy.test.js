@@ -205,6 +205,16 @@ describe("building billing address + last payment date", () => {
     assert.equal(formatPoBox("99"), "P.O. Box 99");
   });
 
+  it("uses the building name when street is missing", () => {
+    const mapped = buildingToBillingAddress({
+      name: "Kilimani Heights",
+      address_city: "Nairobi",
+    });
+    assert.equal(mapped.billingAddress, "Kilimani Heights");
+    assert.equal(mapped.billingCity, "Nairobi");
+    assert.equal(mapped.billingCountry, "Kenya");
+  });
+
   it("picks latest payment date from Zoho invoices", () => {
     assert.equal(formatDateOnly("2026-08-01T12:00:00Z"), "2026-08-01");
     assert.equal(

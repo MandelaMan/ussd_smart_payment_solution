@@ -100,10 +100,12 @@ import {
   parseStatusFilterParam,
   serializeStatusFilter,
   statusFiltersEqual,
+  canCreateCustomerOnTisp,
   type SubscriptionStatusLabel,
 } from "../lib/customerStatus";
 import { StatusMultiSelect } from "../components/ui/StatusMultiSelect";
 import { CustomerTypeConvertDialog } from "../components/customers/CustomerTypeConvertDialog";
+import { CreateOnTispDialog } from "../components/customers/CreateOnTispDialog";
 import { CustomerImportProgressDialog } from "../components/customers/CustomerImportProgressDialog";
 import { RowCheckbox } from "../components/ui/RowCheckbox";
 import { ModalShell } from "../components/ui/ModalShell";
@@ -116,6 +118,7 @@ import { formatDisplayText } from "../lib/formatText";
 import { DisplayText } from "../components/ui/DisplayText";
 import { useAuth } from "../lib/authContext";
 import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hidePricing } from "../lib/rbac";
+import { TISP_STANDARD_DUE_DATE } from "../lib/tispConstants";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobileFAB, MobilePageChrome } from "../components/ui/MobilePageChrome";
@@ -241,6 +244,7 @@ export function CustomersListPage() {
   const [switchInstallationDate, setSwitchInstallationDate] = useState(defaultInstallationDate);
   const [switchInstallationTime, setSwitchInstallationTime] = useState(DEFAULT_INSTALLATION_TIME);
   const [switchAssignmentMode, setSwitchAssignmentMode] = useState<"auto" | "manual">("auto");
+  const [switchTechnicianId, setSwitchTechnicianId] = useState<number | null>(null);
   const [cancelNotes, setCancelNotes] = useState("");
   const [cancelOnuCollectedAt, setCancelOnuCollectedAt] = useState(todayDateInputValue);
   const [cancelDstvDecoderCollectedAt, setCancelDstvDecoderCollectedAt] = useState(
@@ -275,6 +279,9 @@ export function CustomersListPage() {
     todayDateInputValue
   );
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [createOnTispCustomers, setCreateOnTispCustomers] = useState<Customer[]>([]);
+  const [createOnTispDueDate, setCreateOnTispDueDate] = useState(TISP_STANDARD_DUE_DATE);
+  const [createOnTispLoading, setCreateOnTispLoading] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [convertCustomer, setConvertCustomer] = useState<Customer | null>(null);
   const { sorts, toggleSort, sortQuery } = useTableSort<CustomerSortKey>([
@@ -497,6 +504,11 @@ export function CustomersListPage() {
     [activeSelectedCustomers]
   );
 
+  const tispCreateSelectedCustomers = useMemo(
+    () => selectedCustomers.filter((customer) => canCreateCustomerOnTisp(customer)),
+    [selectedCustomers]
+  );
+
   const bulkCancelFormValid =
     bulkNotes.trim().length > 0 &&
     Boolean(bulkOnuCollectedAt) &&
@@ -645,6 +657,103 @@ export function CustomersListPage() {
       });
     } finally {
       setBulkLoading(false);
+    }
+  }
+
+  function openBulkCreateOnTisp() {
+    if (!tispCreateSelectedCustomers.length) return;
+    setCreateOnTispDueDate(TISP_STANDARD_DUE_DATE);
+    setCreateOnTispCustomers(tispCreateSelectedCustomers);
+  }
+
+  function closeCreateOnTispDialog() {
+    if (createOnTispLoading) return;
+    setCreateOnTispCustomers([]);
+    setCreateOnTispDueDate(TISP_STANDARD_DUE_DATE);
+  }
+
+  function patchCustomersAfterTispCreate(
+    updated: Array<{ id: number; customer?: Customer; dueDate?: string }>
+  ) {
+    const byId = new Map(updated.map((row) => [row.id, row]));
+    setCustomers((prev) =>
+      prev.map((c) => {
+        const row = byId.get(c.id);
+        if (!row) return c;
+        if (row.customer) return { ...c, ...row.customer };
+        return {
+          ...c,
+          tispDueDate: row.dueDate || createOnTispDueDate,
+          tispSyncStatus: "synced" as const,
+          tispSyncError: null,
+        };
+      })
+    );
+    setPanelRefreshKey((key) => key + 1);
+  }
+
+  async function submitCreateOnTisp() {
+    if (!createOnTispCustomers.length || !createOnTispDueDate.trim()) return;
+    setCreateOnTispLoading(true);
+    try {
+      if (createOnTispCustomers.length === 1) {
+        const target = createOnTispCustomers[0];
+        const res = await api.createCustomerOnTisp(target.id, createOnTispDueDate.trim());
+        toaster.create({
+          title: res.created ? "Created on TISP" : "Updated on TISP",
+          description: res.dueDate
+            ? `${res.customer?.customerNumber || target.customerNumber} · due ${res.dueDate}`
+            : undefined,
+          type: "success",
+        });
+        patchCustomersAfterTispCreate([
+          { id: target.id, customer: res.customer, dueDate: res.dueDate },
+        ]);
+      } else {
+        const res = await api.bulkCreateCustomersOnTisp(
+          createOnTispCustomers.map((c) => c.id),
+          createOnTispDueDate.trim()
+        );
+        toaster.create({
+          title: `Created ${res.succeeded} of ${res.total} on TISP`,
+          description:
+            res.failed > 0
+              ? `${res.failed} failed — check the toast details or retry those rows`
+              : res.updated
+                ? `${res.created} created · ${res.updated} already on TISP were updated`
+                : undefined,
+          type: res.failed > 0 ? "warning" : "success",
+        });
+        if (res.failed > 0) {
+          const failed = res.results.filter((row) => !row.ok);
+          console.table(failed);
+          const firstError = failed[0]?.error;
+          if (firstError) {
+            toaster.create({
+              title: "TISP create failed for some customers",
+              description: firstError,
+              type: "error",
+              duration: 10000,
+            });
+          }
+        }
+        patchCustomersAfterTispCreate(
+          res.results
+            .filter((row) => row.ok)
+            .map((row) => ({ id: row.id, dueDate: row.dueDate || res.dueDate }))
+        );
+        clearSelection();
+      }
+      setCreateOnTispCustomers([]);
+      setCreateOnTispDueDate(TISP_STANDARD_DUE_DATE);
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "TISP create failed",
+        type: "error",
+        duration: 10000,
+      });
+    } finally {
+      setCreateOnTispLoading(false);
     }
   }
 
@@ -901,6 +1010,12 @@ export function CustomersListPage() {
       setConvertCustomer(customer);
       return;
     }
+    if (type === "createOnTisp") {
+      if (!canCreateCustomerOnTisp(customer)) return;
+      setCreateOnTispDueDate(TISP_STANDARD_DUE_DATE);
+      setCreateOnTispCustomers([customer]);
+      return;
+    }
 
     setActionCustomer(customer);
     setActionType(type);
@@ -910,6 +1025,7 @@ export function CustomersListPage() {
     setSwitchInstallationDate(defaultInstallationDate());
     setSwitchInstallationTime(DEFAULT_INSTALLATION_TIME);
     setSwitchAssignmentMode("auto");
+    setSwitchTechnicianId(null);
     setCancelNotes("");
     setCancelOnuCollectedAt(todayDateInputValue());
     setCancelDstvDecoderCollectedAt(todayDateInputValue());
@@ -1418,6 +1534,7 @@ export function CustomersListPage() {
             installationDate: switchInstallationDate,
             installationTime: switchInstallationTime,
             installationAssignmentMode: switchAssignmentMode,
+            installationTechnicianId: switchTechnicianId || undefined,
           }
         );
         if (res.tisp && !res.tisp.ok) {
@@ -1889,6 +2006,21 @@ export function CustomersListPage() {
             {selectedIds.size > 0 && (
               <Button
                 size="sm"
+                colorPalette="brand"
+                variant="outline"
+                borderRadius="md"
+                disabled={tispCreateSelectedCustomers.length === 0}
+                onClick={openBulkCreateOnTisp}
+              >
+                Create on TISP
+                {tispCreateSelectedCustomers.length > 0
+                  ? ` (${tispCreateSelectedCustomers.length})`
+                  : ""}
+              </Button>
+            )}
+            {selectedIds.size > 0 && (
+              <Button
+                size="sm"
                 colorPalette="red"
                 variant="outline"
                 borderRadius="md"
@@ -2237,6 +2369,14 @@ export function CustomersListPage() {
         onClose={() => setConvertCustomer(null)}
         onConverted={handleTypeConverted}
       />
+      <CreateOnTispDialog
+        customers={createOnTispCustomers}
+        dueDate={createOnTispDueDate}
+        loading={createOnTispLoading}
+        onDueDateChange={setCreateOnTispDueDate}
+        onClose={closeCreateOnTispDialog}
+        onSubmit={() => void submitCreateOnTisp()}
+      />
       <CustomerActionDialog
         customer={actionCustomer}
         buildings={buildings}
@@ -2247,6 +2387,7 @@ export function CustomersListPage() {
         switchInstallationDate={switchInstallationDate}
         switchInstallationTime={switchInstallationTime}
         switchAssignmentMode={switchAssignmentMode}
+        switchTechnicianId={switchTechnicianId}
         cancelNotes={cancelNotes}
         cancelOnuCollectedAt={cancelOnuCollectedAt}
         cancelDstvDecoderCollectedAt={cancelDstvDecoderCollectedAt}
@@ -2277,6 +2418,7 @@ export function CustomersListPage() {
         onSwitchInstallationDateChange={setSwitchInstallationDate}
         onSwitchInstallationTimeChange={setSwitchInstallationTime}
         onSwitchAssignmentModeChange={setSwitchAssignmentMode}
+        onSwitchTechnicianIdChange={setSwitchTechnicianId}
         onNotesChange={setCancelNotes}
         onOnuCollectedAtChange={setCancelOnuCollectedAt}
         onDstvDecoderCollectedAtChange={setCancelDstvDecoderCollectedAt}

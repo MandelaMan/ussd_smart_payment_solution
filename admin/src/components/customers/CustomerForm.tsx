@@ -34,10 +34,7 @@ import {
   getBuildingIpRules,
   validateIpForBuilding,
 } from "../../lib/buildingIpRules";
-import {
-  buildingToBillingAddress,
-  isBillingAddressEmpty,
-} from "../../lib/buildingBillingAddress";
+import { buildingToBillingAddress } from "../../lib/buildingBillingAddress";
 import { buildCustomerNumberPreview } from "../../lib/customerNumber";
 import { isShopPremise, type PremiseType } from "../../lib/premise";
 import { shouldUseAgencyContactForSkynestPlaceholder } from "../../lib/b2bAgencyContact";
@@ -288,6 +285,9 @@ export function CustomerForm({
   const [installationAssignmentMode, setInstallationAssignmentMode] = useState<
     "auto" | "manual"
   >("auto");
+  const [installationTechnicianId, setInstallationTechnicianId] = useState<
+    number | null
+  >(null);
   const [tispDueDate, setTispDueDate] = useState(TISP_STANDARD_DUE_DATE);
   const [loadedTispDueDate, setLoadedTispDueDate] = useState(TISP_STANDARD_DUE_DATE);
   const [onTisp, setOnTisp] = useState(false);
@@ -565,7 +565,13 @@ export function CustomerForm({
     setPhone(leadPrefill.phone);
     setEmail(leadPrefill.email);
     setApartmentNumber(leadPrefill.apartmentNumber);
-    if (leadPrefill.buildingId) setBuildingId(String(leadPrefill.buildingId));
+    if (leadPrefill.buildingId) {
+      const nextBuildingId = String(leadPrefill.buildingId);
+      setBuildingId(nextBuildingId);
+      applyBuildingBillingAddress(
+        buildings.find((b) => String(b.id) === nextBuildingId)
+      );
+    }
     if (leadPrefill.paymentFrequency) {
       setPaymentFrequency(leadPrefill.paymentFrequency);
     }
@@ -897,20 +903,6 @@ export function CustomerForm({
     setPaymentCoversDecoder(true);
   }
 
-  function billingFieldsMatchBuilding(building: Building | undefined): boolean {
-    const mapped = buildingToBillingAddress(building);
-    if (!mapped) return false;
-    return (
-      billingAttention.trim() === mapped.billingAttention &&
-      billingAddress.trim() === mapped.billingAddress &&
-      billingStreet2.trim() === mapped.billingStreet2 &&
-      billingCity.trim() === mapped.billingCity &&
-      billingState.trim() === mapped.billingState &&
-      billingZip.trim() === mapped.billingZip &&
-      (billingCountry.trim() || "Kenya") === (mapped.billingCountry || "Kenya")
-    );
-  }
-
   function applyBuildingBillingAddress(building: Building | undefined) {
     const mapped = buildingToBillingAddress(building);
     if (!mapped) return false;
@@ -925,28 +917,13 @@ export function CustomerForm({
   }
 
   function onBuildingChange(nextBuildingId: string) {
-    const previousBuilding = buildings.find((b) => String(b.id) === buildingId);
     const nextBuilding = buildings.find((b) => String(b.id) === nextBuildingId);
-    const shouldFill =
-      isBillingAddressEmpty({
-        billingAttention,
-        billingAddress,
-        billingStreet2,
-        billingCity,
-        billingState,
-        billingZip,
-        billingCountry,
-      }) || billingFieldsMatchBuilding(previousBuilding);
-
     setBuildingId(nextBuildingId);
     setPaymentFrequency("monthly");
     setCategoryId("");
     setPlanId("");
     setProductId("");
-
-    if (shouldFill) {
-      applyBuildingBillingAddress(nextBuilding);
-    }
+    applyBuildingBillingAddress(nextBuilding);
   }
 
   function paymentStatusSummaryLabel(): string {
@@ -1323,6 +1300,7 @@ export function CustomerForm({
     installationDate,
     installationTime,
     installationAssignmentMode,
+    installationTechnicianId,
   ]);
 
   function validateForm() {
@@ -1716,6 +1694,7 @@ export function CustomerForm({
         installationDate: installationDate || undefined,
         installationTime: installationTime || undefined,
         installationAssignmentMode,
+        installationTechnicianId: installationTechnicianId || undefined,
         campaignId:
           customerType === "C2B" &&
           !trialPeriod &&
@@ -2053,9 +2032,11 @@ export function CustomerForm({
               date={installationDate}
               time={installationTime}
               assignmentMode={installationAssignmentMode}
+              technicianId={installationTechnicianId}
               onDateChange={setInstallationDate}
               onTimeChange={setInstallationTime}
               onAssignmentModeChange={setInstallationAssignmentMode}
+              onTechnicianIdChange={setInstallationTechnicianId}
               disabled={fieldsDisabled}
               required={false}
             />

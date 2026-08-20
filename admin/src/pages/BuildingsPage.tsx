@@ -13,7 +13,6 @@ import {
   Grid,
   Heading,
   Input,
-  Stack,
   Table,
   Text,
 } from "@chakra-ui/react";
@@ -84,6 +83,10 @@ const DEFAULT_BUILDINGS_CACHE_KEY = buildingsListCacheKey({
 
 function normalizePrefix(value: string) {
   return value.trim().replace(/\.+$/, "");
+}
+
+function suggestedBuildingCode(source?: { c2bCode?: string | null } | null) {
+  return String(source?.c2bCode || "").trim().toUpperCase();
 }
 
 export function BuildingsPage() {
@@ -254,12 +257,22 @@ export function BuildingsPage() {
   });
 
   function setFormPopAndFilterPrefixes(nextPopId: number | "") {
+    const previousSuggested = suggestedBuildingCode(selectedPop);
     setFormPopId(nextPopId);
     if (nextPopId === "") {
       setIpPrefixes([]);
+      setBuildingCode((prev) =>
+        !prev.trim() || prev.trim().toUpperCase() === previousSuggested ? "" : prev
+      );
       return;
     }
     const pop = pops.find((p) => p.id === nextPopId);
+    const nextSuggested = suggestedBuildingCode(pop);
+    setBuildingCode((prev) => {
+      const current = prev.trim().toUpperCase();
+      if (!current || current === previousSuggested) return nextSuggested;
+      return prev;
+    });
     const pool = new Set((pop?.ipPrefixes || []).map(normalizePrefix));
     if (pop?.ipSetup !== "STATIC") {
       setIpPrefixes([]);
@@ -272,7 +285,9 @@ export function BuildingsPage() {
     setEditing(building);
     setFormPopId(building.popId);
     setName(building.name);
-    setBuildingCode(building.buildingCode || "");
+    setBuildingCode(
+      (building.buildingCode || building.c2bCode || "").toUpperCase()
+    );
     setIpPrefixes(building.ipPrefixes || []);
     setAddressAttention(building.addressAttention || "");
     setAddressStreet(building.addressStreet || "");
@@ -781,13 +796,6 @@ function BuildingForm({
   const pool = selectedPop?.ipPrefixes || [];
   const showPrefixPicker = selectedPop?.ipSetup === "STATIC";
   const selectedKeys = new Set(ipPrefixes.map(normalizePrefix));
-  const exampleApt = "401A";
-  const popC2b = selectedPop?.c2bCode || "POP";
-  const codePreview =
-    buildingCode.trim() &&
-    buildingCode.trim().toUpperCase() !== popC2b.toUpperCase()
-      ? `${popC2b}-${buildingCode.trim().toUpperCase()}-${exampleApt}`
-      : `${popC2b}-${exampleApt}`;
 
   return (
     <form onSubmit={onSubmit}>
@@ -821,37 +829,19 @@ function BuildingForm({
             value={buildingCode}
             onChange={(e) => setBuildingCode(e.target.value.toUpperCase())}
             maxLength={10}
-            placeholder="e.g. TGA (optional for 1:1 POPs)"
             fontFamily="mono"
           />
-          <Text fontSize="xs" color="fg.muted" mt={1}>
-            Customer numbers: <Text as="span" fontFamily="mono">{codePreview}</Text>
-            {" "}— leave blank for Enaki/Colosseum/Skynest-style POP-APT numbers.
-          </Text>
         </Field.Root>
-        {selectedPop ? (
-          <Box>
-            <Text fontSize="sm" color="fg.muted" mt={{ base: 0, md: 8 }}>
-              Inherited from POP: C2B <Text as="span" fontFamily="mono">{selectedPop.c2bCode}</Text>
-              {" · "}B2B <Text as="span" fontFamily="mono">{selectedPop.b2bCode}</Text>
-              {" · "}{selectedPop.ipSetup}
-              {" · "}{selectedPop.dstvSetup === "headend_coax" ? "Headend coax" : "Decoder"}
-            </Text>
-          </Box>
-        ) : null}
         {showPrefixPicker ? (
           <Box gridColumn={{ md: "span 2" }}>
             <Field.Root>
               <Field.Label>Assigned IP prefixes</Field.Label>
-              <Text fontSize="xs" color="fg.muted" mb={2}>
-                Select from this POP&apos;s prefix pool. Optional — assign now or update later.
-              </Text>
               {pool.length === 0 ? (
                 <Text fontSize="sm" color="fg.muted">
-                  This POP has no prefixes yet. Add them under Manage POPs.
+                  This POP has no prefixes yet.
                 </Text>
               ) : (
-                <Flex gap={2} flexWrap="wrap">
+                <Flex gap={2} flexWrap="wrap" mt={1}>
                   {pool.map((prefix) => {
                     const key = normalizePrefix(prefix);
                     const active = selectedKeys.has(key);
@@ -872,20 +862,7 @@ function BuildingForm({
                   })}
                 </Flex>
               )}
-              {ipPrefixes.length > 0 ? (
-                <Stack gap={1} mt={3}>
-                  <Text fontSize="xs" color="fg.muted">
-                    {ipPrefixes.length} selected
-                  </Text>
-                </Stack>
-              ) : null}
             </Field.Root>
-          </Box>
-        ) : selectedPop?.ipSetup === "PPOE" ? (
-          <Box gridColumn={{ md: "span 2" }}>
-            <Text fontSize="sm" color="fg.muted">
-              PPOE POP — no static IP prefixes are assigned to buildings.
-            </Text>
           </Box>
         ) : null}
       </Grid>
@@ -898,7 +875,6 @@ function BuildingForm({
             <Input
               value={addressAttention}
               onChange={(e) => setAddressAttention(e.target.value)}
-              placeholder="Billing contact / building manager"
               autoComplete="off"
             />
           </Field.Root>
@@ -907,7 +883,6 @@ function BuildingForm({
             <Input
               value={addressPoBox}
               onChange={(e) => setAddressPoBox(e.target.value)}
-              placeholder="e.g. 12345-00100"
               autoComplete="off"
             />
           </Field.Root>
@@ -917,7 +892,6 @@ function BuildingForm({
               <Input
                 value={addressStreet}
                 onChange={(e) => setAddressStreet(e.target.value)}
-                placeholder="Street / building location"
                 autoComplete="off"
               />
             </Field.Root>
@@ -928,7 +902,6 @@ function BuildingForm({
               <Input
                 value={addressStreet2}
                 onChange={(e) => setAddressStreet2(e.target.value)}
-                placeholder="Floor, wing, landmark"
                 autoComplete="off"
               />
             </Field.Root>

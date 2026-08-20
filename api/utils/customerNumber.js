@@ -58,6 +58,18 @@ function buildCustomerNumber(building, customerType, apartmentNumber) {
   return `${popCode}-${apt}`;
 }
 
+/**
+ * Same apartment, other billing type: CL-A10 ↔ CLB-A10, AZE-TGA-401A ↔ AZEB-TGA-401A.
+ */
+function alternateTypeCustomerNumber(building, customerType, apartmentNumber) {
+  const current = String(customerType || "").toUpperCase();
+  if (current !== "C2B" && current !== "B2B") return "";
+  const other = current === "B2B" ? "C2B" : "B2B";
+  return String(buildCustomerNumber(building, other, apartmentNumber) || "")
+    .trim()
+    .toUpperCase();
+}
+
 /** Live apartment number with any cancel archive suffix stripped (H302-CXL-12 → H302). */
 function liveCustomerNumber(customerNumber) {
   return String(customerNumber || "")
@@ -228,6 +240,7 @@ module.exports = {
   normalizePremiseType,
   nextShopUnitCode,
   buildCustomerNumber,
+  alternateTypeCustomerNumber,
   liveCustomerNumber,
   archiveCancelledCustomerNumber,
   compactCustomerNumber,
