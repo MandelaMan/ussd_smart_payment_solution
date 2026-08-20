@@ -12,10 +12,16 @@ function apiProxy(extra: ProxyOptions = {}): ProxyOptions {
     ...extra,
     configure(proxy) {
       extra.configure?.(proxy, extra);
-      const originalWeb = proxy.web.bind(proxy);
-      proxy.web = ((req, res, options, callback) => {
+      // Vite/http-proxy types mark `web` read-only and overload options/callback.
+      // Keep local-dev retry behavior without blocking production `tsc -b`.
+      type ProxyWeb = typeof proxy.web;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const originalWeb = proxy.web.bind(proxy) as (...args: any[]) => void;
+      const webWithRetry = ((req, res, options, callback) => {
+        const opts = typeof options === "function" ? {} : (options ?? {});
+        const cb = typeof options === "function" ? options : callback;
         const tryOnce = (attempt: number) => {
-          originalWeb(req, res, options, (error) => {
+          originalWeb(req, res, opts, (error: Error, errorReq: unknown, errorRes: unknown, target: unknown) => {
             const code = (error as NodeJS.ErrnoException | undefined)?.code;
             const canRetry =
               Boolean(error) &&
@@ -23,7 +29,7 @@ function apiProxy(extra: ProxyOptions = {}): ProxyOptions {
               attempt < 8 &&
               Boolean(res) &&
               "headersSent" in res &&
-              !res.headersSent;
+              !(res as { headersSent?: boolean }).headersSent;
             if (canRetry) {
               setTimeout(
                 () => tryOnce(attempt + 1),
@@ -31,11 +37,17 @@ function apiProxy(extra: ProxyOptions = {}): ProxyOptions {
               );
               return;
             }
-            callback?.(error);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (cb as any)?.(error, errorReq, errorRes, target);
           });
         };
         tryOnce(0);
-      }) as typeof proxy.web;
+      }) as ProxyWeb;
+      Object.defineProperty(proxy, "web", {
+        configurable: true,
+        writable: true,
+        value: webWithRetry,
+      });
     },
   };
 }
