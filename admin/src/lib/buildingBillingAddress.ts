@@ -1,5 +1,16 @@
 import type { Building } from "./api";
 
+/** Zoho Books billing_address field max lengths. */
+export const ZOHO_BILLING_FIELD_MAX = {
+  attention: 100,
+  address: 100,
+  street2: 100,
+  city: 50,
+  state: 50,
+  zip: 50,
+  country: 50,
+} as const;
+
 /** Format PO Box for Zoho street lines (Books has no dedicated po_box field). */
 export function formatPoBox(poBox: string | null | undefined): string {
   const s = String(poBox || "").trim();

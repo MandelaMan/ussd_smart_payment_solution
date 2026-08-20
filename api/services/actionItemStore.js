@@ -29,6 +29,147 @@ function uniqueIds(list) {
   return [...new Set((list || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
 }
 
+function pendingChecklistCount(item) {
+  return (item?.steps || []).filter((step) => step.status === "pending").length;
+}
+
+function assertCanComplete(item) {
+  const pending = pendingChecklistCount(item);
+  if (pending <= 0) return;
+  throw new Error(
+    pending === 1
+      ? "Finish the remaining checklist item before marking this complete"
+      : `Finish the remaining ${pending} checklist items before marking this complete`
+  );
+}
+
+function parseJson(value, fallback = {}) {
+  if (value == null || value === "") return fallback;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function actorFields(actor) {
+  const id = actor?.id != null ? Number(actor.id) : null;
+  const name = actor?.name ? String(actor.name).trim().slice(0, 191) : null;
+  return {
+    actorId: Number.isFinite(id) && id > 0 ? id : null,
+    actorName: name || null,
+  };
+}
+
+function statusPhrase(status) {
+  if (status === "in_progress") return "in progress";
+  return String(status || "").replace(/_/g, " ");
+}
+
+function quoteLabel(label) {
+  return `“${String(label || "").trim()}”`;
+}
+
+function truncateDetail(text, max = 240) {
+  const value = String(text || "").trim();
+  if (!value) return null;
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1).trimEnd()}…`;
+}
+
+function mapEvent(row) {
+  if (!row) return null;
+  const metadata = parseJson(row.metadata, {});
+  return {
+    id: Number(row.id),
+    type: row.event_type,
+    message: row.message,
+    detail: row.detail || null,
+    actorUserId: row.actor_user_id != null ? Number(row.actor_user_id) : null,
+    actorName: row.actor_name || null,
+    createdAt: wallClock(row.created_at),
+    metadata,
+  };
+}
+
+function stepEventMessage(status, label) {
+  if (status === "done") return `Completed ${quoteLabel(label)}`;
+  if (status === "skipped") return `Skipped ${quoteLabel(label)}`;
+  return `Reopened ${quoteLabel(label)}`;
+}
+
+function synthesizeActionItemHistory(item) {
+  const events = [];
+  if (item?.createdAt) {
+    events.push({
+      id: "created",
+      type: "created",
+      message: "Created this reminder",
+      detail: null,
+      actorUserId: item.createdBy,
+      actorName: item.createdByName || null,
+      createdAt: item.createdAt,
+      metadata: {},
+    });
+  }
+  for (const step of item?.steps || []) {
+    if (!step.completedAt) continue;
+    if (step.status !== "done" && step.status !== "skipped") continue;
+    events.push({
+      id: `step-${step.id}`,
+      type: step.status === "skipped" ? "step_skipped" : "step_done",
+      message: stepEventMessage(step.status, step.label),
+      detail: null,
+      actorUserId: step.completedBy,
+      actorName: step.completedByName || null,
+      createdAt: step.completedAt,
+      metadata: { stepId: step.id },
+    });
+  }
+  if (item?.status === "completed" && item.completedAt) {
+    events.push({
+      id: "completed",
+      type: "status_changed",
+      message: "Marked completed",
+      detail: null,
+      actorUserId: item.completedBy,
+      actorName: item.completedByName || null,
+      createdAt: item.completedAt,
+      metadata: { status: "completed" },
+    });
+  }
+  return events;
+}
+
+function mergeActionItemHistory(item, stored = []) {
+  const logged = Array.isArray(stored) ? stored.filter(Boolean) : [];
+  const hasCreated = logged.some((event) => event.type === "created");
+  const loggedStepIds = new Set(
+    logged
+      .map((event) => Number(event.metadata?.stepId))
+      .filter((id) => Number.isFinite(id) && id > 0)
+  );
+  const hasCompleted = logged.some(
+    (event) => event.type === "status_changed" && event.metadata?.status === "completed"
+  );
+
+  const extra = synthesizeActionItemHistory(item).filter((event) => {
+    if (event.type === "created") return !hasCreated;
+    if (event.type === "step_done" || event.type === "step_skipped") {
+      return !loggedStepIds.has(Number(event.metadata?.stepId));
+    }
+    if (event.id === "completed") return !hasCompleted;
+    return true;
+  });
+
+  return [...logged, ...extra].sort((a, b) => {
+    const byTime = String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+    if (byTime) return byTime;
+    return String(b.id).localeCompare(String(a.id), undefined, { numeric: true });
+  });
+}
+
 /** Tagged users always get assignment pings, including the person who created the reminder. */
 function notificationRecipientIds(userIds, { type, actorId } = {}) {
   const ids = uniqueIds(userIds);
@@ -123,6 +264,7 @@ function mapItem(row, extras = {}) {
     createdByName: row.created_by_name || null,
     completedAt: wallClock(row.completed_at),
     completedBy: row.completed_by != null ? Number(row.completed_by) : null,
+    completedByName: row.completed_by_name || null,
     notes: row.notes || "",
     stepCount,
     stepsDone,
@@ -145,6 +287,7 @@ const SELECT_SQL = `
          c.apartment_number,
          b.name AS building_name,
          creator.name AS created_by_name,
+         completer.name AS completed_by_name,
          (SELECT COUNT(*) FROM action_item_steps s WHERE s.action_item_id = ai.id) AS step_count,
          (SELECT COUNT(*) FROM action_item_steps s WHERE s.action_item_id = ai.id AND s.status = 'done') AS steps_done,
          (SELECT GROUP_CONCAT(u.name ORDER BY u.name SEPARATOR ', ')
@@ -156,6 +299,7 @@ const SELECT_SQL = `
     LEFT JOIN customers c ON c.id = ai.customer_id
     LEFT JOIN buildings b ON b.id = c.building_id
     LEFT JOIN admin_users creator ON creator.id = ai.created_by
+    LEFT JOIN admin_users completer ON completer.id = ai.completed_by
 `;
 
 async function listTypes() {
@@ -235,11 +379,55 @@ async function loadSteps(itemId) {
   return rows.map(mapStep);
 }
 
+async function recordEvent(itemId, { type, message, detail = null, metadata = {}, actor } = {}) {
+  const { actorId, actorName } = actorFields(actor);
+  try {
+    await query(
+      `INSERT INTO action_item_events
+         (action_item_id, event_type, message, detail, metadata, actor_user_id, actor_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        Number(itemId),
+        String(type || "updated").slice(0, 64),
+        String(message || "Updated this reminder").slice(0, 500),
+        detail ? String(detail) : null,
+        JSON.stringify(metadata || {}),
+        actorId,
+        actorName,
+      ]
+    );
+  } catch (err) {
+    console.warn("action item event log failed:", err?.message || err);
+  }
+}
+
+async function loadStoredEvents(itemId) {
+  try {
+    const rows = await query(
+      `SELECT id, event_type, message, detail, metadata, actor_user_id, actor_name, created_at
+         FROM action_item_events
+        WHERE action_item_id = ?
+        ORDER BY created_at DESC, id DESC`,
+      [Number(itemId)]
+    );
+    return rows.map(mapEvent);
+  } catch (err) {
+    console.warn("action item history load failed:", err?.message || err);
+    return [];
+  }
+}
+
 async function getById(id) {
   const rows = await query(`${SELECT_SQL} WHERE ai.id = ? LIMIT 1`, [Number(id)]);
   if (!rows[0]) return null;
-  const [steps, assignees] = await Promise.all([loadSteps(id), loadAssignees(id)]);
-  return mapItem(rows[0], { steps, assignees });
+  const [steps, assignees, storedEvents] = await Promise.all([
+    loadSteps(id),
+    loadAssignees(id),
+    loadStoredEvents(id),
+  ]);
+  const item = mapItem(rows[0], { steps, assignees });
+  item.history = mergeActionItemHistory(item, storedEvents);
+  return item;
 }
 
 async function listActionItems({
@@ -465,6 +653,13 @@ async function createActionItem(body, { actor } = {}) {
     conn.release();
   }
 
+  await recordEvent(itemId, {
+    type: "created",
+    message: "Created this reminder",
+    actor,
+    metadata: {},
+  });
+
   const item = await getById(itemId);
   const notifyCustomer = Boolean(item.customerId) && body.notifyCustomer === true;
 
@@ -505,12 +700,25 @@ async function createActionItem(body, { actor } = {}) {
   return item;
 }
 
+async function namesForIds(ids) {
+  const unique = uniqueIds(ids);
+  if (!unique.length) return [];
+  const rows = await query(
+    `SELECT id, name FROM admin_users WHERE id IN (${unique.map(() => "?").join(",")})`,
+    unique
+  );
+  const byId = new Map(rows.map((row) => [Number(row.id), row.name]));
+  return unique.map((id) => byId.get(id)).filter(Boolean);
+}
+
 async function replaceAssignees(itemId, userIds, { actor } = {}) {
   const item = await getById(itemId);
   if (!item) throw new Error("Reminder not found");
   const nextIds = await assertActiveUsers(userIds);
-  const previous = new Set((item.assignees || []).map((a) => a.id));
+  const previousAssignees = item.assignees || [];
+  const previous = new Set(previousAssignees.map((a) => a.id));
   const added = nextIds.filter((id) => !previous.has(id));
+  const removed = previousAssignees.filter((a) => !nextIds.includes(a.id));
 
   const pool = getPool();
   const conn = await pool.getConnection();
@@ -524,6 +732,29 @@ async function replaceAssignees(itemId, userIds, { actor } = {}) {
     throw err;
   } finally {
     conn.release();
+  }
+
+  if (added.length || removed.length) {
+    const addedNames = await namesForIds(added);
+    const removedNames = removed.map((a) => a.name).filter(Boolean);
+    let message = "Updated tagged users";
+    if (addedNames.length && !removedNames.length) {
+      message = `Tagged ${addedNames.join(", ")}`;
+    } else if (removedNames.length && !addedNames.length) {
+      message = `Removed ${removedNames.join(", ")}`;
+    }
+    const detailParts = [];
+    if (addedNames.length && removedNames.length) {
+      detailParts.push(`Added ${addedNames.join(", ")}`);
+      detailParts.push(`Removed ${removedNames.join(", ")}`);
+    }
+    await recordEvent(item.id, {
+      type: "assignees_updated",
+      message,
+      detail: detailParts.length ? detailParts.join(". ") : null,
+      actor,
+      metadata: { addedUserIds: added, removedUserIds: removed.map((a) => a.id) },
+    });
   }
 
   const updated = await getById(item.id);
@@ -552,29 +783,65 @@ async function updateActionItem(id, patch, { actor } = {}) {
 
   const updates = [];
   const params = [];
+  const historyEvents = [];
 
   if (patch.title != null) {
     const title = String(patch.title).trim();
     if (!title) throw new Error("Title is required");
-    updates.push("title = ?");
-    params.push(title.slice(0, 255));
+    if (title !== item.title) {
+      updates.push("title = ?");
+      params.push(title.slice(0, 255));
+      historyEvents.push({
+        type: "title_changed",
+        message: `Renamed to ${quoteLabel(title.slice(0, 200))}`,
+      });
+    }
   }
   if (patch.description !== undefined) {
-    updates.push("description = ?");
-    params.push(String(patch.description || "").trim() || null);
+    const description = String(patch.description || "").trim() || null;
+    if (description !== (item.description || null)) {
+      updates.push("description = ?");
+      params.push(description);
+      historyEvents.push({
+        type: "description_changed",
+        message: "Updated the description",
+        detail: truncateDetail(description),
+      });
+    }
   }
   if (patch.notes !== undefined) {
-    updates.push("notes = ?");
-    params.push(String(patch.notes || "").trim() || null);
+    const notes = String(patch.notes || "").trim() || null;
+    if ((notes || "") !== (item.notes || "")) {
+      updates.push("notes = ?");
+      params.push(notes);
+      historyEvents.push({
+        type: "notes_updated",
+        message: "Updated internal notes",
+        detail: truncateDetail(notes),
+      });
+    }
   }
   if (patch.dueDate !== undefined) {
-    updates.push("due_date = ?");
-    params.push(dateOnly(patch.dueDate));
+    const dueDate = dateOnly(patch.dueDate);
+    if (dueDate !== item.dueDate) {
+      updates.push("due_date = ?");
+      params.push(dueDate);
+      historyEvents.push({
+        type: "due_date_changed",
+        message: dueDate ? `Changed due date to ${formatDueDisplay(dueDate)}` : "Cleared the due date",
+      });
+    }
   }
   if (patch.priority != null) {
     if (!VALID_PRIORITIES.has(patch.priority)) throw new Error("Invalid priority");
-    updates.push("priority = ?");
-    params.push(patch.priority);
+    if (patch.priority !== item.priority) {
+      updates.push("priority = ?");
+      params.push(patch.priority);
+      historyEvents.push({
+        type: "priority_changed",
+        message: `Changed priority to ${patch.priority}`,
+      });
+    }
   }
 
   let statusChanged = false;
@@ -582,16 +849,26 @@ async function updateActionItem(id, patch, { actor } = {}) {
   if (patch.status != null) {
     if (!VALID_STATUSES.has(patch.status)) throw new Error("Invalid status");
     nextStatus = patch.status;
-    updates.push("status = ?");
-    params.push(patch.status);
     statusChanged = patch.status !== item.status;
-    if (patch.status === "completed") {
-      updates.push("completed_at = COALESCE(completed_at, NOW())");
-      updates.push("completed_by = COALESCE(completed_by, ?)");
-      params.push(actor?.id != null ? Number(actor.id) : null);
-    } else if (item.status === "completed" && patch.status !== "completed") {
-      updates.push("completed_at = NULL");
-      updates.push("completed_by = NULL");
+    if (statusChanged && patch.status === "completed") {
+      assertCanComplete(item);
+    }
+    if (statusChanged) {
+      updates.push("status = ?");
+      params.push(patch.status);
+      historyEvents.push({
+        type: "status_changed",
+        message: `Marked ${statusPhrase(patch.status)}`,
+        metadata: { status: patch.status },
+      });
+      if (patch.status === "completed") {
+        updates.push("completed_at = COALESCE(completed_at, NOW())");
+        updates.push("completed_by = COALESCE(completed_by, ?)");
+        params.push(actor?.id != null ? Number(actor.id) : null);
+      } else if (item.status === "completed") {
+        updates.push("completed_at = NULL");
+        updates.push("completed_by = NULL");
+      }
     }
   }
 
@@ -602,6 +879,9 @@ async function updateActionItem(id, patch, { actor } = {}) {
   if (updates.length) {
     params.push(item.id);
     await query(`UPDATE action_items SET ${updates.join(", ")} WHERE id = ?`, params);
+    for (const event of historyEvents) {
+      await recordEvent(item.id, { ...event, actor });
+    }
   }
 
   let updated = await getById(item.id);
@@ -675,6 +955,17 @@ async function updateStep(itemId, stepId, patch, { actor } = {}) {
     params
   );
 
+  if (patch.status != null && patch.status !== step.status) {
+    const eventType =
+      patch.status === "done" ? "step_done" : patch.status === "skipped" ? "step_skipped" : "step_undone";
+    await recordEvent(itemId, {
+      type: eventType,
+      message: stepEventMessage(patch.status, step.label),
+      actor,
+      metadata: { stepId: step.id, status: patch.status },
+    });
+  }
+
   const steps = await loadSteps(itemId);
   const allDone = steps.length > 0 && steps.every((s) => s.status === "done" || s.status === "skipped");
   const anyStarted = steps.some((s) => s.status !== "pending");
@@ -684,6 +975,12 @@ async function updateStep(itemId, stepId, patch, { actor } = {}) {
       await updateActionItem(itemId, { status: "completed" }, { actor });
     } else if (anyStarted && item.status === "open") {
       await query(`UPDATE action_items SET status = 'in_progress' WHERE id = ?`, [itemId]);
+      await recordEvent(itemId, {
+        type: "status_changed",
+        message: "Marked in progress",
+        actor,
+        metadata: { status: "in_progress" },
+      });
     }
   }
 
@@ -708,6 +1005,12 @@ async function addStep(itemId, { label, description } = {}, { actor } = {}) {
       maxOrder + 10,
     ]
   );
+  await recordEvent(item.id, {
+    type: "step_added",
+    message: `Added checklist item ${quoteLabel(text)}`,
+    actor,
+    metadata: {},
+  });
   emitAdminUpdate("action_items", { action: "step_added", id: item.id });
   return getById(item.id);
 }
@@ -777,4 +1080,8 @@ module.exports = {
   addStep,
   formatDueDisplay,
   notificationRecipientIds,
+  mergeActionItemHistory,
+  synthesizeActionItemHistory,
+  pendingChecklistCount,
+  assertCanComplete,
 };

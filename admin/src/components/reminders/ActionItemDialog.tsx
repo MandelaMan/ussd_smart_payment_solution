@@ -13,7 +13,9 @@ import {
 import { Link as RouterLink } from "react-router-dom";
 import {
   api,
+  formatDate,
   type ActionItem,
+  type ActionItemEvent,
   type ActionItemStep,
 } from "../../lib/api";
 import { AppDialog } from "../ui/AppDialog";
@@ -53,6 +55,63 @@ function statusLabel(status: string) {
   return status.replace(/_/g, " ");
 }
 
+function actorLine(name: string | null | undefined, at: string | null | undefined) {
+  return [name || null, at ? formatDate(at) : null].filter(Boolean).join(" · ");
+}
+
+function stepAttribution(step: ActionItemStep) {
+  if (step.status !== "done" && step.status !== "skipped") return "";
+  return actorLine(step.completedByName, step.completedAt);
+}
+
+function pendingChecklistCount(item: ActionItem) {
+  return (item.steps || []).filter((step) => step.status === "pending").length;
+}
+
+function ActionItemActivity({ history }: { history: ActionItemEvent[] }) {
+  return (
+    <Box pt={3} borderTopWidth="1px" borderColor="border">
+      <Text fontSize="sm" fontWeight="medium" mb={1.5}>
+        Activity
+      </Text>
+      {history.length === 0 ? (
+        <Text fontSize="xs" color="fg.muted">
+          No updates recorded yet
+        </Text>
+      ) : (
+        <Stack gap={0} maxH="240px" overflowY="auto">
+          {history.map((event) => {
+            const whoWhen = actorLine(event.actorName, event.createdAt);
+            return (
+              <Box
+                key={String(event.id)}
+                py={1.5}
+                borderBottomWidth="1px"
+                borderColor="border.muted"
+                _last={{ borderBottomWidth: 0 }}
+              >
+                <Text fontSize="sm" lineHeight="1.35">
+                  {event.message}
+                </Text>
+                {event.detail ? (
+                  <Text fontSize="xs" color="fg.muted" lineHeight="1.35" whiteSpace="pre-wrap">
+                    {event.detail}
+                  </Text>
+                ) : null}
+                {whoWhen ? (
+                  <Text fontSize="xs" color="fg.muted" mt={0.5}>
+                    {whoWhen}
+                  </Text>
+                ) : null}
+              </Box>
+            );
+          })}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
 type Props = {
   itemId: number | null;
   onClose: () => void;
@@ -70,6 +129,7 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
   const [newStep, setNewStep] = useState("");
   const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
   const [allUsers, setAllUsers] = useState<{ id: number; name: string; email: string }[]>([]);
+  const pendingSteps = item ? pendingChecklistCount(item) : 0;
 
   useEffect(() => {
     if (!itemId) {
@@ -216,6 +276,12 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
                   {item.typeName}
                   {item.dueDisplay ? ` · due ${item.dueDisplay}` : ""}
                 </Text>
+                {item.createdByName || item.createdAt ? (
+                  <Text fontSize="xs" color="fg.muted" mt={0.5}>
+                    Created{item.createdByName ? ` by ${item.createdByName}` : ""}
+                    {item.createdAt ? ` · ${formatDate(item.createdAt)}` : ""}
+                  </Text>
+                ) : null}
               </Box>
               <Flex gap={1} flexShrink={0}>
                 <Badge colorPalette={statusPalette(item.status)}>{statusLabel(item.status)}</Badge>
@@ -245,25 +311,37 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
               Checklist ({item.stepsDone}/{item.stepCount || item.steps?.length || 0})
             </Text>
             <Stack gap={1} mb={3}>
-              {(item.steps || []).map((step) => (
-                <Flex key={step.id} align="center" gap={2} minH="28px">
-                  <RowCheckbox
-                    checked={step.status === "done"}
-                    disabled={!canEdit || saving}
-                    onChange={() => void toggleStep(step)}
-                    aria-label={step.label}
-                  />
-                  <Text
-                    fontSize="sm"
-                    lineHeight="1.3"
-                    title={step.description || undefined}
-                    textDecoration={step.status === "done" ? "line-through" : undefined}
-                    color={step.status === "skipped" || step.status === "done" ? "fg.muted" : "fg"}
-                  >
-                    {step.label}
-                  </Text>
-                </Flex>
-              ))}
+              {(item.steps || []).map((step) => {
+                const attribution = stepAttribution(step);
+                return (
+                  <Flex key={step.id} align="flex-start" gap={2} minH="28px">
+                    <Box pt="2px">
+                      <RowCheckbox
+                        checked={step.status === "done"}
+                        disabled={!canEdit || saving}
+                        onChange={() => void toggleStep(step)}
+                        aria-label={step.label}
+                      />
+                    </Box>
+                    <Box minW={0}>
+                      <Text
+                        fontSize="sm"
+                        lineHeight="1.3"
+                        title={step.description || undefined}
+                        textDecoration={step.status === "done" ? "line-through" : undefined}
+                        color={step.status === "skipped" || step.status === "done" ? "fg.muted" : "fg"}
+                      >
+                        {step.label}
+                      </Text>
+                      {attribution ? (
+                        <Text fontSize="xs" color="fg.muted" lineHeight="1.3">
+                          {attribution}
+                        </Text>
+                      ) : null}
+                    </Box>
+                  </Flex>
+                );
+              })}
             </Stack>
 
             {canEdit ? (
@@ -357,24 +435,44 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
             ) : null}
 
             {canEdit ? (
-              <Flex gap={2} wrap="wrap">
-                {item.status !== "in_progress" && item.status !== "completed" ? (
-                  <Button size="sm" variant="outline" loading={saving} onClick={() => void setStatus("in_progress")}>
-                    Start
-                  </Button>
+              <Box mb={4}>
+                <Flex gap={2} wrap="wrap">
+                  {item.status !== "in_progress" && item.status !== "completed" ? (
+                    <Button size="sm" variant="outline" loading={saving} onClick={() => void setStatus("in_progress")}>
+                      Start
+                    </Button>
+                  ) : null}
+                  {item.status !== "completed" ? (
+                    <Button
+                      size="sm"
+                      colorPalette="brand"
+                      loading={saving}
+                      disabled={pendingSteps > 0}
+                      title={
+                        pendingSteps > 0
+                          ? "Finish the checklist before marking this complete"
+                          : undefined
+                      }
+                      onClick={() => void setStatus("completed")}
+                    >
+                      Complete
+                    </Button>
+                  ) : null}
+                  {item.status !== "cancelled" && item.status !== "completed" ? (
+                    <Button size="sm" variant="ghost" loading={saving} onClick={() => void setStatus("cancelled")}>
+                      Cancel reminder
+                    </Button>
+                  ) : null}
+                </Flex>
+                {item.status !== "completed" && pendingSteps > 0 ? (
+                  <Text fontSize="xs" color="fg.muted" mt={1.5}>
+                    Finish the checklist to mark this complete.
+                  </Text>
                 ) : null}
-                {item.status !== "completed" ? (
-                  <Button size="sm" colorPalette="brand" loading={saving} onClick={() => void setStatus("completed")}>
-                    Complete
-                  </Button>
-                ) : null}
-                {item.status !== "cancelled" && item.status !== "completed" ? (
-                  <Button size="sm" variant="ghost" loading={saving} onClick={() => void setStatus("cancelled")}>
-                    Cancel reminder
-                  </Button>
-                ) : null}
-              </Flex>
+              </Box>
             ) : null}
+
+            <ActionItemActivity history={item.history || []} />
           </>
         ) : null}
       </Box>

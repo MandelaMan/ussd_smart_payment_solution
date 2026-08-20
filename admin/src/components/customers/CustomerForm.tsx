@@ -34,8 +34,14 @@ import {
   getBuildingIpRules,
   validateIpForBuilding,
 } from "../../lib/buildingIpRules";
-import { buildingToBillingAddress } from "../../lib/buildingBillingAddress";
-import { buildCustomerNumberPreview } from "../../lib/customerNumber";
+import {
+  buildingToBillingAddress,
+  ZOHO_BILLING_FIELD_MAX,
+} from "../../lib/buildingBillingAddress";
+import {
+  buildCustomerNumberPreview,
+  shopLocationCode,
+} from "../../lib/customerNumber";
 import { isShopPremise, type PremiseType } from "../../lib/premise";
 import { shouldUseAgencyContactForSkynestPlaceholder } from "../../lib/b2bAgencyContact";
 import { embeddedFieldInputStyles } from "../../theme";
@@ -231,7 +237,6 @@ export function CustomerForm({
   const [apartmentNumber, setApartmentNumber] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [shopLocation, setShopLocation] = useState("");
-  const [shopUnitCode, setShopUnitCode] = useState("");
   const [paymentFrequency, setPaymentFrequency] = useState("monthly");
   const [customPeriodDays, setCustomPeriodDays] = useState("");
   const [buildingId, setBuildingId] = useState("");
@@ -725,9 +730,17 @@ export function CustomerForm({
       .finally(() => setPackagesLoading(false));
   }, [buildingId, paymentFrequency, categoryId, planId, isEdit, isLeadConvert, canEditPackage]);
 
+  const shopUnitForNumber = shopLocationCode(shopLocation);
+  const unitCodeForPreview =
+    premiseType === "shop"
+      ? isEdit
+        ? apartmentNumber
+        : shopUnitForNumber
+      : apartmentNumber;
+
   useEffect(() => {
-    const apt = apartmentNumber.trim();
-    if (premiseType === "shop" || !buildingId || !apt) {
+    const unit = unitCodeForPreview.trim();
+    if (!buildingId || !unit) {
       setOccupancy(null);
       return;
     }
@@ -737,7 +750,7 @@ export function CustomerForm({
       api
         .checkApartmentOccupancy(
           Number(buildingId),
-          apt,
+          unit,
           isEdit ? customer?.id : undefined
         )
         .then(setOccupancy)
@@ -746,47 +759,23 @@ export function CustomerForm({
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [buildingId, apartmentNumber, isEdit, customer?.id, premiseType]);
+  }, [buildingId, unitCodeForPreview, isEdit, customer?.id]);
 
   const selectedBuilding = buildings.find((b) => String(b.id) === buildingId);
   const ipRules = getBuildingIpRules(selectedBuilding);
   const needsIp = ipRules?.ipSetup === "STATIC";
   const isPpoe = selectedBuilding?.ipSetup === "PPOE";
-  const unitCodeForPreview =
-    premiseType === "shop"
-      ? isEdit
-        ? apartmentNumber
-        : shopUnitCode
-      : apartmentNumber;
 
   const previewCustomerNumber = useMemo(
     () =>
       buildCustomerNumberPreview(
         selectedBuilding,
         customerType,
-        unitCodeForPreview
+        unitCodeForPreview,
+        premiseType
       ),
-    [selectedBuilding, unitCodeForPreview, customerType]
+    [selectedBuilding, unitCodeForPreview, customerType, premiseType]
   );
-
-  useEffect(() => {
-    if (isEdit || premiseType !== "shop" || !buildingId) {
-      if (premiseType !== "shop") setShopUnitCode("");
-      return;
-    }
-    let cancelled = false;
-    api
-      .previewShopCustomerNumber(Number(buildingId), customerType)
-      .then((res) => {
-        if (!cancelled) setShopUnitCode(res.unitCode);
-      })
-      .catch(() => {
-        if (!cancelled) setShopUnitCode("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isEdit, premiseType, buildingId, customerType]);
 
   useEffect(() => {
     if (!selectedBuilding) {
@@ -881,7 +870,8 @@ export function CustomerForm({
   const previewCode = buildCustomerNumberPreview(
     buildings.find((x) => String(x.id) === buildingId),
     customerType,
-    unitCodeForPreview
+    unitCodeForPreview,
+    premiseType
   );
 
   const previewIpResult = validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
@@ -1324,7 +1314,10 @@ export function CustomerForm({
       occupancy.tenant
     ) {
       toaster.create({
-        title: "Apartment already occupied",
+        title:
+          premiseType === "shop"
+            ? "Shop location already occupied"
+            : "Apartment already occupied",
         description: `${occupancy.tenant.customerName} (${occupancy.tenant.customerNumber}) is the current tenant.`,
         type: "error",
       });
@@ -1338,6 +1331,13 @@ export function CustomerForm({
       if (!shopLocation.trim()) {
         toaster.create({
           title: "Enter the shop location in this building",
+          type: "error",
+        });
+        return false;
+      }
+      if (!shopUnitForNumber) {
+        toaster.create({
+          title: "Shop location must include letters or numbers",
           type: "error",
         });
         return false;
@@ -1897,7 +1897,7 @@ export function CustomerForm({
           title="Location"
           description={
             premiseType === "shop"
-              ? "Shops sit under the same building and POP as apartments. The customer number is assigned automatically."
+              ? "Shops sit under the same building and POP as apartments. Customer number is POP-BUILDING-SHP plus the location without spaces."
               : undefined
           }
           sideBySide
@@ -1924,7 +1924,6 @@ export function CustomerForm({
                     } else {
                       setBusinessName("");
                       setShopLocation("");
-                      setShopUnitCode("");
                     }
                   },
                 }}
@@ -1973,9 +1972,39 @@ export function CustomerForm({
                   w="full"
                   value={shopLocation}
                   onChange={(e) => setShopLocation(e.target.value)}
-                  placeholder="e.g. Ground floor, shop 3"
+                  placeholder="e.g. S18"
                   disabled={fieldsDisabled}
                 />
+                {!isEdit ? (
+                  <Field.HelperText>
+                    Spaces are dropped in the customer number
+                    {shopUnitForNumber ? ` (…-SHP-${shopUnitForNumber})` : ""}.
+                  </Field.HelperText>
+                ) : null}
+                {!isEdit &&
+                occupancyChecking &&
+                shopUnitForNumber &&
+                buildingId ? (
+                  <Text fontSize="xs" color="fg.muted" mt={1}>
+                    Checking location availability…
+                  </Text>
+                ) : !isEdit &&
+                  occupancy &&
+                  !occupancy.available &&
+                  occupancy.tenant ? (
+                  <Text fontSize="xs" color="red.600" mt={1}>
+                    {occupancy.tenant.apartmentNumber} already has an active
+                    tenant: {occupancy.tenant.customerName} (
+                    {occupancy.tenant.customerNumber})
+                  </Text>
+                ) : !isEdit &&
+                  occupancy?.available &&
+                  shopUnitForNumber &&
+                  buildingId ? (
+                  <Text fontSize="xs" color="green.700" mt={1}>
+                    Location is available
+                  </Text>
+                ) : null}
               </Field.Root>
               {isEdit ? (
                 <Field.Root w="full">
@@ -2729,6 +2758,7 @@ export function CustomerForm({
               placeholder="Billing contact name"
               disabled={fieldsDisabled}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.attention}
             />
           </Field.Root>
           <Field.Root>
@@ -2739,7 +2769,11 @@ export function CustomerForm({
               placeholder="Street / building"
               disabled={fieldsDisabled}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.address}
             />
+            <Field.HelperText>
+              Zoho Books limit: {ZOHO_BILLING_FIELD_MAX.address} characters.
+            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Street 2</Field.Label>
@@ -2749,6 +2783,7 @@ export function CustomerForm({
               placeholder="Apartment, suite, PO Box"
               disabled={fieldsDisabled}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.street2}
             />
           </Field.Root>
           <Field.Root>
@@ -2759,6 +2794,7 @@ export function CustomerForm({
               placeholder="Nairobi"
               disabled={fieldsDisabled}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.city}
             />
           </Field.Root>
           <Field.Root>
@@ -2769,6 +2805,7 @@ export function CustomerForm({
               placeholder="Nairobi"
               disabled={fieldsDisabled}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.state}
             />
           </Field.Root>
           <Field.Root>
@@ -2779,6 +2816,7 @@ export function CustomerForm({
               placeholder="00100"
               disabled={fieldsDisabled}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.zip}
             />
           </Field.Root>
           <Field.Root>
@@ -2789,6 +2827,7 @@ export function CustomerForm({
               placeholder="Kenya"
               disabled={fieldsDisabled}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.country}
             />
           </Field.Root>
         </FormSection>

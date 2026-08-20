@@ -507,14 +507,11 @@ const createRecurringInvoice_JS = async ({
   is_inclusive_tax,
   payment_terms,
   payment_terms_label,
-  billing_address,
-  customer,
 }) => {
   if (!customer_id || !line_items?.length) return null;
-  const { buildZohoBillingAddress } = require("../utils/zohoBillingAddress");
-  const resolvedBilling =
-    billing_address ||
-    (customer ? buildZohoBillingAddress(customer) : null);
+  // Do not send inline billing_address. Zoho Books treats that field as a
+  // 100-character string on invoice/recurring create (code 15). The contact
+  // already holds the structured address; new profiles inherit it.
 
   const payload = {
     customer_id,
@@ -533,9 +530,6 @@ const createRecurringInvoice_JS = async ({
   }
   if (payment_terms_label) {
     payload.payment_terms_label = String(payment_terms_label);
-  }
-  if (resolvedBilling) {
-    payload.billing_address = resolvedBilling;
   }
 
   const createResult = await withTimeout(
@@ -1359,8 +1353,6 @@ const createInvoice_JS = async ({
   due_date,
   payment_terms,
   payment_terms_label,
-  billing_address,
-  customer,
   notes,
 }) => {
   try {
@@ -1368,10 +1360,9 @@ const createInvoice_JS = async ({
       return null;
     }
 
-    const { buildZohoBillingAddress } = require("../utils/zohoBillingAddress");
-    const resolvedBilling =
-      billing_address ||
-      (customer ? buildZohoBillingAddress(customer) : null);
+    // Do not send inline billing_address. Zoho Books treats that field as a
+    // 100-character string on invoice create (code 15). Invoices inherit the
+    // contact's structured billing address instead.
 
     const invoiceData = {
       customer_id,
@@ -1405,9 +1396,6 @@ const createInvoice_JS = async ({
       if (is_discount_before_tax != null) {
         invoiceData.is_discount_before_tax = Boolean(is_discount_before_tax);
       }
-    }
-    if (resolvedBilling) {
-      invoiceData.billing_address = resolvedBilling;
     }
 
     const extraParams = invoice_number

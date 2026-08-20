@@ -1893,6 +1893,16 @@ export type ActionItemStep = {
   notes: string | null;
 };
 
+export type ActionItemEvent = {
+  id: number | string;
+  type: string;
+  message: string;
+  detail: string | null;
+  actorUserId: number | null;
+  actorName: string | null;
+  createdAt: string | null;
+};
+
 export type ActionItem = {
   id: number;
   typeId: number;
@@ -1913,6 +1923,7 @@ export type ActionItem = {
   createdByName: string | null;
   completedAt: string | null;
   completedBy: number | null;
+  completedByName: string | null;
   notes: string;
   stepCount: number;
   stepsDone: number;
@@ -1921,6 +1932,7 @@ export type ActionItem = {
   updatedAt: string | null;
   steps?: ActionItemStep[];
   assignees?: ActionAssignee[];
+  history?: ActionItemEvent[];
 };
 
 export type UserNotification = {
@@ -3142,11 +3154,16 @@ export const api = {
     );
   },
 
-  previewShopCustomerNumber: (buildingId: number, customerType: "C2B" | "B2B") =>
+  previewShopCustomerNumber: (
+    buildingId: number,
+    customerType: "C2B" | "B2B",
+    shopLocation?: string
+  ) =>
     request<{ unitCode: string; customerNumber: string }>(
       `/admin/customers/shop-number-preview${buildQueryString({
         buildingId: String(buildingId),
         customerType,
+        ...(shopLocation ? { shopLocation } : {}),
       })}`
     ),
 

@@ -10,7 +10,7 @@ const {
   pickUniquePaybillCustomer,
   isValidPaybillAccountRef,
   normalizePremiseType,
-  nextShopUnitCode,
+  shopLocationCode,
 } = require("../../api/utils/customerNumber");
 
 describe("customer numbering (signup / move / convert / cancel)", () => {
@@ -68,11 +68,27 @@ describe("customer numbering (signup / move / convert / cancel)", () => {
     assert.equal(buildCustomerNumber(singleBuilding, "C2B", "h302"), "ET-H302");
   });
 
-  it("builds POP-SHOP unit for a shop the same way as an apartment", () => {
-    assert.equal(buildCustomerNumber(singleBuilding, "C2B", "SH01"), "ET-SH01");
+  it("builds POP-SHP-LOCATION for a shop", () => {
     assert.equal(
-      buildCustomerNumber(multiBuilding, "B2B", "SH02"),
-      "AZEB-TGA-SH02"
+      buildCustomerNumber(singleBuilding, "C2B", "s 18", "shop"),
+      "ET-SHP-S18"
+    );
+    assert.equal(
+      buildCustomerNumber(multiBuilding, "C2B", "s18", "shop"),
+      "AZE-TGA-SHP-S18"
+    );
+    assert.equal(
+      buildCustomerNumber(multiBuilding, "B2B", "s18", "shop"),
+      "AZEB-TGA-SHP-S18"
+    );
+  });
+
+  it("strips spaces from shop location in the customer number", () => {
+    assert.equal(shopLocationCode("s 18"), "S18");
+    assert.equal(shopLocationCode("Ground floor, shop 3"), "GROUNDFLOORSHOP3");
+    assert.equal(
+      buildCustomerNumber(multiBuilding, "C2B", "Ground floor shop 3", "shop"),
+      "AZE-TGA-SHP-GROUNDFLOORSHOP3"
     );
   });
 
@@ -83,10 +99,15 @@ describe("customer numbering (signup / move / convert / cancel)", () => {
     assert.equal(normalizePremiseType(""), "apartment");
   });
 
-  it("allocates the next unused shop unit code", () => {
-    assert.equal(nextShopUnitCode([]), "SH01");
-    assert.equal(nextShopUnitCode(["401A", "SH01", "sh02"]), "SH03");
-    assert.equal(nextShopUnitCode(["SH01", "SH03"]), "SH02");
+  it("alternate type number keeps the SHP segment for shops", () => {
+    assert.equal(
+      alternateTypeCustomerNumber(multiBuilding, "C2B", "S18", "shop"),
+      "AZEB-TGA-SHP-S18"
+    );
+    assert.equal(
+      alternateTypeCustomerNumber(multiBuilding, "B2B", "S18", "shop"),
+      "AZE-TGA-SHP-S18"
+    );
   });
 
   it("strips CXL archive suffix to live number", () => {
@@ -118,6 +139,8 @@ describe("paybill BillRefNumber validation", () => {
       "AZEB-TGA-401A",
       "CL-A10",
       "CLB-A10",
+      "AZE-TGA-SHP-S18",
+      "ET-SHP-S18",
     ]) {
       assert.equal(isValidPaybillAccountRef(ref), true, ref);
     }

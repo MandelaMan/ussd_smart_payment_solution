@@ -53,7 +53,8 @@ function alternateNumberForCustomer(customer) {
       building_code: customer.buildingCode || customer.building_code,
     },
     customer.customerType || customer.customer_type,
-    customer.apartmentNumber || customer.apartment_number
+    customer.apartmentNumber || customer.apartment_number,
+    customer.premiseType || customer.premise_type
   );
 }
 

@@ -1316,7 +1316,8 @@ function alternateTypeAccountNumber(ctx) {
   const alt = alternateTypeCustomerNumber(
     buildingFromTispCtx(ctx),
     ctx?.customer_type ?? ctx?.customerType,
-    apartment
+    apartment,
+    ctx?.premise_type ?? ctx?.premiseType
   );
   return alt && alt !== current ? alt : null;
 }
@@ -2689,7 +2690,8 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
         recurring,
       };
     } catch (e) {
-      const message = e.message || "Zoho sync failed";
+      const message =
+        e.response?.data?.message || e.message || "Zoho sync failed";
       try {
         await store.updateCustomerZohoBillingStatus(
           customerId,
@@ -2723,7 +2725,10 @@ async function runZohoSyncForCustomer(customerId, options = {}) {
     const result = await pushCustomerToZoho(ctx, options);
     return { ok: true, ...result };
   } catch (e) {
-    return { ok: false, error: e.message || "Zoho sync failed" };
+    return {
+      ok: false,
+      error: e.response?.data?.message || e.message || "Zoho sync failed",
+    };
   }
 }
 
@@ -7146,11 +7151,17 @@ async function previewShopCustomerNumber(req, res, next) {
     if (!building) {
       return res.status(404).json({ error: "Building not found" });
     }
-    const { buildCustomerNumber } = require("../utils/customerNumber");
-    const unitCode = await store.nextShopUnitCodeForBuilding(buildingId);
+    const { buildCustomerNumber, shopLocationCode } = require("../utils/customerNumber");
+    const shopLocation = String(req.query.shopLocation || "").trim();
+    const unitCode = shopLocationCode(shopLocation);
     return res.json({
       unitCode,
-      customerNumber: buildCustomerNumber(building, customerType, unitCode),
+      customerNumber: buildCustomerNumber(
+        building,
+        customerType,
+        unitCode,
+        "shop"
+      ),
     });
   } catch (err) {
     return next(err);

@@ -15,7 +15,7 @@ const {
   paybillRefTokens,
   pickUniquePaybillCustomer,
   normalizePremiseType,
-  nextShopUnitCode,
+  shopLocationCode,
 } = require("../utils/customerNumber");
 
 /** Keep sync error columns short — TISP often returns full HTML error pages. */
@@ -2412,16 +2412,6 @@ async function validateAndNormalizeCustomerPhone(data, { existingCustomer = null
   throw new Error("Phone is required");
 }
 
-async function nextShopUnitCodeForBuilding(buildingId) {
-  const rows = await query(
-    `SELECT apartment_number
-     FROM customers
-     WHERE building_id = ? AND status = 'active'`,
-    [buildingId]
-  );
-  return nextShopUnitCode(rows.map((row) => row.apartment_number));
-}
-
 async function createCustomer(data) {
   const building = await getBuildingById(data.buildingId);
   if (!building) throw new Error("Building not found");
@@ -2473,8 +2463,11 @@ async function createCustomer(data) {
   let apartmentNumber = String(data.apartmentNumber || "")
     .trim()
     .toUpperCase();
-  if (premiseType === "shop" && !apartmentNumber) {
-    apartmentNumber = await nextShopUnitCodeForBuilding(building.id);
+  if (premiseType === "shop") {
+    apartmentNumber = shopLocationCode(shopLocation);
+    if (!apartmentNumber) {
+      throw new Error("Shop location must include letters or numbers");
+    }
   }
   if (!apartmentNumber) {
     throw new Error(
@@ -2488,7 +2481,8 @@ async function createCustomer(data) {
   const customerNumber = buildCustomerNumber(
     building,
     data.customerType,
-    apartmentNumber
+    apartmentNumber,
+    premiseType
   );
 
   const dstvDecoderSerial = normalizeDstvDecoderSerial(data.dstvDecoderSerial);
@@ -2949,7 +2943,8 @@ async function switchCustomerApartment(
   const newCustomerNumber = buildCustomerNumber(
     building,
     customer.customer_type,
-    newApartment
+    newApartment,
+    customer.premise_type
   );
   const previousCustomerNumber = customer.customer_number;
 
@@ -3793,7 +3788,8 @@ async function convertCustomerType(customerId, targetType, agencyId = null) {
   const newCustomerNumber = buildCustomerNumber(
     building,
     nextType,
-    customer.apartment_number
+    customer.apartment_number,
+    customer.premise_type
   );
 
   await releaseCancelledIdentityForReuse({
@@ -4345,10 +4341,17 @@ async function importCustomerFromRow(row, batchSeen) {
   }
 
   const apartmentNumber = isShop
-    ? String(row.apartment_number || "").trim().toUpperCase() ||
-      (await nextShopUnitCodeForBuilding(building.id))
+    ? shopLocationCode(row.shop_location)
     : String(row.apartment_number).trim().toUpperCase();
-  const customerNumber = buildCustomerNumber(building, customerType, apartmentNumber);
+  if (isShop && !apartmentNumber) {
+    throw new Error("Shop location must include letters or numbers");
+  }
+  const customerNumber = buildCustomerNumber(
+    building,
+    customerType,
+    apartmentNumber,
+    premiseType
+  );
 
   const ipCheck = validateIpForBuilding(building, ipAddress);
   if (!ipCheck.ok) {
@@ -4760,7 +4763,6 @@ module.exports = {
   reconcileZohoBillingStatus,
   allocateZohoInvoiceSequence,
   recordSignupInvoiceDelivery,
-  nextShopUnitCodeForBuilding,
   createCustomer,
   changeCustomerProduct,
   updateCustomerBillingCycle,

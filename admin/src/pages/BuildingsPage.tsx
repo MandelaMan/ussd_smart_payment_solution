@@ -27,7 +27,7 @@ import { useAuth } from "../lib/authContext";
 import { canMutateConfig, hasPermission } from "../lib/rbac";
 import { toaster } from "../components/ui/toaster";
 import { cacheKeyFromParams } from "../lib/moduleDataCache";
-import { getCachedPops, invalidateSharedLookups } from "../lib/sharedLookups";
+import { ZOHO_BILLING_FIELD_MAX } from "../lib/buildingBillingAddress";
 import {
   beginListLoad,
   endListLoad,
@@ -876,6 +876,7 @@ function BuildingForm({
               value={addressAttention}
               onChange={(e) => setAddressAttention(e.target.value)}
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.attention}
             />
           </Field.Root>
           <Field.Root>
@@ -884,6 +885,7 @@ function BuildingForm({
               value={addressPoBox}
               onChange={(e) => setAddressPoBox(e.target.value)}
               autoComplete="off"
+              maxLength={64}
             />
           </Field.Root>
           <Box gridColumn={{ md: "span 2" }}>
@@ -893,7 +895,11 @@ function BuildingForm({
                 value={addressStreet}
                 onChange={(e) => setAddressStreet(e.target.value)}
                 autoComplete="off"
+                maxLength={ZOHO_BILLING_FIELD_MAX.address}
               />
+              <Field.HelperText>
+                Zoho Books limit: {ZOHO_BILLING_FIELD_MAX.address} characters.
+              </Field.HelperText>
             </Field.Root>
           </Box>
           <Box gridColumn={{ md: "span 2" }}>
@@ -903,6 +909,7 @@ function BuildingForm({
                 value={addressStreet2}
                 onChange={(e) => setAddressStreet2(e.target.value)}
                 autoComplete="off"
+                maxLength={ZOHO_BILLING_FIELD_MAX.street2}
               />
             </Field.Root>
           </Box>
@@ -913,6 +920,7 @@ function BuildingForm({
               onChange={(e) => setAddressCity(e.target.value)}
               placeholder="Nairobi"
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.city}
             />
           </Field.Root>
           <Field.Root>
@@ -922,6 +930,7 @@ function BuildingForm({
               onChange={(e) => setAddressState(e.target.value)}
               placeholder="Nairobi"
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.state}
             />
           </Field.Root>
           <Field.Root>
@@ -931,6 +940,7 @@ function BuildingForm({
               onChange={(e) => setAddressZip(e.target.value)}
               placeholder="00100"
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.zip}
             />
           </Field.Root>
           <Field.Root>
@@ -940,6 +950,7 @@ function BuildingForm({
               onChange={(e) => setAddressCountry(e.target.value)}
               placeholder="Kenya"
               autoComplete="off"
+              maxLength={ZOHO_BILLING_FIELD_MAX.country}
             />
           </Field.Root>
         </Grid>

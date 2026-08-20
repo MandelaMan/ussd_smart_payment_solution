@@ -3,6 +3,9 @@
  * Kept free of DB so process-flow tests can cover numbering without MySQL.
  */
 
+const SHOP_NUMBER_SEGMENT = "SHP";
+const SHOP_LOCATION_CODE_MAX = 20;
+
 function normalizePremiseType(value) {
   return String(value || "")
     .trim()
@@ -12,30 +15,27 @@ function normalizePremiseType(value) {
 }
 
 /**
- * Next unused shop unit code in a building: SH01, SH02, … SH99, SH100.
- * `existingUnitCodes` should be every live unit in that building so shops
- * never collide with an apartment already named SH01.
+ * Shop unit segment from "Location in building": uppercase, no spaces
+ * or other punctuation (e.g. "s 18" → S18).
  */
-function nextShopUnitCode(existingUnitCodes) {
-  const used = new Set(
-    (Array.isArray(existingUnitCodes) ? existingUnitCodes : [])
-      .map((code) => String(code || "").trim().toUpperCase())
-      .filter(Boolean)
-  );
-  for (let i = 1; i <= 9999; i++) {
-    const code = `SH${String(i).padStart(2, "0")}`;
-    if (!used.has(code)) return code;
-  }
-  throw new Error("No shop unit codes remaining in this building");
+function shopLocationCode(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, SHOP_LOCATION_CODE_MAX);
 }
 
 /**
- * Match server buildCustomerNumber: POP[-BUILDING]-APT
- * Multi-building POPs: POP-BUILDING-APT (e.g. AZE-TGA-401A).
- * Single-building POPs leave building_code empty → POP-APT (e.g. ET-401A).
- * Shops use the same formula with an auto-assigned SH01 unit segment.
+ * POP[-BUILDING]-APT for apartments; POP[-BUILDING]-SHP-{location} for shops.
+ * Multi-building POPs: AZE-TGA-401A / AZE-TGA-SHP-S18.
+ * Single-building POPs leave building_code empty → ET-401A / ET-SHP-S18.
  */
-function buildCustomerNumber(building, customerType, apartmentNumber) {
+function buildCustomerNumber(
+  building,
+  customerType,
+  apartmentNumber,
+  premiseType
+) {
   const popCode = String(
     customerType === "B2B"
       ? building?.b2b_code || building?.b2bCode
@@ -48,24 +48,35 @@ function buildCustomerNumber(building, customerType, apartmentNumber) {
   )
     .trim()
     .toUpperCase();
-  const apt = String(apartmentNumber || "")
-    .trim()
-    .toUpperCase();
-  if (!popCode || !apt) return "";
+  const isShop = normalizePremiseType(premiseType) === "shop";
+  const unit = isShop
+    ? shopLocationCode(apartmentNumber)
+    : String(apartmentNumber || "")
+        .trim()
+        .toUpperCase();
+  if (!popCode || !unit) return "";
+  const unitSegment = isShop ? `${SHOP_NUMBER_SEGMENT}-${unit}` : unit;
   if (buildingCode && buildingCode !== popCode) {
-    return `${popCode}-${buildingCode}-${apt}`;
+    return `${popCode}-${buildingCode}-${unitSegment}`;
   }
-  return `${popCode}-${apt}`;
+  return `${popCode}-${unitSegment}`;
 }
 
 /**
- * Same apartment, other billing type: CL-A10 ↔ CLB-A10, AZE-TGA-401A ↔ AZEB-TGA-401A.
+ * Same unit, other billing type: CL-A10 ↔ CLB-A10, AZE-TGA-SHP-S18 ↔ AZEB-TGA-SHP-S18.
  */
-function alternateTypeCustomerNumber(building, customerType, apartmentNumber) {
+function alternateTypeCustomerNumber(
+  building,
+  customerType,
+  apartmentNumber,
+  premiseType
+) {
   const current = String(customerType || "").toUpperCase();
   if (current !== "C2B" && current !== "B2B") return "";
   const other = current === "B2B" ? "C2B" : "B2B";
-  return String(buildCustomerNumber(building, other, apartmentNumber) || "")
+  return String(
+    buildCustomerNumber(building, other, apartmentNumber, premiseType) || ""
+  )
     .trim()
     .toUpperCase();
 }
@@ -229,8 +240,8 @@ function isValidPaybillAccountRef(ref) {
   if (/-CXL-\d+$/i.test(normalized) || /CXL\d+$/i.test(compact)) return false;
   if (!/[0-9]/.test(lastSegment)) return false;
 
-  // POP-APT or POP-BUILDING-APT after space→hyphen normalize
-  if (/^[A-Z0-9]{2,10}(-[A-Z0-9]{1,20}){1,2}$/.test(normalized)) return true;
+  // POP-APT, POP-BUILDING-APT, or POP[-BUILDING]-SHP-LOCATION
+  if (/^[A-Z0-9]{2,10}(-[A-Z0-9]{1,20}){1,3}$/.test(normalized)) return true;
 
   // Compact missing hyphens (ETT506) or apartment-only (T506)
   return /^[A-Z0-9]{3,30}$/.test(compact) && /[A-Z]/.test(compact);
@@ -238,7 +249,8 @@ function isValidPaybillAccountRef(ref) {
 
 module.exports = {
   normalizePremiseType,
-  nextShopUnitCode,
+  shopLocationCode,
+  SHOP_NUMBER_SEGMENT,
   buildCustomerNumber,
   alternateTypeCustomerNumber,
   liveCustomerNumber,
