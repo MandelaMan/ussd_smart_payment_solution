@@ -525,6 +525,7 @@ export type Customer = {
   productId: number;
   productName: string;
   productMbps: number;
+  productExtraBandwidth?: number | null;
   planId?: number | null;
   planName?: string | null;
   planSortOrder?: number | null;

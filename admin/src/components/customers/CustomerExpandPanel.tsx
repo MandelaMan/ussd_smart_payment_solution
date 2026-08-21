@@ -1457,7 +1457,9 @@ export function CustomerExpandPanel({
               </Box>
             ) : null}
             <Text fontWeight="bold" fontSize={{ base: "md", sm: "lg" }} color="fg" whiteSpace="nowrap">
-              {hidePricing ? `${customer.productMbps} Mbps` : formatCurrency(customer.packagePrice)}
+              {hidePricing
+                ? `${customer.productMbps + Number(customer.productExtraBandwidth || 0)} Mbps`
+                : formatCurrency(customer.packagePrice)}
             </Text>
           </Flex>
           <Flex align="center" gap={1}>
@@ -1556,7 +1558,11 @@ export function CustomerExpandPanel({
           <DetailGrid>
             <DetailCard
               label="Package"
-              value={formatCustomerPackageLabel(customer.productName, customer.productMbps)}
+              value={formatCustomerPackageLabel(
+                customer.productName,
+                customer.productMbps,
+                customer.productExtraBandwidth
+              )}
               highlight
               span={{ base: "1 / -1", md: "span 1" }}
             />

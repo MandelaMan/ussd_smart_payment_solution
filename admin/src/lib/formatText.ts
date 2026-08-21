@@ -77,11 +77,14 @@ export function formatDataTableColumnLabel(label: string): string {
 
 export function formatCustomerPackageLabel(
   productName: string | null | undefined,
-  mbps: number | null | undefined
+  mbps: number | null | undefined,
+  extraBandwidth?: number | null
 ): string {
   const name = formatProductNameForDisplay(productName);
   if (!name) return "";
-  const speed = Number(mbps);
-  if (!Number.isFinite(speed) || speed <= 0) return name;
-  return `${name} (${speed} Mbps)`;
+  const base = Number(mbps);
+  const extra = Number(extraBandwidth) || 0;
+  const total = (Number.isFinite(base) ? base : 0) + extra;
+  if (!Number.isFinite(total) || total <= 0) return name;
+  return `${name} (${total} Mbps)`;
 }

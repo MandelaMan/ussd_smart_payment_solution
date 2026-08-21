@@ -1082,7 +1082,11 @@ export function CustomerForm({
     } else if (isEdit && customer) {
       items.push({
         label: "Package",
-        value: formatCustomerPackageLabel(customer.productName, customer.productMbps),
+        value: formatCustomerPackageLabel(
+          customer.productName,
+          customer.productMbps,
+          customer.productExtraBandwidth
+        ),
       });
     }
     if (displayPrice != null) {
@@ -2061,7 +2065,11 @@ export function CustomerForm({
                 <Field.Label color="fg.muted">Current package</Field.Label>
                 <Input
                   {...lockedPackageFieldProps}
-                  value={formatCustomerPackageLabel(customer.productName, customer.productMbps)}
+                  value={formatCustomerPackageLabel(
+                    customer.productName,
+                    customer.productMbps,
+                    customer.productExtraBandwidth
+                  )}
                 />
               </Field.Root>
               <Field.Root opacity={0.92}>
