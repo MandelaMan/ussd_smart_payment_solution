@@ -52,10 +52,6 @@ export function CreateOnTispDialog({
             onChange={onDueDateChange}
             placeholder={`Default ${TISP_STANDARD_DUE_DATE}`}
           />
-          <Field.HelperText>
-            A future date turns internet on. Today or an earlier date keeps service
-            off after the account is created.
-          </Field.HelperText>
         </Field.Root>
         <Flex justify="flex-end" gap={2}>
           <Button variant="ghost" onClick={onClose} disabled={loading}>

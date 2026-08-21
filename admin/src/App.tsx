@@ -39,8 +39,17 @@ function lazyPage<T extends Record<string, unknown>>(
   exportName: keyof T & string
 ) {
   return lazy(async () => {
-    const mod = await loader();
-    return { default: mod[exportName] as ComponentType };
+    const load = async () => {
+      const mod = await loader();
+      return { default: mod[exportName] as ComponentType };
+    };
+    try {
+      return await load();
+    } catch {
+      // Vite HMR can invalidate a route chunk mid-import; retry once.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return await load();
+    }
   });
 }
 

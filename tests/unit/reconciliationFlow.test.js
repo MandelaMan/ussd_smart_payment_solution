@@ -16,6 +16,7 @@ const { detectSkippedMonthlyPayment } = require("../../api/utils/skippedPayment"
 const {
   isOverdueZohoInvoice,
   isExcludedZohoInvoiceStatus,
+  selectOverdueZohoInvoicesToVoid,
 } = require("../../api/utils/zohoInvoiceStatus");
 
 describe("subscription status normalization (pause / suspend / cancel)", () => {
@@ -220,6 +221,66 @@ describe("Zoho invoice status helpers", () => {
     assert.equal(
       isOverdueZohoInvoice({ status: "paid", balance: 0, dueDate: "2020-01-01" }),
       false
+    );
+  });
+
+  it("selects only this customer's overdue invoices to void on cancel", () => {
+    const agencyContactId = "agency-1";
+    const cancelled = {
+      customerType: "B2B",
+      customerNumber: "ET-H302",
+    };
+    const invoices = [
+      {
+        invoice_id: "ov-1",
+        customer_id: agencyContactId,
+        reference_number: "ET-H302",
+        status: "overdue",
+        balance: 3500,
+        due_date: "2020-01-01",
+      },
+      {
+        invoice_id: "paid-1",
+        customer_id: agencyContactId,
+        reference_number: "ET-H302",
+        status: "paid",
+        balance: 0,
+        due_date: "2020-01-01",
+      },
+      {
+        invoice_id: "future-1",
+        customer_id: agencyContactId,
+        reference_number: "ET-H302",
+        status: "sent",
+        balance: 3500,
+        due_date: "2099-01-01",
+      },
+      {
+        invoice_id: "sibling-ov",
+        customer_id: agencyContactId,
+        reference_number: "ET-H401",
+        status: "overdue",
+        balance: 3500,
+        due_date: "2020-01-01",
+      },
+      {
+        invoice_id: "draft-1",
+        customer_id: agencyContactId,
+        reference_number: "ET-H302",
+        status: "draft",
+        balance: 3500,
+        due_date: "2020-01-01",
+      },
+    ];
+
+    const selected = selectOverdueZohoInvoicesToVoid(
+      invoices,
+      agencyContactId,
+      cancelled
+    );
+    assert.deepEqual(
+      selected.map((inv) => inv.invoice_id),
+      ["ov-1"]
     );
   });
 });

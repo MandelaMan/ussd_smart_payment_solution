@@ -440,6 +440,32 @@ const stopRecurringInvoice_JS = async (recurringInvoiceId) => {
   }
 };
 
+/** Void a Zoho Books invoice (POST /invoices/{id}/status/void). */
+const voidInvoice_JS = async (invoiceId, options = {}) => {
+  if (!invoiceId) return null;
+  try {
+    const payload = {};
+    const reason = String(options.reason || "").trim();
+    if (reason) payload.reason = reason.slice(0, 500);
+    const data = await withTimeout(
+      callZoho(
+        `invoices/${invoiceId}/status/void`,
+        "POST",
+        Object.keys(payload).length ? payload : {},
+      ),
+      10_000,
+      "void-invoice",
+    );
+    return data.invoice || data;
+  } catch (error) {
+    console.error(
+      "voidInvoice_JS error:",
+      error.response?.data || error.message,
+    );
+    throw error;
+  }
+};
+
 /** Mark a Zoho Books contact inactive (POST /contacts/{id}/inactive). */
 const markContactInactive_JS = async (contactId) => {
   if (!contactId) return null;
@@ -1906,6 +1932,7 @@ module.exports = {
   getRecurringInvoice_JS,
   resumeRecurringInvoice_JS,
   stopRecurringInvoice_JS,
+  voidInvoice_JS,
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
   getCustomerPayments_JS,

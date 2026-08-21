@@ -19,6 +19,8 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 - TISP does **not** rename `AccountNumber` on UPDATE. Number changes (apartment move, C2B↔B2B) **migrate**: release old account → INSERT new.
 - There is no admin “Resume / Reconnect” menu item. Network restore after Suspended/Paused is payment-driven (`SetISPPayment` + OLT activate).
 - Type changes must use **Convert to C2B/B2B**, not Edit.
+- **Shops** are units under the same building and POP as apartments. Customer numbers still use the unit segment (`SH01`, `SH02`, …).
+- New signups and apartment switches can create **installation** jobs (Installations module). Campaign first-month discounts apply at onboard only; decoder fees are never discounted.
 
 ---
 
@@ -34,7 +36,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 | Convert C2B↔B2B | Type, agency, customer number, PPPoE if it tracked the number | Migrate old → new account number (preserve due date) | C2B→B2B: stop personal recurring, inactive contact, agency signup invoice + recurring. B2B→C2B: detach agency snapshot, refresh agency recurring without this house, create personal contact + recurring + new invoice | No |
 | Pause service (away) | `subscription_status=Paused`, pause window + reason | Due date = today (stop access) | Defer matching recurring so next invoice is after pause end | Deactivate ONU |
 | Suspend on TISP | `subscription_status=Suspended` | Due date = today | **None** (billing continues) | Deactivate ONU |
-| Cancel subscription | `status=cancelled`, close apartment history, collection dates; archive number to `{number}-CXL-{id}` and clear IP/DSTV immediately | Due date = cancel day (async) | C2B: stop recurring, rename company to `{number}-CXL-{id}`, mark inactive. B2B: stop agency recurring for this number only | Deactivate ONU (async) |
+| Cancel subscription | `status=cancelled`, close apartment history, collection dates; archive number to `{number}-CXL-{id}` and clear IP/DSTV immediately | Due date = cancel day (async) | C2B: void overdue invoices, stop recurring, rename company to `{number}-CXL-{id}`, mark inactive. B2B: void that house's overdue invoices and stop agency recurring for this number only | Deactivate ONU (async) |
 | New signup after cancel (same apt) | Cancelled row already archived; insert new active tenant on live number | UPDATE existing account (name/phone/package/due) | Retire leftover Zoho contact on live number; create **new** Zoho customer + signup invoice (former invoices ignored) | No |
 | Apartment history | Read-only timeline | — | — | — |
 | Wipe local records | Hard-delete local rows (**cancelled only**) | **Untouched** | **Untouched** | **Untouched** |
@@ -167,7 +169,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 - **Local:** `status=cancelled`, `subscription_status=Cancelled`, reason + collection dates; open apartment history closed. Customer number archived to `{number}-CXL-{id}` and IP / PPPoE / DSTV serial cleared **immediately** so UNIQUE keys are free for reuse.
 - **TISP:** Background sync sets due date to cancellation day (uses the live apartment number, not the archived local value).
-- **Zoho:** Background — C2B stop recurring, rename `company_name` to `{number}-CXL-{id}` (same archive form as local), mark contact inactive. B2B stop only recurring rows matching this customer number on the agency contact (agency stays active).
+- **Zoho:** Background — void overdue invoices (positive balance, past due / Zoho overdue; drafts already excluded). C2B then stop recurring, rename `company_name` to `{number}-CXL-{id}` (same archive form as local), mark contact inactive. B2B void only this house's overdue invoices on the agency contact, then stop only recurring rows matching this customer number (agency stays active). Partially paid invoices may fail to void in Zoho; those are logged and left for follow-up.
 - **OLT:** Background deactivate ONU when linked.
 
 **Notes:** Response returns `tisp/zoho: pending` immediately; check activity log for integration results. Prefer Cancel over Wipe for leavers. The apartment number is free for a new active tenant immediately. Menu label: **Cancel & release apartment**.

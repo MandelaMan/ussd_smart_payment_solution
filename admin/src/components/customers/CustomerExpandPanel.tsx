@@ -343,9 +343,24 @@ function pickInvoiceForStatus(invoices: ZohoInvoice[]): ZohoInvoice | null {
   return invoices[0];
 }
 
+function isTispDueDatePast(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const s = String(value).trim();
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  const due = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(s);
+  if (Number.isNaN(due.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  due.setHours(0, 0, 0, 0);
+  return due < today;
+}
+
 function buildTispDueNarration(
   dueLabel: string | null,
-  expires: boolean
+  expires: boolean,
+  tone?: StatusTone
 ): StatusNarration {
   return {
     label: "Due date",
@@ -354,7 +369,7 @@ function buildTispDueNarration(
         ? `Internet expires on ${dueLabel}.`
         : `Due date is ${dueLabel}.`
       : "No due date on TISP.",
-    tone: dueLabel ? "ok" : "neutral",
+    tone: tone ?? (dueLabel ? "ok" : "neutral"),
   };
 }
 
@@ -434,13 +449,14 @@ function buildTispNarrations(
     ];
   }
   if (statusLower.includes("suspend")) {
+    const overdue = Boolean(dueLabel) && isTispDueDatePast(integrations?.tispDueDate);
     return [
       {
         label: "Internet status",
         text: "Suspended — not active on TISP.",
-        tone: "warn",
+        tone: overdue ? "bad" : "warn",
       },
-      buildTispDueNarration(dueLabel, false),
+      buildTispDueNarration(dueLabel, false, overdue ? "bad" : undefined),
     ];
   }
   if (statusLower.includes("disconnect") || statusLower.includes("inactive")) {

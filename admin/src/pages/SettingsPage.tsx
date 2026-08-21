@@ -660,9 +660,6 @@ function CommunicationPanel({
               onChange={(e) => setFromAddress(e.target.value)}
               placeholder="customersupport@sulsolutions.biz"
             />
-            <Field.HelperText>
-              Must be the mailbox address or an alias on the connected Zoho account.
-            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Zoho Mail account ID</Field.Label>
@@ -672,9 +669,6 @@ function CommunicationPanel({
               placeholder="6499189000000008002"
               fontFamily="mono"
             />
-            <Field.HelperText>
-              Numeric account ID from Zoho Mail (optional if auto-resolved).
-            </Field.HelperText>
           </Field.Root>
           <Button
             colorPalette="brand"
@@ -809,18 +803,11 @@ function CommunicationPanel({
               fontFamily="mono"
               fontSize="sm"
             />
-            <Field.HelperText>
-              One address per line (or comma-separated). Applied to Zoho invoice
-              emails. Invoices are never sent without at least one CC.
-            </Field.HelperText>
           </Field.Root>
 
           <Box>
             <Text fontSize="sm" fontWeight="medium" mb={1}>
               Email templates
-            </Text>
-            <Text fontSize="xs" color="fg.muted" mb={2}>
-              Expand a template name to edit its subject, body, and CC list.
             </Text>
             <Box
               borderWidth="1px"
@@ -899,7 +886,6 @@ function CommunicationPanel({
                         fontFamily="mono"
                         fontSize="sm"
                       />
-                      <Field.HelperText>One address per line.</Field.HelperText>
                     </Field.Root>
                   </Stack>
                 </SettingsTreeBranch>
@@ -945,9 +931,6 @@ function CommunicationPanel({
           <Field.Root>
             <Field.Label>Webhook URL</Field.Label>
             <Input value={webhookUrl} readOnly fontFamily="mono" fontSize="sm" />
-            <Field.HelperText>
-              Meta → WhatsApp → Configuration → Webhook callback URL.
-            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Phone number ID</Field.Label>
@@ -985,9 +968,6 @@ function CommunicationPanel({
               }
               autoComplete="new-password"
             />
-            <Field.HelperText>
-              Required for webhook signature verification when WhatsApp is enabled.
-            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Webhook verify token</Field.Label>
@@ -997,9 +977,6 @@ function CommunicationPanel({
               placeholder="Long random string you invent"
               fontFamily="mono"
             />
-            <Field.HelperText>
-              Must match the verify token you enter in Meta when registering the webhook.
-            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Click-to-chat URL (optional)</Field.Label>
@@ -1034,10 +1011,6 @@ function CommunicationPanel({
               onChange={(e) => setOutboundTemplate(e.target.value)}
               placeholder="starlynx_outreach"
             />
-            <Field.HelperText>
-              Approved Meta template for agent-initiated / outside-24h messages
-              (body param {"{{1}}"} = message text).
-            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Template language</Field.Label>

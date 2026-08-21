@@ -470,13 +470,10 @@ export function PackageChangeForm({
               size="sm"
               value={customPeriodDays}
               onChange={(e) => onCustomPeriodDaysChange(e.target.value)}
-              placeholder="e.g. 30"
-              disabled={fieldsDisabled}
-            />
-            <Field.HelperText fontSize="2xs">
-              Price = monthly base × days ÷ 30
-            </Field.HelperText>
-          </Field.Root>
+            placeholder="e.g. 30"
+            disabled={fieldsDisabled}
+          />
+        </Field.Root>
         ) : (
           <Field.Root required w="full">
             <Field.Label fontSize="sm">

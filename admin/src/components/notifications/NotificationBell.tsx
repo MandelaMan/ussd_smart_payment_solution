@@ -94,7 +94,21 @@ function typeMeta(type: string) {
       label: "Assigned",
     };
   }
+  if (type === "lead_signup") {
+    return {
+      icon: FiInbox,
+      bg: "teal.50",
+      color: "teal.700",
+      label: "Signup",
+    };
+  }
   return { icon: FiBell, bg: "gray.100", color: "gray.600", label: "Update" };
+}
+
+function notificationPath(item: UserNotification) {
+  if (item.type === "lead_signup") return "/leads";
+  if (item.actionItemId) return `/reminders?id=${item.actionItemId}`;
+  return "/reminders";
 }
 
 function dayBucket(iso: string) {
@@ -154,11 +168,10 @@ export function NotificationBell({ compact = false }: Props) {
     };
   }, [open, refresh]);
 
-  async function openItem(id: number | null, notificationId: number) {
-    await markRead([notificationId]);
+  async function openItem(item: UserNotification) {
+    await markRead([item.id]);
     setOpen(false);
-    if (id) navigate(`/reminders?id=${id}`);
-    else navigate("/reminders");
+    navigate(notificationPath(item));
   }
 
   function openReminders() {
@@ -371,7 +384,7 @@ export function NotificationBell({ compact = false }: Props) {
                             cursor="pointer"
                             transition="background 0.12s ease"
                             _hover={{ bg: item.isRead ? "bg.muted" : "brand.100" }}
-                            onClick={() => void openItem(item.actionItemId, item.id)}
+                            onClick={() => void openItem(item)}
                           >
                             <Flex
                               w="36px"

@@ -36,4 +36,4 @@ Built assets land in `admin/dist` and are served by the API at `/admin` in produ
 - Chakra UI
 - React Router
 
-Login and roles are managed under **Settings → Users** (Administrator, Customer Support, CFO, Partner).
+Login and access are managed under **Settings → Users**. System roles are **Administrator** (full access) and **User** (group + override permissions). See [RBAC](../docs/RBAC.md).

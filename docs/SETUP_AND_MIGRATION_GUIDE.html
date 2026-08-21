@@ -286,6 +286,9 @@
   <a class="sub" href="#env-reconciliation">Billing &amp; reconciliation</a>
   <a class="sub" href="#env-redis">Redis &amp; sync</a>
   <a class="sub" href="#env-mail">Zoho Mail</a>
+  <a class="sub" href="#env-whatsapp">WhatsApp Cloud API</a>
+  <a class="sub" href="#env-push">Web push (VAPID)</a>
+  <a class="sub" href="#env-leads">Public signup &amp; leads</a>
   <a href="#mysql-setup">3. MySQL / MariaDB (Docker)</a>
   <a href="#redis-setup">4. Redis (Docker)</a>
   <a href="#install">5. Install dependencies</a>
@@ -300,6 +303,7 @@
   <a class="sub" href="#custom-invoice">Custom invoice (customer card)</a>
   <a href="#webhooks">13. Webhooks &amp; public URLs</a>
   <a class="sub" href="#zoho-webhook-onetime">Zoho webhook (one-time)</a>
+  <a class="sub" href="#whatsapp-webhook">WhatsApp webhook</a>
   <a href="#ussd">14. USSD endpoints</a>
   <a href="#rbac">15. Roles &amp; access</a>
   <a href="#data-migration">16. Data migration scripts</a>
@@ -318,8 +322,8 @@
       Complete step-by-step guide for first-time setup, environment migration, and production deployment.
     </p>
     <div class="meta">
-      <span>Last updated: <strong>2026-08-12</strong> (Custom invoice on customer card; Docker Compose + XAMPP restore)</span>
-      <span>App version: <strong>1.0.0</strong></span>
+      <span>Last updated: <strong>2026-08-21</strong> (v1.14.0 — RBAC groups, campaigns, installations, reminders, public signup)</span>
+      <span>App version: <strong>1.14.0</strong></span>
       <span>Node.js: <strong>18+</strong> (CI uses 18)</span>
       <span>Also see root <a href="../README.md"><code>README.md</code></a> for a short local-dev quick start.</span>
     </div>
@@ -343,7 +347,15 @@
       <li>Production process layout (API, worker, optional Xtream scheduler)</li>
       <li>Post-deploy verification and ongoing maintenance</li>
       <li>Billing reconciliation UI, Zoho/TISP onboarding behaviour, integration snapshot caching, and custom-period invoices from the customer card</li>
+      <li>Permission-driven RBAC (Administrator / User + groups), campaigns, installations, reminders, POPs/shops, and public signup</li>
     </ul>
+    <p>
+      Related docs: <a href="./RBAC.md">Roles &amp; permissions</a>,
+      <a href="./CUSTOMER_PROCESSES.md">Customer processes</a>,
+      <a href="./SYNC_ARCHITECTURE.md">Sync architecture</a>,
+      <a href="./ZOHO_SYNC_SETUP.md">Zoho sync setup</a>.
+      Product versioning (Settings → Versioning) lives in <code>admin/src/lib/versionLog.ts</code>.
+    </p>
     <div class="callout danger">
       <strong>Security:</strong> Never commit <code>.env</code> or real credentials. The template
       <code>.env.dist</code> contains example values — replace every secret before going live.
@@ -363,7 +375,8 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  Express API (index.js)  —  PORT (default 4000)                  │
 │  • /api/* REST routes    • /admin/* static React build           │
-│  • Socket.IO /api/socket.io (sync progress)                      │
+│  • /signup and /leads public forms   • WhatsApp Cloud webhook    │
+│  • Socket.IO /api/socket.io (sync progress, notifications)       │
 │  • Health: GET /api/health                                       │
 └────────┬───────────────────────────────┬────────────────────────┘
          │                               │
@@ -475,7 +488,7 @@ cd ussd_smart_payment_solution</code></pre>
         <tr><td><code>MYSQL_PORT</code></td><td><code>3307</code></td><td>Host port mapped from container <code>3306</code> (avoids conflict with XAMPP on 3306). Production typically uses <code>3306</code>.</td></tr>
         <tr><td><code>MYSQL_USER</code> / <code>MYSQL_PASSWORD</code></td><td><code>root</code> / <code>root</code></td><td>Matches compose <code>MARIADB_ROOT_PASSWORD</code>. Use a dedicated non-root user in production.</td></tr>
         <tr><td><code>MYSQL_DATABASE</code></td><td><code>ussd_smart_payment_solution</code></td><td>Database name (created by compose)</td></tr>
-        <tr><td><code>MYSQL_CONNECTION_LIMIT</code></td><td>10</td><td>Pool size</td></tr>
+        <tr><td><code>MYSQL_CONNECTION_LIMIT</code></td><td>25</td><td>Pool size (<code>.env.dist</code>). <code>api/config/env.js</code> fallback is 10 if unset.</td></tr>
       </tbody>
     </table>
     <div class="callout info">
@@ -486,16 +499,20 @@ cd ussd_smart_payment_solution</code></pre>
     <table>
       <thead><tr><th>Variable</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>JWT_SECRET</code></td><td><strong>Required.</strong> Long random string; app refuses to start auth without it.</td></tr>
-        <tr><td><code>JWT_EXPIRES_IN</code></td><td>Token lifetime (default <code>8h</code>)</td></tr>
-        <tr><td><code>ADMIN_ORIGIN</code></td><td>Admin UI origin for CORS/Socket.IO. Dev: <code>http://localhost:5173</code>. Prod: <code>https://app.sulsolutions.biz</code></td></tr>
-        <tr><td><code>ADMIN_*</code></td><td>Administrator seed user (<code>yarn db:seed</code>)</td></tr>
-        <tr><td><code>SUPPORT_*</code></td><td>Customer support seed user</td></tr>
-        <tr><td><code>CFO_*</code></td><td>CFO seed user</td></tr>
-        <tr><td><code>PARTNER_*</code></td><td>Partner seed user (read-only dashboard)</td></tr>
+        <tr><td><code>JWT_SECRET</code></td><td><strong>Required.</strong> ≥32 characters in production; app exits on boot if missing or weak.</td></tr>
+        <tr><td><code>JWT_EXPIRES_IN</code></td><td>Token lifetime (default <code>7d</code>)</td></tr>
+        <tr><td><code>MAX_ADMIN_SESSIONS</code></td><td>Max concurrent admin device sessions per account (default <code>5</code>). Oldest session is revoked on a new login beyond the cap.</td></tr>
+        <tr><td><code>ADMIN_ORIGIN</code></td><td>Admin UI origin for CORS/Socket.IO/cookies. Dev: <code>http://localhost:5173</code> (not <code>127.0.0.1</code> — cookies are host-specific). Prod: <code>https://app.sulsolutions.biz</code></td></tr>
+        <tr><td><code>ACCOUNT_RECOVERY_EMAIL</code></td><td>Inbox for staff login-recovery requests (including administrator accounts). Default in dist: <code>it@sulsolutions.biz</code></td></tr>
+        <tr><td><code>USSD_API_SECRET</code></td><td>Shared secret for USSD customer-lookup endpoints. <strong>Required in production.</strong></td></tr>
+        <tr><td><code>ADMIN_*</code></td><td>Administrator seed user (<code>yarn db:seed</code>) — system role <code>admin</code></td></tr>
+        <tr><td><code>SUPPORT_*</code></td><td>Seed user: system role <code>user</code> + Support group</td></tr>
+        <tr><td><code>CFO_*</code></td><td>Seed user: system role <code>user</code> + Finance group</td></tr>
+        <tr><td><code>CEO_*</code></td><td>Seed user: system role <code>user</code> + Management group</td></tr>
+        <tr><td><code>PARTNER_*</code></td><td>Seed user: system role <code>user</code> + Customer Relations group</td></tr>
       </tbody>
     </table>
-    <p>Each role uses <code>NAME</code>, <code>EMAIL</code>, and <code>PASSWORD</code> suffixes. See <code>.env.dist</code> for defaults. <strong>Development only</strong> — change all passwords before production.</p>
+    <p>Each seed user uses <code>NAME</code>, <code>EMAIL</code>, and <code>PASSWORD</code> suffixes. See <code>.env.dist</code> for defaults. <strong>Development only</strong> — change all passwords before production. Access is permission-driven (see <a href="#rbac">§15</a> and <a href="./RBAC.md"><code>docs/RBAC.md</code></a>).</p>
 
     <h3 id="env-zoho">Zoho Books</h3>
     <table>
@@ -510,7 +527,8 @@ cd ussd_smart_payment_solution</code></pre>
         <tr><td><code>ZOHO_MPESA_ACCOUNT_ID</code></td><td>Optional Zoho bank/chart-of-accounts ID for that paybill account. Set this if name lookup fails (Banking or Chart of Accounts → copy account ID from the URL).</td></tr>
         <tr><td><code>ZOHO_INVOICE_TAX_INCLUSIVE</code></td><td><code>true</code> — M-Pesa amounts are VAT-inclusive</td></tr>
         <tr><td><code>ZOHO_SIGNUP_INVOICE_EMAIL_ENABLED</code></td><td><code>false</code> — when <code>true</code>, the app emails signup invoices via Zoho API; leave off if Zoho Books already sends invoice mail (avoids double-send)</td></tr>
-        <tr><td><code>ZOHO_RECURRING_ON_SIGNUP</code></td><td><code>false</code> — when <code>true</code>, creates a Zoho recurring profile on new customer signup (default: one signup invoice only)</td></tr>
+        <tr><td><code>ZOHO_INVOICE_CC_EMAILS</code></td><td>Optional fallback CC list. Prefer Settings → Communication → Invoice CC emails.</td></tr>
+        <tr><td><code>ZOHO_RECURRING_ON_SIGNUP</code></td><td>Kept for compatibility. A Zoho recurring profile is always created on new C2B signup (paid or unpaid); this flag no longer gates creation.</td></tr>
         <tr><td><code>ZOHO_DSTV_ONE_TIME_FEE</code></td><td><code>2900</code> — one-time DSTV decoder line item (KES) on the <strong>first</strong> signup invoice only for DSTV packages; not billed monthly</td></tr>
         <tr><td><code>ZOHO_VAT_TAX_ID</code></td><td>Optional tax ID if inclusive flag alone is insufficient</td></tr>
         <tr><td><code>ZOHO_WEBHOOK_SECRET</code></td><td>Shared secret for <code>POST /api/public/zoho/webhook</code>. Required for the one-time Zoho Books workflow setup (see <a href="#zoho-webhook-onetime">§13</a>). Extends TISP when a customer pays directly in Zoho Books — zero outbound Zoho API calls.</td></tr>
@@ -538,7 +556,9 @@ cd ussd_smart_payment_solution</code></pre>
         <tr><td><code>MPESA_CALLBACK_URL</code></td><td>STK callback: <code>POST /api/payment/callback</code></td></tr>
         <tr><td><code>MPESA_CONFIRMATION_URL</code></td><td>C2B confirmation: <code>POST /api/payment/confirmation</code></td></tr>
         <tr><td><code>MPESA_VALIDATION_URL</code></td><td>C2B validation: <code>POST /api/payment/validation</code></td></tr>
-        <tr><td><code>MPESA_STK_USE_LIVE_AMOUNT</code></td><td><code>true</code> to charge real subscription amount on STK</td></tr>
+        <tr><td><code>MPESA_STK_USE_LIVE_AMOUNT</code></td><td><code>true</code> to charge real subscription amount on STK (admin upgrades always use live amount)</td></tr>
+        <tr><td><code>MPESA_CALLBACK_IP_ALLOWLIST</code></td><td>Optional comma-separated Safaricom Daraja egress IPs</td></tr>
+        <tr><td><code>MPESA_CALLBACK_SECRET</code></td><td>Optional header <code>X-Mpesa-Callback-Secret</code>. Recommended in production; if M-Pesa is configured and this is unset, the API warns and relies on the IP allowlist.</td></tr>
         <tr><td><code>DEFAULT_ACCOUNT_REFERENCE</code></td><td>Optional fallback STK/C2B account reference (default <code>Starlynx Utility</code>)</td></tr>
         <tr><td><code>MPESA_C2B_REGISTER_URL</code></td><td>Optional override for Daraja C2B URL registration API</td></tr>
         <tr><td><code>MPESA_C2B_SIMULATE_URL</code></td><td>Optional override for Daraja C2B simulation API</td></tr>
@@ -557,6 +577,8 @@ cd ussd_smart_payment_solution</code></pre>
         <tr><td><code>TISP_REQUEST_TIMEOUT_MS</code></td><td>Default 15000</td></tr>
         <tr><td><code>TISP_QUOTE_TIMEOUT_MS</code></td><td>Default 5000 (upgrade quotes)</td></tr>
         <tr><td><code>TISP_SHORTCODE</code></td><td>Must be <code>000000</code> for SetClientDetails INSERT (not the M-Pesa paybill)</td></tr>
+        <tr><td><code>TISP_STANDARD_DUE_DATE</code></td><td>Optional YYYY-MM-DD default due date used on create/update when no other due date applies</td></tr>
+        <tr><td><code>OLT_EMS_TIMEOUT_MS</code></td><td>Default 30000. OLT host/credentials live on each building, not in <code>.env</code></td></tr>
       </tbody>
     </table>
     <p><strong>TISP create payload behaviour</strong> (see <code>api/controllers/tisp.controller.js</code>):</p>
@@ -601,8 +623,8 @@ cd ussd_smart_payment_solution</code></pre>
       <tbody>
         <tr><td><code>REDIS_HOST</code></td><td>127.0.0.1</td><td>Redis host (Docker or local install)</td></tr>
         <tr><td><code>REDIS_PORT</code></td><td>6379</td><td>Redis port. If a host Redis already uses 6379, Docker Redis may fail to bind — the existing instance is fine.</td></tr>
-        <tr><td><code>REDIS_PASSWORD</code></td><td>(empty)</td><td>Set in production</td></tr>
-        <tr><td><code>REDIS_DB</code></td><td>0</td><td>Redis database index</td></tr>
+        <tr><td><code>REDIS_PASSWORD</code></td><td>(empty for Docker)</td><td>Compose Redis has no AUTH — leave empty locally. Set for hosted Redis. If <code>.env.dist</code> has a password, clear it when using Docker.</td></tr>
+        <tr><td><code>REDIS_DB</code></td><td>0 (Docker) / 1 (dist)</td><td>Redis database index. Docker Redis uses DB 0 unless you change it.</td></tr>
         <tr><td><code>SYNC_ENABLED</code></td><td>true</td><td>Master switch for BullMQ sync</td></tr>
         <tr><td><code>SYNC_SCHEDULER_ENABLED</code></td><td>true</td><td>Register repeatable cron-style jobs</td></tr>
         <tr><td><code>WORKER_INLINE</code></td><td>false</td><td>Run workers inside API process (<strong>dev only</strong>)</td></tr>
@@ -622,14 +644,48 @@ cd ussd_smart_payment_solution</code></pre>
       </tbody>
     </table>
 
-    <h3 id="env-mail">Zoho Mail (billing communications)</h3>
+    <h3 id="env-mail">Zoho Mail (billing &amp; customer communications)</h3>
     <table>
       <thead><tr><th>Variable</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>ZOHO_MAIL_REFRESH_TOKEN</code></td><td>Optional; needs <code>ZohoMail.messages.CREATE</code> scope</td></tr>
+        <tr><td><code>ZOHO_MAIL_REFRESH_TOKEN</code></td><td>Required for outbound mail. Needs <code>ZohoMail.messages.ALL</code> and <code>ZohoMail.accounts.READ</code>. Exchange with <code>node scripts/zoho-mail-oauth-exchange.js --url "PASTE_REDIRECT_URL"</code></td></tr>
         <tr><td><code>ZOHO_MAIL_API_BASE</code></td><td><code>https://mail.zoho.com/api</code></td></tr>
-        <tr><td><code>ZOHO_MAIL_ACCOUNT_ID</code></td><td>Sending mailbox account</td></tr>
-        <tr><td><code>ZOHO_MAIL_FROM_ADDRESS</code>, <code>ZOHO_MAIL_FROM_NAME</code></td><td>From header for customer emails</td></tr>
+        <tr><td><code>ZOHO_MAIL_REDIRECT_URI</code></td><td>OAuth redirect used when exchanging the refresh token (e.g. <code>https://app.sulsolutions.biz/api</code>)</td></tr>
+        <tr><td><code>ZOHO_MAIL_ACCOUNT_ID</code>, <code>ZOHO_MAIL_FROM_ADDRESS</code>, <code>ZOHO_MAIL_FROM_NAME</code></td><td>Optional env fallbacks. Prefer Settings → Communication for the live from-address, name, and account ID.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-whatsapp">WhatsApp Cloud API</h3>
+    <p>Credentials can live in Settings → Communication, with optional <code>.env</code> fallback. Public webhook: <code>https://YOUR_HOST/api/public/whatsapp/webhook</code>.</p>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>WHATSAPP_PHONE_NUMBER_ID</code>, <code>WHATSAPP_ACCESS_TOKEN</code></td><td>Meta Cloud API sending identity</td></tr>
+        <tr><td><code>WHATSAPP_APP_SECRET</code></td><td>Used to verify webhook signatures (raw body is captured in Express for this path)</td></tr>
+        <tr><td><code>WHATSAPP_WEBHOOK_VERIFY_TOKEN</code></td><td>Token Meta sends on webhook handshake</td></tr>
+        <tr><td><code>WHATSAPP_CLICK_TO_CHAT_URL</code></td><td>Optional click-to-chat link shown in the admin UI</td></tr>
+        <tr><td><code>WHATSAPP_WELCOME_MESSAGE</code>, <code>WHATSAPP_COMPLETE_MESSAGE</code></td><td>Optional bot copy</td></tr>
+        <tr><td><code>WHATSAPP_OUTBOUND_TEMPLATE</code>, <code>WHATSAPP_OUTBOUND_TEMPLATE_LANG</code></td><td>Template name/language for outbound (default lang <code>en</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-push">Web push (PWA)</h3>
+    <p>Optional. If omitted, VAPID keys are generated and stored in <code>app_settings</code>.</p>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>VAPID_PUBLIC_KEY</code>, <code>VAPID_PRIVATE_KEY</code></td><td>Generate with <code>npx web-push generate-vapid-keys</code></td></tr>
+        <tr><td><code>VAPID_SUBJECT</code></td><td>e.g. <code>mailto:support@sulsolutions.biz</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-leads">Public signup &amp; leads</h3>
+    <p>Share <code>https://YOUR_HOST/signup</code> for customer signup (Leads status <strong>Interested — pending conversion</strong>). Enquiry form: <code>https://YOUR_HOST/leads</code>. Embed: <code>&lt;script src="https://YOUR_HOST/leads/embed.js" async&gt;&lt;/script&gt;</code> + <code>&lt;div id="starlynx-lead-form"&gt;&lt;/div&gt;</code>.</p>
+    <table>
+      <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>LEAD_FORM_BRAND</code>, <code>LEAD_FORM_TITLE</code>, <code>LEAD_FORM_SUBTITLE</code>, <code>LEAD_FORM_SUCCESS</code></td><td>Public enquiry form copy</td></tr>
+        <tr><td><code>SIGNUP_FORM_TITLE</code>, <code>SIGNUP_FORM_SUBTITLE</code>, <code>SIGNUP_FORM_SUCCESS</code></td><td>Public signup form copy</td></tr>
       </tbody>
     </table>
   </section>
@@ -746,6 +802,57 @@ yarn db:migrate</code></pre>
         <tr><td><code>023_customer_zoho_billing_status.sql</code></td><td>Zoho billing onboarding status on customers</td></tr>
         <tr><td><code>024_customer_zoho_invoice_seq.sql</code></td><td>Per-customer Zoho invoice number sequence</td></tr>
         <tr><td><code>025_customer_signup_invoice_tracking.sql</code></td><td>Tracks signup invoice ID and email-sent timestamp (prevents duplicate emails)</td></tr>
+        <tr><td><code>026_customer_trial_period.sql</code></td><td>Trial period: skip signup invoice; first bill via recurring after 30 days</td></tr>
+        <tr><td><code>027_normalize_product_names.sql</code></td><td>Normalize product display names from catalog sources</td></tr>
+        <tr><td><code>028_activity_logs_widen_enums.sql</code></td><td>Widen activity-log enums for billing and other modules</td></tr>
+        <tr><td><code>029_truncate_sync_error_blobs.sql</code></td><td>Trim oversized TISP/Zoho HTML error blobs on customers</td></tr>
+        <tr><td><code>030_align_tisp_snapshot_not_on_tisp.sql</code></td><td>Align TISP snapshots with subscription status after Account Not Found</td></tr>
+        <tr><td><code>031_customer_events_disconnect.sql</code></td><td>Disconnect event type on customer events</td></tr>
+        <tr><td><code>032_ceo_role.sql</code></td><td>Legacy CEO role (later remapped to User + Management group in 064)</td></tr>
+        <tr><td><code>033_building_dstv_setup.sql</code></td><td>Per-building DSTV setup (headend coax vs decoder)</td></tr>
+        <tr><td><code>034_customer_search_indexes.sql</code></td><td>Customer list search indexes</td></tr>
+        <tr><td><code>035_ascii_product_name_separators.sql</code></td><td>ASCII hyphens in product names (avoid em-dash mojibake)</td></tr>
+        <tr><td><code>036_leads_module.sql</code></td><td>Leads intake (WhatsApp + website/embed)</td></tr>
+        <tr><td><code>037_auth_hardening.sql</code></td><td><code>token_version</code> + login audit trail</td></tr>
+        <tr><td><code>038_account_lockout.sql</code></td><td>Lockout after repeated failed logins</td></tr>
+        <tr><td><code>039_apartment_history_ip.sql</code></td><td>IP persisted on apartment-history rows</td></tr>
+        <tr><td><code>040_premium_plan_and_dstv_only_category.sql</code></td><td>Premium plan + DSTV Only category</td></tr>
+        <tr><td><code>041_ppoe_username.sql</code></td><td>PPPoE username stored separately from apartment number</td></tr>
+        <tr><td><code>042_agency_discount.sql</code></td><td>Optional agency discount % on client package prices</td></tr>
+        <tr><td><code>043_customer_cancellation_details.sql</code></td><td>Cancel reason and equipment collection dates</td></tr>
+        <tr><td><code>044_customer_olt_onu.sql</code></td><td>OLT MAC / ONU fields on customers</td></tr>
+        <tr><td><code>045_building_olt.sql</code></td><td>Per-building OLT EMS endpoint</td></tr>
+        <tr><td><code>045_customer_service_pause.sql</code></td><td>Temporary service pause (away) window</td></tr>
+        <tr><td><code>046_building_olt_credentials.sql</code></td><td>Per-building EMS login (not in <code>.env</code>)</td></tr>
+        <tr><td><code>047_building_olts.sql</code></td><td>Multiple OLTs per building</td></tr>
+        <tr><td><code>048_leads_prospect_fields.sql</code></td><td>Prospect fields on leads</td></tr>
+        <tr><td><code>049_premium_plus_plan.sql</code></td><td>Premium Plus catalog plan</td></tr>
+        <tr><td><code>050_customer_email_messages.sql</code></td><td>Local store for customer email conversations</td></tr>
+        <tr><td><code>051_app_settings.sql</code></td><td>Key/value JSON app settings</td></tr>
+        <tr><td><code>052_lead_email_messages.sql</code></td><td>Lead email conversations via Zoho Mail</td></tr>
+        <tr><td><code>053_perf_lookup_indexes.sql</code></td><td>List/filter/lookup performance indexes</td></tr>
+        <tr><td><code>054_activity_logs_actor.sql</code></td><td>Attribute activity feed entries to the acting admin</td></tr>
+        <tr><td><code>055_customer_billing_address.sql</code></td><td>Customer billing address for Zoho contact sync</td></tr>
+        <tr><td><code>056_seed_customer_et_c201_susan_ayebare.sql</code></td><td>Idempotent Enaki C201 seed/repair</td></tr>
+        <tr><td><code>057_building_address.sql</code></td><td>Building postal address copied onto customers when blank</td></tr>
+        <tr><td><code>058_pops_and_buildings.sql</code></td><td>POPs as parent of buildings (codes, IP pool, DSTV, OLTs)</td></tr>
+        <tr><td><code>059_skynest_and_taarifa_under_azalea.sql</code></td><td>Skynest POP + Taarifa under Azalea (data repair)</td></tr>
+        <tr><td><code>060_building_code.sql</code></td><td>Optional per-building code in customer numbers</td></tr>
+        <tr><td><code>061_ensure_brookside_under_azalea.sql</code></td><td>Brookside Terraces under Azalea POP</td></tr>
+        <tr><td><code>062_admin_sessions.sql</code></td><td>Per-device admin sessions (max concurrent logins)</td></tr>
+        <tr><td><code>063_dstv_only_no_bandwidth_plan.sql</code></td><td>DSTV Only: Zoho billing, no TISP/bandwidth</td></tr>
+        <tr><td><code>064_rbac_permission_system.sql</code></td><td>Permission catalog, groups, overrides; legacy roles → User + groups</td></tr>
+        <tr><td><code>065_campaigns_referrals.sql</code></td><td>Acquisition campaigns and referral rewards</td></tr>
+        <tr><td><code>066_campaign_priority.sql</code></td><td>Concurrent campaigns with priority</td></tr>
+        <tr><td><code>067_campaign_paused_status.sql</code></td><td>Pause a campaign without ending its date window</td></tr>
+        <tr><td><code>068_installations.sql</code></td><td>Field installations at onboard and apartment switch</td></tr>
+        <tr><td><code>069_installations_optional_schedule.sql</code></td><td>Onboarding jobs with no visit slot yet</td></tr>
+        <tr><td><code>070_action_items.sql</code></td><td>Reminders, assignees, in-app notifications, PWA push</td></tr>
+        <tr><td><code>071_lead_signup_interested.sql</code></td><td>Public signup status: Interested — pending conversion</td></tr>
+        <tr><td><code>072_auth_recovery_outcome.sql</code></td><td>Login audit: account-recovery requests</td></tr>
+        <tr><td><code>073_customer_shops.sql</code></td><td>Shops as units under the same building/POP as apartments</td></tr>
+        <tr><td><code>074_installation_cancellation_reason.sql</code></td><td>Reason when an installation visit is cancelled</td></tr>
+        <tr><td><code>075_action_item_events.sql</code></td><td>Per-reminder activity trail</td></tr>
       </tbody>
     </table>
     <div class="callout warn">
@@ -763,14 +870,15 @@ yarn db:migrate</code></pre>
     <h2><span class="num">7</span> Seed users &amp; optional data</h2>
     <h3>Test users for all roles (development)</h3>
     <pre><code>yarn db:seed</code></pre>
-    <p>Creates one user per role if the email does not already exist:</p>
+    <p>Creates one user per seed profile if the email does not already exist. After migration <code>064</code>, only two system roles exist (<code>admin</code> / <code>user</code>); operational access comes from groups:</p>
     <table>
-      <thead><tr><th>Role</th><th>Env prefix</th><th>Default email</th></tr></thead>
+      <thead><tr><th>System role</th><th>Group</th><th>Env prefix</th><th>Default email</th></tr></thead>
       <tbody>
-        <tr><td><code>admin</code></td><td><code>ADMIN_*</code></td><td>admin@sulsolutions.biz</td></tr>
-        <tr><td><code>support</code></td><td><code>SUPPORT_*</code></td><td>support@sulsolutions.biz</td></tr>
-        <tr><td><code>cfo</code></td><td><code>CFO_*</code></td><td>cfo@sulsolutions.biz</td></tr>
-        <tr><td><code>partner</code></td><td><code>PARTNER_*</code></td><td>partner@sulsolutions.biz</td></tr>
+        <tr><td><code>admin</code></td><td>—</td><td><code>ADMIN_*</code></td><td>admin@sulsolutions.biz</td></tr>
+        <tr><td><code>user</code></td><td>Support</td><td><code>SUPPORT_*</code></td><td>support@sulsolutions.biz</td></tr>
+        <tr><td><code>user</code></td><td>Finance</td><td><code>CFO_*</code></td><td>cfo@sulsolutions.biz</td></tr>
+        <tr><td><code>user</code></td><td>Management</td><td><code>CEO_*</code></td><td>ceo@sulsolutions.biz</td></tr>
+        <tr><td><code>user</code></td><td>Customer Relations</td><td><code>PARTNER_*</code></td><td>partner@sulsolutions.biz</td></tr>
       </tbody>
     </table>
     <p>Login at <code>http://localhost:5173/admin/login</code> (dev) or <code>https://YOUR_HOST/admin/</code> (prod).
@@ -987,15 +1095,15 @@ pm2 startup              # follow printed instructions</code></pre>
       <li>Live API test (creates temp user): <code>yarn xtream:test</code></li>
     </ol>
 
-    <h3>12.5 Zoho Mail (billing gap emails)</h3>
+    <h3>12.5 Zoho Mail (customer &amp; billing emails)</h3>
     <ol>
-      <li>Obtain OAuth refresh token with <code>ZohoMail.messages.CREATE</code> scope.</li>
-      <li>Set <code>ZOHO_MAIL_ACCOUNT_ID</code> and from-address variables.</li>
-      <li>Used by Billing → <strong>Customer Communications</strong> module (manual reminder emails — separate from signup invoice email).</li>
+      <li>Obtain OAuth refresh token with <code>ZohoMail.messages.ALL</code> and <code>ZohoMail.accounts.READ</code>.</li>
+      <li>Set <code>ZOHO_MAIL_REFRESH_TOKEN</code>. From-address, display name, and account ID are edited in Settings → Communication (env values are fallbacks only).</li>
+      <li>Used by Communication, Leads email, and Billing → <strong>Customer Communications</strong> (separate from signup invoice email).</li>
     </ol>
 
     <h3 id="admin-billing">12.6 Admin Billing UI</h3>
-    <p>Finance roles (admin, cfo) access <strong>Billing</strong> in the sidebar (<code>/admin/billing</code>). The nav label is shortened to <strong>Billing</strong>; the page title remains <strong>Billing Reconciliation</strong>.</p>
+    <p>Users with <code>billing.view</code> (typically Finance/Billing groups and Administrators) access <strong>Billing</strong> in the sidebar (<code>/admin/billing</code>). The nav label is shortened to <strong>Billing</strong>; the page title remains <strong>Billing Reconciliation</strong>.</p>
     <table>
       <thead><tr><th>Route</th><th>Module</th><th>Description</th></tr></thead>
       <tbody>
@@ -1147,6 +1255,10 @@ pm2 startup              # follow printed instructions</code></pre>
         <tr><td><code>/api/payment/b2c/result</code></td><td>POST</td><td>Safaricom B2C result</td><td>Public</td></tr>
         <tr><td><code>/api/payment/b2c/timeout</code></td><td>POST</td><td>Safaricom B2C timeout</td><td>Public</td></tr>
         <tr><td><code>/api/public/zoho/webhook</code></td><td>POST</td><td>Zoho Books Invoice Paid workflow</td><td><code>x-zoho-webhook-secret</code> header</td></tr>
+        <tr><td><code>/api/public/whatsapp/webhook</code></td><td>GET/POST</td><td>Meta WhatsApp Cloud API</td><td>Verify token (GET) / app-secret signature (POST)</td></tr>
+        <tr><td><code>/api/public/leads</code></td><td>POST</td><td>Public enquiry / embed form</td><td>Public</td></tr>
+        <tr><td><code>/signup</code></td><td>GET</td><td>Public customer signup page</td><td>Public</td></tr>
+        <tr><td><code>/leads</code></td><td>GET</td><td>Public enquiry form</td><td>Public</td></tr>
         <tr><td><code>/api/public/login-stats</code></td><td>GET</td><td>Public login statistics</td><td>Public</td></tr>
         <tr><td><code>/api/ussd</code></td><td>POST</td><td>USSD gateway</td><td>Public</td></tr>
       </tbody>
@@ -1181,6 +1293,14 @@ pm2 startup              # follow printed instructions</code></pre>
     </ol>
     <p><strong>Handler:</strong> <code>api/controllers/public.controller.js</code> → <code>zohoWebhook</code>.
     On success, completes pending upgrades or runs <code>handleSubscriptionPaymentReceived</code> for reconciliation.</p>
+
+    <h3 id="whatsapp-webhook">WhatsApp Cloud webhook</h3>
+    <ol>
+      <li>In Meta Developer Console, set the callback URL to <code>https://YOUR_HOST/api/public/whatsapp/webhook</code>.</li>
+      <li>Use the same verify token as <code>WHATSAPP_WEBHOOK_VERIFY_TOKEN</code> (or the value saved in Settings → Communication).</li>
+      <li>Subscribe to message webhooks. POST bodies are signature-checked with <code>WHATSAPP_APP_SECRET</code>; Express keeps the raw body for this path only.</li>
+    </ol>
+    <p>Credentials may be stored in Settings → Communication instead of <code>.env</code>. Public signup and enquiry pages are static: <code>/signup</code> and <code>/leads</code>.</p>
   </section>
 
   <!-- STEP 14 USSD -->
@@ -1195,56 +1315,75 @@ pm2 startup              # follow printed instructions</code></pre>
         <tr><td><code>/api/ussd/customer</code></td><td>POST</td><td>Alias for customer-details</td></tr>
       </tbody>
     </table>
-    <p>STK Push payments initiated via USSD use the M-Pesa callback at <code>/api/payment/callback</code>.</p>
+    <p>STK Push payments initiated via USSD use the M-Pesa callback at <code>/api/payment/callback</code>.
+    Customer-lookup endpoints require <code>USSD_API_SECRET</code> in production.</p>
   </section>
 
   <!-- STEP 15 RBAC -->
   <section id="rbac">
     <h2><span class="num">15</span> Roles &amp; access control</h2>
+    <p>
+      Access is permission-driven (product <strong>1.11.0+</strong>). See
+      <a href="./RBAC.md"><code>docs/RBAC.md</code></a> for the full catalog.
+      System roles set the baseline only; day-to-day access comes from <strong>groups</strong> and optional per-user overrides.
+    </p>
     <table>
-      <thead><tr><th>Role</th><th>Home dashboard</th><th>Access</th></tr></thead>
+      <thead><tr><th>System role</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>admin</code></td>
-          <td>Finance dashboard</td>
-          <td>Full access: users, settings, logs, customers, config, finance, billing, sync, reports</td>
+          <td><code>admin</code> (Administrator)</td>
+          <td>Full access to every module. Groups and overrides do not limit access. Cannot be deactivated.</td>
         </tr>
         <tr>
-          <td><code>support</code></td>
-          <td>Support dashboard</td>
-          <td>Customers (read/write), buildings, products, agencies; pricing hidden; no finance, billing, reports, logs, or settings</td>
-        </tr>
-        <tr>
-          <td><code>cfo</code></td>
-          <td>Finance dashboard</td>
-          <td>Transactions, Billing (<code>/billing/*</code>), sync; reports; read-only customers (with financials)</td>
-        </tr>
-        <tr>
-          <td><code>partner</code></td>
-          <td>Partner dashboard</td>
-          <td>Read-only customer list (no financial detail), reports (<code>/admin/reports</code>), partner metrics API (<code>/api/admin/partner/dashboard</code>); no edits, billing, or transactions</td>
+          <td><code>user</code> (User)</td>
+          <td>Authenticated only (<code>dashboard.view</code>). All other keys come from groups (union) plus grant/deny overrides.</td>
         </tr>
       </tbody>
     </table>
+    <p>Legacy roles <code>support</code>, <code>cfo</code>, <code>ceo</code>, and <code>partner</code> were remapped by migration <code>064</code> to User + a preset group (Support, Finance, Management, Customer Relations). Original values stay in <code>admin_users.legacy_role</code>.</p>
 
-    <h3>Admin UI routes by role</h3>
+    <h3>Preset groups</h3>
     <table>
-      <thead><tr><th>Route</th><th>admin</th><th>support</th><th>cfo</th><th>partner</th></tr></thead>
+      <thead><tr><th>Group</th><th>Typical job</th><th>Notes</th></tr></thead>
       <tbody>
-        <tr><td><code>/</code> (home)</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
-        <tr><td><code>/customers</code></td><td>✓ write</td><td>✓ write</td><td>✓ read</td><td>✓ read</td></tr>
-        <tr><td><code>/products</code>, <code>/buildings</code>, <code>/agencies</code>, <code>/apartments</code></td><td>✓</td><td>✓</td><td>—</td><td>—</td></tr>
-        <tr><td><code>/transactions</code>, <code>/billing/*</code>, <code>/synchronization</code></td><td>✓</td><td>—</td><td>✓</td><td>—</td></tr>
-        <tr><td><code>/reports</code></td><td>✓</td><td>—</td><td>✓</td><td>✓</td></tr>
-        <tr><td><code>/settings</code>, <code>/logs</code></td><td>✓</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>Sales</td><td>Acquisition</td><td>Customers + leads; no financials</td></tr>
+        <tr><td>Finance</td><td>CFO / accounts</td><td>Billing ops; no refund, no Settings</td></tr>
+        <tr><td>Billing</td><td>Collections</td><td>Allocate / communicate; no refund, no sync</td></tr>
+        <tr><td>Support</td><td>Help desk</td><td>Pause and OLT; no cancel, disconnect, or agencies</td></tr>
+        <tr><td>Technician</td><td>Field tech</td><td>View customers; update installation jobs</td></tr>
+        <tr><td>Installations</td><td>Onboarding coordinators</td><td>Jobs + occupancy; no building/POP create</td></tr>
+        <tr><td>Network Operations</td><td>NOC</td><td>Disconnect, pause, equipment edit</td></tr>
+        <tr><td>Management</td><td>PM / exec</td><td>Read-heavy finance and reports</td></tr>
+        <tr><td>Customer Relations</td><td>Partner</td><td>Customer list + reports; no financials</td></tr>
+      </tbody>
+    </table>
+    <p>Dangerous actions (<code>customers.cancel</code>, <code>billing.refund</code>, <code>customers.delete</code>) are not in any preset. Grant them individually or use Administrator.</p>
+
+    <h3>Admin UI modules (permission keys)</h3>
+    <table>
+      <thead><tr><th>Route</th><th>Typical permission</th></tr></thead>
+      <tbody>
+        <tr><td><code>/</code> (home)</td><td><code>dashboard.view</code></td></tr>
+        <tr><td><code>/customers</code></td><td><code>customers.view</code> (write actions need more specific keys)</td></tr>
+        <tr><td><code>/leads</code></td><td><code>leads.view</code></td></tr>
+        <tr><td><code>/communication</code></td><td><code>communication.view</code></td></tr>
+        <tr><td><code>/products</code>, <code>/buildings</code>, <code>/agencies</code>, <code>/apartments</code></td><td><code>packages.view</code> / <code>buildings.view</code> / <code>agencies.view</code> / <code>apartments.view</code></td></tr>
+        <tr><td><code>/campaigns</code></td><td><code>campaigns.view</code></td></tr>
+        <tr><td><code>/installations</code></td><td><code>installations.view</code></td></tr>
+        <tr><td><code>/reminders</code></td><td><code>action_items.view</code></td></tr>
+        <tr><td><code>/activity-audit</code></td><td>Administrators only</td></tr>
+        <tr><td><code>/transactions</code>, <code>/billing/*</code></td><td><code>transactions.view</code> / <code>billing.view</code></td></tr>
+        <tr><td><code>/analytics</code>, <code>/reports</code></td><td><code>analytics.view</code> / <code>reports.view</code></td></tr>
+        <tr><td><code>/settings</code></td><td><code>settings.view</code> / <code>users.view</code> (Administrators always)</td></tr>
       </tbody>
     </table>
     <p>Route guards: <code>admin/src/components/ProtectedRoute.tsx</code> and <code>admin/src/lib/rbac.ts</code>.
-    Reports use a separate <code>ReportsRoute</code> (admin, cfo, partner) — not nested under finance routes.</p>
-    <p>Manage users in admin <strong>Settings → Users</strong> (<code>POST /api/admin/users</code>, admin only).
-    Role changes, password reset, and activate/deactivate are available from each row’s actions menu.
-    Administrator accounts cannot be deactivated.</p>
-    <p>Auth uses HTTP-only cookie <code>admin_token</code> (JWT). Login: <code>POST /api/auth/login</code>.</p>
+    Every sensitive API route uses <code>requirePermission(...)</code> — hiding a nav item is not sufficient.</p>
+    <p>Manage users in admin <strong>Settings → Users &amp; permissions</strong>.
+    Assign groups when creating or editing a user. Use <strong>Permissions</strong> on a user for individual grant/deny.
+    After changing a group, affected users should refresh the admin app so <code>/auth/me</code> picks up the new list.</p>
+    <p>Auth uses HTTP-only cookie <code>admin_token</code> (JWT). Login: <code>POST /api/auth/login</code>.
+    Concurrent sessions are capped by <code>MAX_ADMIN_SESSIONS</code>. Password resets increment <code>token_version</code> and invalidate all sessions.</p>
   </section>
 
   <!-- STEP 16 DATA MIGRATION -->
@@ -1477,18 +1616,19 @@ yarn xtream:sync</code></pre>
     </p>
     <ul>
       <li>New or removed environment variables in <code>.env.dist</code> or <code>api/config/env.js</code></li>
-      <li>New database migrations in <code>db/migrations/</code> (currently through <code>025_customer_signup_invoice_tracking.sql</code>)</li>
+      <li>New database migrations in <code>db/migrations/</code> (currently through <code>075_action_item_events.sql</code>)</li>
       <li>Changes to deploy workflow, PM2 layout, or required processes</li>
       <li>New external integrations, webhooks, or API routes</li>
       <li>Changes to admin build path, port defaults, or auth/CORS behavior</li>
       <li>New yarn scripts in <code>package.json</code> (including <code>docker:*</code>, <code>db:setup</code>, <code>db:restore-xampp</code>)</li>
       <li>Local infrastructure changes (<code>docker-compose.yml</code>, MySQL/Redis ports)</li>
-      <li>RBAC role changes</li>
+      <li>RBAC catalog, groups, or <code>SYSTEM_GROUP_PRESET_REVISION</code> (see <a href="./RBAC.md"><code>docs/RBAC.md</code></a>)</li>
+      <li>Public URLs (<code>/signup</code>, <code>/leads</code>, WhatsApp webhook)</li>
     </ul>
     <p>When updating, change the <strong>Last updated</strong> date in the document header and add a brief note in your commit message.</p>
 
     <h3>Runtime dependencies (root <code>package.json</code>)</h3>
-    <p>Core stack: Express, MySQL2, Redis (ioredis), BullMQ, Socket.IO, JWT + bcrypt auth, axios, moment, exceljs/pdfkit (reports), lru-cache (Zoho token cache).
+    <p>Core stack: Express, MySQL2, Redis (ioredis), BullMQ, Socket.IO, JWT + bcrypt auth, axios, moment, exceljs/pdfkit (reports), lru-cache (Zoho token cache), <code>web-push</code> (PWA notifications), <code>whatsapp-cloud-bot</code>.
     No longer included: <code>bcryptjs</code>, <code>uuid</code>, <code>uuidv4</code> (removed in 2026-07-06 cleanup).</p>
 
     <h3>Removed dead code (2026-07-06 cleanup)</h3>
@@ -1511,10 +1651,11 @@ yarn xtream:sync</code></pre>
       <li>Optional: <code>yarn db:restore-xampp</code> if migrating from XAMPP</li>
       <li><code>yarn install</code></li>
       <li><code>yarn db:migrate</code> (or <code>yarn db:setup</code>)</li>
-      <li><code>yarn db:seed</code> (all four dev roles) if not restoring existing data</li>
+      <li><code>yarn db:seed</code> (Administrator + Support/Finance/Management/Customer Relations users) if not restoring existing data</li>
       <li><code>yarn build</code></li>
-      <li>Configure Daraja, Zoho OAuth, TISP, Xtream external portals</li>
+      <li>Configure Daraja, Zoho OAuth, TISP, Xtream, WhatsApp (optional), VAPID (optional) external portals</li>
       <li>Set up Zoho Invoice Paid webhook (one-time) — <a href="#zoho-webhook-onetime">§13</a></li>
+      <li>Register Meta WhatsApp webhook at <code>/api/public/whatsapp/webhook</code> if using Communication/Leads chat</li>
       <li>Start API + worker (+ optional Xtream scheduler)</li>
       <li>Configure HTTPS reverse proxy</li>
       <li>Run health check and smoke tests</li>

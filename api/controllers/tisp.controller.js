@@ -61,11 +61,17 @@ const TISP_CREATE_FIELD_ORDER = [
 ];
 
 function stringifyTispCreatePayload(payload) {
-  const parts = TISP_CREATE_FIELD_ORDER.map((key) => {
+  const keys = TISP_CREATE_FIELD_ORDER.slice();
+  // TISP UPDATE needs the existing client_account UUID; omit on INSERT.
+  if (payload.Id) keys.unshift("Id");
+  const parts = keys.map((key) => {
     const value = payload[key] ?? "";
     return `"${key}":${JSON.stringify(String(value))}`;
   });
-  return `{${parts.join(",")}}`;
+  // Match TISP's own JSON (ClientStatus): no space after colon, space after comma.
+  // Their Stream parser splits on comma-space; compact "," hid TransactionType=UPDATE
+  // and SetClientDetails defaulted to INSERT (Duplicate entry on client_account.PRIMARY).
+  return `{${parts.join(", ")}}`;
 }
 
 async function postTispJson(url, payload, { timeout = 30_000, wireFormat = "default" } = {}) {
@@ -287,19 +293,112 @@ function isTispDuplicateAccountError(err) {
   return (
     lower.includes("duplicate account") ||
     lower.includes("account already exists") ||
-    lower.includes("already exist")
+    lower.includes("already exist") ||
+    lower.includes("duplicate entry")
   );
+}
+
+const TISP_CLIENT_ACCOUNT_UUID_RE =
+  /duplicate entry '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})' for key 'client_account\.primary'/i;
+
+/** UUID TISP already has for this client when INSERT hits client_account.PRIMARY. */
+function extractTispDuplicateAccountId(err) {
+  const match = tispErrorMessage(err).match(TISP_CLIENT_ACCOUNT_UUID_RE);
+  return match ? match[1] : "";
+}
+
+function extractTispClientAccountId(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const raw =
+    payload.Id ??
+    payload.id ??
+    payload.tispClientId ??
+    payload.ClientId ??
+    payload.clientId ??
+    payload.AccountId ??
+    payload.accountId ??
+    "";
+  const value = String(raw).trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value
+  )
+    ? value
+    : "";
 }
 
 /** TISP UPDATE / Client Status: account is not on TISP yet. */
 function isTispAccountMissingError(err) {
   const lower = tispErrorMessage(err).toLowerCase();
+  if (!lower) return false;
+  // "package not found" / "router not found" are not a missing client.
+  if (
+    lower.includes("package") ||
+    lower.includes("router") ||
+    lower.includes("location")
+  ) {
+    return false;
+  }
   return (
     lower.includes("account not found") ||
     lower.includes("client not found") ||
-    lower.includes("not found") ||
-    lower.includes("does not exist")
+    lower.includes("no client") ||
+    lower.includes("account does not exist") ||
+    lower.includes("client does not exist") ||
+    ((lower.includes("account") || lower.includes("client")) &&
+      (lower.includes("not found") || lower.includes("does not exist")))
   );
+}
+
+/**
+ * Client Status body that means the account is present — even when `status` /
+ * `package` are omitted (TISP often returns due date + names only).
+ */
+function tispClientPayloadIndicatesAccount(parsed) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return false;
+  }
+  const candidates = [
+    parsed.status,
+    parsed.Status,
+    parsed.package,
+    parsed.Package,
+    parsed.AccountNumber,
+    parsed.accountNumber,
+    parsed.accountnumber,
+    parsed.DueDate,
+    parsed.dueDate,
+    parsed.duedate,
+    parsed.StaticIPAddress,
+    parsed.staticIPAddress,
+    parsed.PppoeUsername,
+    parsed.pppoeUsername,
+    parsed.FirstName,
+    parsed.firstName,
+    parsed.Telephone,
+    parsed.telephone,
+  ];
+  return candidates.some((value) => value != null && String(value).trim() !== "");
+}
+
+/** Local DB evidence that this customer already has a TISP account. */
+function hasLocalTispAccountEvidence(ctx = {}) {
+  const sync = String(ctx.tisp_sync_status || ctx.tispSyncStatus || "").toLowerCase();
+  if (sync === "synced") return true;
+  const due = ctx.tisp_due_date || ctx.tispDueDate;
+  return Boolean(due && String(due).trim());
+}
+
+/**
+ * Whether pushCustomerToTisp may INSERT after UPDATE looks missing.
+ * Edits of already-provisioned customers must never create a second record.
+ */
+function shouldAllowTispCreateFallback(meta = {}, ctx = {}) {
+  if (meta.allowCreate === false) return false;
+  if (meta.forceUpdate === true) return false;
+  if (meta.preferUpdate === true && hasLocalTispAccountEvidence(ctx)) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -334,8 +433,11 @@ async function accountExistsOnTisp(customerNumber) {
     });
     const parsed = parseTispResponseBody(data);
     if (!parsed) return false;
+    // Identity fields first — a payload with DueDate/AccountNumber is present
+    // even if `message` happens to match a generic error keyword.
+    if (tispClientPayloadIndicatesAccount(parsed)) return true;
     if (parsed.message && isTispErrorText(parsed.message)) return false;
-    return Boolean(parsed.status ?? parsed.Status ?? parsed.package ?? parsed.Package);
+    return false;
   } catch {
     return false;
   }
@@ -466,6 +568,42 @@ async function postSetClientDetails(payload, meta = {}) {
       );
       err.response = r;
       err._apiCallLogged = true;
+      const duplicateId = extractTispDuplicateAccountId(parsed.message);
+      if (
+        duplicateId &&
+        !payload.Id &&
+        meta._retriedWithClientAccountId !== true
+      ) {
+        // TISP looked up the existing row then INSERTed it. Retry as UPDATE with Id.
+        const retried = await postSetClientDetails(
+          { ...payload, Id: duplicateId, TransactionType: "UPDATE" },
+          {
+            ...meta,
+            operation: "set_client_update",
+            _retriedWithClientAccountId: true,
+          }
+        );
+        if (meta.customerId) {
+          try {
+            const snapRepo = require("../repositories/integrationSnapshot.repository");
+            const existing = await snapRepo.getTispSnapshot(meta.customerId);
+            let raw = {};
+            if (existing?.raw_json) {
+              raw =
+                typeof existing.raw_json === "string"
+                  ? JSON.parse(existing.raw_json)
+                  : existing.raw_json || {};
+            }
+            await snapRepo.upsertTispSnapshot(meta.customerId, {
+              ...raw,
+              Id: duplicateId,
+            });
+          } catch {
+            /* best-effort — next edit can retry from the duplicate error again */
+          }
+        }
+        return retried;
+      }
       throw err;
     }
 
@@ -796,8 +934,13 @@ function buildTispSetClientPayload(input, transactionType) {
     categoryName,
     productName,
   });
+  const id =
+    String(transactionType || "").toUpperCase() === "UPDATE"
+      ? extractTispClientAccountId(input)
+      : "";
 
   return {
+    ...(id ? { Id: id } : {}),
     TransactionType: transactionType,
     PackageType: packageType,
     FirstName: first,
@@ -871,7 +1014,12 @@ module.exports = {
   formatTispError,
   parseTispOperationResponse,
   accountExistsOnTisp,
+  tispClientPayloadIndicatesAccount,
+  hasLocalTispAccountEvidence,
+  shouldAllowTispCreateFallback,
   isTispDuplicateAccountError,
+  extractTispDuplicateAccountId,
+  extractTispClientAccountId,
   isTispAccountMissingError,
   formatTispDueDate,
   test,

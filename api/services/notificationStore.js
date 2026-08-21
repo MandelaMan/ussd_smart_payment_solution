@@ -16,6 +16,21 @@ function mapRow(row) {
   };
 }
 
+async function listActiveUserIdsForAdminOrGroup(groupSlug) {
+  const slug = String(groupSlug || "").trim();
+  if (!slug) return [];
+  const rows = await query(
+    `SELECT DISTINCT u.id
+     FROM admin_users u
+     LEFT JOIN rbac_user_groups ug ON ug.user_id = u.id
+     LEFT JOIN rbac_groups g ON g.id = ug.group_id AND g.is_active = 1
+     WHERE u.is_active = 1
+       AND (u.role = 'admin' OR g.slug = ?)`,
+    [slug]
+  );
+  return rows.map((row) => Number(row.id)).filter((id) => id > 0);
+}
+
 async function createNotifications({
   userIds,
   type,
@@ -120,6 +135,7 @@ async function markRead(userId, { ids = null, all = false } = {}) {
 
 module.exports = {
   createNotifications,
+  listActiveUserIdsForAdminOrGroup,
   listForUser,
   unreadCount,
   markRead,

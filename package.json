@@ -1,6 +1,6 @@
 {
   "name": "ussd_smart_payment_solution",
-  "version": "1.0.0",
+  "version": "1.14.0",
   "main": "index.js",
   "repository": "https://github.com/MandelaMan/ussd_smart_payment_solution.git",
   "author": "MandelaMan <nelsonomoro@gmail.com>",

@@ -685,15 +685,6 @@
               <input type="hidden" id="productId" name="productId" value="" />
             </div>
 
-            <label id="dstv-field" hidden>
-              <span>DSTV decoder serial</span>
-              <input
-                id="dstvDecoderSerial"
-                name="dstvDecoderSerial"
-                autocomplete="off"
-                placeholder="Required for DSTV packages"
-              />
-            </label>
             <label>
               <span>Notes</span>
               <textarea id="message" name="message" placeholder="Anything we should know?"></textarea>
@@ -776,8 +767,6 @@
         var submit = document.getElementById("submit");
         var building = document.getElementById("buildingId");
         var product = document.getElementById("productId");
-        var dstvField = document.getElementById("dstv-field");
-        var dstvInput = document.getElementById("dstvDecoderSerial");
         var pkgEmpty = document.getElementById("pkg-empty");
         var pkgGrid = document.getElementById("pkg-grid");
         var pkgFreq = document.getElementById("pkg-freq");
@@ -859,17 +848,8 @@
           return groups.find(function (g) { return g.key === selectedKey; }) || null;
         }
 
-        function toggleDstv() {
-          var pkg = selectedPackage();
-          var need = Boolean(pkg && pkg.hasDstv);
-          dstvField.hidden = !need;
-          dstvInput.required = need;
-          if (!need) dstvInput.value = "";
-        }
-
         function setProduct(id) {
           product.value = id ? String(id) : "";
-          toggleDstv();
         }
 
         function visibleGroups() {
@@ -1072,7 +1052,6 @@
             buildingId: form.buildingId.value,
             apartmentNumber: form.apartmentNumber.value,
             productId: form.productId.value,
-            dstvDecoderSerial: form.dstvDecoderSerial.value,
             message: form.message.value,
             companyWebsite: form.companyWebsite.value,
             pageUrl: window.location.href,

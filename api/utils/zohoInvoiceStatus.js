@@ -1,3 +1,5 @@
+const { filterZohoInvoicesForContact } = require("./zohoCustomerScope");
+
 function normalizeZohoInvoiceStatus(status) {
   return String(status || "").trim().toLowerCase();
 }
@@ -42,9 +44,21 @@ function summarizeOverdueZohoInvoices(invoices) {
   };
 }
 
+/**
+ * Overdue invoices that belong to this Zoho contact (and, for B2B, this
+ * customer number only) — candidates to void when a subscription is cancelled.
+ */
+function selectOverdueZohoInvoicesToVoid(invoices, contactId, customer = null) {
+  if (!contactId) return [];
+  return filterZohoInvoicesForContact(invoices, contactId, customer).filter(
+    isOverdueZohoInvoice
+  );
+}
+
 module.exports = {
   normalizeZohoInvoiceStatus,
   isExcludedZohoInvoiceStatus,
   isOverdueZohoInvoice,
   summarizeOverdueZohoInvoices,
+  selectOverdueZohoInvoicesToVoid,
 };

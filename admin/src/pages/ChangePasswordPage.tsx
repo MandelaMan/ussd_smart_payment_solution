@@ -94,9 +94,6 @@ export function ChangePasswordPage() {
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 autoComplete="current-password"
               />
-              <Field.HelperText>
-                Optional if you just received a temporary password from an admin.
-              </Field.HelperText>
             </Field.Root>
           )}
 

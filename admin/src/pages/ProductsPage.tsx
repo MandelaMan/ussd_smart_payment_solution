@@ -904,9 +904,6 @@ function ProductForm({
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </SelectField>
-          {isDstvOnly ? (
-            <Field.HelperText>DSTV Only has no internet plan tiers.</Field.HelperText>
-          ) : null}
         </Field.Root>
         <Field.Root required>
           <Field.Label>Billing frequency</Field.Label>
@@ -939,9 +936,6 @@ function ProductForm({
             disabled={internetFieldsDisabled}
             bg={isDstvOnly ? "bg.subtle" : undefined}
           />
-          {isDstvOnly ? (
-            <Field.HelperText>Speed is not used for DSTV Only.</Field.HelperText>
-          ) : null}
         </Field.Root>
         {!readOnlyStructure && (
           <Field.Root required>
@@ -967,13 +961,10 @@ function ProductForm({
         <Field.Root required>
           <Field.Label>Price (KES, incl. VAT)</Field.Label>
           <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder={examplePrice ? String(examplePrice) : undefined} disabled={fieldsDisabled} />
-          {examplePrice != null && (
-            <Field.HelperText>Reference price for this variant: {formatCurrency(examplePrice)}</Field.HelperText>
-          )}
         </Field.Root>
         <Field.Root>
           <Field.Label>Monthly base price</Field.Label>
-          <Input type="number" value={monthlyPrice} onChange={(e) => setMonthlyPrice(e.target.value)} placeholder="Optional — used for custom billing periods" disabled={fieldsDisabled} />
+          <Input type="number" value={monthlyPrice} onChange={(e) => setMonthlyPrice(e.target.value)} placeholder="e.g. 3500" disabled={fieldsDisabled} />
         </Field.Root>
         <Field.Root>
           <Field.Label>Extra bandwidth (Mbps)</Field.Label>
@@ -986,9 +977,6 @@ function ProductForm({
             disabled={internetFieldsDisabled}
             bg={isDstvOnly ? "bg.subtle" : undefined}
           />
-          {isDstvOnly ? (
-            <Field.HelperText>Extra bandwidth is not used for DSTV Only.</Field.HelperText>
-          ) : null}
         </Field.Root>
         {showDecoderFeeNotice && (
           <Box gridColumn={{ md: "1 / -1" }} bg="orange.50" borderRadius="md" px={3} py={2}>

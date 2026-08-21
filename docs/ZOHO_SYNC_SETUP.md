@@ -15,7 +15,7 @@ Zoho Books ──webhooks──► Node API ──► MySQL
 The React app **never** calls Zoho directly. All dashboard and customer views read from MySQL snapshots updated by:
 
 1. **Webhooks** (highest priority, zero/minimal API calls)
-2. **Incremental scheduled sync** (`last_modified_time` per module, every 10 minutes by default)
+2. **Incremental scheduled sync** (`last_modified_time` per module, every 60 minutes by default via `ZOHO_SYNC_INTERVAL_MS`)
 3. **On-demand single-customer refresh** (manual button, respects cache + API reserve)
 
 ---

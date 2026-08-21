@@ -8,6 +8,67 @@ export type VersionEntry = {
 /** Product versioning log — feature releases only (newest first). */
 export const VERSION_LOG: VersionEntry[] = [
   {
+    version: "1.14.0",
+    date: "2026-08-21",
+    title: "Public signup & admin hardening",
+    features: [
+      "Public signup form lands in Leads as Interested — pending conversion until staff verify",
+      "Customer numbers reused for a new tenant after cancel (TISP update, new Zoho contact)",
+      "Concurrent admin session limits per account with oldest-device revocation",
+      "Staff account-recovery requests logged and emailed to the recovery inbox",
+    ],
+  },
+  {
+    version: "1.13.0",
+    date: "2026-08-18",
+    title: "Installations, reminders & push",
+    features: [
+      "Installation jobs created at customer onboard and apartment switch",
+      "Reminders workspace with assignees, due dates, and an activity trail",
+      "In-app notification bell and optional PWA web-push alerts",
+    ],
+  },
+  {
+    version: "1.12.0",
+    date: "2026-08-14",
+    title: "Campaigns & referrals",
+    features: [
+      "Acquisition campaigns with first-month package discount at onboard",
+      "Referral rewards tracked against campaigns",
+      "Concurrent campaigns with priority and pause without ending the date window",
+    ],
+  },
+  {
+    version: "1.11.0",
+    date: "2026-08-08",
+    title: "Permission-driven access",
+    features: [
+      "Administrator and User system roles with group-based permissions",
+      "Preset groups for Sales, Finance, Billing, Support, Technician, and more",
+      "Individual grant/deny overrides and a permission audit trail",
+    ],
+  },
+  {
+    version: "1.10.0",
+    date: "2026-08-06",
+    title: "POPs, shops & DSTV-only",
+    features: [
+      "POPs as the parent of buildings, with optional per-building customer-number codes",
+      "Shops as units under the same building and POP as apartments",
+      "DSTV-only plans billed in Zoho without TISP or bandwidth provisioning",
+    ],
+  },
+  {
+    version: "1.9.0",
+    date: "2026-08-05",
+    title: "Settings, activity & billing address",
+    features: [
+      "App settings stored in the database and editable from the admin workspace",
+      "Customer and building billing addresses synced to Zoho Books contacts",
+      "Activity feed entries attributed to the admin who performed the action",
+    ],
+  },
+  {
     version: "1.8.0",
     date: "2026-07-29",
     title: "Customer communication",

@@ -1,6 +1,8 @@
 # Roles, Groups & Permissions
 
-This application uses a permission-driven RBAC model.
+This application uses a permission-driven RBAC model (product **1.11.0+**).
+
+Day-to-day management: admin **Settings → Users & permissions**. Full setup context: [Setup & migration guide](./SETUP_AND_MIGRATION_GUIDE.html#rbac).
 
 ## System roles
 

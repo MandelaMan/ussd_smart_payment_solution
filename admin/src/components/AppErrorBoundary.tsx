@@ -4,6 +4,33 @@ import { Box, Button, Heading, Stack, Text } from "@chakra-ui/react";
 type Props = { children: ReactNode };
 type State = { error: Error | null };
 
+const STALE_IMPORT_RE =
+  /dynamically imported module|Failed to fetch dynamically imported module|Loading chunk/i;
+const STALE_IMPORT_RELOAD_KEY = "sul-admin-stale-import-reload";
+
+function isStaleDynamicImportError(error: Error | null) {
+  if (!error) return false;
+  return STALE_IMPORT_RE.test(error.message || "");
+}
+
+function shouldReloadForStaleImport() {
+  try {
+    if (sessionStorage.getItem(STALE_IMPORT_RELOAD_KEY)) return false;
+    sessionStorage.setItem(STALE_IMPORT_RELOAD_KEY, "1");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearStaleImportReload() {
+  try {
+    sessionStorage.removeItem(STALE_IMPORT_RELOAD_KEY);
+  } catch {
+    /* private mode */
+  }
+}
+
 /**
  * Prevents a single route/render crash from wiping the entire admin shell.
  */
@@ -16,9 +43,13 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("[admin] render crash:", error, info.componentStack);
+    if (isStaleDynamicImportError(error) && shouldReloadForStaleImport()) {
+      window.location.reload();
+    }
   }
 
   componentDidMount() {
+    if (!this.state.error) clearStaleImportReload();
     if (import.meta.hot) {
       import.meta.hot.on("vite:afterUpdate", this.clearError);
     }
@@ -55,6 +86,7 @@ export class AppErrorBoundary extends Component<Props, State> {
           <Button
             colorPalette="brand"
             onClick={() => {
+              clearStaleImportReload();
               this.setState({ error: null });
               window.location.reload();
             }}

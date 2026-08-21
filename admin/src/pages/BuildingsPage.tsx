@@ -898,9 +898,6 @@ function BuildingForm({
                 autoComplete="off"
                 maxLength={ZOHO_BILLING_FIELD_MAX.address}
               />
-              <Field.HelperText>
-                Zoho Books limit: {ZOHO_BILLING_FIELD_MAX.address} characters.
-              </Field.HelperText>
             </Field.Root>
           </Box>
           <Box gridColumn={{ md: "span 2" }}>

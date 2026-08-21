@@ -166,9 +166,6 @@ export function PaymentFrequencyForm({
             placeholder="e.g. 30"
             disabled={fieldsDisabled}
           />
-          <Field.HelperText fontSize="2xs">
-            Price = monthly base × days ÷ 30
-          </Field.HelperText>
         </Field.Root>
       ) : null}
 

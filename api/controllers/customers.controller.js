@@ -10,6 +10,9 @@ const {
   formatTispDueDate,
   isTispDuplicateAccountError,
   isTispAccountMissingError,
+  extractTispClientAccountId,
+  hasLocalTispAccountEvidence,
+  shouldAllowTispCreateFallback,
 } = require("./tisp.controller");
 const store = require("../services/customerModuleStore");
 const oltEmsService = require("../services/oltEmsService");
@@ -59,6 +62,7 @@ const {
   getCustomerPayments_JS,
   getRecurringInvoices_JS,
   stopRecurringInvoice_JS,
+  voidInvoice_JS,
   updateRecurringInvoice_JS,
   markContactInactive_JS,
   invalidateZohoContactLookupCache,
@@ -100,7 +104,10 @@ const {
   filterZohoPaymentsForContact,
   zohoContactMatchesDashboardCustomer,
 } = require("../utils/zohoCustomerScope");
-const { summarizeOverdueZohoInvoices } = require("../utils/zohoInvoiceStatus");
+const {
+  summarizeOverdueZohoInvoices,
+  selectOverdueZohoInvoicesToVoid,
+} = require("../utils/zohoInvoiceStatus");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 
 function notifyCustomersChanged(customerId, action = "updated") {
@@ -1375,6 +1382,17 @@ async function refreshTispStatus(customer, options = {}) {
       snapshotPayload.dueDate = preferredDueDate;
       snapshotPayload.duedate = preferredDueDate;
     }
+    try {
+      const existingSnap = await integrationSnapshot.getTispSnapshot(customer.id);
+      const raw =
+        typeof existingSnap?.raw_json === "string"
+          ? JSON.parse(existingSnap.raw_json)
+          : existingSnap?.raw_json;
+      const existingId = extractTispClientAccountId(raw);
+      if (existingId) snapshotPayload.Id = existingId;
+    } catch {
+      /* keep Client Status payload */
+    }
 
     try {
       await integrationSnapshot.upsertTispSnapshot(customer.id, snapshotPayload);
@@ -1658,6 +1676,17 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     customerNumber: accountNumber,
     ipAddress: resolvedIp,
   };
+  if (ctx.id) {
+    try {
+      const snap = await integrationSnapshot.getTispSnapshot(ctx.id);
+      const raw =
+        typeof snap?.raw_json === "string" ? JSON.parse(snap.raw_json) : snap?.raw_json;
+      const tispClientId = extractTispClientAccountId(raw);
+      if (tispClientId) input.tispClientId = tispClientId;
+    } catch {
+      /* first update can recover the Id from TISP's duplicate-key error */
+    }
+  }
 
   // When releasing an old account before renumbering, free IP / PPPoE so the
   // new AccountNumber can claim them. Do not apply the new apartment/IP here.
@@ -2004,8 +2033,7 @@ async function pushCustomerToTisp(ctx, meta = {}) {
     meta.preferUpdate === true ||
     meta.forceUpdate === true ||
     meta.allowCreate === false ||
-    String(ctx.tisp_sync_status || "").toLowerCase() === "synced" ||
-    Boolean(ctx.tisp_due_date);
+    hasLocalTispAccountEvidence(ctx);
 
   try {
     const typeConvertInPlace =
@@ -2074,6 +2102,10 @@ async function pushCustomerToTisp(ctx, meta = {}) {
       }
       return await updateCustomerOnTisp(pushCtx, meta);
     } catch (updateErr) {
+      const canInsert = shouldAllowTispCreateFallback(meta, pushCtx);
+      if (!canInsert) {
+        throw updateErr;
+      }
       if (preferUpdate && !isTispAccountMissingError(updateErr)) {
         // Soft Client Status failures / unrelated UPDATE errors: do not INSERT.
         throw updateErr;
@@ -2117,16 +2149,18 @@ async function resolveCustomerIntegrationPresence(customerId) {
 
   let onTisp = false;
   let tispDueDate = null;
+  const localTispEvidence = hasLocalTispAccountEvidence(ctx);
   try {
     onTisp = customerNumber
       ? Boolean(await accountExistsOnTisp(customerNumber))
       : false;
   } catch {
-    onTisp =
-      String(ctx.tisp_sync_status || "").toLowerCase() === "synced" &&
-      String(ctx.subscription_status || "")
-        .trim()
-        .toLowerCase() !== "not on tisp";
+    onTisp = localTispEvidence;
+  }
+  // Client Status often omits status/package or times out. A prior sync /
+  // snapshot due date means the account already exists — edit must UPDATE.
+  if (!onTisp && localTispEvidence) {
+    onTisp = true;
   }
 
   try {
@@ -2508,6 +2542,8 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     if (!dueForSync) {
       dueForSync = ctx.tisp_due_date || TISP_STANDARD_DUE_DATE;
     }
+    const alreadyOnTisp =
+      Boolean(presence?.onTisp) || hasLocalTispAccountEvidence(tispCtx);
     await pushCustomerToTisp(tispCtx, {
       previousCustomerNumber: previousCustomerNumber || undefined,
       previousApartmentNumber: options.previousApartmentNumber,
@@ -2515,6 +2551,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
       ipAddress: newIp || undefined,
       dueDate: dueForSync,
       preferUpdate: true,
+      allowCreate: !alreadyOnTisp,
       skipCooldown: true,
     });
     tisp = {
@@ -2631,6 +2668,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
               ipAddress: newIp || undefined,
               dueDate: nextDue,
               preferUpdate: true,
+              allowCreate: false,
               skipCooldown: true,
             });
             tisp = { ...tisp, dueDate: nextDue, dueDateReset: true };
@@ -2810,9 +2848,11 @@ async function provisionCustomerOnTispOnly(customerId, dueDateInput) {
     TISP_STANDARD_DUE_DATE;
 
   const number = String(ctx.customer_number || "").trim().toUpperCase();
-  let alreadyOnTisp = false;
+  let alreadyOnTisp = hasLocalTispAccountEvidence(ctx);
   try {
-    alreadyOnTisp = number ? await accountExistsOnTisp(number) : false;
+    if (!alreadyOnTisp && number) {
+      alreadyOnTisp = Boolean(await accountExistsOnTisp(number));
+    }
     await pushCustomerToTisp(ctx, {
       dueDate,
       skipCooldown: true,
@@ -5061,6 +5101,112 @@ async function stopZohoRecurringForCustomer(contactId, customerNumber) {
   return { stopped, matched: matches.length };
 }
 
+/**
+ * Void overdue Zoho invoices for a cancelled customer. B2B is scoped to this
+ * house's reference on the agency contact so sibling invoices stay untouched.
+ * Best-effort: Zoho may reject void when payments are already applied.
+ */
+async function voidOverdueZohoInvoicesForCustomer(contactId, customer) {
+  const empty = { overdueCount: 0, voided: 0, failed: 0, invoices: [] };
+  if (!contactId) return empty;
+
+  let invoices = [];
+  try {
+    invoices = await getInvoices_JS({
+      customer_id: contactId,
+      per_page: 200,
+      page: 1,
+    });
+  } catch (e) {
+    console.warn(
+      `list overdue invoices on cancel failed for ${customer?.customerNumber || contactId}:`,
+      e.message || e
+    );
+    return { ...empty, error: e.message || "Failed to list invoices" };
+  }
+
+  const overdue = selectOverdueZohoInvoicesToVoid(
+    invoices || [],
+    contactId,
+    customer
+  );
+  if (!overdue.length) return empty;
+
+  const liveNumber = String(customer?.customerNumber || "").trim();
+  const reason = liveNumber
+    ? `Subscription cancelled (${liveNumber})`
+    : "Subscription cancelled";
+
+  let voided = 0;
+  let failed = 0;
+  const results = [];
+
+  for (const inv of overdue) {
+    const invoiceId = inv.invoice_id || inv.id;
+    const invoiceNumber = inv.invoice_number || invoiceId;
+    if (!invoiceId) {
+      failed += 1;
+      results.push({ invoiceNumber, ok: false, error: "missing invoice_id" });
+      continue;
+    }
+    try {
+      await voidInvoice_JS(String(invoiceId), { reason });
+      voided += 1;
+      results.push({
+        invoiceId: String(invoiceId),
+        invoiceNumber,
+        ok: true,
+      });
+      const customerId = customer?.id != null ? Number(customer.id) : null;
+      if (customerId) {
+        try {
+          const customerRepo = require("../repositories/customer.repository");
+          await customerRepo.upsertZohoInvoice(
+            customerId,
+            { ...inv, status: "void", balance: 0 },
+            contactId
+          );
+        } catch (snapErr) {
+          console.warn(
+            `local snapshot after void ${invoiceNumber} failed:`,
+            snapErr.message || snapErr
+          );
+        }
+      }
+    } catch (e) {
+      failed += 1;
+      console.warn(
+        `void overdue invoice ${invoiceNumber} on cancel failed:`,
+        e.message || e
+      );
+      results.push({
+        invoiceId: String(invoiceId),
+        invoiceNumber,
+        ok: false,
+        error: e.message || "void failed",
+      });
+    }
+  }
+
+  return {
+    overdueCount: overdue.length,
+    voided,
+    failed,
+    invoices: results,
+  };
+}
+
+function zohoVoidActivityBits(zoho) {
+  const voided = Number(zoho?.overdueInvoicesVoided) || 0;
+  const voidFailed = Number(zoho?.overdueInvoicesFailed) || 0;
+  return [
+    voided > 0
+      ? `Zoho voided ${voided} overdue invoice${voided === 1 ? "" : "s"}`
+      : null,
+    voidFailed > 0 ? `Zoho void failed ${voidFailed}` : null,
+  ];
+}
+
 function recurringWouldInvoiceDuringPause(nextInvoiceDate, pauseStart, pauseEnd) {
   if (!nextInvoiceDate) return true;
   const next = String(nextInvoiceDate).slice(0, 10);
@@ -5222,9 +5368,10 @@ async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd) {
 }
 
 /**
- * After local cancel: set TISP due date to cancellation day, and for C2B
- * mark the Zoho contact inactive (stop recurring first). B2B only stops
- * that customer's recurring on the agency contact — agency stays active.
+ * After local cancel: set TISP due date to cancellation day, void overdue
+ * Zoho invoices, then for C2B mark the Zoho contact inactive (stop recurring
+ * first). B2B only voids/stops that customer's invoices/recurring on the
+ * agency contact — agency stays active.
  */
 async function syncCancellationIntegrations(customerId, cancellationDate = new Date()) {
   const ctx = await store.getCustomerContext(customerId);
@@ -5302,24 +5449,45 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
       if (!agency?.id) {
         result.zoho = { ok: true, skipped: true, reason: "b2b_no_agency" };
       } else {
+        let agencyContact = null;
+        try {
+          agencyContact = await getCustomerByCompanyName_JS(agency.name);
+        } catch (e) {
+          console.warn(
+            `cancel: agency Zoho contact lookup failed for ${agency.name}:`,
+            e.message || e
+          );
+        }
+
+        const overdueVoids = agencyContact?.contact_id
+          ? await voidOverdueZohoInvoicesForCustomer(
+              agencyContact.contact_id,
+              customer
+            )
+          : { overdueCount: 0, voided: 0, failed: 0 };
+
         try {
           const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
           const refreshed = await refreshAgencyRecurring(agency.id);
+          invalidateCustomerZoho(customerId);
           result.zoho = {
             ok: true,
             skipped: false,
             contactInactivated: false,
             reason: "b2b_agency_recurring_refreshed",
             recurring: refreshed.recurring || null,
+            overdueInvoicesVoided: overdueVoids.voided,
+            overdueInvoicesFailed: overdueVoids.failed,
+            overdueInvoicesCount: overdueVoids.overdueCount,
           };
         } catch (e) {
           // Fall back to legacy per-number stop if consolidated refresh fails
-          const agencyContact = await getCustomerByCompanyName_JS(agency.name);
           if (agencyContact?.contact_id) {
             const recurring = await stopZohoRecurringForCustomer(
               agencyContact.contact_id,
               liveNumber
             );
+            invalidateCustomerZoho(customerId);
             result.zoho = {
               ok: true,
               skipped: false,
@@ -5327,11 +5495,17 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
               reason: "b2b_agency_contact_kept",
               recurringStopped: recurring.stopped,
               warning: e.message,
+              overdueInvoicesVoided: overdueVoids.voided,
+              overdueInvoicesFailed: overdueVoids.failed,
+              overdueInvoicesCount: overdueVoids.overdueCount,
             };
           } else {
             result.zoho = {
               ok: false,
               error: e.message || "Agency recurring refresh failed",
+              overdueInvoicesVoided: overdueVoids.voided,
+              overdueInvoicesFailed: overdueVoids.failed,
+              overdueInvoicesCount: overdueVoids.overdueCount,
             };
           }
         }
@@ -5341,6 +5515,10 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
       if (!contact?.contact_id) {
         result.zoho = { ok: true, skipped: true, reason: "no_zoho_contact" };
       } else {
+        const overdueVoids = await voidOverdueZohoInvoicesForCustomer(
+          contact.contact_id,
+          customer
+        );
         const retired = await retireFormerZohoTenantContact(contact, {
           customerNumber: liveNumber,
           formerCustomerId: ctx.id,
@@ -5357,6 +5535,9 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
           companyNameArchived: retired?.archivedCompanyName || null,
           zohoContactId: contact.contact_id,
           recurringStopped: true,
+          overdueInvoicesVoided: overdueVoids.voided,
+          overdueInvoicesFailed: overdueVoids.failed,
+          overdueInvoicesCount: overdueVoids.overdueCount,
         };
       }
     }
@@ -5420,6 +5601,7 @@ async function cancelSubscription(req, res, next) {
                   ? `TISP due ${integrations.tisp.dueDate}`
                   : null,
                 integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+                ...zohoVoidActivityBits(integrations.zoho),
                 integrations.olt?.ok && !integrations.olt?.skipped
                   ? "OLT ONU deactivated"
                   : null,
@@ -5861,6 +6043,7 @@ async function bulkCancelSubscriptions(req, res, next) {
                     ? `TISP due ${integrations.tisp.dueDate}`
                     : null,
                   integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+                  ...zohoVoidActivityBits(integrations.zoho),
                 ]
                   .filter(Boolean)
                   .join(" · "),

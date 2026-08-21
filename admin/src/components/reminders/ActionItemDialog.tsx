@@ -448,11 +448,6 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
                       colorPalette="brand"
                       loading={saving}
                       disabled={pendingSteps > 0}
-                      title={
-                        pendingSteps > 0
-                          ? "Finish the checklist before marking this complete"
-                          : undefined
-                      }
                       onClick={() => void setStatus("completed")}
                     >
                       Complete
@@ -464,11 +459,6 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
                     </Button>
                   ) : null}
                 </Flex>
-                {item.status !== "completed" && pendingSteps > 0 ? (
-                  <Text fontSize="xs" color="fg.muted" mt={1.5}>
-                    Finish the checklist to mark this complete.
-                  </Text>
-                ) : null}
               </Box>
             ) : null}
 

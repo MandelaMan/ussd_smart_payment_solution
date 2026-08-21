@@ -236,7 +236,6 @@ function MoveApartmentForm({
           onChange={(e) => onApartmentChange(e.target.value.toUpperCase())}
           placeholder="e.g. S445"
         />
-        <Field.HelperText>Current: {customer.apartmentNumber}</Field.HelperText>
       </Field.Root>
 
       {checking && newApartment.trim() ? (

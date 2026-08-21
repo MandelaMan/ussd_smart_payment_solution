@@ -1,6 +1,7 @@
 const { query } = require("../config/db");
 const leadStore = require("../services/leadStore");
 const whatsappLeadBot = require("../services/whatsappLeadBot");
+const notificationStore = require("../services/notificationStore");
 const { emitSyncEvent } = require("../socket");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 const { verifyWhatsAppSignature } = require("../middleware/webhookVerify");
@@ -295,11 +296,6 @@ async function submitSignup(req, res, next) {
     if (!product || Number(product.buildingId) !== buildingId || !product.isActive) {
       return res.status(400).json({ error: "Selected package is not available for this building" });
     }
-    if (product.hasDstv && !dstvDecoderSerial) {
-      return res.status(400).json({
-        error: "Please enter your DSTV decoder serial number for this package",
-      });
-    }
 
     const signup = {
       firstName: firstName.slice(0, 80),
@@ -401,6 +397,40 @@ async function submitSignup(req, res, next) {
       referenceId: String(id),
       metadata: { leadId: id, source: "signup", status: "interested" },
     });
+
+    try {
+      const recipientIds = await notificationStore.listActiveUserIdsForAdminOrGroup(
+        "sales"
+      );
+      if (recipientIds.length) {
+        const title = created ? "New customer signup" : "Signup updated";
+        const body = [
+          fullName,
+          phone,
+          `${building.name} · apt ${apartmentNumber}`,
+          product.name,
+          product.paymentFrequency,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        await notificationStore.createNotifications({
+          userIds: recipientIds,
+          type: "lead_signup",
+          title,
+          body,
+          push: {
+            title,
+            body,
+            url: `/admin/leads?lead=${id}`,
+          },
+        });
+      }
+    } catch (notifyErr) {
+      console.warn(
+        "signup notification failed:",
+        notifyErr?.message || notifyErr
+      );
+    }
 
     const form = await signupFormConfig();
     res.status(created ? 201 : 200).json({

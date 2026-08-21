@@ -55,7 +55,6 @@ import { canEditCustomerPackage } from "../../lib/rbac";
 import { DateField } from "../ui/DateField";
 import type { LeadSignupPrefill } from "../../lib/leadSignup";
 import { TextStatus } from "../ui/TextStatus";
-import { normalizeSubscriptionStatus } from "../../lib/customerStatus";
 import { TISP_STANDARD_DUE_DATE } from "../../lib/tispConstants";
 
 const PAYMENT_FREQUENCIES = [
@@ -418,11 +417,9 @@ export function CustomerForm({
     }
 
     // Optimistic local guess while live check runs.
+    // Suspended/Paused customers are still on TISP — do not treat them as create.
     const localOnTisp =
-      customer.tispSyncStatus === "synced" ||
-      (Boolean(customer.subscriptionStatus) &&
-        normalizeSubscriptionStatus(customer.subscriptionStatus) === "Active" &&
-        customer.tispSyncStatus !== "failed");
+      customer.tispSyncStatus === "synced" || Boolean(customer.tispDueDate);
     const localOnZoho =
       customer.customerType === "B2B" ||
       customer.zohoBillingStatus === "completed" ||
@@ -1080,7 +1077,7 @@ export function CustomerForm({
         label: "Package",
         value: dstvOnlyPkg
           ? "DSTV Only"
-          : `${selectedPackage.planName || selectedPackage.name} · ${selectedPackage.mbps} Mbps`,
+          : `${selectedPackage.planName || selectedPackage.name} · ${selectedPackage.mbps + Number(selectedPackage.extraBandwidth || 0)} Mbps`,
       });
     } else if (isEdit && customer) {
       items.push({
@@ -1895,11 +1892,6 @@ export function CustomerForm({
       <Stack gap={4}>
         <FormSection
           title="Location"
-          description={
-            premiseType === "shop"
-              ? "Shops sit under the same building and POP as apartments. Customer number is POP-BUILDING-SHP plus the location without spaces."
-              : undefined
-          }
           sideBySide
         >
           <Field.Root required w="full">
@@ -1975,12 +1967,6 @@ export function CustomerForm({
                   placeholder="e.g. S18"
                   disabled={fieldsDisabled}
                 />
-                {!isEdit ? (
-                  <Field.HelperText>
-                    Spaces are dropped in the customer number
-                    {shopUnitForNumber ? ` (…-SHP-${shopUnitForNumber})` : ""}.
-                  </Field.HelperText>
-                ) : null}
                 {!isEdit &&
                 occupancyChecking &&
                 shopUnitForNumber &&
@@ -2033,21 +2019,16 @@ export function CustomerForm({
               disabled={fieldsDisabled}
               bg={isEdit || !isActive ? "gray.50" : undefined}
             />
-            {isEdit ? (
-              <Text fontSize="xs" color="fg.muted" mt={1}>
-                Use Move apartment from the customer menu to change the unit and
-                book an installation visit.
-              </Text>
-            ) : isActive && occupancyChecking && apartmentNumber.trim() && buildingId ? (
+            {!isEdit && isActive && occupancyChecking && apartmentNumber.trim() && buildingId ? (
               <Text fontSize="xs" color="fg.muted" mt={1}>
                 Checking apartment availability…
               </Text>
-            ) : isActive && occupancy && !occupancy.available && occupancy.tenant ? (
+            ) : !isEdit && isActive && occupancy && !occupancy.available && occupancy.tenant ? (
               <Text fontSize="xs" color="red.600" mt={1}>
                 Apartment {occupancy.tenant.apartmentNumber} already has an active tenant:{" "}
                 {occupancy.tenant.customerName} ({occupancy.tenant.customerNumber})
               </Text>
-            ) : isActive && occupancy?.available && apartmentNumber.trim() && buildingId ? (
+            ) : !isEdit && isActive && occupancy?.available && apartmentNumber.trim() && buildingId ? (
               <Text fontSize="xs" color="green.700" mt={1}>
                 Apartment is available
               </Text>
@@ -2208,7 +2189,7 @@ export function CustomerForm({
                 <option key={p.id} value={p.id} title={p.name}>
                   {isDstvOnly
                     ? formatCurrency(p.price)
-                    : `${p.mbps} Mbps · ${formatCurrency(p.price)}${
+                    : `${p.mbps + Number(p.extraBandwidth || 0)} Mbps · ${formatCurrency(p.price)}${
                         p.hasDstv ? " · +DSTV" : ""
                       }`}
                 </option>
@@ -2376,23 +2357,21 @@ export function CustomerForm({
                       : undefined
                   }
                 />
-                <Field.HelperText>
-                  {!activeCampaign
-                    ? "Select a campaign first"
-                    : !referredByCustomerNumber.trim()
-                      ? `${activeCampaign.newCustomerDiscountPercent}% off first invoice · referral reward after pay`
-                      : referrerLookup.status === "checking" ||
-                          referredByCustomerNumber.trim().toUpperCase() !==
-                            debouncedReferredBy
-                        ? "Looking up apartment…"
-                        : referrerLookup.status === "found"
-                          ? `Found ${referrerLookup.name} — referral reward applies after this customer pays`
-                          : referrerLookup.status === "cancelled"
-                            ? "Referrer is cancelled — referral discount will not apply"
-                            : referrerLookup.status === "not_found"
-                              ? "No active customer in that apartment — referral discount will not apply"
-                              : `${activeCampaign.newCustomerDiscountPercent}% off first invoice · referral reward after pay`}
-                </Field.HelperText>
+                {activeCampaign && referredByCustomerNumber.trim() ? (
+                  <Field.HelperText>
+                    {referrerLookup.status === "checking" ||
+                    referredByCustomerNumber.trim().toUpperCase() !==
+                      debouncedReferredBy
+                      ? "Looking up apartment…"
+                      : referrerLookup.status === "found"
+                        ? `Found ${referrerLookup.name}`
+                        : referrerLookup.status === "cancelled"
+                          ? "Referrer is cancelled"
+                          : referrerLookup.status === "not_found"
+                            ? "No active customer in that apartment"
+                            : null}
+                  </Field.HelperText>
+                ) : null}
               </Field.Root>
             </>
           ) : null}
@@ -2432,39 +2411,14 @@ export function CustomerForm({
                 disabled={fieldsDisabled || integrationsLoading}
                 placeholder="Select due date"
               />
-              {createInitialInvoice || createRecurringInvoice || updateZohoRecurring ? (
-                <Field.HelperText>
-                  {createInitialInvoice
-                    ? "Reset from today: signup invoice due date (Net 7 for C2B, Net 30 for B2B)."
-                    : "Reset from today: next service due (invoice goes out 7 days before)."}
-                </Field.HelperText>
-              ) : !onTisp ? (
-                <Field.HelperText>
-                  Required to create on TISP (default {TISP_STANDARD_DUE_DATE}).
-                </Field.HelperText>
-              ) : null}
             </Field.Root>
-          </FormSection>
-        ) : null}
-
-        {isEdit && isActive && isDstvOnly ? (
-          <FormSection title="TISP">
-            <Box gridColumn={{ md: "span 2" }}>
-              <Text fontSize="sm" color="fg.muted">
-                DSTV Only customers are not added on TISP (no bandwidth). Billing is handled in Zoho Books.
-              </Text>
-            </Box>
           </FormSection>
         ) : null}
 
         {isEdit && isActive ? (
           <FormSection title="Zoho Books">
             <Box gridColumn={{ md: "span 2" }}>
-              {customerType === "B2B" ? (
-                <Text fontSize="sm" color="fg.muted">
-                  Billed via agency Zoho contact.
-                </Text>
-              ) : (
+              {customerType === "C2B" ? (
                 <Stack gap={2}>
                   <Flex align="center" gap={2} flexWrap="wrap">
                     <Text fontSize="sm" color="fg.muted" minW="5.5rem">
@@ -2578,7 +2532,7 @@ export function CustomerForm({
                     </Text>
                   </Flex>
                 </Stack>
-              )}
+              ) : null}
             </Box>
 
             {customerType === "C2B" && !onZoho ? (
@@ -2596,10 +2550,6 @@ export function CustomerForm({
                     <option value="no">No — create contact only</option>
                     <option value="yes">Yes — create signup invoice</option>
                   </SelectField>
-                  <Field.HelperText>
-                    Emailed with Invoice CC addresses from Settings. Will not
-                    send if those CCs are missing.
-                  </Field.HelperText>
                 </Field.Root>
                 <Field.Root>
                   <Field.Label>Recurring invoice</Field.Label>
@@ -2632,15 +2582,6 @@ export function CustomerForm({
                   <option value="no">No — leave billing as-is</option>
                   <option value="yes">Yes — create signup invoice on save</option>
                 </SelectField>
-                <Field.HelperText>
-                  Use when this customer was already in Zoho at signup and the
-                  initial invoice was skipped.
-                  {zohoInvoiceCount > 0
-                    ? ` (${zohoInvoiceCount} invoice${zohoInvoiceCount === 1 ? "" : "s"} already on Zoho)`
-                    : null}{" "}
-                  The invoice is emailed with Invoice CC addresses from Settings
-                  and will not send if those CCs are missing.
-                </Field.HelperText>
               </Field.Root>
             ) : null}
 
@@ -2658,10 +2599,6 @@ export function CustomerForm({
                   <option value="no">No — leave without recurring</option>
                   <option value="yes">Yes — create recurring profile on save</option>
                 </SelectField>
-                <Field.HelperText>
-                  Use when this customer was already in Zoho at signup and
-                  recurring billing was skipped.
-                </Field.HelperText>
               </Field.Root>
             ) : null}
 
@@ -2686,11 +2623,6 @@ export function CustomerForm({
 
         <FormSection
           title="Contact details"
-          description={
-            premiseType === "shop"
-              ? "Person we should contact at the shop."
-              : undefined
-          }
         >
           <Field.Root required>
             <Field.Label>First name</Field.Label>
@@ -2716,13 +2648,6 @@ export function CustomerForm({
               }
               disabled={fieldsDisabled}
             />
-            {b2bUsesAgencyPhone ? (
-              <Field.HelperText>
-                Optional. Invoices always go to the agency. Enter a personal
-                number for service updates, or leave blank to use the agency
-                phone.
-              </Field.HelperText>
-            ) : null}
           </Field.Root>
           <Field.Root required={!b2bUsesAgencyEmail}>
             <Field.Label>Email</Field.Label>
@@ -2739,13 +2664,6 @@ export function CustomerForm({
               }
               disabled={fieldsDisabled}
             />
-            {b2bUsesAgencyEmail ? (
-              <Field.HelperText>
-                Optional. Invoices always go to the agency. Enter a personal
-                email for upgrade, move, and other service notices, or leave
-                blank to use the agency email.
-              </Field.HelperText>
-            ) : null}
           </Field.Root>
         </FormSection>
 
@@ -2771,9 +2689,6 @@ export function CustomerForm({
               autoComplete="off"
               maxLength={ZOHO_BILLING_FIELD_MAX.address}
             />
-            <Field.HelperText>
-              Zoho Books limit: {ZOHO_BILLING_FIELD_MAX.address} characters.
-            </Field.HelperText>
           </Field.Root>
           <Field.Root>
             <Field.Label>Street 2</Field.Label>
@@ -2852,11 +2767,6 @@ export function CustomerForm({
               <option value="C2B">C2B — invoice to customer</option>
               <option value="B2B">B2B — invoice to agency</option>
             </SelectField>
-            {isEdit ? (
-              <Field.HelperText>
-                Use Convert to C2B/B2B from the customer menu.
-              </Field.HelperText>
-            ) : null}
           </Field.Root>
           <Field.Root required>
             <Field.Label>VAT exempt</Field.Label>
