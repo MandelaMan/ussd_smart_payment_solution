@@ -174,11 +174,54 @@ async function testRateLimiter() {
   assert("rate limiter blocks after max", statusCode === 429);
 }
 
+function testPasswordResetTokens() {
+  const {
+    generateResetToken,
+    hashResetToken,
+    isResetTokenExpired,
+    PASSWORD_RESET_USER_SQL,
+  } = require("../api/utils/passwordResetToken");
+  const {
+    genericRecoveryResponse,
+    shouldSendPasswordResetEmail,
+  } = require("../api/utils/accountRecovery");
+
+  const token = generateResetToken();
+  assert("reset token is high entropy", token.length >= 32);
+  assert("reset token hash is sha256 hex", hashResetToken(token).length === 64);
+  assert(
+    "reset token hash is not the raw token",
+    hashResetToken(token) !== token
+  );
+  assert(
+    "expired reset tokens are rejected",
+    isResetTokenExpired(new Date(Date.now() - 1000))
+  );
+  assert(
+    "password reset clears lockout",
+    PASSWORD_RESET_USER_SQL.includes("locked_until = NULL")
+  );
+  const res = genericRecoveryResponse();
+  assert(
+    "recovery response does not enumerate accounts",
+    res.ok === true && !String(res.message).toLowerCase().includes("not found")
+  );
+  assert(
+    "inactive accounts do not receive reset mail",
+    shouldSendPasswordResetEmail({ id: 1, is_active: 0 }) === false
+  );
+  assert(
+    "locked active accounts do receive reset mail",
+    shouldSendPasswordResetEmail({ id: 1, is_active: 1 }) === true
+  );
+}
+
 async function main() {
   console.log("Auth security tests\n");
   await testPasswordPolicy();
   testJwtAlgorithmPinning();
   testAccountLockoutHelpers();
+  testPasswordResetTokens();
   testWebhookVerify();
   await testBcryptCost();
   await testRateLimiter();

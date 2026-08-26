@@ -205,6 +205,7 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>Reason:</strong> {{pauseReason}}<br/>
   <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}
 </p>
+<p>{{pauseCreditNote}}</p>
 <p>Service will remain stopped until the pause ends (or you ask us to resume earlier).</p>
 <p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,

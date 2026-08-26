@@ -31,6 +31,9 @@ export const CUSTOMER_ACTIVITY_EVENT_TYPES = [
 export const ADMIN_AUDIT_EXTRA_EVENT_TYPES = [
   "user_login",
   "user_recovery_requested",
+  "password_reset_requested",
+  "password_reset_completed",
+  "account_unlocked",
   "user_impersonation_started",
   "user_impersonation_stopped",
 ] as const;

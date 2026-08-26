@@ -543,6 +543,17 @@ function mapCustomerRow(row) {
       ? String(row.pause_end_date).slice(0, 10)
       : null,
     pauseReason: row.pause_reason || null,
+    pauseCreditDays:
+      row.pause_credit_days != null ? Number(row.pause_credit_days) : null,
+    pauseOriginalDueDate: row.pause_original_due_date
+      ? String(row.pause_original_due_date).slice(0, 10)
+      : null,
+    pauseCreditedDueDate: row.pause_credited_due_date
+      ? String(row.pause_credited_due_date).slice(0, 10)
+      : null,
+    pauseCreditAppliedAt: row.pause_credit_applied_at
+      ? String(row.pause_credit_applied_at)
+      : null,
     upgradePaymentStatus: row.upgrade_payment_status || "none",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -3200,6 +3211,12 @@ async function pauseCustomer(customerId, payload = {}) {
     throw new Error("Pause end date must be on or after the start date");
   }
 
+  const creditDays = Math.max(0, Number(payload?.creditDays ?? payload?.pause_credit_days ?? 0) || 0);
+  const originalDueDate =
+    formatDateOnly(payload?.originalDueDate ?? payload?.pause_original_due_date) || null;
+  const creditedDueDate =
+    formatDateOnly(payload?.creditedDueDate ?? payload?.pause_credited_due_date) || null;
+
   const customer = await getCustomerContext(customerId);
   if (!customer) throw new Error("Customer not found");
   if (customer.status === "cancelled") {
@@ -3209,23 +3226,80 @@ async function pauseCustomer(customerId, payload = {}) {
     throw new Error("Customer is not active");
   }
 
-  await query(
-    `UPDATE customers
-     SET subscription_status = ?,
-         pause_start_date = ?,
-         pause_end_date = ?,
-         pause_reason = ?
-     WHERE id = ?`,
-    ["Paused", start, end, reason, customerId]
-  );
+  try {
+    await query(
+      `UPDATE customers
+       SET subscription_status = ?,
+           pause_start_date = ?,
+           pause_end_date = ?,
+           pause_reason = ?,
+           pause_credit_days = ?,
+           pause_original_due_date = ?,
+           pause_credited_due_date = ?,
+           pause_credit_applied_at = NULL
+       WHERE id = ?`,
+      ["Paused", start, end, reason, creditDays, originalDueDate, creditedDueDate, customerId]
+    );
+  } catch (err) {
+    if (err.code !== "ER_BAD_FIELD_ERROR") throw err;
+    await query(
+      `UPDATE customers
+       SET subscription_status = ?,
+           pause_start_date = ?,
+           pause_end_date = ?,
+           pause_reason = ?
+       WHERE id = ?`,
+      ["Paused", start, end, reason, customerId]
+    );
+  }
 
-  await query(
-    `INSERT INTO customer_events (customer_id, event_type, notes)
-     VALUES (?, 'pause', ?)`,
-    [customerId, `${reason} (${start} → ${end})`]
-  );
+  const creditNote =
+    creditDays > 0
+      ? ` · ${creditDays} day${creditDays === 1 ? "" : "s"} credited on next subscription`
+      : "";
+  try {
+    await query(
+      `INSERT INTO customer_events (customer_id, event_type, notes)
+       VALUES (?, 'pause', ?)`,
+      [customerId, `${reason} (${start} → ${end})${creditNote}`]
+    );
+  } catch (err) {
+    console.warn("pause event insert skipped:", err.message);
+  }
 
   return getCustomerContext(customerId);
+}
+
+async function markPauseCreditApplied(customerId, appliedDueDate = null) {
+  const id = Number(customerId);
+  if (!id) return null;
+  const due = formatDateOnly(appliedDueDate);
+  try {
+    await query(
+      `UPDATE customers
+       SET pause_credit_applied_at = NOW(),
+           pause_credited_due_date = COALESCE(?, pause_credited_due_date),
+           subscription_status = CASE
+             WHEN LOWER(TRIM(COALESCE(subscription_status, ''))) LIKE '%pause%' THEN 'Active'
+             ELSE subscription_status
+           END
+       WHERE id = ?
+         AND pause_credit_applied_at IS NULL`,
+      [due, id]
+    );
+  } catch (err) {
+    if (err.code !== "ER_BAD_FIELD_ERROR") throw err;
+    await query(
+      `UPDATE customers
+       SET subscription_status = CASE
+             WHEN LOWER(TRIM(COALESCE(subscription_status, ''))) LIKE '%pause%' THEN 'Active'
+             ELSE subscription_status
+           END
+       WHERE id = ?`,
+      [id]
+    );
+  }
+  return getCustomerById(id);
 }
 
 async function deleteCustomerCompletely(customerId) {
@@ -4772,6 +4846,7 @@ module.exports = {
   cancelCustomer,
   disconnectCustomer,
   pauseCustomer,
+  markPauseCreditApplied,
   updateCustomerOltMapping,
   clearCustomerOnuMapping,
   deleteCustomerCompletely,

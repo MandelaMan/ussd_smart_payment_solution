@@ -62,8 +62,9 @@ When `GROUP_PRESETS` in the catalog are intentionally narrowed, bump `SYSTEM_GRO
 2. **Create user** with full name, job title, email, role, groups, status, optional notes
 3. A strong temporary password is generated (e.g. `hJ8}N6V9j`) — copy it or email it to the user
 4. The user must set a full password on first login
-5. Use **Permissions** on a user to grant or deny individual actions without changing their role
-6. Use the **Groups** tab to edit preset group permission bundles — saves persist across restarts
+5. If they forget it later: **Can't access your account?** on the login page emails them a 60-minute reset link. Admins can also **Send reset link** or **Unlock account** from Settings → Users; **Set temporary password** remains a fallback
+6. Use **Permissions** on a user to grant or deny individual actions without changing their role
+7. Use the **Groups** tab to edit preset group permission bundles — saves persist across restarts
 
 After changing a group's permissions, affected users should refresh the admin app (or re-login) so their session picks up the new `/auth/me` permission list. API checks update immediately after save.
 

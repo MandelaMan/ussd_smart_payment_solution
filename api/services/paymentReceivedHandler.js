@@ -130,6 +130,15 @@ async function handleSubscriptionPaymentReceived({
     tispOk = true;
   }
 
+  if (customerRow?.id && (tispOk || skipTispForDstvOnly)) {
+    try {
+      const { applyPendingPauseCreditSafe } = require("./pauseCreditService");
+      await applyPendingPauseCreditSafe(customerRow.id, { paymentDate: paidOn });
+    } catch (e) {
+      console.warn("pause credit after payment failed:", e.message);
+    }
+  }
+
   if (
     customerRow?.id &&
     tispOk &&

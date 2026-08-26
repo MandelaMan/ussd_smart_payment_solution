@@ -771,6 +771,10 @@ function CommunicationPanel({
           </Text>
           ,{" "}
           <Text as="span" fontFamily="mono" fontSize="xs">
+            {"{{pauseCreditNote}}"}
+          </Text>
+          ,{" "}
+          <Text as="span" fontFamily="mono" fontSize="xs">
             {"{{installationDateTime}}"}
           </Text>
           ,{" "}

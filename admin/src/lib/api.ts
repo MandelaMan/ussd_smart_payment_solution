@@ -25,7 +25,9 @@ export function notifyAuthSessionExpired(path: string) {
   if (
     path.startsWith("/auth/login") ||
     path.startsWith("/auth/me") ||
-    path.startsWith("/auth/recover-account")
+    path.startsWith("/auth/recover-account") ||
+    path.startsWith("/auth/forgot-password") ||
+    path.startsWith("/auth/reset-password")
   )
     return;
   // Do not set the notified flag here — AuthProvider re-checks /auth/me and
@@ -139,6 +141,7 @@ export type AdminUser = User & {
   created_at: string;
   notes?: string | null;
   legacyRole?: string | null;
+  lockedUntil?: string | null;
 };
 
 export type BuildingOlt = {
@@ -580,6 +583,10 @@ export type Customer = {
   pauseStartDate?: string | null;
   pauseEndDate?: string | null;
   pauseReason?: string | null;
+  pauseCreditDays?: number | null;
+  pauseOriginalDueDate?: string | null;
+  pauseCreditedDueDate?: string | null;
+  pauseCreditAppliedAt?: string | null;
   upgradePaymentStatus?: "none" | "payment_pending";
   createdAt: string;
   updatedAt: string;
@@ -1976,6 +1983,17 @@ export const api = {
       }),
     }),
 
+  validatePasswordResetToken: (token: string) =>
+    request<{ valid: boolean }>(
+      `/auth/reset-password?token=${encodeURIComponent(token)}`
+    ),
+
+  resetPasswordWithToken: (token: string, newPassword: string) =>
+    request<{ ok: boolean }>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, newPassword }),
+    }),
+
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
 
   impersonateUser: (id: number) =>
@@ -2333,6 +2351,15 @@ export const api = {
         ...(options?.sendEmail ? { sendEmail: true } : {}),
       }),
     }),
+
+  sendUserResetLink: (id: number) =>
+    request<{ ok: boolean; emailed: boolean; email: string }>(
+      `/admin/users/${id}/send-reset-link`,
+      { method: "POST" }
+    ),
+
+  unlockUser: (id: number) =>
+    request<{ ok: boolean }>(`/admin/users/${id}/unlock`, { method: "POST" }),
 
   emailTemporaryPassword: (id: number, temporaryPassword: string) =>
     request<{ ok: boolean; emailed: boolean; email: string }>(
@@ -3584,7 +3611,14 @@ export const api = {
     request<{
       ok: boolean;
       customer: Customer;
-      pause?: { startDate: string; endDate: string; reason: string };
+      pause?: {
+        startDate: string;
+        endDate: string;
+        reason: string;
+        creditDays?: number;
+        originalDueDate?: string | null;
+        creditedDueDate?: string | null;
+      };
       tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
       zoho?: {
         ok: boolean;

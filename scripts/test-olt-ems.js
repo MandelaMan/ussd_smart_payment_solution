@@ -122,7 +122,7 @@ async function adminLogin() {
   const password =
     process.env.TEST_ADMIN_PASSWORD ||
     process.env.ADMIN_PASSWORD ||
-    "Admin@12345";
+    "Admin@2026";
 
   const res = await axios.post(
     `${API_BASE}/auth/login`,

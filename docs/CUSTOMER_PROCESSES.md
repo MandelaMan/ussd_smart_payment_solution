@@ -34,7 +34,7 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 | Update frequency | Swap to matching Mbps product + frequency + price | UPDATE | C2B recurring refresh. B2B skip | No |
 | Move apartment | New apartment, customer number, IP/PPPoE, history rows | Migrate old → new account number | C2B: renumber contact/recurring. B2B skip | Clear ONU index/SN (building OLT link kept) |
 | Convert C2B↔B2B | Type, agency, customer number, PPPoE if it tracked the number | Migrate old → new account number (preserve due date) | C2B→B2B: stop personal recurring, inactive contact, agency signup invoice + recurring. B2B→C2B: detach agency snapshot, refresh agency recurring without this house, create personal contact + recurring + new invoice | No |
-| Pause service (away) | `subscription_status=Paused`, pause window + reason | Due date = today (stop access) | Defer matching recurring so next invoice is after pause end | Deactivate ONU |
+| Pause service (away) | `subscription_status=Paused`, pause window + unused-day credit | Due date = today (stop access) | Defer matching recurring by the away days (next invoice after pause + credit) | Deactivate ONU |
 | Suspend on TISP | `subscription_status=Suspended` | Due date = today | **None** (billing continues) | Deactivate ONU |
 | Cancel subscription | `status=cancelled`, close apartment history, collection dates; archive number to `{number}-CXL-{id}` and clear IP/DSTV immediately | Due date = cancel day (async) | C2B: void overdue invoices, stop recurring, rename company to `{number}-CXL-{id}`, mark inactive. B2B: void that house's overdue invoices and stop agency recurring for this number only | Deactivate ONU (async) |
 | New signup after cancel (same apt) | Cancelled row already archived; insert new active tenant on live number | UPDATE existing account (name/phone/package/due) | Retire leftover Zoho contact on live number; create **new** Zoho customer + signup invoice (former invoices ignored) | No |
@@ -133,16 +133,16 @@ Admin customer actions from the customers list menu (`CustomerActionMenu`), and 
 
 ## 7. Pause service (away)
 
-**Purpose:** Customer temporarily away — stop access now, keep account active, defer Zoho invoices that would fall in the pause window.
+**Purpose:** Customer temporarily away — stop access now, keep account active, credit unused away days onto the next subscription, and defer Zoho invoices that would fall in the pause window.
 
 **Outcomes**
 
-- **Local:** `subscription_status=Paused`, `pause_start_date` / `pause_end_date` / reason.
-- **TISP:** Due date = today (same stop as suspend). Future `pauseStartDate` does not delay the TISP stop.
-- **Zoho:** Matching recurring profiles deferred (`start_date` / next invoice pushed to pause end) on C2B contact or B2B agency by customer-number reference.
+- **Local:** `subscription_status=Paused`, `pause_start_date` / `pause_end_date` / reason, plus `pause_credit_days` (return date exclusive) and the credited next due date. Shown on the customer Status and Package tabs in BIX.
+- **TISP:** Due date = today (same stop as suspend). Future `pauseStartDate` does not delay the TISP stop. On the next subscription payment, TISP due date is extended by the credited away days and the pause credit is marked applied.
+- **Zoho:** Matching recurring profiles deferred so the next invoice is after pause end **and** shifted by the credited away days, on C2B contact or B2B agency by customer-number reference.
 - **OLT:** ONU deactivated when linked.
 
-**Notes:** No automated resume job at `pause_end_date`. Payment while paused can reactivate OLT via the payment handler. Use Suspend when the intent is non-payment enforcement without Zoho deferral.
+**Notes:** No automated resume job at `pause_end_date`. Payment while paused can reactivate OLT via the payment handler and applies the stored pause credit. Use Suspend when the intent is non-payment enforcement without Zoho deferral.
 
 ---
 

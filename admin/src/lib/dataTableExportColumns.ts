@@ -56,6 +56,13 @@ export const userExportColumns: ExportColumn<AdminUser>[] = [
   { header: "Email", value: (row) => row.email },
   { header: "Role", value: (row) => row.role },
   { header: "Active", value: (row) => (row.is_active ? "Yes" : "No") },
+  {
+    header: "Locked",
+    value: (row) =>
+      row.lockedUntil && new Date(row.lockedUntil).getTime() > Date.now()
+        ? "Yes"
+        : "No",
+  },
   { header: "Created", value: (row) => formatDate(row.created_at) },
 ];
 
@@ -101,5 +108,12 @@ export const customerListExportColumns = (
   {
     header: "Due date",
     value: (row) => (row.tispDueDate ? formatDateOnly(row.tispDueDate) : ""),
+  },
+  {
+    header: "Pause credit days",
+    value: (row) =>
+      row.pauseCreditDays != null && row.pauseCreditDays > 0
+        ? String(row.pauseCreditDays)
+        : "",
   },
 ];

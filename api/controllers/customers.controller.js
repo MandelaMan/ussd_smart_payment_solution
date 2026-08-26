@@ -89,6 +89,10 @@ const {
   lastPaymentFromZohoPayments,
 } = require("../utils/lastPaymentDate");
 const {
+  computePauseCredit,
+  nextRecurringStartAfterPause,
+} = require("../utils/pauseCredit");
+const {
   isB2BCustomer,
   getZohoContactLookupKeys,
   resolveAgencyForCustomer,
@@ -5214,17 +5218,21 @@ function recurringWouldInvoiceDuringPause(nextInvoiceDate, pauseStart, pauseEnd)
 }
 
 /**
- * Push Zoho recurring start_date to pause end so no invoice is issued during the away period.
+ * Push Zoho recurring so the next invoice is after the pause and includes credited away days.
  */
 async function deferZohoRecurringForCustomer(
   contactId,
   customerNumber,
   pauseStart,
-  pauseEnd
+  pauseEnd,
+  credit = {}
 ) {
   if (!contactId || !customerNumber) {
-    return { deferred: 0, matched: 0, resumeDate: pauseEnd };
+    return { deferred: 0, matched: 0, resumeDate: pauseEnd, creditDays: 0 };
   }
+
+  const creditDays = Math.max(0, Number(credit.creditDays) || 0);
+  const creditedDueDate = credit.creditedDueDate || null;
 
   const list = await getRecurringInvoices_JS({
     customer_id: contactId,
@@ -5246,16 +5254,27 @@ async function deferZohoRecurringForCustomer(
     const id = row.recurring_invoice_id || row.recurringinvoice_id;
     if (!id) continue;
     const nextDate = row.next_invoice_date || null;
-    if (!recurringWouldInvoiceDuringPause(nextDate, pauseStart, pauseEnd)) {
+    const newStartDate = nextRecurringStartAfterPause({
+      nextInvoiceDate: nextDate,
+      pauseEnd,
+      creditDays,
+      creditedDueDate,
+    });
+    const mustShift =
+      !nextDate ||
+      recurringWouldInvoiceDuringPause(nextDate, pauseStart, pauseEnd) ||
+      (newStartDate && nextDate < newStartDate);
+    if (!mustShift || !newStartDate) {
       continue;
     }
     try {
-      await updateRecurringInvoice_JS(String(id), { start_date: pauseEnd });
+      await updateRecurringInvoice_JS(String(id), { start_date: newStartDate });
       deferred += 1;
       profiles.push({
         recurringInvoiceId: String(id),
         previousNextInvoiceDate: nextDate,
-        newStartDate: pauseEnd,
+        newStartDate,
+        creditDays,
       });
     } catch (e) {
       console.warn(
@@ -5270,10 +5289,12 @@ async function deferZohoRecurringForCustomer(
     matched: matches.length,
     profiles,
     resumeDate: pauseEnd,
+    creditDays,
+    creditedDueDate,
   };
 }
 
-async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd) {
+async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd, credit = {}) {
   const ctx = await store.getCustomerContext(customerId);
   if (!ctx) {
     return { ok: false, error: "Customer not found" };
@@ -5306,7 +5327,8 @@ async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd) {
         agencyContact.contact_id,
         ctx.customer_number,
         pauseStart,
-        pauseEnd
+        pauseEnd,
+        credit
       );
       invalidateCustomerZoho(customerId);
       return {
@@ -5326,7 +5348,8 @@ async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd) {
       contact.contact_id,
       ctx.customer_number,
       pauseStart,
-      pauseEnd
+      pauseEnd,
+      credit
     );
 
     try {
@@ -5676,6 +5699,47 @@ async function stopTispServiceToday(ctx) {
 }
 
 /**
+ * After a payment that resumes a paused customer, push TISP DueDate forward
+ * by the credited away days on top of the new billing period.
+ */
+async function extendTispDueDateForCustomer(ctx, dueDate) {
+  const nextDue = formatDateOnly(dueDate);
+  if (!ctx || !nextDue) {
+    return { ok: true, skipped: true, reason: "missing_due_date" };
+  }
+
+  const tisp = { ok: true, skipped: true, dueDate: nextDue };
+  try {
+    const onTisp = await accountExistsOnTisp(ctx.customer_number);
+    if (!onTisp) {
+      tisp.reason = "not_on_tisp";
+      return tisp;
+    }
+    await updateCustomerOnTisp(ctx, {
+      dueDate: nextDue,
+      skipCooldown: true,
+    });
+    tisp.ok = true;
+    tisp.skipped = false;
+    try {
+      await integrationSnapshot.upsertTispSnapshot(ctx.id, {
+        DueDate: nextDue,
+        dueDate: nextDue,
+        duedate: nextDue,
+        status: "Active",
+      });
+    } catch (e) {
+      console.warn("TISP snapshot save (pause credit) failed:", e.message);
+    }
+  } catch (e) {
+    tisp.ok = false;
+    tisp.skipped = false;
+    tisp.error = formatTispError(e);
+  }
+  return tisp;
+}
+
+/**
  * Disconnect service on TISP by setting due date to today.
  * Keeps the local account active; sets subscription status to Suspended.
  */
@@ -5810,6 +5874,14 @@ async function pauseCustomer(req, res, next) {
       });
     }
 
+    const originalDueDate =
+      formatDateOnly(ctx.tisp_due_date || ctx.tispDueDate) || null;
+    const pauseCredit = computePauseCredit({
+      pauseStart,
+      pauseEnd,
+      originalDueDate,
+    });
+
     const tisp = await stopTispServiceToday(ctx);
 
     const olt = await oltEmsService.deactivateOnuForCustomer(ctx, {
@@ -5821,9 +5893,17 @@ async function pauseCustomer(req, res, next) {
       reason: pauseReason,
       pauseStartDate: pauseStart,
       pauseEndDate: pauseEnd,
+      creditDays: pauseCredit.creditDays,
+      originalDueDate: pauseCredit.originalDueDate,
+      creditedDueDate: pauseCredit.creditedDueDate,
     });
 
-    const zoho = await syncPauseZohoBilling(customerId, pauseStart, pauseEnd);
+    const zoho = await syncPauseZohoBilling(
+      customerId,
+      pauseStart,
+      pauseEnd,
+      pauseCredit
+    );
 
     try {
       await integrationSnapshot.upsertTispSnapshot(customerId, {
@@ -5854,12 +5934,18 @@ async function pauseCustomer(req, res, next) {
       message: [
         customer?.customerNumber || "",
         `away ${pauseStart} → ${pauseEnd}`,
+        pauseCredit.creditDays > 0
+          ? `${pauseCredit.creditDays} day${pauseCredit.creditDays === 1 ? "" : "s"} credited on next subscription`
+          : null,
+        pauseCredit.creditedDueDate
+          ? `next due ${pauseCredit.creditedDueDate}`
+          : null,
         pauseReason,
         tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
         zoho.skipped
           ? null
           : zoho.recurring?.deferred
-            ? `Zoho recurring deferred to ${pauseEnd}`
+            ? `Zoho recurring deferred (${pauseCredit.creditDays || 0}d credit)`
             : "Zoho recurring unchanged",
         zoho.error || null,
         tisp.skipped ? "not on TISP" : null,
@@ -5883,6 +5969,17 @@ async function pauseCustomer(req, res, next) {
           pauseStartDate: pauseStart,
           pauseEndDate: pauseEnd,
           pauseReason,
+          pauseCreditDays:
+            pauseCredit.creditDays > 0 ? String(pauseCredit.creditDays) : "0",
+          pauseCreditedDueDate: pauseCredit.creditedDueDate || "",
+          pauseCreditNote:
+            pauseCredit.creditDays > 0
+              ? `The ${pauseCredit.creditDays} day${pauseCredit.creditDays === 1 ? "" : "s"} you are away will be added to your next subscription${
+                  pauseCredit.creditedDueDate
+                    ? ` (next due ${pauseCredit.creditedDueDate})`
+                    : ""
+                }.`
+              : "",
         },
       });
     } catch (e) {
@@ -5896,6 +5993,9 @@ async function pauseCustomer(req, res, next) {
         startDate: pauseStart,
         endDate: pauseEnd,
         reason: pauseReason,
+        creditDays: pauseCredit.creditDays,
+        originalDueDate: pauseCredit.originalDueDate,
+        creditedDueDate: pauseCredit.creditedDueDate,
       },
       tisp,
       olt,
@@ -7389,6 +7489,7 @@ module.exports = {
   cancelSubscription,
   disconnectCustomer,
   pauseCustomer,
+  extendTispDueDateForCustomer,
   linkCustomerOlt,
   deleteCustomerPermanently,
   bulkCancelSubscriptions,

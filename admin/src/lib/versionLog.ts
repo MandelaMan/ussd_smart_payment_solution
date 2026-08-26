@@ -8,12 +8,23 @@ export type VersionEntry = {
 /** Product versioning log — feature releases only (newest first). */
 export const VERSION_LOG: VersionEntry[] = [
   {
+    version: "1.15.0",
+    date: "2026-08-26",
+    title: "Self-serve staff password reset",
+    features: [
+      "Staff request a time-limited reset link from the login page instead of waiting on IT",
+      "Completing a reset unlocks a lockout from failed sign-in attempts",
+      "Admins can send a reset link or unlock an account from Users, with temporary passwords as a fallback",
+    ],
+  },
+  {
     version: "1.14.0",
     date: "2026-08-21",
     title: "Public signup & admin hardening",
     features: [
       "Public signup form lands in Leads as Interested — pending conversion until staff verify",
       "Customer numbers reused for a new tenant after cancel (TISP update, new Zoho contact)",
+      "Paused accounts credit unused away days onto the next subscription, shown on the customer record",
       "Concurrent admin session limits per account with oldest-device revocation",
       "Staff account-recovery requests logged and emailed to the recovery inbox",
     ],

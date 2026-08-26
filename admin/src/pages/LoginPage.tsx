@@ -11,9 +11,8 @@ import {
   InputGroup,
   Stack,
   Text,
-  Textarea,
 } from "@chakra-ui/react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
   FiActivity,
   FiEye,
@@ -581,6 +580,7 @@ function DesktopCustomerCard({
 export function LoginPage() {
   const { user, loading, login } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const sessionExpired =
     (location.state as { reason?: string } | null)?.reason === "session_expired";
   const redirectTo =
@@ -592,9 +592,15 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<"login" | "recover">("login");
-  const [recoverNote, setRecoverNote] = useState("");
   const [recoverSent, setRecoverSent] = useState(false);
   const [heroStats, setHeroStats] = useState<LoginHeroStats>(EMPTY_HERO_STATS);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("recover") === "1") {
+      setMode("recover");
+    }
+  }, [location.search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -646,8 +652,10 @@ export function LoginPage() {
   function backToLogin() {
     setError("");
     setRecoverSent(false);
-    setRecoverNote("");
     setMode("login");
+    if (new URLSearchParams(location.search).get("recover") === "1") {
+      navigate("/login", { replace: true });
+    }
   }
 
   async function handleRecoverSubmit(e: FormEvent) {
@@ -655,10 +663,10 @@ export function LoginPage() {
     setError("");
     setSubmitting(true);
     try {
-      await api.recoverAccount(email, recoverNote);
+      await api.recoverAccount(email);
       setRecoverSent(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to send recovery request");
+      setError(err instanceof Error ? err.message : "Unable to send a reset email");
     } finally {
       setSubmitting(false);
     }
@@ -783,9 +791,12 @@ export function LoginPage() {
   const recoverForm = recoverSent ? (
     <Stack gap={4} w="full">
       <Box bg="green.50" color="green.800" px={3} py={2.5} borderRadius="lg" fontSize="sm">
-        If an account exists for that email, IT has been notified at {RECOVERY_INBOX} and will
-        restore access, including administrator accounts.
+        If an account exists for that email, we sent a password reset link. Check your inbox
+        (and spam). The link expires in 60 minutes.
       </Box>
+      <Text fontSize="xs" color="fg.muted" textAlign="center">
+        Didn&apos;t get an email? Contact IT at {RECOVERY_INBOX}.
+      </Text>
       <Button
         type="button"
         w="full"
@@ -807,8 +818,8 @@ export function LoginPage() {
       <Stack gap={{ base: 5, md: 4 }}>
         {statusBanner}
         <Text fontSize="sm" color="fg.muted" lineHeight="1.55">
-          Enter the email on your staff account. IT ({RECOVERY_INBOX}) will restore access for
-          users and administrators.
+          Enter the email on your staff account. If it matches an active account, we&apos;ll send
+          a reset link — including for administrator accounts.
         </Text>
 
         <Field.Root required>
@@ -834,36 +845,6 @@ export function LoginPage() {
           </InputGroup>
         </Field.Root>
 
-        <Field.Root>
-          <Field.Label
-            display={{ base: "none", md: "block" }}
-            fontWeight="medium"
-            color="fg"
-            fontSize="sm"
-            mb={1}
-          >
-            What happened? (optional)
-          </Field.Label>
-          <Textarea
-            placeholder="Forgot password, locked out, or another issue"
-            value={recoverNote}
-            onChange={(e) => setRecoverNote(e.target.value)}
-            rows={3}
-            maxLength={1000}
-            fontSize={{ base: "16px", md: "sm" }}
-            borderRadius="lg"
-            bg="bg.panel"
-            border="1px solid"
-            borderColor="border"
-            _placeholder={{ color: "fg.subtle" }}
-            _focusVisible={{
-              borderColor: BRAND.cerulean,
-              boxShadow: "none",
-              outline: "none",
-            }}
-          />
-        </Field.Root>
-
         <Button
           type="submit"
           w="full"
@@ -877,7 +858,7 @@ export function LoginPage() {
           fontSize="sm"
           loading={submitting}
         >
-          Request recovery
+          Send reset link
         </Button>
 
         <Button
@@ -899,7 +880,7 @@ export function LoginPage() {
   );
 
   const authPanel = mode === "recover" ? recoverForm : loginForm;
-  const panelTitle = mode === "recover" ? "Recover account" : "Welcome back";
+  const panelTitle = mode === "recover" ? "Forgot password" : "Welcome back";
 
   return (
     <Flex

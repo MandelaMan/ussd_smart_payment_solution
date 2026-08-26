@@ -22,7 +22,16 @@ const {
   recoveryInboxEmail,
   genericRecoveryResponse,
   buildAccountRecoveryEmail,
+  buildPasswordResetEmail,
+  shouldSendPasswordResetEmail,
+  adminResetPasswordUrl,
 } = require("../utils/accountRecovery");
+const { PASSWORD_RESET_USER_SQL } = require("../utils/passwordResetToken");
+const {
+  issuePasswordResetToken,
+  findValidResetToken,
+  consumeValidResetToken,
+} = require("../services/passwordResetStore");
 const {
   MAX_FAILED_ATTEMPTS,
   LOCKOUT_MINUTES,
@@ -296,6 +305,58 @@ async function login(req, res, next) {
   }
 }
 
+async function notifyItRecoveryFallback({
+  emailInput,
+  user,
+  note,
+  req,
+}) {
+  const locked = user && isAccountLocked(user);
+  try {
+    await sendZohoMail(
+      buildAccountRecoveryEmail({
+        requesterEmail: emailInput,
+        user: user
+          ? {
+              name: user.name,
+              email: user.email,
+              role: normalizeSystemRole(user.role),
+              jobTitle: user.job_title || null,
+              is_active: Boolean(user.is_active),
+              lockedUntil:
+                locked && user.locked_until ? String(user.locked_until) : null,
+              mustChangePassword: Boolean(user.must_change_password),
+            }
+          : null,
+        note,
+        ip: clientIp(req),
+        userAgent: req?.headers?.["user-agent"]
+          ? String(req.headers["user-agent"]).slice(0, 500)
+          : null,
+        requestedAt: new Date().toISOString(),
+        usersUrl: adminUsersUrl(),
+      })
+    );
+  } catch (err) {
+    console.error("[auth] IT recovery fallback email failed:", err.message);
+  }
+}
+
+async function sendStaffPasswordResetEmail({ user, createdByUserId = null, req }) {
+  const { raw } = await issuePasswordResetToken({
+    userId: user.id,
+    createdByUserId,
+    req,
+  });
+  await sendZohoMail(
+    buildPasswordResetEmail({
+      name: user.name,
+      email: user.email,
+      resetUrl: adminResetPasswordUrl(raw),
+    })
+  );
+}
+
 async function requestAccountRecovery(req, res, next) {
   const emailInput = req.body?.email ? normalizeEmail(req.body.email) : "";
   const note = String(req.body?.note || "")
@@ -314,58 +375,38 @@ async function requestAccountRecovery(req, res, next) {
       [emailInput]
     );
     const user = rows[0] || null;
-    const locked = user && isAccountLocked(user);
 
     await logAuthEvent({
       email: emailInput,
       userId: user?.id || null,
       outcome: "recovery",
       req,
-      reason: user ? "account_recovery_requested" : "account_recovery_unknown",
+      reason: user ? "password_reset_requested" : "password_reset_unknown",
     });
 
-    if (!user) {
+    if (!shouldSendPasswordResetEmail(user)) {
       return res.json(genericRecoveryResponse());
     }
 
     if (!isZohoMailConfigured()) {
       return res.status(503).json({
-        error: `Unable to send the recovery request. Please email ${recoveryInboxEmail()} directly.`,
+        error: `Unable to send the reset email. Please email ${recoveryInboxEmail()} directly.`,
       });
     }
 
-    const mail = buildAccountRecoveryEmail({
-      requesterEmail: emailInput,
-      user: {
-        name: user.name,
-        email: user.email,
-        role: normalizeSystemRole(user.role),
-        jobTitle: user.job_title || null,
-        is_active: Boolean(user.is_active),
-        lockedUntil: locked && user.locked_until ? String(user.locked_until) : null,
-        mustChangePassword: Boolean(user.must_change_password),
-      },
-      note,
-      ip: clientIp(req),
-      userAgent: req?.headers?.["user-agent"]
-        ? String(req.headers["user-agent"]).slice(0, 500)
-        : null,
-      requestedAt: new Date().toISOString(),
-      usersUrl: adminUsersUrl(),
-    });
-
     try {
-      await sendZohoMail(mail);
+      await sendStaffPasswordResetEmail({ user, req });
     } catch (err) {
-      console.error("[auth] account recovery email failed:", err.message);
+      console.error("[auth] password reset email failed:", err.message);
+      await notifyItRecoveryFallback({ emailInput, user, note, req });
       return res.status(503).json({
-        error: `Unable to send the recovery request. Please email ${recoveryInboxEmail()} directly.`,
+        error: `Unable to send the reset email. Please email ${recoveryInboxEmail()} directly.`,
       });
     }
 
     await logActivitySafe({
-      eventType: "user_recovery_requested",
-      title: "Account recovery requested",
+      eventType: "password_reset_requested",
+      title: "Password reset requested",
       message: `${user.name} · ${user.email} · ${normalizeSystemRole(user.role)}`,
       source: "admin",
       status: "success",
@@ -379,6 +420,180 @@ async function requestAccountRecovery(req, res, next) {
     });
 
     return res.json(genericRecoveryResponse());
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function validatePasswordResetToken(req, res, next) {
+  try {
+    const token = String(req.query?.token || "").trim();
+    const row = await findValidResetToken(token);
+    return res.json({ valid: Boolean(row) });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function completePasswordReset(req, res, next) {
+  try {
+    const token = String(req.body?.token || "").trim();
+    const newPassword = req.body?.newPassword;
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        error: "Reset token and new password are required",
+      });
+    }
+
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
+    const consumed = await consumeValidResetToken(token);
+    if (!consumed) {
+      return res.status(400).json({
+        error: "This reset link is invalid or has expired. Request a new one.",
+      });
+    }
+
+    const rows = await query(
+      `SELECT id, name, email, is_active FROM admin_users WHERE id = ? LIMIT 1`,
+      [consumed.user_id]
+    );
+    const user = rows[0];
+    if (!user || !user.is_active) {
+      return res.status(400).json({
+        error: "This reset link is invalid or has expired. Request a new one.",
+      });
+    }
+
+    const hash = await bcrypt.hash(String(newPassword), 12);
+    await query(
+      `UPDATE admin_users SET ${PASSWORD_RESET_USER_SQL} WHERE id = ?`,
+      [hash, user.id]
+    );
+    await invalidateUserTokens(user.id);
+
+    await logAuthEvent({
+      email: user.email,
+      userId: user.id,
+      outcome: "recovery",
+      req,
+      reason: "password_reset_completed",
+    });
+    await logActivitySafe({
+      eventType: "password_reset_completed",
+      title: "Password reset completed",
+      message: `${user.name} · ${user.email}`,
+      source: "admin",
+      status: "success",
+      referenceId: String(user.id),
+      metadata: {
+        email: user.email,
+        ip: clientIp(req),
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function sendUserResetLink(req, res, next) {
+  try {
+    const id = Number(req.params.id);
+    const rows = await query(
+      `SELECT id, name, email, is_active FROM admin_users WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const target = rows[0];
+    if (!target) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    if (!target.is_active) {
+      return res.status(400).json({
+        error: "Cannot send a reset link to a disabled account",
+      });
+    }
+    if (!isZohoMailConfigured()) {
+      return res.status(503).json({
+        error: `Email is not configured. Please email ${recoveryInboxEmail()} or set a temporary password instead.`,
+      });
+    }
+
+    await sendStaffPasswordResetEmail({
+      user: target,
+      createdByUserId: req.user.id,
+      req,
+    });
+
+    const meta = clientMeta(req);
+    await auditPermissionChange({
+      actorUserId: req.user.id,
+      targetUserId: id,
+      action: "password_reset_link_sent",
+      newState: { emailedTo: target.email },
+      ...meta,
+    });
+    await logActivitySafe({
+      eventType: "password_reset_requested",
+      title: "Password reset link sent",
+      message: `${req.user.name} sent a reset link to ${target.name}`,
+      source: "admin",
+      status: "success",
+      actor: { id: req.user.id, name: req.user.name },
+      referenceId: String(id),
+      metadata: {
+        email: target.email,
+        ip: clientIp(req),
+      },
+    });
+
+    return res.json({ ok: true, emailed: true, email: target.email });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function unlockUser(req, res, next) {
+  try {
+    const id = Number(req.params.id);
+    const rows = await query(
+      `SELECT id, name, email FROM admin_users WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const target = rows[0];
+    if (!target) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    await resetFailedLogins(id);
+
+    const meta = clientMeta(req);
+    await auditPermissionChange({
+      actorUserId: req.user.id,
+      targetUserId: id,
+      action: "account_unlocked",
+      newState: { lockedUntil: null },
+      ...meta,
+    });
+    await logActivitySafe({
+      eventType: "account_unlocked",
+      title: "Account unlocked",
+      message: `${req.user.name} unlocked ${target.name}`,
+      source: "admin",
+      status: "success",
+      actor: { id: req.user.id, name: req.user.name },
+      referenceId: String(id),
+      metadata: {
+        email: target.email,
+        ip: clientIp(req),
+      },
+    });
+
+    return res.json({ ok: true });
   } catch (err) {
     return next(err);
   }
@@ -515,7 +730,7 @@ async function listUsers(_req, res, next) {
   try {
     const rows = await query(
       `SELECT u.id, u.name, u.email, u.role, u.job_title, u.notes, u.is_active,
-              u.must_change_password, u.legacy_role, u.created_at
+              u.must_change_password, u.legacy_role, u.created_at, u.locked_until
        FROM admin_users u
        ORDER BY u.created_at DESC`
     );
@@ -547,6 +762,10 @@ async function listUsers(_req, res, next) {
         notes: u.notes || null,
         is_active: u.is_active,
         mustChangePassword: Boolean(u.must_change_password),
+        lockedUntil:
+          isAccountLocked(u) && u.locked_until
+            ? new Date(u.locked_until).toISOString()
+            : null,
         legacyRole: u.legacy_role || null,
         created_at: u.created_at,
         groups: byUser.get(u.id) || [],
@@ -826,7 +1045,10 @@ async function resetUserPassword(req, res, next) {
 
     const hash = await bcrypt.hash(temporaryPassword, 12);
     await query(
-      `UPDATE admin_users SET password_hash = ?, must_change_password = 1 WHERE id = ?`,
+      `UPDATE admin_users
+       SET password_hash = ?, must_change_password = 1,
+           failed_login_count = 0, locked_until = NULL
+       WHERE id = ?`,
       [hash, id]
     );
     await invalidateUserTokens(id);
@@ -1093,6 +1315,10 @@ module.exports = {
   me,
   changePassword,
   requestAccountRecovery,
+  validatePasswordResetToken,
+  completePasswordReset,
+  sendUserResetLink,
+  unlockUser,
   listUsers,
   createUser,
   updateUser,

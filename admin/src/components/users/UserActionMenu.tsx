@@ -4,9 +4,11 @@ import {
   FiEdit3,
   FiEye,
   FiKey,
+  FiMail,
   FiMoreVertical,
   FiShield,
   FiSlash,
+  FiUnlock,
   FiUserCheck,
 } from "react-icons/fi";
 import type { AdminUser } from "../../lib/api";
@@ -24,6 +26,8 @@ export type UserAction =
   | { type: "impersonate" }
   | { type: "role"; role: string }
   | { type: "resetPassword" }
+  | { type: "sendResetLink" }
+  | { type: "unlock" }
   | { type: "toggleActive" };
 
 type Props = {
@@ -32,6 +36,7 @@ type Props = {
   isProtectedAdmin?: boolean;
   showImpersonate?: boolean;
   impersonateDisabledReason?: string | null;
+  isLocked?: boolean;
 };
 
 export function UserActionMenu({
@@ -40,6 +45,7 @@ export function UserActionMenu({
   isProtectedAdmin,
   showImpersonate,
   impersonateDisabledReason,
+  isLocked,
 }: Props) {
   const currentRole = user.role === "admin" ? "admin" : "user";
 
@@ -70,6 +76,8 @@ export function UserActionMenu({
             if (role !== currentRole) onAction({ type: "role", role });
             return;
           }
+          if (value === "sendResetLink") onAction({ type: "sendResetLink" });
+          if (value === "unlock") onAction({ type: "unlock" });
           if (value === "resetPassword") onAction({ type: "resetPassword" });
           if (value === "toggleActive") onAction({ type: "toggleActive" });
         }, 150);
@@ -136,9 +144,27 @@ export function UserActionMenu({
               ))}
             </Menu.ItemGroup>
             <Menu.Separator />
+            {isLocked ? (
+              <Menu.Item value="unlock">
+                <FiUnlock />
+                Unlock account
+              </Menu.Item>
+            ) : null}
+            <Menu.Item
+              value="sendResetLink"
+              disabled={!user.is_active}
+              title={
+                user.is_active
+                  ? undefined
+                  : "Cannot send a reset link to a disabled account"
+              }
+            >
+              <FiMail />
+              Send reset link
+            </Menu.Item>
             <Menu.Item value="resetPassword">
               <FiKey />
-              Reset password
+              Set temporary password
             </Menu.Item>
             <Menu.Item
               value="toggleActive"

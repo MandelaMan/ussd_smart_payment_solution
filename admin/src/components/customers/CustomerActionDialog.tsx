@@ -12,6 +12,7 @@ import { formatTitleCase } from "../../lib/formatText";
 import { isShopPremise } from "../../lib/premise";
 import {
   api,
+  formatDateOnly,
   type ApartmentHistoryEntry,
   type ApartmentOccupancy,
   type Building,
@@ -33,6 +34,7 @@ import { PaymentFrequencyForm } from "./PaymentFrequencyForm";
 import type { CustomerAction } from "./CustomerActionMenu";
 import type { Product, PendingUpgrade, UpgradePaymentMethod, UpgradeQuote } from "../../lib/api";
 import { InstallationScheduleFields } from "../installations/InstallationScheduleFields";
+import { addCalendarDays, pauseAwayDays, pauseCreditLabel } from "../../lib/pauseCredit";
 
 type Props = {
   customer: Customer | null;
@@ -426,6 +428,10 @@ export function CustomerActionDialog({
     Boolean(pauseStartDate) &&
     Boolean(pauseEndDate) &&
     pauseEndDate >= pauseStartDate;
+  const pauseCreditDays = pauseAwayDays(pauseStartDate, pauseEndDate);
+  const pauseCreditedDue = pauseCreditDays
+    ? addCalendarDays(customer?.tispDueDate || pauseEndDate, pauseCreditDays)
+    : null;
   const [cancelStep, setCancelStep] = useState<1 | 2>(1);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
 
@@ -550,7 +556,7 @@ export function CustomerActionDialog({
         {actionType === "pause" ? (
           <Stack gap={4}>
             <Text fontSize="sm" color="fg.muted">
-              Stops internet now. Billing resumes on the return date.
+              Stops internet now. Away days are added to the next subscription when they return.
             </Text>
             <Field.Root required>
               <Field.Label>Pause start date</Field.Label>
@@ -569,6 +575,24 @@ export function CustomerActionDialog({
                 onChange={(e) => onPauseEndDateChange(e.target.value)}
               />
             </Field.Root>
+            {pauseCreditDays > 0 ? (
+              <Box
+                borderWidth="1px"
+                borderColor="blue.200"
+                bg="blue.50"
+                borderRadius="md"
+                px={3}
+                py={2}
+              >
+                <Text fontSize="sm" color="blue.800">
+                  {pauseCreditLabel(pauseCreditDays)} away will be credited on the next
+                  subscription
+                  {pauseCreditedDue
+                    ? ` (next due ${formatDateOnly(pauseCreditedDue)}).`
+                    : "."}
+                </Text>
+              </Box>
+            ) : null}
             <Field.Root required>
               <Field.Label>Reason for pause</Field.Label>
               <Input

@@ -5,6 +5,8 @@ const {
   me,
   changePassword,
   requestAccountRecovery,
+  validatePasswordResetToken,
+  completePasswordReset,
   stopImpersonation,
 } = require("../controllers/auth.controller");
 const { authenticate } = require("../middleware/auth");
@@ -41,6 +43,19 @@ router.post(
   authApiLimiter,
   recoverAccountLimiter,
   requestAccountRecovery
+);
+router.post(
+  "/forgot-password",
+  authApiLimiter,
+  recoverAccountLimiter,
+  requestAccountRecovery
+);
+router.get("/reset-password", authApiLimiter, validatePasswordResetToken);
+router.post(
+  "/reset-password",
+  authApiLimiter,
+  recoverAccountLimiter,
+  completePasswordReset
 );
 router.post("/logout", authApiLimiter, logout);
 router.post("/stop-impersonation", authApiLimiter, stopImpersonation);

@@ -360,6 +360,7 @@ const getRecurringInvoices_JS = async (params = {}) => {
     const page = Number(params.page || 1);
     const per_page = Math.min(Number(params.per_page || 50), 200);
     const zohoParams = { customer_id, page, per_page };
+    if (params.filter_by) zohoParams.filter_by = String(params.filter_by);
 
     const data = await withTimeout(
       callZoho("recurringinvoices", "GET", null, zohoParams),

@@ -33,6 +33,7 @@ import { AppUpdateBanner } from "./components/ui/AppUpdateBanner";
 import { RouteContentSkeleton } from "./components/PageSkeletons";
 import { LoginPage } from "./pages/LoginPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 
 function lazyPage<T extends Record<string, unknown>>(
   loader: () => Promise<T>,
@@ -134,6 +135,7 @@ export default function App() {
             <ScrollToTop />
             <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route element={<ProtectedRoute />}>
               <Route
                 path="change-password"

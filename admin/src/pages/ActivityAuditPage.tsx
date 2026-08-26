@@ -39,6 +39,9 @@ const PAGE_SIZE = 30;
 function eventLabel(value: string): string {
   if (value === "user_login") return "User signed in";
   if (value === "user_recovery_requested") return "Account recovery requested";
+  if (value === "password_reset_requested") return "Password reset requested";
+  if (value === "password_reset_completed") return "Password reset completed";
+  if (value === "account_unlocked") return "Account unlocked";
   if (value === "user_impersonation_started") return "Impersonation started";
   if (value === "user_impersonation_stopped") return "Impersonation stopped";
   return value

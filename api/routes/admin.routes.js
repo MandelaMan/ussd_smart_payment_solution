@@ -22,6 +22,8 @@ const {
   updateUser,
   resetUserPassword,
   emailTemporaryPassword,
+  sendUserResetLink,
+  unlockUser,
   impersonateUser,
 } = require("../controllers/auth.controller");
 const { listBuildings, createBuilding, updateBuilding, listBuildingOlts, createBuildingOlt, updateBuildingOlt, deleteBuildingOlt } = require("../controllers/buildings.controller");
@@ -276,6 +278,16 @@ router.get("/users", requirePermission("users.view"), listUsers);
 router.post("/users", requirePermission("users.create"), createUser);
 router.patch("/users/:id", requirePermission("users.edit"), updateUser);
 router.post("/users/:id/reset-password", requirePermission("users.reset_password"), resetUserPassword);
+router.post(
+  "/users/:id/send-reset-link",
+  requirePermission("users.reset_password"),
+  sendUserResetLink
+);
+router.post(
+  "/users/:id/unlock",
+  requirePermission("users.reset_password"),
+  unlockUser
+);
 router.post(
   "/users/:id/email-temporary-password",
   requirePermission("users.reset_password"),

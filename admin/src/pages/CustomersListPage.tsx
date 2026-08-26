@@ -120,13 +120,14 @@ import { useAuth } from "../lib/authContext";
 import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hidePricing } from "../lib/rbac";
 import { TISP_STANDARD_DUE_DATE } from "../lib/tispConstants";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
+import { FILTER_CONTROL_HEIGHT } from "../theme";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobileFAB, MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { ListPageStack } from "../components/ui/pageLayout";
 import { MobileCardListSkeleton, DataTableLoadingSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
-import { FILTER_CONTROL_HEIGHT } from "../theme";
+import { pauseAwayDays, pauseCreditLabel } from "../lib/pauseCredit";
 
 const PAGE_SIZE = 30;
 
@@ -1591,6 +1592,7 @@ export function CustomersListPage() {
             prev.map((c) => (c.id === res.customer.id ? { ...c, ...res.customer } : c))
           );
         }
+        const creditDays = res.pause?.creditDays ?? 0;
         const zohoDeferred = res.zoho?.recurring?.deferred ?? 0;
         if (res.tisp && res.tisp.ok === false) {
           toaster.create({
@@ -1611,6 +1613,9 @@ export function CustomersListPage() {
             title: "Service paused",
             description: [
               res.pause?.endDate ? `Away until ${res.pause.endDate}` : null,
+              creditDays > 0
+                ? `${pauseCreditLabel(creditDays)} credited on next subscription`
+                : null,
               zohoDeferred > 0
                 ? `${zohoDeferred} recurring profile${zohoDeferred === 1 ? "" : "s"} deferred`
                 : null,
@@ -2105,7 +2110,7 @@ export function CustomersListPage() {
                           </Box>
                         ) : undefined
                       }
-                      statusLine={<TextStatus status={displayCustomerStatus(c)} variant="caption" />}
+                      statusLine={<CustomerStatusText customer={c} />}
                       trailing={
                         hidePrices ? undefined : (
                           <Text fontWeight="bold" fontSize="md" whiteSpace="nowrap">
@@ -2546,7 +2551,24 @@ export function CustomersListPage() {
 }
 
 function CustomerStatusText({ customer }: { customer: Customer }) {
-  return <TextStatus status={displayCustomerStatus(customer)} />;
+  const creditDays =
+    customer.pauseCreditDays != null && customer.pauseCreditDays > 0
+      ? customer.pauseCreditDays
+      : pauseAwayDays(customer.pauseStartDate, customer.pauseEndDate);
+  const showCredit =
+    creditDays > 0 &&
+    (displayCustomerStatus(customer) === "Paused" || !customer.pauseCreditAppliedAt);
+  return (
+    <Stack gap={0.5}>
+      <TextStatus status={displayCustomerStatus(customer)} />
+      {showCredit ? (
+        <Text fontSize="xs" color="blue.700" textTransform="none">
+          {pauseCreditLabel(creditDays)}{" "}
+          {customer.pauseCreditAppliedAt ? "credited" : "credit on next sub"}
+        </Text>
+      ) : null}
+    </Stack>
+  );
 }
 
 function PaymentFrequencyText({ customer }: { customer: Customer }) {

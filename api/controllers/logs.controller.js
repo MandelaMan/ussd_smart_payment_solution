@@ -93,6 +93,12 @@ async function retryLog(req, res, next) {
         referenceId: log.referenceId,
         parentLogId: log.id,
       });
+      try {
+        const { applyPendingPauseCreditForAccountSafe } = require("../services/pauseCreditService");
+        await applyPendingPauseCreditForAccountSafe(log.customerNumber);
+      } catch (e) {
+        console.warn("SetISPPayment retry pause credit skipped:", e.message);
+      }
       result = { ok: true, message: "SetISPPayment retried" };
     } else if (
       log.operation === "customer_tisp_push" &&

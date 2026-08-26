@@ -46,6 +46,7 @@ import {
 import { formatCustomerPackageLabel, formatTitleCase } from "../../lib/formatText";
 import { customerDisplayTitle, isShopPremise } from "../../lib/premise";
 import { displayCustomerStatus, normalizeSubscriptionStatus } from "../../lib/customerStatus";
+import { pauseAwayDays, pauseCreditLabel } from "../../lib/pauseCredit";
 import {
   parseRetryAfterSeconds,
   SYNC_COOLDOWN_MS,
@@ -116,6 +117,31 @@ function scrollPanelIntoView(el: HTMLElement | null) {
   window.requestAnimationFrame(() => {
     el.scrollIntoView({ behavior: "smooth", block: "nearest" });
   });
+}
+
+function pauseCreditDaysFor(customer: Customer): number {
+  if (customer.pauseCreditDays != null && customer.pauseCreditDays > 0) {
+    return customer.pauseCreditDays;
+  }
+  return pauseAwayDays(customer.pauseStartDate, customer.pauseEndDate);
+}
+
+function formatPauseCreditDetail(customer: Customer): string | null {
+  const days = pauseCreditDaysFor(customer);
+  if (days <= 0 && !customer.pauseStartDate) return null;
+  const away =
+    customer.pauseStartDate && customer.pauseEndDate
+      ? `Away ${formatDateOnly(customer.pauseStartDate)} → ${formatDateOnly(customer.pauseEndDate)}`
+      : null;
+  if (days <= 0) return away;
+  const credited = customer.pauseCreditAppliedAt
+    ? `${pauseCreditLabel(days)} added to the last subscription`
+    : `${pauseCreditLabel(days)} will be added to the next subscription`;
+  const due =
+    !customer.pauseCreditAppliedAt && customer.pauseCreditedDueDate
+      ? `next due ${formatDateOnly(customer.pauseCreditedDueDate)}`
+      : null;
+  return [credited, away, due].filter(Boolean).join(" · ");
 }
 
 function formatRelativeTime(iso: string | null | undefined): string | null {
@@ -432,6 +458,21 @@ function buildTispNarrations(
     const pauseNote = customer.pauseReason
       ? `Reason: ${customer.pauseReason}.`
       : null;
+    const creditDays =
+      customer.pauseCreditDays != null && customer.pauseCreditDays > 0
+        ? customer.pauseCreditDays
+        : pauseAwayDays(customer.pauseStartDate, customer.pauseEndDate);
+    const creditApplied = Boolean(customer.pauseCreditAppliedAt);
+    const creditText =
+      creditDays > 0
+        ? creditApplied
+          ? `${pauseCreditLabel(creditDays)} from this pause were added to the last subscription.`
+          : `${pauseCreditLabel(creditDays)} from this pause will be added to the next subscription${
+              customer.pauseCreditedDueDate
+                ? ` (next due ${formatDateOnly(customer.pauseCreditedDueDate)})`
+                : ""
+            }.`
+        : null;
     return [
       {
         label: "Internet status",
@@ -445,6 +486,15 @@ function buildTispNarrations(
           .join(" "),
         tone: "warn",
       },
+      ...(creditText
+        ? [
+            {
+              label: "Pause credit",
+              text: creditText,
+              tone: creditApplied ? ("ok" as const) : ("warn" as const),
+            },
+          ]
+        : []),
       buildTispDueNarration(dueLabel, false),
     ];
   }
@@ -470,12 +520,30 @@ function buildTispNarrations(
     ];
   }
   if (statusLower.includes("active")) {
+    const creditDays = pauseCreditDaysFor(customer);
+    const creditPending = creditDays > 0 && !customer.pauseCreditAppliedAt;
+    const creditApplied = creditDays > 0 && Boolean(customer.pauseCreditAppliedAt);
     return [
       {
         label: "Internet status",
         text: "Active on TISP and Books.",
         tone: "ok",
       },
+      ...(creditPending || creditApplied
+        ? [
+            {
+              label: "Pause credit",
+              text: creditApplied
+                ? `${pauseCreditLabel(creditDays)} from the last pause were added to this subscription.`
+                : `${pauseCreditLabel(creditDays)} from the last pause will be added to the next subscription${
+                    customer.pauseCreditedDueDate
+                      ? ` (next due ${formatDateOnly(customer.pauseCreditedDueDate)})`
+                      : ""
+                  }.`,
+              tone: creditApplied ? ("ok" as const) : ("warn" as const),
+            },
+          ]
+        : []),
       buildTispDueNarration(dueLabel, true),
     ];
   }
@@ -1592,6 +1660,14 @@ export function CustomerExpandPanel({
               <DetailCard label="Apartment number" value={customer.apartmentNumber} mono />
             )}
             <DetailCard label="Payment frequency" value={paymentFrequencyLabel} />
+            {formatPauseCreditDetail(customer) ? (
+              <DetailCard
+                label="Pause credit"
+                value={formatPauseCreditDetail(customer)}
+                highlight={!customer.pauseCreditAppliedAt}
+                span={{ base: "1 / -1", md: "span 1" }}
+              />
+            ) : null}
             {customer.trialPeriodEnabled && customer.trialEndsAt ? (
               <DetailCard
                 label="Trial period"

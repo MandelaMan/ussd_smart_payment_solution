@@ -322,7 +322,7 @@
       Complete step-by-step guide for first-time setup, environment migration, and production deployment.
     </p>
     <div class="meta">
-      <span>Last updated: <strong>2026-08-21</strong> (v1.14.0 — RBAC groups, campaigns, installations, reminders, public signup)</span>
+      <span>Last updated: <strong>2026-08-26</strong> (v1.15.0 — self-serve staff password reset)</span>
       <span>App version: <strong>1.14.0</strong></span>
       <span>Node.js: <strong>18+</strong> (CI uses 18)</span>
       <span>Also see root <a href="../README.md"><code>README.md</code></a> for a short local-dev quick start.</span>
@@ -503,7 +503,7 @@ cd ussd_smart_payment_solution</code></pre>
         <tr><td><code>JWT_EXPIRES_IN</code></td><td>Token lifetime (default <code>7d</code>)</td></tr>
         <tr><td><code>MAX_ADMIN_SESSIONS</code></td><td>Max concurrent admin device sessions per account (default <code>5</code>). Oldest session is revoked on a new login beyond the cap.</td></tr>
         <tr><td><code>ADMIN_ORIGIN</code></td><td>Admin UI origin for CORS/Socket.IO/cookies. Dev: <code>http://localhost:5173</code> (not <code>127.0.0.1</code> — cookies are host-specific). Prod: <code>https://app.sulsolutions.biz</code></td></tr>
-        <tr><td><code>ACCOUNT_RECOVERY_EMAIL</code></td><td>Inbox for staff login-recovery requests (including administrator accounts). Default in dist: <code>it@sulsolutions.biz</code></td></tr>
+        <tr><td><code>ACCOUNT_RECOVERY_EMAIL</code></td><td>Fallback inbox if a self-serve password-reset email cannot be delivered (including administrator accounts). Staff reset links go to the account email. Default in dist: <code>it@sulsolutions.biz</code></td></tr>
         <tr><td><code>USSD_API_SECRET</code></td><td>Shared secret for USSD customer-lookup endpoints. <strong>Required in production.</strong></td></tr>
         <tr><td><code>ADMIN_*</code></td><td>Administrator seed user (<code>yarn db:seed</code>) — system role <code>admin</code></td></tr>
         <tr><td><code>SUPPORT_*</code></td><td>Seed user: system role <code>user</code> + Support group</td></tr>
@@ -513,6 +513,14 @@ cd ussd_smart_payment_solution</code></pre>
       </tbody>
     </table>
     <p>Each seed user uses <code>NAME</code>, <code>EMAIL</code>, and <code>PASSWORD</code> suffixes. See <code>.env.dist</code> for defaults. <strong>Development only</strong> — change all passwords before production. Access is permission-driven (see <a href="#rbac">§15</a> and <a href="./RBAC.md"><code>docs/RBAC.md</code></a>).</p>
+    <p>
+      Staff who forget a password use <strong>Can&apos;t access your account?</strong> on
+      <code>/admin/login</code>. The app emails a 60-minute, single-use reset link to that
+      address when the account exists and is active (locked accounts are included; inactive
+      accounts are not). Completing the reset also clears a failed-login lockout.
+      Administrators can send the same link or unlock an account from Settings → Users.
+      <code>ACCOUNT_RECOVERY_EMAIL</code> is notified only if that email cannot be sent.
+    </p>
 
     <h3 id="env-zoho">Zoho Books</h3>
     <table>
@@ -853,6 +861,8 @@ yarn db:migrate</code></pre>
         <tr><td><code>073_customer_shops.sql</code></td><td>Shops as units under the same building/POP as apartments</td></tr>
         <tr><td><code>074_installation_cancellation_reason.sql</code></td><td>Reason when an installation visit is cancelled</td></tr>
         <tr><td><code>075_action_item_events.sql</code></td><td>Per-reminder activity trail</td></tr>
+        <tr><td><code>076_pause_subscription_credit.sql</code></td><td>Credit unused pause days onto the next subscription</td></tr>
+        <tr><td><code>077_password_reset_tokens.sql</code></td><td>Hashed, single-use staff password reset tokens</td></tr>
       </tbody>
     </table>
     <div class="callout warn">
@@ -1616,7 +1626,7 @@ yarn xtream:sync</code></pre>
     </p>
     <ul>
       <li>New or removed environment variables in <code>.env.dist</code> or <code>api/config/env.js</code></li>
-      <li>New database migrations in <code>db/migrations/</code> (currently through <code>075_action_item_events.sql</code>)</li>
+      <li>New database migrations in <code>db/migrations/</code> (currently through <code>077_password_reset_tokens.sql</code>)</li>
       <li>Changes to deploy workflow, PM2 layout, or required processes</li>
       <li>New external integrations, webhooks, or API routes</li>
       <li>Changes to admin build path, port defaults, or auth/CORS behavior</li>

@@ -81,6 +81,11 @@ function isProtectedAdmin(user: AdminUser) {
   return user.role === "admin";
 }
 
+function isAdminUserLocked(user: AdminUser) {
+  if (!user.lockedUntil) return false;
+  return new Date(user.lockedUntil).getTime() > Date.now();
+}
+
 function validateManualPassword(password: string, confirm: string): string | null {
   if (password.length < 8) {
     return "Password must be at least 8 characters";
@@ -491,6 +496,14 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       setResetUser(user);
       return;
     }
+    if (action.type === "sendResetLink") {
+      void handleSendResetLink(user);
+      return;
+    }
+    if (action.type === "unlock") {
+      void handleUnlock(user);
+      return;
+    }
     if (action.type === "toggleActive") {
       void handleToggleActive(user.id, !!user.is_active);
     }
@@ -557,6 +570,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       });
       clearResetPasswordFields();
       setResetUser(null);
+      void load();
     } catch (err) {
       toaster.create({
         title: err instanceof Error ? err.message : "Password reset failed",
@@ -564,6 +578,37 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       });
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function handleSendResetLink(user: AdminUser) {
+    try {
+      const res = await api.sendUserResetLink(user.id);
+      toaster.create({
+        title: `Reset link emailed to ${res.email || user.email}`,
+        type: "success",
+      });
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Failed to send reset link",
+        type: "error",
+      });
+    }
+  }
+
+  async function handleUnlock(user: AdminUser) {
+    try {
+      await api.unlockUser(user.id);
+      toaster.create({
+        title: `Unlocked ${user.name}`,
+        type: "success",
+      });
+      void load();
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Failed to unlock account",
+        type: "error",
+      });
     }
   }
 
@@ -1008,7 +1053,11 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                           statusLine={
                             <Text fontSize="xs" color="fg.muted">
                               {roleLabel(user.role)} ·{" "}
-                              {user.is_active ? "Active" : "Disabled"}
+                              {isAdminUserLocked(user)
+                                ? "Locked"
+                                : user.is_active
+                                  ? "Active"
+                                  : "Disabled"}
                               {user.jobTitle ? ` · ${user.jobTitle}` : ""}
                             </Text>
                           }
@@ -1018,6 +1067,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                               isProtectedAdmin={isProtectedAdmin(user)}
                               showImpersonate={viewerIsAdmin}
                               impersonateDisabledReason={impersonateDisabledReason(user)}
+                              isLocked={isAdminUserLocked(user)}
                               onAction={(action) => handleUserAction(user, action)}
                             />
                           }
@@ -1109,12 +1159,24 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                               </Flex>
                             </Table.Cell>
                             <Table.Cell {...dataTableCellProps}>
-                              <Badge
-                                colorPalette={user.is_active ? "green" : "red"}
-                                variant="subtle"
-                              >
-                                {user.is_active ? "Active" : "Disabled"}
-                              </Badge>
+                              <Flex gap={1} wrap="wrap">
+                                <Badge
+                                  colorPalette={
+                                    !user.is_active
+                                      ? "red"
+                                      : isAdminUserLocked(user)
+                                        ? "orange"
+                                        : "green"
+                                  }
+                                  variant="subtle"
+                                >
+                                  {!user.is_active
+                                    ? "Disabled"
+                                    : isAdminUserLocked(user)
+                                      ? "Locked"
+                                      : "Active"}
+                                </Badge>
+                              </Flex>
                             </Table.Cell>
                             <Table.Cell {...dataTableCellProps}>
                               <UserActionMenu
@@ -1122,6 +1184,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                                 isProtectedAdmin={isProtectedAdmin(user)}
                                 showImpersonate={viewerIsAdmin}
                                 impersonateDisabledReason={impersonateDisabledReason(user)}
+                                isLocked={isAdminUserLocked(user)}
                                 onAction={(action) => handleUserAction(user, action)}
                               />
                             </Table.Cell>
@@ -1367,17 +1430,18 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       >
         <Dialog.Header pr={12}>
           <Dialog.Title>
-            {resetUser ? `Reset password · ${resetUser.name}` : "Reset password"}
+            {resetUser ? `Set temporary password · ${resetUser.name}` : "Set temporary password"}
           </Dialog.Title>
         </Dialog.Header>
         <Dialog.Body>
           <Text fontSize="sm" color="fg.muted" mb={3}>
-            Reset the password for{" "}
+            Prefer sending a reset link from the user menu. This fallback sets a temporary
+            password for{" "}
             <Text as="span" fontWeight="medium" color="fg">
               {resetUser?.name}
             </Text>
             {resetUser?.email ? ` (${resetUser.email})` : ""}. They must change it
-            on next login.
+            on next login. A lockout, if any, is cleared.
           </Text>
           <Checkbox.Root
             checked={resetSetPassword}

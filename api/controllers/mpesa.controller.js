@@ -1211,6 +1211,18 @@ async function processUnallocatedMpesaPayment(row, meta = {}) {
     console.warn("[mpesa-allocation] TISP refresh skipped:", e.message);
   }
 
+  if (tispPosted) {
+    try {
+      const { applyPendingPauseCreditForAccountSafe } = require("../services/pauseCreditService");
+      await applyPendingPauseCreditForAccountSafe(accountRef, {
+        msisdn: row.phone,
+        paymentDate: row.transaction_date || row.created_at,
+      });
+    } catch (e) {
+      console.warn("[mpesa-allocation] pause credit skipped:", e.message);
+    }
+  }
+
   try {
     const { onRefereeSignupPaid } = require("../services/referralRewardService");
     await onRefereeSignupPaid({
@@ -1401,6 +1413,15 @@ const mpesaConfirmation = async (req, res) => {
         });
       } catch (e) {
         console.error("C2B snapshot upsert failed", e);
+      }
+      try {
+        const { applyPendingPauseCreditForAccountSafe } = require("../services/pauseCreditService");
+        await applyPendingPauseCreditForAccountSafe(accountRef, {
+          msisdn,
+          paymentDate: transTime,
+        });
+      } catch (e) {
+        console.warn("C2B pause credit skipped:", e.message);
       }
     }
 
@@ -1723,6 +1744,15 @@ const mpesaCallback = async (req, res) => {
           ispPayload,
           source: "STK",
         });
+        try {
+          const { applyPendingPauseCreditForAccountSafe } = require("../services/pauseCreditService");
+          await applyPendingPauseCreditForAccountSafe(accountRef, {
+            msisdn: transaction.PhoneNumber,
+            paymentDate: transaction.TransactionDate,
+          });
+        } catch (e) {
+          console.warn("STK pause credit skipped:", e.message);
+        }
       }
 
       try {

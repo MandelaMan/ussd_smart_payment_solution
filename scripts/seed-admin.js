@@ -17,7 +17,7 @@ const TEST_USERS = [
     groupSlugs: [],
     name: process.env.ADMIN_NAME || "Admin",
     email: process.env.ADMIN_EMAIL || "admin@sulsolutions.biz",
-    password: process.env.ADMIN_PASSWORD || "Admin@12345",
+    password: process.env.ADMIN_PASSWORD || "Admin@2026",
   },
   {
     role: "user",
@@ -49,6 +49,12 @@ const TEST_USERS = [
   },
 ];
 
+const ADMIN_SEED_EMAIL = String(
+  process.env.ADMIN_EMAIL || "admin@sulsolutions.biz"
+)
+  .trim()
+  .toLowerCase();
+
 async function seedUser({ role, groupSlugs, name, email, password }) {
   const normalizedEmail = String(email).trim().toLowerCase();
   const existing = await query(
@@ -56,7 +62,20 @@ async function seedUser({ role, groupSlugs, name, email, password }) {
     [normalizedEmail]
   );
   if (existing.length) {
-    console.log(`  ↷ ${role}: ${normalizedEmail} (already exists)`);
+    if (normalizedEmail === ADMIN_SEED_EMAIL) {
+      const hash = await bcrypt.hash(password, 12);
+      await query(
+        `UPDATE admin_users
+         SET password_hash = ?, must_change_password = 0,
+             failed_login_count = 0, locked_until = NULL,
+             token_version = token_version + 1
+         WHERE id = ?`,
+        [hash, existing[0].id]
+      );
+      console.log(`  ✔ ${role}: ${normalizedEmail} (password enforced)`);
+    } else {
+      console.log(`  ↷ ${role}: ${normalizedEmail} (already exists)`);
+    }
     return existing[0].id;
   }
 

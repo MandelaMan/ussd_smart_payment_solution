@@ -4,6 +4,7 @@ const {
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
   stopRecurringInvoice_JS,
+  resumeRecurringInvoice_JS,
   getInvoices_JS,
 } = require("../controllers/zoho.controller");
 const { isB2BCustomer, resolveAgencyForCustomer } = require("../utils/b2bBilling");
@@ -15,6 +16,8 @@ const {
 const {
   mapPaymentFrequencyToRecurrence,
   recurrenceMatches,
+  isActiveRecurring,
+  selectRecurringProfileToUpdate,
 } = require("../utils/zohoRecurrence");
 const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
@@ -109,13 +112,6 @@ function buildRecurringProfileName(
   return `${number} - ${freqLabel} Invoice`;
 }
 
-function isActiveRecurring(recurring) {
-  const status = String(
-    recurring?.status || recurring?.recurrence_status || "active",
-  ).toLowerCase();
-  return !["stopped", "expired", "inactive"].includes(status);
-}
-
 function recurringMatchesCustomerRefs(row, refs = []) {
   const rowRef = String(row?.reference_number || "").trim().toUpperCase();
   const rowName = String(row?.recurrence_name || "").trim().toUpperCase();
@@ -130,7 +126,7 @@ function recurringMatchesCustomerRefs(row, refs = []) {
   );
 }
 
-async function listActiveRecurringForCustomer(
+async function listMatchedRecurringForCustomer(
   contactId,
   customerNumber,
   previousCustomerNumber = null
@@ -138,23 +134,38 @@ async function listActiveRecurringForCustomer(
   const list = await getRecurringInvoices_JS({
     customer_id: contactId,
     per_page: 50,
+    filter_by: "Status.All",
   });
   const refs = [
     String(customerNumber || "").trim().toUpperCase(),
     String(previousCustomerNumber || "").trim().toUpperCase(),
   ].filter(Boolean);
 
-  const active = (list || []).filter(isActiveRecurring);
-  const matched = active.filter((row) =>
+  const rows = list || [];
+  const matched = rows.filter((row) =>
     recurringMatchesCustomerRefs(row, refs)
   );
   if (matched.length) return matched;
 
   // After apartment/type change, fall back to the only active profile on the contact.
+  const active = rows.filter(isActiveRecurring);
   if (previousCustomerNumber && active.length === 1) {
     return [active[0]];
   }
   return [];
+}
+
+async function listActiveRecurringForCustomer(
+  contactId,
+  customerNumber,
+  previousCustomerNumber = null
+) {
+  const matched = await listMatchedRecurringForCustomer(
+    contactId,
+    customerNumber,
+    previousCustomerNumber
+  );
+  return matched.filter(isActiveRecurring);
 }
 
 async function findRecurringForCustomer(
@@ -162,12 +173,26 @@ async function findRecurringForCustomer(
   customerNumber,
   previousCustomerNumber = null
 ) {
-  const matched = await listActiveRecurringForCustomer(
-    contactId,
-    customerNumber,
-    previousCustomerNumber
+  const { existing } = selectRecurringProfileToUpdate(
+    await listMatchedRecurringForCustomer(
+      contactId,
+      customerNumber,
+      previousCustomerNumber
+    )
   );
-  return matched[0] || null;
+  return existing || null;
+}
+
+async function stopExtraActiveRecurring(profiles = []) {
+  for (const row of profiles) {
+    const extraId = String(row?.recurring_invoice_id || row?.recurringinvoice_id || "");
+    if (!extraId) continue;
+    try {
+      await stopRecurringInvoice_JS(extraId);
+    } catch (e) {
+      console.warn("stop extra Zoho recurring profile failed:", e.message || e);
+    }
+  }
 }
 
 async function applyRecurringInvoiceEmailCcs(recurringInvoiceId) {
@@ -260,10 +285,13 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     customer.customPeriodDays
   );
 
-  const matchedProfiles = await listActiveRecurringForCustomer(
+  const matchedProfiles = await listMatchedRecurringForCustomer(
     zohoContact.contact_id,
     customer.customerNumber,
     previousCustomerNumber
+  );
+  const { existing, extraActives } = selectRecurringProfileToUpdate(
+    matchedProfiles
   );
 
   // Apartment move with no package price: still rename existing profile(s).
@@ -274,7 +302,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     let last = null;
     let renamed = 0;
     for (const row of matchedProfiles) {
-      const id = String(row.recurring_invoice_id || "");
+      const id = String(row.recurring_invoice_id || row.recurringinvoice_id || "");
       if (!id) continue;
       last = await updateRecurringProfileFields(id, {
         recurrenceName,
@@ -288,9 +316,11 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
       updated: renamed > 0,
       renameOnly: true,
       profilesRenamed: renamed,
-      recurringInvoiceId: matchedProfiles[0]?.recurring_invoice_id
-        ? String(matchedProfiles[0].recurring_invoice_id)
-        : null,
+      recurringInvoiceId: existing?.recurring_invoice_id
+        ? String(existing.recurring_invoice_id)
+        : matchedProfiles[0]?.recurring_invoice_id
+          ? String(matchedProfiles[0].recurring_invoice_id)
+          : null,
       recurring: last?.updated || null,
       recurrenceName,
       referenceNumber,
@@ -316,14 +346,15 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     console.warn("referral overlay on recurring lines failed:", e.message);
   }
 
-  const existing = matchedProfiles[0] || null;
-
-  // Renumber: rename every matched active profile (old + new refs) so nothing
+  // Renumber: rename every matched profile (old + new refs) so nothing
   // keeps the previous customer number as order/profile name.
   if (previousCustomerNumber && matchedProfiles.length > 1) {
-    for (const row of matchedProfiles.slice(1)) {
-      const extraId = String(row.recurring_invoice_id || "");
-      if (!extraId) continue;
+    const keepId = String(
+      existing?.recurring_invoice_id || existing?.recurringinvoice_id || ""
+    );
+    for (const row of matchedProfiles) {
+      const extraId = String(row.recurring_invoice_id || row.recurringinvoice_id || "");
+      if (!extraId || extraId === keepId) continue;
       try {
         await updateRecurringProfileFields(extraId, {
           recurrenceName,
@@ -339,9 +370,19 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     }
   }
 
-  if (existing?.recurring_invoice_id) {
-    const id = String(existing.recurring_invoice_id);
-    if (recurrenceMatches(existing, recurrence)) {
+  if (existing?.recurring_invoice_id || existing?.recurringinvoice_id) {
+    const id = String(existing.recurring_invoice_id || existing.recurringinvoice_id);
+    // List payloads omit cadence fields. Load the profile before deciding
+    // whether Zoho actually needs a new recurring invoice.
+    const full = (await getRecurringInvoice_JS(id)) || existing;
+    if (recurrenceMatches(full, recurrence)) {
+      if (!isActiveRecurring(full)) {
+        try {
+          await resumeRecurringInvoice_JS(id);
+        } catch (e) {
+          console.warn("resume recurring before update failed:", e.message);
+        }
+      }
       const syncLineItems = options.syncLineItems !== false;
       const result = await updateRecurringProfileFields(id, {
         recurrenceName,
@@ -349,6 +390,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         lineItems: syncLineItems ? lineItem : null,
       });
       await applyRecurringInvoiceEmailCcs(id);
+      await stopExtraActiveRecurring(extraActives);
       return {
         created: false,
         updated: true,
@@ -367,6 +409,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     } catch (e) {
       console.warn("stop recurring before recreate failed:", e.message);
     }
+    await stopExtraActiveRecurring(extraActives);
   }
 
   const startDate =
@@ -482,7 +525,7 @@ async function renumberZohoContactCustomerNumber(contact, options = {}) {
     options.paymentFrequency,
     options.customPeriodDays
   );
-  const matched = await listActiveRecurringForCustomer(
+  const matched = await listMatchedRecurringForCustomer(
     contact.contact_id,
     newCustomerNumber,
     previousCustomerNumber || null
@@ -634,4 +677,5 @@ module.exports = {
   renumberZohoContactCustomerNumber,
   pushCustomerBillingToZoho,
   isActiveRecurring,
+  selectRecurringProfileToUpdate,
 };
