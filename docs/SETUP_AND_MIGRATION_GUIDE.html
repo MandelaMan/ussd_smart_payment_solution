@@ -503,7 +503,7 @@ cd ussd_smart_payment_solution</code></pre>
         <tr><td><code>JWT_EXPIRES_IN</code></td><td>Token lifetime (default <code>7d</code>)</td></tr>
         <tr><td><code>MAX_ADMIN_SESSIONS</code></td><td>Max concurrent admin device sessions per account (default <code>5</code>). Oldest session is revoked on a new login beyond the cap.</td></tr>
         <tr><td><code>ADMIN_ORIGIN</code></td><td>Admin UI origin for CORS/Socket.IO/cookies. Dev: <code>http://localhost:5173</code> (not <code>127.0.0.1</code> — cookies are host-specific). Prod: <code>https://app.sulsolutions.biz</code></td></tr>
-        <tr><td><code>ACCOUNT_RECOVERY_EMAIL</code></td><td>Fallback inbox if a self-serve password-reset email cannot be delivered (including administrator accounts). Staff reset links go to the account email. Default in dist: <code>it@sulsolutions.biz</code></td></tr>
+        <tr><td><code>ACCOUNT_RECOVERY_EMAIL</code></td><td>Super Admin inbox notified on every staff password-reset request (default <code>it@sulsolutions.biz</code>). Staff still receive their own reset link when the account exists and is active.</td></tr>
         <tr><td><code>USSD_API_SECRET</code></td><td>Shared secret for USSD customer-lookup endpoints. <strong>Required in production.</strong></td></tr>
         <tr><td><code>ADMIN_*</code></td><td>Administrator seed user (<code>yarn db:seed</code>) — system role <code>admin</code></td></tr>
         <tr><td><code>SUPPORT_*</code></td><td>Seed user: system role <code>user</code> + Support group</td></tr>
@@ -519,7 +519,7 @@ cd ussd_smart_payment_solution</code></pre>
       address when the account exists and is active (locked accounts are included; inactive
       accounts are not). Completing the reset also clears a failed-login lockout.
       Administrators can send the same link or unlock an account from Settings → Users.
-      <code>ACCOUNT_RECOVERY_EMAIL</code> is notified only if that email cannot be sent.
+      Super Admin (<code>ACCOUNT_RECOVERY_EMAIL</code>, default <code>it@sulsolutions.biz</code>) is notified on every request.
     </p>
 
     <h3 id="env-zoho">Zoho Books</h3>
@@ -884,7 +884,7 @@ yarn db:migrate</code></pre>
     <table>
       <thead><tr><th>System role</th><th>Group</th><th>Env prefix</th><th>Default email</th></tr></thead>
       <tbody>
-        <tr><td><code>admin</code></td><td>—</td><td><code>ADMIN_*</code></td><td>admin@sulsolutions.biz</td></tr>
+        <tr><td><code>admin</code></td><td>—</td><td><code>ADMIN_*</code></td><td>it@sulsolutions.biz</td></tr>
         <tr><td><code>user</code></td><td>Support</td><td><code>SUPPORT_*</code></td><td>support@sulsolutions.biz</td></tr>
         <tr><td><code>user</code></td><td>Finance</td><td><code>CFO_*</code></td><td>cfo@sulsolutions.biz</td></tr>
         <tr><td><code>user</code></td><td>Management</td><td><code>CEO_*</code></td><td>ceo@sulsolutions.biz</td></tr>

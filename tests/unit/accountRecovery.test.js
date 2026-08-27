@@ -25,7 +25,7 @@ const {
 } = require("../../api/lib/customerActivityEvents");
 
 describe("account recovery", () => {
-  it("emails IT by default only as a fallback inbox", () => {
+  it("emails Super Admin at it@sulsolutions.biz by default", () => {
     assert.equal(DEFAULT_RECOVERY_EMAIL, "it@sulsolutions.biz");
     assert.equal(recoveryInboxEmail(), "it@sulsolutions.biz");
   });
@@ -104,18 +104,30 @@ describe("account recovery", () => {
     assert.equal(accountStatusLabel({ is_active: true }), "Active");
   });
 
-  it("keeps an IT fallback email that does not leak requester HTML", () => {
-    const mail = buildAccountRecoveryEmail({
+  it("notifies Super Admin of every reset request without leaking requester HTML", () => {
+    const mailed = buildAccountRecoveryEmail({
       requesterEmail: "user@sulsolutions.biz",
       user: { name: "<script>", role: "user", is_active: true },
       note: "<img src=x onerror=alert(1)>",
       usersUrl: "http://localhost:5173/settings",
+      staffLinkSent: true,
     });
-    assert.equal(mail.toAddress, "it@sulsolutions.biz");
-    assert.equal(mail.content.includes("<script>"), false);
-    assert.match(mail.content, /&lt;script&gt;/);
-    assert.match(mail.content, /&lt;img src=x/);
-    assert.match(mail.content, /could not be sent/i);
+    assert.equal(mailed.toAddress, "it@sulsolutions.biz");
+    assert.match(mailed.subject, /password reset requested/i);
+    assert.match(mailed.content, /Super Admin notice/i);
+    assert.match(mailed.content, /Reset link emailed to staff/);
+    assert.match(mailed.content, />Yes</);
+    assert.equal(mailed.content.includes("<script>"), false);
+    assert.match(mailed.content, /&lt;script&gt;/);
+    assert.match(mailed.content, /&lt;img src=x/);
+
+    const failed = buildAccountRecoveryEmail({
+      requesterEmail: "user@sulsolutions.biz",
+      user: { name: "Ada", role: "user", is_active: true },
+      usersUrl: "http://localhost:5173/settings",
+      staffLinkSent: false,
+    });
+    assert.match(failed.content, /No reset link was sent/i);
   });
 
   it("records password reset events on the admin activity audit trail", () => {

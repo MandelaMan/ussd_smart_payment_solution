@@ -1,6 +1,7 @@
 const { query } = require("../config/db");
 const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
 const { attributeDocumentAmount, unitWeight } = require("../utils/b2bDocumentAttribution");
+const { projectRecurringDatesInSpan } = require("../utils/billingMatrixProjection");
 const {
   getKpiSnapshot,
   getExpectedCollections,
@@ -179,7 +180,7 @@ const REPORT_DEFINITIONS = [
     id: "customer-monthly-billing-matrix",
     title: "Customer Monthly Billing Matrix",
     description:
-      "Customers × selected months in a year: invoice amount/date and payment amount/date per month. Invoices land in the month they were raised. Months with no raise show projected dates/amounts from Zoho recurring (including stopped) or last-invoice cadence; otherwise No recurring. Projected invoice total is the scheduled expected bill for the selected months (including past months). Consolidated B2B amounts are split per managed house.",
+      "Customers × selected months in a year: invoice amount/date and payment amount/date per month. Invoices land in the month they were raised. Months with no raise show projected dates/amounts from Zoho recurring (including stopped) or last-invoice cadence; otherwise No recurring. Projected invoice total is the expected bill for those months (including already-invoiced customers). Consolidated B2B amounts are split per managed house.",
     category: "Billing",
     family: "Billing",
     dateFilter: false,
@@ -1947,75 +1948,6 @@ function emptyMonthBucket() {
   };
 }
 
-/** True when year-month is the current calendar month or later. */
-function isOpenOrFutureYearMonth(year, monthNum, now = new Date()) {
-  const y = now.getFullYear();
-  const m = now.getMonth() + 1;
-  return Number(year) > y || (Number(year) === y && Number(monthNum) >= m);
-}
-
-function daysInMonth(year, monthNum) {
-  return new Date(Number(year), Number(monthNum), 0).getDate();
-}
-
-function recurringMonthStep(frequency, customPeriodDays) {
-  const freq = String(frequency || "monthly").toLowerCase();
-  if (freq === "quarterly") return 3;
-  if (freq === "yearly") return 12;
-  if (freq === "custom") {
-    const days = Math.max(Number(customPeriodDays) || 30, 1);
-    return Math.max(1, Math.round(days / 30));
-  }
-  return 1;
-}
-
-/**
- * Project recurring invoice dates across a year month span from next_invoice_date.
- * @returns {Map<string, string>} month key "MM" → YYYY-MM-DD
- */
-function projectRecurringDatesInSpan(
-  nextInvoiceDate,
-  year,
-  monthFrom,
-  monthTo,
-  frequency,
-  customPeriodDays
-) {
-  /** @type {Map<string, string>} */
-  const out = new Map();
-  const start = dateOnly(nextInvoiceDate);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return out;
-
-  const step = recurringMonthStep(frequency, customPeriodDays);
-  let y = Number(start.slice(0, 4));
-  let m = Number(start.slice(5, 7));
-  const dayOfMonth = Number(start.slice(8, 10));
-  const periodStart = `${year}-${String(monthFrom).padStart(2, "0")}-01`;
-  const periodEnd = `${year}-${String(monthTo).padStart(2, "0")}-${String(
-    daysInMonth(year, monthTo)
-  ).padStart(2, "0")}`;
-
-  let guard = 0;
-  // Walk forward from next_invoice_date until we enter / pass the selected span.
-  while (guard < 240) {
-    const dim = daysInMonth(y, m);
-    const d = Math.min(dayOfMonth, dim);
-    const dateStr = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    if (dateStr > periodEnd) break;
-    if (dateStr >= periodStart && y === Number(year) && m >= monthFrom && m <= monthTo) {
-      const mm = String(m).padStart(2, "0");
-      if (!out.has(mm)) out.set(mm, dateStr);
-    }
-    m += step;
-    while (m > 12) {
-      m -= 12;
-      y += 1;
-    }
-    guard += 1;
-  }
-  return out;
-}
-
 function isUsableRecurringForProjection(status) {
   const s = String(status || "")
     .trim()
@@ -2391,11 +2323,13 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
         const byId = recurringByCustomer.get(Number(c.id));
         const contactId = c.zoho_contact_id ? String(c.zoho_contact_id) : "";
         const byContact = contactId ? recurringByContact.get(contactId) : null;
+        const lastInvoice = lastInvoiceByCustomer.get(Number(c.id)) || "";
         const scheduleStart =
           byId?.nextInvoiceDate ||
           byContact?.nextInvoiceDate ||
-          lastInvoiceByCustomer.get(Number(c.id)) ||
+          lastInvoice ||
           "";
+        const notBefore = lastInvoice ? `${String(lastInvoice).slice(0, 7)}-01` : "";
         projectedByCustomer.set(
           Number(c.id),
           scheduleStart
@@ -2405,7 +2339,8 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
                 period.monthFrom,
                 period.monthTo,
                 c.payment_frequency,
-                c.custom_period_days
+                c.custom_period_days,
+                { notBefore }
               )
             : null
         );
@@ -2417,7 +2352,10 @@ async function customerMonthlyBillingMatrix(year, { monthFrom, monthTo } = {}) {
           String(c.customer_type || "").toUpperCase() === "B2B" ? c.discount_percent : null,
       });
       const scheduledDate = projected?.get(mm) || "";
-      if (scheduledDate && expectedUnit > 0) {
+      const raised = Boolean(invoiceDate) && Number(invoiceAmount) > 0;
+      // Expected bill for the month: on cadence, or actually invoiced (cadence
+      // next date often already rolled to next month after a raise).
+      if (expectedUnit > 0 && (scheduledDate || raised)) {
         yearProjectedInvoiceTotal += expectedUnit;
       }
 

@@ -305,11 +305,12 @@ async function login(req, res, next) {
   }
 }
 
-async function notifyItRecoveryFallback({
+async function notifySuperAdminPasswordReset({
   emailInput,
   user,
   note,
   req,
+  staffLinkSent = false,
 }) {
   const locked = user && isAccountLocked(user);
   try {
@@ -335,10 +336,11 @@ async function notifyItRecoveryFallback({
           : null,
         requestedAt: new Date().toISOString(),
         usersUrl: adminUsersUrl(),
+        staffLinkSent,
       })
     );
   } catch (err) {
-    console.error("[auth] IT recovery fallback email failed:", err.message);
+    console.error("[auth] Super Admin password-reset notice failed:", err.message);
   }
 }
 
@@ -384,40 +386,57 @@ async function requestAccountRecovery(req, res, next) {
       reason: user ? "password_reset_requested" : "password_reset_unknown",
     });
 
-    if (!shouldSendPasswordResetEmail(user)) {
-      return res.json(genericRecoveryResponse());
-    }
-
     if (!isZohoMailConfigured()) {
       return res.status(503).json({
         error: `Unable to send the reset email. Please email ${recoveryInboxEmail()} directly.`,
       });
     }
 
-    try {
-      await sendStaffPasswordResetEmail({ user, req });
-    } catch (err) {
-      console.error("[auth] password reset email failed:", err.message);
-      await notifyItRecoveryFallback({ emailInput, user, note, req });
-      return res.status(503).json({
-        error: `Unable to send the reset email. Please email ${recoveryInboxEmail()} directly.`,
-      });
+    let staffLinkSent = false;
+    if (shouldSendPasswordResetEmail(user)) {
+      try {
+        await sendStaffPasswordResetEmail({ user, req });
+        staffLinkSent = true;
+      } catch (err) {
+        console.error("[auth] password reset email failed:", err.message);
+        await notifySuperAdminPasswordReset({
+          emailInput,
+          user,
+          note,
+          req,
+          staffLinkSent: false,
+        });
+        return res.status(503).json({
+          error: `Unable to send the reset email. Please email ${recoveryInboxEmail()} directly.`,
+        });
+      }
     }
 
-    await logActivitySafe({
-      eventType: "password_reset_requested",
-      title: "Password reset requested",
-      message: `${user.name} · ${user.email} · ${normalizeSystemRole(user.role)}`,
-      source: "admin",
-      status: "success",
-      referenceId: String(user.id),
-      metadata: {
-        email: user.email,
-        role: normalizeSystemRole(user.role),
-        note: note || null,
-        ip: clientIp(req),
-      },
+    await notifySuperAdminPasswordReset({
+      emailInput,
+      user,
+      note,
+      req,
+      staffLinkSent,
     });
+
+    if (staffLinkSent) {
+      await logActivitySafe({
+        eventType: "password_reset_requested",
+        title: "Password reset requested",
+        message: `${user.name} · ${user.email} · ${normalizeSystemRole(user.role)}`,
+        source: "admin",
+        status: "success",
+        referenceId: String(user.id),
+        metadata: {
+          email: user.email,
+          role: normalizeSystemRole(user.role),
+          note: note || null,
+          ip: clientIp(req),
+          superAdminNotified: recoveryInboxEmail(),
+        },
+      });
+    }
 
     return res.json(genericRecoveryResponse());
   } catch (err) {

@@ -795,7 +795,7 @@ export function LoginPage() {
         (and spam). The link expires in 60 minutes.
       </Box>
       <Text fontSize="xs" color="fg.muted" textAlign="center">
-        Didn&apos;t get an email? Contact IT at {RECOVERY_INBOX}.
+        Didn't get an email? Contact Super Admin at {RECOVERY_INBOX}.
       </Text>
       <Button
         type="button"

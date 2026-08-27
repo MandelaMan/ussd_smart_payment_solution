@@ -263,7 +263,7 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
   }
 
   return (
-    <AppDialog open={Boolean(itemId)} onOpenChange={(d) => !d.open && onClose()} maxW="lg">
+    <AppDialog open={Boolean(itemId)} onOpenChange={(d) => !d.open && onClose()} maxW="2xl">
       <Box px={5} py={4} overflowY="auto">
         {loading && !item ? (
           <Text color="fg.muted">Loading…</Text>

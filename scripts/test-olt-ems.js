@@ -118,7 +118,7 @@ async function adminLogin() {
   const email =
     process.env.TEST_ADMIN_EMAIL ||
     process.env.ADMIN_EMAIL ||
-    "admin@sulsolutions.biz";
+    "it@sulsolutions.biz";
   const password =
     process.env.TEST_ADMIN_PASSWORD ||
     process.env.ADMIN_PASSWORD ||

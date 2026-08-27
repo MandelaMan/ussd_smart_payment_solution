@@ -16,7 +16,7 @@ const TEST_USERS = [
     role: "admin",
     groupSlugs: [],
     name: process.env.ADMIN_NAME || "Admin",
-    email: process.env.ADMIN_EMAIL || "admin@sulsolutions.biz",
+    email: process.env.ADMIN_EMAIL || "it@sulsolutions.biz",
     password: process.env.ADMIN_PASSWORD || "Admin@2026",
   },
   {
@@ -49,34 +49,70 @@ const TEST_USERS = [
   },
 ];
 
-const ADMIN_SEED_EMAIL = String(
-  process.env.ADMIN_EMAIL || "admin@sulsolutions.biz"
-)
+const DEFAULT_ADMIN_EMAIL = "it@sulsolutions.biz";
+const LEGACY_ADMIN_EMAILS = ["admin@sulsolutions.biz"];
+
+const ADMIN_SEED_EMAIL = String(process.env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL)
   .trim()
   .toLowerCase();
 
-async function seedUser({ role, groupSlugs, name, email, password }) {
-  const normalizedEmail = String(email).trim().toLowerCase();
-  const existing = await query(
-    `SELECT id, role FROM admin_users WHERE email = ? LIMIT 1`,
+async function findExistingUser(normalizedEmail, role) {
+  const exact = await query(
+    `SELECT id, email, role FROM admin_users WHERE email = ? LIMIT 1`,
     [normalizedEmail]
   );
-  if (existing.length) {
+  if (exact[0]) return exact[0];
+
+  if (role !== "admin") return null;
+  for (const legacy of LEGACY_ADMIN_EMAILS) {
+    if (legacy === normalizedEmail) continue;
+    const rows = await query(
+      `SELECT id, email, role FROM admin_users WHERE email = ? LIMIT 1`,
+      [legacy]
+    );
+    if (rows[0]) return rows[0];
+  }
+  return null;
+}
+
+async function seedUser({ role, groupSlugs, name, email, password }) {
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const existing = await findExistingUser(normalizedEmail, role);
+  if (existing) {
     if (normalizedEmail === ADMIN_SEED_EMAIL) {
       const hash = await bcrypt.hash(password, 12);
-      await query(
-        `UPDATE admin_users
-         SET password_hash = ?, must_change_password = 0,
-             failed_login_count = 0, locked_until = NULL,
-             token_version = token_version + 1
-         WHERE id = ?`,
-        [hash, existing[0].id]
-      );
-      console.log(`  ✔ ${role}: ${normalizedEmail} (password enforced)`);
+      const taken =
+        existing.email !== normalizedEmail
+          ? await query(
+              `SELECT id FROM admin_users WHERE email = ? AND id <> ? LIMIT 1`,
+              [normalizedEmail, existing.id]
+            )
+          : [];
+      if (taken[0]) {
+        console.log(
+          `  ! ${role}: cannot rename ${existing.email} → ${normalizedEmail} (already in use)`
+        );
+      } else {
+        await query(
+          `UPDATE admin_users
+           SET email = ?, password_hash = ?, must_change_password = 0,
+               failed_login_count = 0, locked_until = NULL,
+               token_version = token_version + 1
+           WHERE id = ?`,
+          [normalizedEmail, hash, existing.id]
+        );
+        if (existing.email !== normalizedEmail) {
+          console.log(
+            `  ✔ ${role}: ${existing.email} → ${normalizedEmail} (email + password enforced)`
+          );
+        } else {
+          console.log(`  ✔ ${role}: ${normalizedEmail} (password enforced)`);
+        }
+      }
     } else {
       console.log(`  ↷ ${role}: ${normalizedEmail} (already exists)`);
     }
-    return existing[0].id;
+    return existing.id;
   }
 
   const hash = await bcrypt.hash(password, 12);

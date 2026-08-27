@@ -65,6 +65,7 @@ function buildAccountRecoveryEmail({
   userAgent,
   requestedAt,
   usersUrl,
+  staffLinkSent = false,
 }) {
   const email = String(requesterEmail || "").trim().toLowerCase();
   const found = Boolean(user);
@@ -83,6 +84,7 @@ function buildAccountRecoveryEmail({
     ["Job title", user?.jobTitle || "—"],
     ["Status", accountStatusLabel(user)],
     ["Must change password", user?.mustChangePassword ? "Yes" : found ? "No" : "—"],
+    ["Reset link emailed to staff", staffLinkSent ? "Yes" : "No"],
     ["Requester note", note || "—"],
     ["Submitted at", requestedAt || new Date().toISOString()],
     ["IP address", ip || "—"],
@@ -99,15 +101,22 @@ function buildAccountRecoveryEmail({
     )
     .join("");
 
-  const resetHint = found
-    ? `<p>The automated reset email could not be delivered. Reset this account from <a href="${safe(usersUrl)}">${safe(usersUrl)}</a> (Settings → Users &amp; permissions), or send a reset link from that page.</p>`
-    : "<p>No staff account matched this email. Confirm the address with the requester before creating or resetting a user.</p>";
+  let resetHint;
+  if (staffLinkSent) {
+    resetHint =
+      "<p>A reset link was emailed to the staff member. Review this request if it looks unexpected.</p>";
+  } else if (found) {
+    resetHint = `<p>No reset link was sent to the staff member. Reset this account from <a href="${safe(usersUrl)}">${safe(usersUrl)}</a> (Settings → Users &amp; permissions), or send a reset link from that page.</p>`;
+  } else {
+    resetHint =
+      "<p>No staff account matched this email. Confirm the address with the requester before creating or resetting a user.</p>";
+  }
 
   return {
     toAddress: recoveryInboxEmail(),
-    subject: `SUL Bix account recovery request — ${email || "unknown"}`,
+    subject: `SUL Bix password reset requested — ${email || "unknown"}`,
     content: `
-      <p>A staff member requested a password reset from the SUL Bix login page, but the reset email could not be sent to them. This includes administrator accounts.</p>
+      <p>Super Admin notice: someone requested a password reset from the SUL Bix login page. This includes administrator accounts.</p>
       <table style="border-collapse:collapse;font-family:system-ui,sans-serif;font-size:14px;">${tableRows}</table>
       ${resetHint}
     `,
