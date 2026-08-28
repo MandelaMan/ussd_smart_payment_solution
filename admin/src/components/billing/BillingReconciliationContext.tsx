@@ -25,6 +25,7 @@ export function BillingReconciliationProvider({ children }: { children: ReactNod
   const refreshSummary = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setSummaryLoading(true);
     try {
+      // Rebuilds from the customer-record cache (not the stale insights JSON blob).
       setSummary(await api.getReconciliationSummary({ cached: true }));
     } catch (e) {
       if (!opts?.silent) {

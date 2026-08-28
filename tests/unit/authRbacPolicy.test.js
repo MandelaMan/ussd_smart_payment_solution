@@ -167,6 +167,21 @@ describe("RBAC permission catalog integrity", () => {
     assert.ok(bySlug["network-operations"].has("customers.disconnect"));
   });
 
+  it("customer-create groups include building, apartment, and package lookups", () => {
+    const bySlug = Object.fromEntries(
+      GROUP_PRESETS.map((g) => [g.slug, new Set(g.permissions)])
+    );
+    for (const slug of ["sales", "support", "installations"]) {
+      assert.ok(bySlug[slug].has("customers.create"), `${slug} missing customers.create`);
+      assert.ok(bySlug[slug].has("customers.view"), `${slug} missing customers.view`);
+      assert.ok(bySlug[slug].has("buildings.view"), `${slug} missing buildings.view`);
+      assert.ok(bySlug[slug].has("apartments.view"), `${slug} missing apartments.view`);
+      assert.ok(bySlug[slug].has("packages.view"), `${slug} missing packages.view`);
+      assert.equal(bySlug[slug].has("buildings.create"), false, `${slug} should not create buildings`);
+    }
+    assert.equal(bySlug.sales.has("customers.financials"), false);
+  });
+
   it("every operational module view is granted by a preset or role default", () => {
     const granted = new Set([
       ...USER_ROLE_DEFAULTS,

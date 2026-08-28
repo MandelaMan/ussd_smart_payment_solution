@@ -119,8 +119,23 @@ export function moduleCount(summary: ReconciliationSummary | null, module: Billi
   return typeof value === "number" ? value : 0;
 }
 
-export function rowBillingGapIssue(row: { primaryStatus: string; statuses: string[] }) {
-  return BILLING_GAP_STATUSES.find(
-    (s) => row.primaryStatus === s || row.statuses.includes(s),
-  );
+export function isBillingGapStatus(
+  value: string
+): value is (typeof BILLING_GAP_STATUSES)[number] {
+  return (BILLING_GAP_STATUSES as readonly string[]).includes(value);
+}
+
+export function rowHasBillingGap(
+  row: { primaryStatus: string; statuses?: string[] },
+  status: string
+) {
+  return row.primaryStatus === status || (row.statuses || []).includes(status);
+}
+
+export function rowBillingGapIssue(
+  row: { primaryStatus: string; statuses?: string[] },
+  preferred?: string
+) {
+  if (preferred && rowHasBillingGap(row, preferred)) return preferred;
+  return BILLING_GAP_STATUSES.find((s) => rowHasBillingGap(row, s));
 }

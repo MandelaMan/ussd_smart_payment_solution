@@ -8,6 +8,8 @@ const {
   buildIssueTiles,
   recordToIssuePreview,
   roundMoney,
+  parseStatusFilter,
+  recordMatchesStatusFilter,
 } = require("../utils/reconciliationEngine");
 const {
   isB2BCustomer,
@@ -67,6 +69,8 @@ let syncInProgress = false;
 let activeSyncPromise = null;
 let schemaReady = false;
 let dbHydratePromise = null;
+/** Snapshot may be a browse batch; merge the rest of the DB cache once. */
+let cacheFullyMerged = false;
 
 function parseJson(value, fallback = null) {
   if (value == null) return fallback;
@@ -298,6 +302,7 @@ async function upsertCustomerCacheRecord(record) {
 
 async function clearCustomerCache() {
   await ensureReconciliationSchema();
+  cacheFullyMerged = false;
   try {
     await query(`DELETE FROM reconciliation_customer_cache`);
   } catch (e) {
@@ -320,6 +325,7 @@ async function hydrateSnapshotFromCustomerCache() {
         snapshot.records.set(record.customerId, record);
       }
     }
+    cacheFullyMerged = snapshot.records.size > 0;
     return snapshot.records.size > 0;
   } catch (e) {
     console.warn("[reconciliation] hydrate customer cache skipped:", e.message);
@@ -327,8 +333,36 @@ async function hydrateSnapshotFromCustomerCache() {
   }
 }
 
+async function mergeSnapshotFromCustomerCache() {
+  if (cacheFullyMerged) return;
+  await ensureReconciliationSchema();
+  try {
+    const rows = await query(
+      `SELECT record_json FROM reconciliation_customer_cache ORDER BY customer_id ASC`
+    );
+    for (const row of rows) {
+      const record = parseJson(row.record_json);
+      if (record?.customerId && !snapshot.records.has(record.customerId)) {
+        snapshot.records.set(record.customerId, record);
+      }
+    }
+    cacheFullyMerged = true;
+  } catch (e) {
+    console.warn("[reconciliation] merge customer cache skipped:", e.message);
+  }
+}
+
 async function ensureDbHydrated() {
-  if (snapshot.records.size > 0) return;
+  if (snapshot.records.size > 0) {
+    if (cacheFullyMerged) return;
+    if (!dbHydratePromise) {
+      dbHydratePromise = mergeSnapshotFromCustomerCache().finally(() => {
+        dbHydratePromise = null;
+      });
+    }
+    await dbHydratePromise;
+    return;
+  }
   if (!dbHydratePromise) {
     dbHydratePromise = (async () => {
       await loadInsightsFromDb();
@@ -350,6 +384,7 @@ async function syncCustomersIncremental(
   if (replaceCache) {
     await clearCustomerCache();
     snapshot.records = new Map();
+    cacheFullyMerged = false;
   }
 
   snapshot.sync.progress = {
@@ -1177,21 +1212,17 @@ function getCachedSummary() {
 }
 
 async function getCachedSummaryAsync() {
-  const cached = await loadInsightsFromDb();
-  if (cached) {
-    scheduleBackgroundSyncIfNeeded();
-    return cached;
-  }
-
+  await loadInsightsFromDb();
   await ensureDbHydrated();
-  const built = buildSummaryPayload();
-  if (built.sync.customerCount > 0) {
+  if (snapshot.records.size > 0) {
+    const built = buildSummaryPayload();
     built.fromCache = true;
     return mergeLiveSyncStatus(built);
   }
 
   scheduleBackgroundSyncIfNeeded();
-  return mergeLiveSyncStatus(built);
+  const cached = await loadInsightsFromDb();
+  return cached || mergeLiveSyncStatus(buildSummaryPayload());
 }
 
 function scheduleBackgroundSyncIfNeeded() {
@@ -1239,7 +1270,10 @@ function startScheduledSync() {
 
 async function getSummary() {
   await waitForSyncInProgress();
-  scheduleBackgroundSyncIfNeeded();
+  await ensureDbHydrated();
+  if (snapshot.records.size === 0) {
+    scheduleBackgroundSyncIfNeeded();
+  }
   return buildSummaryPayload();
 }
 
@@ -1262,21 +1296,38 @@ function formatCustomerListRow(r) {
   };
 }
 
+async function loadCachedRecordsMatchingStatus(statuses) {
+  const list = [...new Set(statuses)].filter(Boolean);
+  if (!list.length) return [];
+  await ensureReconciliationSchema();
+  try {
+    const inPlaceholders = list.map(() => "?").join(", ");
+    const searchClauses = list
+      .map(() => `JSON_SEARCH(statuses_json, 'one', ?) IS NOT NULL`)
+      .join(" OR ");
+    const rows = await query(
+      `SELECT record_json FROM reconciliation_customer_cache
+       WHERE primary_status IN (${inPlaceholders})
+          OR (${searchClauses})`,
+      [...list, ...list]
+    );
+    const records = [];
+    for (const row of rows) {
+      const record = parseJson(row.record_json);
+      if (record?.customerId) records.push(record);
+    }
+    return records;
+  } catch (e) {
+    console.warn("[reconciliation] status cache lookup skipped:", e.message);
+    return [];
+  }
+}
+
 function applyRecordFilters(records, filters = {}) {
   let filtered = records;
 
   if (filters.status) {
-    const statuses = String(filters.status)
-      .toLowerCase()
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    filtered = filtered.filter((r) =>
-      statuses.some(
-        (status) =>
-          r.primaryStatus === status || (r.statuses || []).includes(status)
-      )
-    );
+    filtered = filtered.filter((r) => recordMatchesStatusFilter(r, filters.status));
   }
 
   if (filters.buildingId) {
@@ -1313,6 +1364,20 @@ function sortRecords(records, filters = {}) {
   return sorted;
 }
 
+async function recordsMatchingFilters(filters = {}) {
+  let records = applyRecordFilters(Array.from(snapshot.records.values()), filters);
+  const statusList = parseStatusFilter(filters.status);
+  if (statusList.length === 1) {
+    const cached = await loadCachedRecordsMatchingStatus(statusList);
+    const byId = new Map(records.map((r) => [r.customerId, r]));
+    for (const record of cached) {
+      if (!byId.has(record.customerId)) byId.set(record.customerId, record);
+    }
+    records = applyRecordFilters(Array.from(byId.values()), filters);
+  }
+  return records;
+}
+
 async function listCustomersBrowse(filters = {}) {
   await ensureDbHydrated();
   await waitForSyncInProgress();
@@ -1322,22 +1387,25 @@ async function listCustomersBrowse(filters = {}) {
     await waitForSyncInProgress();
   }
 
-  const limit = Math.min(BROWSE_BATCH, Math.max(1, Number(filters.limit) || BROWSE_BATCH));
-  const records = sortRecords(
-    applyRecordFilters(Array.from(snapshot.records.values()), filters),
-    filters
-  ).slice(0, limit);
+  const statusList = parseStatusFilter(filters.status);
+  const specificStatus = statusList.length === 1;
+  const sorted = sortRecords(await recordsMatchingFilters(filters), filters);
+  const limit = specificStatus
+    ? Math.min(100, Math.max(1, Number(filters.limit) || BROWSE_BATCH))
+    : Math.min(BROWSE_BATCH, Math.max(1, Number(filters.limit) || BROWSE_BATCH));
+  const page = specificStatus ? Math.max(1, Number(filters.page) || 1) : 1;
+  const paged = sorted.slice((page - 1) * limit, page * limit);
 
   return {
-    data: records.map(formatCustomerListRow),
+    data: paged.map(formatCustomerListRow),
     pagination: {
-      page: 1,
+      page,
       limit,
-      total: records.length,
-      pages: 1,
+      total: sorted.length,
+      pages: Math.max(1, Math.ceil(sorted.length / limit) || 1),
     },
     sync: buildSyncMeta(),
-    browseMode: true,
+    browseMode: !specificStatus,
   };
 }
 
@@ -1403,10 +1471,7 @@ async function listCustomersBySearch(filters = {}) {
 async function listCustomers(filters = {}) {
   if (filters.forExport) {
     await ensureDbHydrated();
-    const records = sortRecords(
-      applyRecordFilters(Array.from(snapshot.records.values()), filters),
-      filters
-    );
+    const records = sortRecords(await recordsMatchingFilters(filters), filters);
     return {
       data: records.map(formatCustomerListRow),
       pagination: {

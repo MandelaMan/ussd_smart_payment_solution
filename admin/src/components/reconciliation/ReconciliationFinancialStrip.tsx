@@ -18,6 +18,32 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 export function ReconciliationFinancialStrip({ summary }: Props) {
+  const stats = [
+    {
+      label: "Outstanding",
+      value: formatCurrency(summary.totalOutstandingBalance),
+      show: true,
+    },
+    {
+      label: "Customers with issues",
+      value: String(summary.sync.issueCustomerCount ?? 0),
+      show: true,
+    },
+    {
+      label: "Revenue at risk",
+      value: formatCurrency(summary.revenueAtRisk),
+      show: summary.revenueAtRisk > 0,
+    },
+    {
+      label: "Expected (month)",
+      value: formatCurrency(summary.expectedRevenueThisMonth),
+      show: summary.expectedRevenueThisMonth > 0,
+    },
+  ].filter((stat) => stat.show);
+
+  const forecast = summary.upcomingInvoices;
+  const showForecast = Boolean(forecast && (forecast.invoiceCount || forecast.anticipatedAmount));
+
   return (
     <Stack gap={3}>
       <Flex
@@ -30,18 +56,12 @@ export function ReconciliationFinancialStrip({ summary }: Props) {
         divideColor="brand.100"
         overflow="hidden"
       >
-        <Stat label="Outstanding" value={formatCurrency(summary.totalOutstandingBalance)} />
-        <Stat label="Revenue at Risk" value={formatCurrency(summary.revenueAtRisk)} />
-        <Stat label="Expected (month)" value={formatCurrency(summary.expectedRevenueThisMonth)} />
-        <Stat label="Collected (month)" value={formatCurrency(summary.revenueCollectedThisMonth)} />
-        <Stat label="Collection Rate" value={`${summary.collectionRate}%`} />
-        <Stat
-          label="Customers with Issues"
-          value={String(summary.sync.issueCustomerCount ?? "—")}
-        />
+        {stats.map((stat) => (
+          <Stat key={stat.label} label={stat.label} value={stat.value} />
+        ))}
       </Flex>
-      {summary.upcomingInvoices ? (
-        <UpcomingInvoicesForecastStrip forecast={summary.upcomingInvoices} />
+      {showForecast && forecast ? (
+        <UpcomingInvoicesForecastStrip forecast={forecast} />
       ) : null}
     </Stack>
   );

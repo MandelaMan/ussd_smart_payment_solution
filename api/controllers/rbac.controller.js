@@ -8,6 +8,13 @@ const {
   isAdministrator,
 } = require("../rbac/permissionService");
 const { getPermission: lookupPerm } = require("../rbac/permissionCatalog");
+const {
+  snapshotEffectivePermissionKeys,
+  snapshotUsersForPermissionNotify,
+  loadGroupMemberUsers,
+  notifyIfNewPermissionsGranted,
+  notifyUsersOfGrantedPermissions,
+} = require("../services/permissionGrantEmail");
 
 async function listPermissionCatalog(_req, res) {
   return res.json({ modules: getCatalogForApi() });
@@ -140,6 +147,10 @@ async function updateGroup(req, res, next) {
     const group = rows[0];
     if (!group) return res.status(404).json({ error: "Group not found" });
 
+    if (name !== undefined && !String(name).trim()) {
+      return res.status(400).json({ error: "Name cannot be empty" });
+    }
+
     const prevPerms = await query(
       `SELECT perm_key FROM rbac_group_permissions WHERE group_id = ?`,
       [groupId]
@@ -150,11 +161,19 @@ async function updateGroup(req, res, next) {
       isActive: Boolean(group.is_active),
       permissions: prevPerms.map((p) => p.perm_key).sort(),
     };
+    const accessMayChange =
+      Array.isArray(permissions) || is_active !== undefined;
+    const memberSnapshots = accessMayChange
+      ? await snapshotUsersForPermissionNotify(
+          await loadGroupMemberUsers(groupId)
+        )
+      : [];
 
     if (name !== undefined) {
-      const trimmed = String(name).trim();
-      if (!trimmed) return res.status(400).json({ error: "Name cannot be empty" });
-      await query(`UPDATE rbac_groups SET name = ? WHERE id = ?`, [trimmed, groupId]);
+      await query(`UPDATE rbac_groups SET name = ? WHERE id = ?`, [
+        String(name).trim(),
+        groupId,
+      ]);
     }
     if (description !== undefined) {
       await query(`UPDATE rbac_groups SET description = ? WHERE id = ?`, [
@@ -204,6 +223,9 @@ async function updateGroup(req, res, next) {
       ...meta,
     });
     await invalidateUserPermissionCache();
+    if (accessMayChange) {
+      await notifyUsersOfGrantedPermissions(memberSnapshots);
+    }
 
     return res.json({ ok: true });
   } catch (err) {
@@ -284,7 +306,7 @@ async function setUserPermissionOverrides(req, res, next) {
     const { grants = [], denies = [] } = req.body || {};
 
     const rows = await query(
-      `SELECT id, role FROM admin_users WHERE id = ? LIMIT 1`,
+      `SELECT id, name, email, role, is_active FROM admin_users WHERE id = ? LIMIT 1`,
       [userId]
     );
     if (!rows[0]) return res.status(404).json({ error: "User not found" });
@@ -300,6 +322,7 @@ async function setUserPermissionOverrides(req, res, next) {
       `SELECT perm_key, effect FROM rbac_user_permissions WHERE user_id = ?`,
       [userId]
     );
+    const previousKeys = await snapshotEffectivePermissionKeys(rows[0]);
 
     const grantSet = new Set(
       (Array.isArray(grants) ? grants : []).filter((k) => lookupPerm(k))
@@ -342,6 +365,11 @@ async function setUserPermissionOverrides(req, res, next) {
     await invalidateUserPermissionCache();
 
     const resolved = await resolveUserPermissions(rows[0]);
+    await notifyIfNewPermissionsGranted({
+      user: rows[0],
+      previousKeys,
+      previousRole: rows[0].role,
+    });
     return res.json({
       ok: true,
       permissions: resolved.permissions,

@@ -32,6 +32,7 @@ export type LeadSignupPrefill = {
   phone: string;
   email: string;
   apartmentNumber: string;
+  block: string;
   buildingId: number | null;
   buildingName: string | null;
   productId: number | null;
@@ -76,6 +77,7 @@ export function parseLeadSignup(lead: Lead): LeadSignupPrefill {
     phone: asString(lead.phone),
     email: asString(lead.email),
     apartmentNumber: asString(lead.apartmentNumber),
+    block: asString(lead.block) || asString(signup?.block),
     buildingId: asNumber(lead.buildingId) || asNumber(signup?.buildingId),
     buildingName: asString(lead.buildingName || lead.buildingInterest) || null,
     productId: asNumber(signup?.productId),

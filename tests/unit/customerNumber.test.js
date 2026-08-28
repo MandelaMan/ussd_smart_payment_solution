@@ -11,6 +11,8 @@ const {
   isValidPaybillAccountRef,
   normalizePremiseType,
   shopLocationCode,
+  normalizeApartmentUnit,
+  normalizeBlock,
 } = require("../../api/utils/customerNumber");
 
 describe("customer numbering (signup / move / convert / cancel)", () => {
@@ -66,6 +68,15 @@ describe("customer numbering (signup / move / convert / cancel)", () => {
 
   it("uppercases apartment segment", () => {
     assert.equal(buildCustomerNumber(singleBuilding, "C2B", "h302"), "ET-H302");
+  });
+
+  it("does not put block in the customer number", () => {
+    const azaleaHeights = {
+      c2bCode: "AZE",
+      b2bCode: "AZEB",
+      buildingCode: "AH",
+    };
+    assert.equal(buildCustomerNumber(azaleaHeights, "C2B", "4G"), "AZE-AH-4G");
   });
 
   it("builds POP-SHP-LOCATION for a shop", () => {
@@ -127,6 +138,39 @@ describe("customer numbering (signup / move / convert / cancel)", () => {
     const archived = archiveCancelledCustomerNumber(long, 999999);
     assert.ok(archived.length <= 50);
     assert.match(archived, /-CXL-999999$/);
+  });
+});
+
+describe("apartment unit and block capture", () => {
+  const azaleaHeights = {
+    c2bCode: "AZE",
+    b2bCode: "AZEB",
+    buildingCode: "AH",
+  };
+
+  it("accepts a plain unit and optional block text", () => {
+    assert.equal(normalizeApartmentUnit("4g", azaleaHeights), "4G");
+    assert.equal(normalizeApartmentUnit("401A", azaleaHeights), "401A");
+    assert.equal(normalizeApartmentUnit("APT-101", {}), "APT-101");
+    assert.equal(normalizeBlock(" a "), "a");
+    assert.equal(normalizeBlock("Block A"), "Block A");
+    assert.equal(normalizeBlock("   "), null);
+  });
+
+  it("rejects stuffed account numbers like AZE-4G-BLOCK-A", () => {
+    for (const value of [
+      "AZE-4G-BLOCK-A",
+      "AZE-AH-4G-BLOCK-A",
+      "4G-BLOCK-A",
+      "AZE-4G",
+      "AZE4GBLOCKA",
+    ]) {
+      assert.throws(
+        () => normalizeApartmentUnit(value, azaleaHeights),
+        /unit only/i,
+        value
+      );
+    }
   });
 });
 

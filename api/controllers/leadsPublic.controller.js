@@ -6,6 +6,10 @@ const { emitSyncEvent } = require("../socket");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 const { verifyWhatsAppSignature } = require("../middleware/webhookVerify");
 const { logActivitySafe } = require("../services/activityLogStore");
+const {
+  normalizeApartmentUnit,
+  normalizeBlock,
+} = require("../utils/customerNumber");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[+\d][\d\s()-]{6,20}$/;
@@ -229,7 +233,8 @@ async function submitSignup(req, res, next) {
     const lastName = String(req.body?.lastName || "").trim();
     const phone = String(req.body?.phone || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
-    const apartmentNumber = String(req.body?.apartmentNumber || "").trim();
+    const apartmentNumberRaw = String(req.body?.apartmentNumber || "").trim();
+    const block = normalizeBlock(req.body?.block);
     const buildingId = Number(req.body?.buildingId);
     const productId = Number(req.body?.productId);
     const dstvDecoderSerial = String(req.body?.dstvDecoderSerial || "")
@@ -250,7 +255,7 @@ async function submitSignup(req, res, next) {
     if (!email || !EMAIL_RE.test(email)) {
       return res.status(400).json({ error: "Please enter a valid email" });
     }
-    if (!apartmentNumber) {
+    if (!apartmentNumberRaw) {
       return res.status(400).json({ error: "Please enter your apartment / unit number" });
     }
     if (!Number.isFinite(buildingId) || buildingId <= 0) {
@@ -274,11 +279,30 @@ async function submitSignup(req, res, next) {
     }
 
     const [building] = await query(
-      `SELECT id, name FROM buildings WHERE id = ? LIMIT 1`,
+      `SELECT b.id, b.name, b.building_code,
+              pop.c2b_code, pop.b2b_code
+       FROM buildings b
+       LEFT JOIN pops pop ON pop.id = b.pop_id
+       WHERE b.id = ?
+       LIMIT 1`,
       [buildingId]
     );
     if (!building) {
       return res.status(400).json({ error: "Selected building was not found" });
+    }
+
+    let apartmentNumber;
+    try {
+      apartmentNumber = normalizeApartmentUnit(apartmentNumberRaw, building);
+    } catch (e) {
+      return res.status(400).json({
+        error:
+          e.message ||
+          "Apartment is the unit only (e.g. 4G). Put the block in the Block field.",
+      });
+    }
+    if (!apartmentNumber) {
+      return res.status(400).json({ error: "Please enter your apartment / unit number" });
     }
 
     const [product] = await query(
@@ -312,6 +336,7 @@ async function submitSignup(req, res, next) {
       planName: product.planName || null,
       dstvDecoderSerial: dstvDecoderSerial || null,
       customerType: "C2B",
+      block,
     };
 
     const metadata = {
@@ -325,7 +350,7 @@ async function submitSignup(req, res, next) {
       `Signup request from ${fullName}`,
       `Phone ${phone}`,
       `Email ${email}`,
-      `${building.name} · apt ${apartmentNumber}`,
+      `${building.name} · apt ${apartmentNumber}${block ? ` · ${block}` : ""}`,
       `${product.name}${product.paymentFrequency ? ` · ${product.paymentFrequency}` : ""}`,
       dstvDecoderSerial ? `DSTV serial ${dstvDecoderSerial}` : null,
       message || null,
@@ -350,6 +375,7 @@ async function submitSignup(req, res, next) {
         interest: String(product.name || "Signup").slice(0, 100),
         buildingInterest: building.name,
         apartmentNumber: apartmentNumber.slice(0, 50),
+        block,
         buildingId,
         message: message ? message.slice(0, 4000) : existingLead.message,
         metadata: mergedMeta,
@@ -366,6 +392,7 @@ async function submitSignup(req, res, next) {
         interest: String(product.name || "Signup").slice(0, 100),
         buildingInterest: building.name,
         apartmentNumber: apartmentNumber.slice(0, 50),
+        block,
         buildingId,
         message: message ? message.slice(0, 4000) : null,
         metadata,
@@ -407,7 +434,7 @@ async function submitSignup(req, res, next) {
         const body = [
           fullName,
           phone,
-          `${building.name} · apt ${apartmentNumber}`,
+          `${building.name} · apt ${apartmentNumber}${block ? ` · ${block}` : ""}`,
           product.name,
           product.paymentFrequency,
         ]

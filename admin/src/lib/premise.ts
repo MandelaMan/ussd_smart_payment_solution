@@ -1,3 +1,5 @@
+import { formatCustomerBlock } from "./customerNumber";
+
 export type PremiseType = "apartment" | "shop";
 
 export function normalizePremiseType(value: unknown): PremiseType {
@@ -37,9 +39,11 @@ export function customerUnitLine(customer: {
   shopLocation?: string | null;
   businessName?: string | null;
   premiseType?: string | null;
+  block?: string | null;
 }): string {
-  if (isShopPremise(customer)) {
-    return customer.shopLocation || customer.apartmentNumber || "";
-  }
-  return customer.apartmentNumber || "";
+  const unit = isShopPremise(customer)
+    ? customer.shopLocation || customer.apartmentNumber || ""
+    : customer.apartmentNumber || "";
+  const blockLabel = formatCustomerBlock(customer.block);
+  return [unit, blockLabel].filter(Boolean).join(" · ");
 }

@@ -30,7 +30,7 @@ const COMMUNICABLE_STATUSES = new Set([
   "cancelled_still_active",
 ]);
 
-async function resolveCustomerEmail(customer, record) {
+async function resolveCustomerEmail(customer, record, options = {}) {
   if (isB2BCustomer(customer)) {
     const agencyEmail = resolveInvoiceEmail(customer);
     if (agencyEmail.includes("@")) {
@@ -40,6 +40,10 @@ async function resolveCustomerEmail(customer, record) {
 
   if (customer?.email && String(customer.email).includes("@")) {
     return { email: String(customer.email).trim(), source: "dashboard" };
+  }
+
+  if (options.allowZohoLookup === false) {
+    return { email: null, source: null };
   }
 
   try {
@@ -53,6 +57,32 @@ async function resolveCustomerEmail(customer, record) {
   }
 
   return { email: null, source: null };
+}
+
+async function loadEligibilityContacts(ids) {
+  const byId = new Map();
+  const unique = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+  const chunkSize = 500;
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await query(
+      `SELECT c.id, c.email, c.customer_type, a.email AS agency_email
+       FROM customers c
+       LEFT JOIN agencies a ON a.id = c.agency_id
+       WHERE c.id IN (${placeholders})`,
+      chunk
+    );
+    for (const row of rows) {
+      byId.set(Number(row.id), {
+        id: Number(row.id),
+        email: row.email,
+        customerType: row.customer_type,
+        agencyEmail: row.agency_email,
+      });
+    }
+  }
+  return byId;
 }
 
 async function loadLastSentMap(customerNumbers = []) {
@@ -87,13 +117,8 @@ async function listCandidates(filters = {}) {
   let records = reconciliationStore.getRecords().filter(isCommunicableRecord);
 
   if (filters.status) {
-    const statuses = String(filters.status)
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    records = records.filter((r) =>
-      statuses.some((s) => r.primaryStatus === s || (r.statuses || []).includes(s))
-    );
+    const { recordMatchesStatusFilter } = require("../utils/reconciliationEngine");
+    records = records.filter((r) => recordMatchesStatusFilter(r, filters.status));
   }
 
   if (filters.search) {
@@ -266,13 +291,22 @@ async function sendBulkCommunication({ customerIds = [], user } = {}) {
 
 async function countEligible() {
   const records = reconciliationStore.getRecords().filter(isCommunicableRecord);
+  const total = records.length;
+  if (!total || !isZohoMailConfigured()) {
+    return { total, eligible: 0 };
+  }
+
+  // Dashboard/agency emails only — never Zoho. Summary is polled every few
+  // seconds during sync; a live Books lookup per gap customer times out the page.
+  const contacts = await loadEligibilityContacts(records.map((r) => r.customerId));
   let eligible = 0;
   for (const record of records) {
-    const customer = await customerStore.getCustomerById(record.customerId);
-    const { email } = await resolveCustomerEmail(customer, record);
-    if (email && resolveTemplateKey(record) && isZohoMailConfigured()) eligible += 1;
+    if (!resolveTemplateKey(record)) continue;
+    const customer = contacts.get(Number(record.customerId));
+    const { email } = await resolveCustomerEmail(customer, record, { allowZohoLookup: false });
+    if (email) eligible += 1;
   }
-  return { total: records.length, eligible };
+  return { total, eligible };
 }
 
 module.exports = {

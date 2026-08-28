@@ -1650,6 +1650,9 @@ export function CustomerExpandPanel({
                   label="Shop location"
                   value={customer.shopLocation || "—"}
                 />
+                {customer.block ? (
+                  <DetailCard label="Block" value={customer.block} />
+                ) : null}
                 <DetailCard
                   label="Unit code"
                   value={customer.apartmentNumber}
@@ -1657,7 +1660,12 @@ export function CustomerExpandPanel({
                 />
               </>
             ) : (
-              <DetailCard label="Apartment number" value={customer.apartmentNumber} mono />
+              <>
+                <DetailCard label="Apartment number" value={customer.apartmentNumber} mono />
+                {customer.block ? (
+                  <DetailCard label="Block" value={customer.block} />
+                ) : null}
+              </>
             )}
             <DetailCard label="Payment frequency" value={paymentFrequencyLabel} />
             {formatPauseCreditDetail(customer) ? (
@@ -2207,11 +2215,6 @@ export function CustomerExpandPanel({
         </Dialog.Header>
         <Dialog.Body px={5} py={4}>
           <Stack gap={3}>
-            <Text fontSize="sm" color="fg.muted">
-              Creates a new Zoho contact for {customer?.customerNumber || "this customer"}
-              and archives the previous tenant’s contact. Choose whether payment
-              was already made so we do not email another unpaid invoice.
-            </Text>
             <Field.Root>
               <Field.Label>Has payment already been made?</Field.Label>
               <SelectField
@@ -2303,12 +2306,7 @@ export function CustomerExpandPanel({
                   </Field.Root>
                 ) : null}
               </>
-            ) : (
-              <Text fontSize="xs" color="fg.muted">
-                A new signup invoice will be created on the fresh Zoho contact and
-                emailed to the customer.
-              </Text>
-            )}
+            ) : null}
           </Stack>
         </Dialog.Body>
         <Dialog.Footer

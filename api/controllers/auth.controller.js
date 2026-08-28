@@ -53,6 +53,10 @@ const {
   normalizeSystemRole,
   isAdministrator,
 } = require("../rbac/permissionService");
+const {
+  snapshotEffectivePermissionKeys,
+  notifyIfNewPermissionsGranted,
+} = require("../services/permissionGrantEmail");
 
 const VALID_ROLES = ["admin", "user"];
 
@@ -928,6 +932,10 @@ async function updateUser(req, res, next) {
       `SELECT group_id FROM rbac_user_groups WHERE user_id = ?`,
       [id]
     );
+    const accessMayChange = Boolean(role) || Array.isArray(groupIds);
+    const previousKeys = accessMayChange
+      ? await snapshotEffectivePermissionKeys(target)
+      : [];
 
     const updates = [];
     const params = [];
@@ -981,6 +989,20 @@ async function updateUser(req, res, next) {
 
     if (shouldInvalidate && (role || is_active === false)) {
       await invalidateUserTokens(id);
+    }
+
+    if (accessMayChange) {
+      const updatedRows = await query(
+        `SELECT id, name, email, role, is_active FROM admin_users WHERE id = ? LIMIT 1`,
+        [id]
+      );
+      if (updatedRows[0]) {
+        await notifyIfNewPermissionsGranted({
+          user: updatedRows[0],
+          previousKeys,
+          previousRole: target.role,
+        });
+      }
     }
 
     const meta = clientMeta(req);

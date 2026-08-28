@@ -1,8 +1,9 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Box, Button, Field, Heading, Input, Text, VStack } from "@chakra-ui/react";
+import { Box, Button, Field, Heading, Text, VStack } from "@chakra-ui/react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { meetsPasswordPolicy } from "../lib/passwordStrength";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { PasswordStrengthMeter } from "../components/ui/PasswordStrengthMeter";
 import { toaster } from "../components/ui/toaster";
 import { BRAND } from "../theme";
@@ -140,8 +141,7 @@ export function ResetPasswordPage() {
 
               <Field.Root required>
                 <Field.Label>New password</Field.Label>
-                <Input
-                  type="password"
+                <PasswordInput
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   autoComplete="new-password"
@@ -152,8 +152,7 @@ export function ResetPasswordPage() {
 
               <Field.Root required>
                 <Field.Label>Confirm new password</Field.Label>
-                <Input
-                  type="password"
+                <PasswordInput
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
                   autoComplete="new-password"

@@ -6,6 +6,7 @@ export const CUSTOMER_EXPORT_COLUMN_OPTIONS: ExportColumnOption[] = [
   { key: "fullName", label: "Name", required: true },
   { key: "customerType", label: "Type", required: true },
   { key: "apartmentNumber", label: "Apartment", required: true },
+  { key: "block", label: "Block" },
   { key: "subscriptionStatus", label: "Status", required: true },
   { key: "dstvDecoderSerial", label: "DSTV IUC/Serial" },
   { key: "buildingName", label: "Building" },

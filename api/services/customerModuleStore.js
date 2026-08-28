@@ -16,6 +16,8 @@ const {
   pickUniquePaybillCustomer,
   normalizePremiseType,
   shopLocationCode,
+  normalizeApartmentUnit,
+  normalizeBlock,
 } = require("../utils/customerNumber");
 
 /** Keep sync error columns short — TISP often returns full HTML error pages. */
@@ -57,6 +59,7 @@ function buildCustomerSearchFilter(term, options = {}) {
         OR UPPER(TRIM(c.apartment_number)) = ?
         OR UPPER(TRIM(c.business_name)) = ?
         OR UPPER(TRIM(c.shop_location)) = ?
+        OR UPPER(TRIM(c.block)) = ?
         OR UPPER(TRIM(CONCAT_WS(' ', c.first_name, c.middle_name, c.last_name))) = ?
         OR UPPER(TRIM(CONCAT_WS(' ', c.first_name, c.last_name))) = ?
         OR UPPER(TRIM(c.customer_number)) LIKE ?
@@ -67,6 +70,7 @@ function buildCustomerSearchFilter(term, options = {}) {
       )`,
       params: [
         compact,
+        upper,
         upper,
         upper,
         upper,
@@ -96,6 +100,7 @@ function buildCustomerSearchFilter(term, options = {}) {
       OR UPPER(c.apartment_number) LIKE ?
       OR UPPER(c.business_name) LIKE ?
       OR UPPER(c.shop_location) LIKE ?
+      OR UPPER(c.block) LIKE ?
       OR UPPER(REPLACE(c.customer_number, '-', '')) LIKE ?
       OR RIGHT(
         UPPER(REPLACE(REPLACE(REPLACE(c.customer_number, '-', ''), ' ', ''), '_', '')),
@@ -110,6 +115,7 @@ function buildCustomerSearchFilter(term, options = {}) {
       upper,
       upper,
       compact,
+      prefix,
       prefix,
       prefix,
       prefix,
@@ -440,6 +446,7 @@ function mapCustomerRow(row) {
     customerType: row.customer_type,
     premiseType: normalizePremiseType(row.premise_type),
     apartmentNumber: row.apartment_number,
+    block: row.block || null,
     businessName: row.business_name || null,
     shopLocation: row.shop_location || null,
     paymentFrequency: row.payment_frequency,
@@ -2479,6 +2486,8 @@ async function createCustomer(data) {
     if (!apartmentNumber) {
       throw new Error("Shop location must include letters or numbers");
     }
+  } else {
+    apartmentNumber = normalizeApartmentUnit(apartmentNumber, building);
   }
   if (!apartmentNumber) {
     throw new Error(
@@ -2487,6 +2496,7 @@ async function createCustomer(data) {
         : "Apartment number is required"
     );
   }
+  const block = normalizeBlock(data.block);
   await assertApartmentAvailable(building.id, apartmentNumber);
 
   const customerNumber = buildCustomerNumber(
@@ -2588,13 +2598,13 @@ async function createCustomer(data) {
        billing_attention, billing_address, billing_street2, billing_city,
        billing_state, billing_zip, billing_country,
        ip_address,
-       is_vat_exempt, customer_type, premise_type, apartment_number,
+       is_vat_exempt, customer_type, premise_type, apartment_number, block,
        business_name, shop_location, payment_frequency,
        custom_period_days, building_id, product_id, agency_id,
        customer_number, tisp_password, ppoe_username, package_price,
        decoder_fee_amount, decoder_fee_required, dstv_decoder_serial,
        trial_period_enabled, trial_ends_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       names.first_name,
       names.middle_name,
@@ -2613,6 +2623,7 @@ async function createCustomer(data) {
       data.customerType,
       premiseType,
       apartmentNumber,
+      block,
       premiseType === "shop" ? businessName : null,
       premiseType === "shop" ? shopLocation : null,
       data.paymentFrequency,
@@ -2673,6 +2684,7 @@ async function createCustomer(data) {
     product,
     names,
     apartmentNumber,
+    block,
     premiseType,
     businessName: premiseType === "shop" ? businessName : null,
     shopLocation: premiseType === "shop" ? shopLocation : null,
@@ -3635,7 +3647,7 @@ async function updateCustomerDetails(id, data, options = {}) {
          is_vat_exempt = ?, customer_type = ?, agency_id = ?, ip_address = ?,
          dstv_decoder_serial = ?,
          tisp_password = ?, ppoe_username = ?,
-         business_name = ?, shop_location = ?,
+         business_name = ?, shop_location = ?, block = ?,
          product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?,
          decoder_fee_required = ?, decoder_fee_amount = ?
      WHERE id = ?`,
@@ -3661,6 +3673,9 @@ async function updateCustomerDetails(id, data, options = {}) {
       isPpoe ? ppoeUsername : null,
       existingPremise === "shop" ? businessName : null,
       existingPremise === "shop" ? shopLocation : null,
+      data.block !== undefined
+        ? normalizeBlock(data.block)
+        : existing.block || null,
       productId,
       paymentFrequency,
       customPeriodDays,
@@ -4462,6 +4477,7 @@ async function importCustomerFromRow(row, batchSeen) {
     businessName: isShop ? String(row.business_name).trim() : undefined,
     shopLocation: isShop ? String(row.shop_location).trim() : undefined,
     apartmentNumber,
+    block: row.block,
     paymentFrequency,
     customPeriodDays: row.custom_period_days
       ? Number(row.custom_period_days)

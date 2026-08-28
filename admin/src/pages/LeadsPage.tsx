@@ -354,6 +354,7 @@ export function LeadsPage() {
                 {lead.interest || "No interest set"}
                 {lead.buildingInterest ? ` · ${lead.buildingInterest}` : ""}
                 {lead.apartmentNumber ? ` · apt ${lead.apartmentNumber}` : ""}
+                {lead.block ? ` · ${lead.block}` : ""}
               </Text>
               {lead.message ? (
                 <Text fontSize="sm" mt={1}>
@@ -395,6 +396,7 @@ export function LeadsPage() {
                 <Text>
                   {signup.buildingName || "Building not set"}
                   {signup.apartmentNumber ? ` · apt ${signup.apartmentNumber}` : ""}
+                  {lead.block ? ` · ${lead.block}` : ""}
                 </Text>
                 <Text>
                   {signup.productName || "Package not set"}

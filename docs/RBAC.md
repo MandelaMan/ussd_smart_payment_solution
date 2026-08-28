@@ -40,19 +40,34 @@ Preset groups ship with recommended permission sets:
 
 | Group | Typical job | Notes |
 |-------|-------------|--------|
-| Sales | Acquisition | Customers + leads; no financials |
+| Sales | Acquisition | Create/view customers + leads; **view buildings, apartments, packages**; no financials, no building create |
 | Finance | CFO / accounts | Billing ops; **no refund**, no Settings |
 | Billing | Collections | Allocate / communicate; no refund, no sync |
-| Support | Help desk | Pause and OLT; **no cancel, disconnect, or agencies** |
-| Technician | Field tech | View customers; update installation jobs |
-| Installations | Onboarding coordinators | Jobs + occupancy; **no building/POP create** |
-| Network Operations | NOC | Disconnect, pause, equipment edit |
+| Support | Help desk | Create/view customers; **view buildings and apartments**; pause and OLT; **no cancel, disconnect, or agencies** |
+| Technician | Field tech | View customers, buildings, apartments; update installation jobs |
+| Installations | Onboarding coordinators | Create customers; jobs + occupancy; **view buildings**; **no building/POP create** |
+| Network Operations | NOC | Disconnect, pause, equipment edit (including buildings) |
 | Management | PM / exec | Read-heavy finance and reports |
-| Customer Relations | Partner | Customer list + reports; **no financials** |
+| Customer Relations | Partner | Customer list + reports; **no financials**, no buildings |
 
 Dangerous actions (`customers.cancel`, `billing.refund`, `customers.delete`) are not in any preset. Grant them individually or use the Administrator role.
 
 Assign one or more groups when creating or editing a user. Group permissions merge (union).
+
+### Who to assign
+
+Match the job, not the job title. Prefer **one primary group**. Stack a second group only when the person truly does two jobs (that always expands access).
+
+| They need to… | Assign | Do not assign |
+|---------------|--------|----------------|
+| Create a customer (pick building, unit, package) | **Sales**, **Support**, or **Installations** | Finance, Billing, Technician, Management, Customer Relations |
+| See customers and buildings (no create) | **Technician** (field) or **Network Operations** (NOC) | Customer Relations (customers only; no buildings) |
+| Collect / allocate payments | **Billing** | Sales, Support |
+| Run finance, invoices, reconciliation | **Finance** | Sales (no financials) |
+| Edit building / OLT records | **Network Operations** (or Administrator) | Sales, Support, Installations |
+| Cancel, disconnect, refund, wipe records | Individual permission or **Administrator** | Any preset group |
+
+**Companion rule:** `customers.create` is not enough. The new-customer form loads buildings, apartments, and packages. Those three groups therefore also get `buildings.view`, `apartments.view`, and `packages.view`. They do **not** get `buildings.create` / `buildings.edit`.
 
 When `GROUP_PRESETS` in the catalog are intentionally narrowed, bump `SYSTEM_GROUP_PRESET_REVISION` so existing databases replace system-group grants on next boot. Custom (non-system) groups are not overwritten.
 
@@ -67,6 +82,8 @@ When `GROUP_PRESETS` in the catalog are intentionally narrowed, bump `SYSTEM_GRO
 7. Use the **Groups** tab to edit preset group permission bundles — saves persist across restarts
 
 After changing a group's permissions, affected users should refresh the admin app (or re-login) so their session picks up the new `/auth/me` permission list. API checks update immediately after save.
+
+When a user **gains** access (new group, extra grants, expanded group permissions, or promotion to Administrator), they are emailed a list of what they can now do. **Revoking** rights does not send an email.
 
 ## Performance (permission checks on list APIs)
 

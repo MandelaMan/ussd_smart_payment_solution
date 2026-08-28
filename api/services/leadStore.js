@@ -42,9 +42,9 @@ async function listLeads(filters = {}) {
   if (filters.search) {
     const q = `%${String(filters.search).trim()}%`;
     clauses.push(
-      "(l.name LIKE ? OR l.phone LIKE ? OR l.email LIKE ? OR l.interest LIKE ? OR l.message LIKE ? OR l.apartment_number LIKE ? OR l.building_interest LIKE ?)"
+      "(l.name LIKE ? OR l.phone LIKE ? OR l.email LIKE ? OR l.interest LIKE ? OR l.message LIKE ? OR l.apartment_number LIKE ? OR l.block LIKE ? OR l.building_interest LIKE ?)"
     );
-    params.push(q, q, q, q, q, q, q);
+    params.push(q, q, q, q, q, q, q, q);
   }
 
   const page = Math.max(1, Number(filters.page) || 1);
@@ -71,6 +71,7 @@ async function listLeads(filters = {}) {
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
             l.building_interest AS buildingInterest,
             l.apartment_number AS apartmentNumber,
+            l.block AS block,
             l.building_id AS buildingId,
             b.name AS buildingName,
             l.message, l.notes,
@@ -113,6 +114,7 @@ async function getLeadById(id) {
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
             l.building_interest AS buildingInterest,
             l.apartment_number AS apartmentNumber,
+            l.block AS block,
             l.building_id AS buildingId,
             b.name AS buildingName,
             l.message, l.notes,
@@ -136,6 +138,7 @@ async function getLeadByWhatsAppWaId(waId) {
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
             l.building_interest AS buildingInterest,
             l.apartment_number AS apartmentNumber,
+            l.block AS block,
             l.building_id AS buildingId,
             b.name AS buildingName,
             l.message, l.notes,
@@ -163,6 +166,7 @@ async function getLeadByEmail(email) {
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
             l.building_interest AS buildingInterest,
             l.apartment_number AS apartmentNumber,
+            l.block AS block,
             l.building_id AS buildingId,
             b.name AS buildingName,
             l.message, l.notes,
@@ -269,6 +273,7 @@ async function getOpenLeadByPhone(phone) {
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
             l.building_interest AS buildingInterest,
             l.apartment_number AS apartmentNumber,
+            l.block AS block,
             l.building_id AS buildingId,
             b.name AS buildingName,
             l.message, l.notes,
@@ -294,6 +299,7 @@ async function getOpenLeadByPhone(phone) {
     `SELECT l.id, l.source, l.status, l.name, l.phone, l.email, l.interest,
             l.building_interest AS buildingInterest,
             l.apartment_number AS apartmentNumber,
+            l.block AS block,
             l.building_id AS buildingId,
             b.name AS buildingName,
             l.message, l.notes,
@@ -334,9 +340,9 @@ async function createLead(data) {
   const result = await query(
     `INSERT INTO leads
       (source, status, name, phone, email, interest, building_interest,
-       apartment_number, building_id, message,
+       apartment_number, block, building_id, message,
        notes, whatsapp_wa_id, conversation_state, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       source,
       data.status && LEAD_STATUSES.includes(data.status) ? data.status : "new",
@@ -346,6 +352,7 @@ async function createLead(data) {
       data.interest ? String(data.interest).trim() : null,
       data.buildingInterest ? String(data.buildingInterest).trim() : null,
       data.apartmentNumber ? String(data.apartmentNumber).trim() : null,
+      data.block ? String(data.block).trim().slice(0, 50) : null,
       data.buildingId != null && data.buildingId !== ""
         ? Number(data.buildingId)
         : null,
@@ -372,6 +379,7 @@ async function updateLead(id, patch = {}) {
     interest: "interest",
     buildingInterest: "building_interest",
     apartmentNumber: "apartment_number",
+    block: "block",
     buildingId: "building_id",
     message: "message",
     notes: "notes",

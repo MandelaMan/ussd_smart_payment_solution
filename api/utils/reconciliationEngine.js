@@ -1030,6 +1030,24 @@ function buildIssueTiles(records = [], unmatchedMpesa = []) {
   return tiles;
 }
 
+function parseStatusFilter(status) {
+  if (status == null || status === "") return [];
+  return String(status)
+    .toLowerCase()
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function recordMatchesStatusFilter(record, statusFilter) {
+  const wanted = parseStatusFilter(statusFilter);
+  if (!wanted.length) return true;
+  const statuses = record?.statuses || [];
+  return wanted.some(
+    (status) => record?.primaryStatus === status || statuses.includes(status)
+  );
+}
+
 module.exports = {
   BILLING_STATUSES,
   RECOMMENDATION_ACTIONS,
@@ -1049,4 +1067,6 @@ module.exports = {
   isActiveService,
   isDisconnectedService,
   isUnknownService,
+  parseStatusFilter,
+  recordMatchesStatusFilter,
 };

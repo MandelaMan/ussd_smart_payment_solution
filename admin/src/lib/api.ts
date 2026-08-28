@@ -286,6 +286,7 @@ export type Lead = {
   interest: string | null;
   buildingInterest: string | null;
   apartmentNumber?: string | null;
+  block?: string | null;
   buildingId?: number | null;
   buildingName?: string | null;
   message: string | null;
@@ -519,6 +520,7 @@ export type Customer = {
   customerType: "C2B" | "B2B";
   premiseType?: "apartment" | "shop";
   apartmentNumber: string;
+  block?: string | null;
   businessName?: string | null;
   shopLocation?: string | null;
   paymentFrequency: "monthly" | "quarterly" | "yearly" | "custom";
@@ -3273,6 +3275,7 @@ export const api = {
       apartmentNumber?: string;
       businessName?: string;
       shopLocation?: string;
+      block?: string;
       paymentFrequency?: Customer["paymentFrequency"];
       customPeriodDays?: number;
       productId?: number;

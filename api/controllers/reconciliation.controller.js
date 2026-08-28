@@ -3,6 +3,67 @@ const { sendTableExport } = require("../utils/tableExportResponse");
 const billingCommunicationStore = require("../services/billingCommunicationStore");
 const { BILLING_STATUSES } = require("../utils/reconciliationEngine");
 
+function emptyUpcomingInvoices() {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    windowDays: 7,
+    windowStart: today,
+    windowEnd: today,
+    invoiceCount: 0,
+    anticipatedAmount: 0,
+    items: [],
+  };
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(resolve, ms)),
+  ]);
+}
+
+async function attachSummaryExtras(summary) {
+  await withTimeout(
+    Promise.all([
+      billingCommunicationStore
+        .countEligible()
+        .then((counts) => {
+          summary.communicationsEligible = counts.eligible;
+          summary.communicationsTotal = counts.total;
+        })
+        .catch(() => {
+          summary.communicationsEligible = 0;
+          summary.communicationsTotal = 0;
+        }),
+      (async () => {
+        try {
+          const { getUpcomingInvoiceForecast } = require("../services/billingForecastStore");
+          summary.upcomingInvoices = await getUpcomingInvoiceForecast({ days: 7 });
+        } catch {
+          summary.upcomingInvoices = emptyUpcomingInvoices();
+        }
+      })(),
+      billingCommunicationStore
+        .getZohoMailConfig()
+        .then((cfg) => {
+          summary.mailConfig = cfg;
+        })
+        .catch(() => {
+          summary.mailConfig = { configured: false };
+        }),
+    ]),
+    8000
+  );
+
+  if (summary.communicationsEligible == null) {
+    summary.communicationsEligible = 0;
+    summary.communicationsTotal = 0;
+  }
+  if (!summary.upcomingInvoices) {
+    summary.upcomingInvoices = emptyUpcomingInvoices();
+  }
+}
+
 async function getSummary(req, res, next) {
   try {
     const cached = req.query.cached === "true" || req.query.cached === "1";
@@ -14,30 +75,7 @@ async function getSummary(req, res, next) {
       reconciliationStore.scheduleBackgroundSyncIfNeeded();
     }
 
-    try {
-      const counts = await billingCommunicationStore.countEligible();
-      summary.communicationsEligible = counts.eligible;
-      summary.communicationsTotal = counts.total;
-    } catch {
-      summary.communicationsEligible = 0;
-      summary.communicationsTotal = 0;
-    }
-
-    try {
-      const { getUpcomingInvoiceForecast } = require("../services/billingForecastStore");
-      summary.upcomingInvoices = await getUpcomingInvoiceForecast({ days: 7 });
-    } catch {
-      summary.upcomingInvoices = {
-        windowDays: 7,
-        windowStart: new Date().toISOString().slice(0, 10),
-        windowEnd: new Date().toISOString().slice(0, 10),
-        invoiceCount: 0,
-        anticipatedAmount: 0,
-        items: [],
-      };
-    }
-
-    summary.mailConfig = await billingCommunicationStore.getZohoMailConfig();
+    await attachSummaryExtras(summary);
     res.json(summary);
   } catch (e) {
     next(e);

@@ -672,7 +672,13 @@
               </label>
               <label>
                 <span>Apartment / unit</span>
-                <input id="apartmentNumber" name="apartmentNumber" required autocomplete="off" placeholder="e.g. B12" />
+                <input id="apartmentNumber" name="apartmentNumber" required autocomplete="off" placeholder="e.g. 4G" maxlength="16" />
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                <span>Block <small>(optional)</small></span>
+                <input id="block" name="block" autocomplete="off" placeholder="e.g. A" maxlength="50" />
               </label>
             </div>
 
@@ -1051,6 +1057,7 @@
             email: form.email.value,
             buildingId: form.buildingId.value,
             apartmentNumber: form.apartmentNumber.value,
+            block: form.block.value,
             productId: form.productId.value,
             message: form.message.value,
             companyWebsite: form.companyWebsite.value,

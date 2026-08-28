@@ -5,6 +5,10 @@
 
 const SHOP_NUMBER_SEGMENT = "SHP";
 const SHOP_LOCATION_CODE_MAX = 20;
+const APARTMENT_UNIT_MAX = 16;
+const BLOCK_MAX = 50;
+const APARTMENT_UNIT_ERROR =
+  "Apartment is the unit only (e.g. 4G or 401A). Do not include POP, building code, or block. Use the Block field for the block.";
 
 function normalizePremiseType(value) {
   return String(value || "")
@@ -23,6 +27,61 @@ function shopLocationCode(value) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, SHOP_LOCATION_CODE_MAX);
+}
+
+function normalizeBlock(value) {
+  const s = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!s) return null;
+  return s.slice(0, BLOCK_MAX);
+}
+
+function popCodesOf(building) {
+  return [
+    building?.c2b_code || building?.c2bCode,
+    building?.b2b_code || building?.b2bCode,
+    building?.building_code || building?.buildingCode,
+  ]
+    .map((code) => String(code || "").trim().toUpperCase())
+    .filter(Boolean);
+}
+
+/**
+ * Unit segment for apartments: 4G, 401A, APT-101.
+ * Rejects stuffed account numbers like AZE-4G-BLOCK-A.
+ */
+function normalizeApartmentUnit(value, building) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "";
+  if (/BLOCK/.test(raw) || (raw.match(/-/g) || []).length > 1) {
+    throw new Error(APARTMENT_UNIT_ERROR);
+  }
+  const unit = raw
+    .replace(/[^A-Z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, APARTMENT_UNIT_MAX);
+  if (!/^[A-Z0-9]+(-[A-Z0-9]+)?$/.test(unit)) {
+    throw new Error(
+      "Apartment number must be letters and numbers only (e.g. 4G, 401A)"
+    );
+  }
+  const compact = unit.replace(/-/g, "");
+  const segments = unit.split("-").filter(Boolean);
+  for (const code of popCodesOf(building)) {
+    if (segments.includes(code)) {
+      throw new Error(APARTMENT_UNIT_ERROR);
+    }
+    if (
+      compact.startsWith(code) &&
+      compact.length > code.length &&
+      /[0-9]/.test(compact.slice(code.length))
+    ) {
+      throw new Error(APARTMENT_UNIT_ERROR);
+    }
+  }
+  return unit;
 }
 
 /**
@@ -250,6 +309,11 @@ function isValidPaybillAccountRef(ref) {
 module.exports = {
   normalizePremiseType,
   shopLocationCode,
+  normalizeBlock,
+  normalizeApartmentUnit,
+  APARTMENT_UNIT_MAX,
+  BLOCK_MAX,
+  APARTMENT_UNIT_ERROR,
   SHOP_NUMBER_SEGMENT,
   buildCustomerNumber,
   alternateTypeCustomerNumber,

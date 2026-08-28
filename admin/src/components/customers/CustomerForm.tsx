@@ -41,6 +41,12 @@ import {
 import {
   buildCustomerNumberPreview,
   shopLocationCode,
+  apartmentUnitInput,
+  apartmentUnitLooksCompound,
+  normalizeBlockInput,
+  formatCustomerBlock,
+  APARTMENT_UNIT_MAX,
+  BLOCK_MAX,
 } from "../../lib/customerNumber";
 import { isShopPremise, type PremiseType } from "../../lib/premise";
 import { shouldUseAgencyContactForSkynestPlaceholder } from "../../lib/b2bAgencyContact";
@@ -234,6 +240,7 @@ export function CustomerForm({
   const [customerType, setCustomerType] = useState<"C2B" | "B2B">("C2B");
   const [premiseType, setPremiseType] = useState<PremiseType>("apartment");
   const [apartmentNumber, setApartmentNumber] = useState("");
+  const [block, setBlock] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [shopLocation, setShopLocation] = useState("");
   const [paymentFrequency, setPaymentFrequency] = useState("monthly");
@@ -315,9 +322,9 @@ export function CustomerForm({
   useEffect(() => {
     setLookupsLoading(true);
     Promise.all([
-      api.listBuildings({ limit: "100" }),
-      api.listAgencies({ limit: "100" }),
-      api.getPackageCatalog(),
+      api.listBuildings({ limit: "100" }).catch(() => ({ buildings: [] as Building[] })),
+      api.listAgencies({ limit: "100" }).catch(() => ({ agencies: [] })),
+      api.getPackageCatalog().catch(() => ({ categories: [] })),
       api.getActiveCampaign().catch(() => ({
         ok: false,
         campaign: null,
@@ -533,6 +540,7 @@ export function CustomerForm({
     setCustomerType(customer.customerType);
     setPremiseType(isShopPremise(customer) ? "shop" : "apartment");
     setApartmentNumber(customer.apartmentNumber);
+    setBlock(customer.block || "");
     setBusinessName(customer.businessName || "");
     setShopLocation(customer.shopLocation || "");
     setPaymentFrequency(customer.paymentFrequency);
@@ -567,6 +575,7 @@ export function CustomerForm({
     setPhone(leadPrefill.phone);
     setEmail(leadPrefill.email);
     setApartmentNumber(leadPrefill.apartmentNumber);
+    setBlock(leadPrefill.block || "");
     if (leadPrefill.buildingId) {
       const nextBuildingId = String(leadPrefill.buildingId);
       setBuildingId(nextBuildingId);
@@ -1053,10 +1062,20 @@ export function CustomerForm({
     if (premiseType === "shop") {
       items.push(
         { label: "Business name", value: businessName.trim() || "—" },
-        { label: "Shop location", value: shopLocation.trim() || "—" }
+        { label: "Shop location", value: shopLocation.trim() || "—" },
+        {
+          label: "Block",
+          value: formatCustomerBlock(block) || block.trim() || "—",
+        }
       );
     } else {
-      items.push({ label: "Apartment", value: apartmentNumber.trim() || "—" });
+      items.push(
+        { label: "Apartment", value: apartmentNumber.trim() || "—" },
+        {
+          label: "Block",
+          value: formatCustomerBlock(block) || block.trim() || "—",
+        }
+      );
     }
 
     if (!isEdit) {
@@ -1223,6 +1242,7 @@ export function CustomerForm({
     agencies,
     agencyId,
     apartmentNumber,
+    block,
     b2bAgencyEmail,
     b2bAgencyPhone,
     billingAddress,
@@ -1346,6 +1366,19 @@ export function CustomerForm({
     }
     if (!isEdit && premiseType === "apartment" && !apartmentNumber.trim()) {
       toaster.create({ title: "Enter the apartment number", type: "error" });
+      return false;
+    }
+    if (
+      !isEdit &&
+      premiseType === "apartment" &&
+      apartmentUnitLooksCompound(apartmentNumber, selectedBuilding)
+    ) {
+      toaster.create({
+        title: "Apartment is the unit only",
+        description:
+          "Enter 4G, not AZE-4G-BLOCK-A. Use the Block field for the block.",
+        type: "error",
+      });
       return false;
     }
     if (isActive && (!isEdit || canEditPackage) && !productId) {
@@ -1541,6 +1574,7 @@ export function CustomerForm({
           customerType,
           agencyId: customerType === "B2B" ? Number(agencyId) : undefined,
           apartmentNumber: isActive ? apartmentNumber : undefined,
+          block: block.trim() || undefined,
           businessName:
             premiseType === "shop" ? businessName.trim() : undefined,
           shopLocation:
@@ -1673,6 +1707,7 @@ export function CustomerForm({
         customerType,
         premiseType,
         apartmentNumber: premiseType === "apartment" ? apartmentNumber : undefined,
+        block: block.trim() || undefined,
         businessName:
           premiseType === "shop" ? businessName.trim() : undefined,
         shopLocation:
@@ -2014,8 +2049,9 @@ export function CustomerForm({
             <Input
               w="full"
               value={apartmentNumber}
-              onChange={(e) => setApartmentNumber(e.target.value.toUpperCase())}
-              placeholder="e.g. S444"
+              onChange={(e) => setApartmentNumber(apartmentUnitInput(e.target.value))}
+              placeholder="e.g. 4G"
+              maxLength={APARTMENT_UNIT_MAX}
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}
@@ -2023,6 +2059,12 @@ export function CustomerForm({
               disabled={fieldsDisabled}
               bg={isEdit || !isActive ? "gray.50" : undefined}
             />
+            {!isEdit &&
+            apartmentUnitLooksCompound(apartmentNumber, selectedBuilding) ? (
+              <Text fontSize="xs" color="red.600" mt={1}>
+                Enter the unit only (e.g. 4G) and put the block in Block.
+              </Text>
+            ) : null}
             {!isEdit && isActive && occupancyChecking && apartmentNumber.trim() && buildingId ? (
               <Text fontSize="xs" color="fg.muted" mt={1}>
                 Checking apartment availability…
@@ -2039,6 +2081,17 @@ export function CustomerForm({
             ) : null}
           </Field.Root>
           )}
+          <Field.Root w="full">
+            <Field.Label>Block</Field.Label>
+            <Input
+              w="full"
+              value={block}
+              onChange={(e) => setBlock(normalizeBlockInput(e.target.value))}
+              placeholder="e.g. A"
+              maxLength={BLOCK_MAX}
+              disabled={fieldsDisabled}
+            />
+          </Field.Root>
         </FormSection>
 
         {!isEdit ? (

@@ -15,6 +15,8 @@ import {
 import {
   moduleStatusParam,
   rowBillingGapIssue,
+  rowHasBillingGap,
+  isBillingGapStatus,
   BILLING_GAP_ISSUE_LABELS,
   BILLING_GAP_STATUSES,
   type BillingModuleDef,
@@ -80,15 +82,13 @@ export function BillingCustomerTable({
   const { user } = useAuth();
   const allowSync = canOperateFinance(user);
   const { syncing, runSync } = useBillingReconciliation();
-  const [searchParams] = useSearchParams();
-  const initialIssue = searchParams.get("issue") || "";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const issueFromUrl = searchParams.get("issue") || "";
   const [searchInput, setSearchInput] = useState("");
   const { query: debouncedQuery, pending: searchPending } = useDebouncedSearch(searchInput);
   const [search, setSearch] = useState("");
   const [issueTypeFilter, setIssueTypeFilter] = useState(() =>
-    BILLING_GAP_STATUSES.includes(initialIssue as (typeof BILLING_GAP_STATUSES)[number])
-      ? initialIssue
-      : ""
+    isBillingGapStatus(issueFromUrl) ? issueFromUrl : ""
   );
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<ReconciliationCustomerRow[]>([]);
@@ -111,6 +111,7 @@ export function BillingCustomerTable({
   const baseStatus = moduleStatusParam(module);
   const activeStatus = issueTypeFilter || baseStatus;
   const searchActive = search.length > 0;
+  const gapFilterActive = Boolean(issueTypeFilter);
   // Billing Gaps search: live-check the customer and show them even when clean,
   // so staff can confirm "no billing gaps". Optional gap-type filter still applies.
   const statusForQuery =
@@ -120,6 +121,27 @@ export function BillingCustomerTable({
   const pageSize = searchActive ? SEARCH_PAGE_SIZE : BROWSE_PAGE_SIZE;
   const syncRunning = syncStatus === "running";
   const tableBusy = loading || searchPending;
+
+  function applyIssueTypeFilter(value: string) {
+    const next = isBillingGapStatus(value) ? value : "";
+    setIssueTypeFilter(next);
+    setPage(1);
+    setExpanded(null);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next) params.set("issue", next);
+        else params.delete("issue");
+        return params;
+      },
+      { replace: true }
+    );
+  }
+
+  useEffect(() => {
+    const next = isBillingGapStatus(issueFromUrl) ? issueFromUrl : "";
+    setIssueTypeFilter((prev) => (prev === next ? prev : next));
+  }, [issueFromUrl]);
 
   useEffect(() => {
     if (debouncedQuery === search) return;
@@ -137,7 +159,8 @@ export function BillingCustomerTable({
     async (opts?: { silent?: boolean }) => {
       if (!baseStatus) return;
       const gen = ++loadGenRef.current;
-      const pageForQuery = searchActive ? page : 1;
+      const paginated = searchActive || gapFilterActive;
+      const pageForQuery = paginated ? page : 1;
       const append = Boolean(isMobile && searchActive && pageForQuery > 1 && !opts?.silent);
       if (!opts?.silent) {
         if (append) setLoadingMore(true);
@@ -156,7 +179,7 @@ export function BillingCustomerTable({
         // Live Zoho search is slow — ignore stale responses from earlier keystrokes
         // (e.g. intermediate "t50" finishing after "t506").
         if (gen !== loadGenRef.current) return;
-        setBrowseMode(Boolean(res.browseMode) && !searchActive);
+        setBrowseMode(Boolean(res.browseMode) && !searchActive && !gapFilterActive);
         setSyncStatus(res.sync?.status ?? "idle");
         setSyncProgress(res.sync?.progress ?? null);
         if (opts?.silent && isMobile && searchActive && pageForQuery > 1) {
@@ -184,7 +207,7 @@ export function BillingCustomerTable({
         }
       }
     },
-    [page, pageSize, search, searchActive, baseStatus, statusForQuery, reloadKey, isMobile],
+    [page, pageSize, search, searchActive, gapFilterActive, baseStatus, statusForQuery, reloadKey, isMobile],
   );
 
   useEffect(() => {
@@ -206,13 +229,18 @@ export function BillingCustomerTable({
     !searchActive &&
     !searchPending &&
     (syncRunning || Boolean(syncProgress?.partialReady));
-  const showTable = !tableBusy && rows.length > 0;
+  const visibleRows = gapFilterActive
+    ? rows.filter((row) => rowHasBillingGap(row, issueTypeFilter))
+    : rows;
+  const showTable = !tableBusy && visibleRows.length > 0;
   const emptyMessage =
     tableBusy || syncRunning ? null : (
       <Text fontSize="sm" color="fg.muted" py={8} textAlign="center">
         {searchActive
           ? "No active customers match your search"
-          : "No billing gaps in the preview batch"}
+          : gapFilterActive
+            ? `No “${BILLING_GAP_ISSUE_LABELS[issueTypeFilter]}” records in the current scan. Search a customer or run Sync to check more.`
+            : "No billing gaps in the preview batch"}
       </Text>
     );
 
@@ -226,7 +254,7 @@ export function BillingCustomerTable({
       };
       if (searchActive && search.trim()) params.search = search.trim();
       if (scope === "view") {
-        params.page = String(searchActive ? page : 1);
+        params.page = String(searchActive || gapFilterActive ? page : 1);
         params.limit = String(pageSize);
       }
       await api.exportReconciliation(params, format);
@@ -257,8 +285,8 @@ export function BillingCustomerTable({
         </Table.Row>
       </Table.Header>
       <Table.Body>
-        {rows.map((row) => {
-          const gapStatus = rowBillingGapIssue(row);
+        {visibleRows.map((row) => {
+          const gapStatus = rowBillingGapIssue(row, issueTypeFilter || undefined);
           return (
             <Fragment key={row.customerId}>
               <Table.Row
@@ -390,13 +418,13 @@ export function BillingCustomerTable({
                         key: "all",
                         label: "All",
                         active: !issueTypeFilter,
-                        onClick: () => setIssueTypeFilter(""),
+                        onClick: () => applyIssueTypeFilter(""),
                       },
                       ...BILLING_GAP_STATUSES.map((status) => ({
                         key: status,
                         label: BILLING_GAP_ISSUE_LABELS[status],
                         active: issueTypeFilter === status,
-                        onClick: () => setIssueTypeFilter(status),
+                        onClick: () => applyIssueTypeFilter(status),
                       })),
                     ]
                   : undefined
@@ -416,7 +444,7 @@ export function BillingCustomerTable({
             actions={
               <DataTableExportButton
                 entityLabel="billing customers"
-                viewCount={rows.length}
+                viewCount={visibleRows.length}
                 totalCount={pagination.total}
                 loading={exporting}
                 onExport={handleExport}
@@ -437,7 +465,7 @@ export function BillingCustomerTable({
                   size="sm"
                   fieldProps={{
                     value: issueTypeFilter,
-                    onChange: (e) => setIssueTypeFilter(e.target.value),
+                    onChange: (e) => applyIssueTypeFilter(e.target.value),
                   }}
                 >
                   <option value="">All gap types</option>
@@ -463,7 +491,7 @@ export function BillingCustomerTable({
         <BillingSyncProgressBanner
           status={syncStatus}
           progress={syncProgress}
-          rowCount={rows.length}
+          rowCount={visibleRows.length}
         />
       )}
 
@@ -477,14 +505,14 @@ export function BillingCustomerTable({
                 pagination={browseMode ? undefined : pagination}
                 onPageChange={setPage}
                 loadingMore={loadingMore}
-                loadedCount={rows.length}
+                loadedCount={visibleRows.length}
               >
                 <MobileDataList
-                  items={rows}
+                  items={visibleRows}
                   getKey={(row) => String(row.customerId)}
                   expandedId={expanded != null ? String(expanded) : null}
                   renderCard={(row, isOpen) => {
-                    const gapStatus = rowBillingGapIssue(row);
+                    const gapStatus = rowBillingGapIssue(row, issueTypeFilter || undefined);
                     const statusForBadge =
                       gapStatus ||
                       (row.primaryStatus === "current" || row.primaryStatus === "paid"
@@ -555,7 +583,7 @@ export function BillingCustomerTable({
                 pagination={browseMode ? undefined : pagination}
                 onPageChange={setPage}
                 loadingMore={loadingMore}
-                loadedCount={rows.length}
+                loadedCount={visibleRows.length}
               >
                 {tableBody}
               </DataTableCard>

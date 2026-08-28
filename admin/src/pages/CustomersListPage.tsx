@@ -2263,9 +2263,7 @@ export function CustomersListPage() {
                           whiteSpace="normal"
                           wordBreak="break-word"
                         >
-                          {isShopPremise(c)
-                            ? `${formatDisplayText(c.buildingName)} · ${customerUnitLine(c)}`
-                            : `${formatDisplayText(c.buildingName)} · ${c.apartmentNumber}`}
+                            {`${formatDisplayText(c.buildingName)} · ${customerUnitLine(c)}`}
                         </Text>
                         {isShopPremise(c) && c.fullName ? (
                           <Text

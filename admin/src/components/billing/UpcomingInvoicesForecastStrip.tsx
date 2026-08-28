@@ -75,11 +75,6 @@ export function UpcomingInvoicesForecastStrip({ forecast, compact = false }: Pro
         <Text fontSize="sm" fontWeight="bold" color="green.800" truncate>
           {formatCurrency(forecast.anticipatedAmount)}
         </Text>
-        {!compact && (
-          <Text fontSize="2xs" color="fg.muted" mt={0.5}>
-            From package prices &amp; Zoho recurring
-          </Text>
-        )}
       </Box>
     </Flex>
   );

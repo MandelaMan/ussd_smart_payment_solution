@@ -1471,6 +1471,23 @@ async function resolveTispBuildingName(ctx) {
   return name;
 }
 
+/** TISP Location/Router must be the POP name (e.g. AZALEA), not the building name. */
+async function resolveTispPopName(ctx) {
+  let name = String(ctx.pop_name || ctx.popName || "").trim();
+  if (!name && (ctx.pop_id || ctx.popId)) {
+    const pop = await store.getPopById(ctx.pop_id || ctx.popId);
+    name = String(pop?.name || "").trim();
+  }
+  if (!name && (ctx.building_id || ctx.buildingId)) {
+    const building = await store.getBuildingById(ctx.building_id || ctx.buildingId);
+    name = String(building?.pop_name || building?.popName || "").trim();
+  }
+  if (!name) {
+    throw new Error("POP name is required for TISP Location and Router");
+  }
+  return name;
+}
+
 /** Resolve STATIC/PPOE from context or building — never default PackageType silently. */
 async function resolveTispBuildingIpSetup(ctx) {
   let ipSetup = ctx.ip_setup ?? ctx.ipSetup ?? null;
@@ -1491,6 +1508,7 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
   const lastName = ctx.last_name ?? ctx.lastName;
   const customerNumber = ctx.customer_number ?? ctx.customerNumber;
   const apartmentNumber = ctx.apartment_number ?? ctx.apartmentNumber;
+  const popName = options.popName ?? ctx.pop_name ?? ctx.popName;
   const ppoeUsername =
     ctx.ppoe_username ??
     ctx.ppoeUsername ??
@@ -1510,7 +1528,8 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     buildingName,
     customerNumber,
     customer_type: ctx.customer_type ?? ctx.customerType,
-    pop_name: ctx.pop_name ?? ctx.popName,
+    pop_name: popName,
+    popName,
     c2b_code: ctx.c2b_code ?? ctx.c2bCode,
     b2b_code: ctx.b2b_code ?? ctx.b2bCode,
     agencyEmail: agencyContact.email,
@@ -1521,6 +1540,7 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     middleName,
     lastName,
     buildingName,
+    popName,
     customerNumber,
     customerType: ctx.customer_type ?? ctx.customerType,
     ipSetup,
@@ -1551,6 +1571,7 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
 
 async function createCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
+  const popName = await resolveTispPopName(ctx);
   const ipSetup = await resolveTispBuildingIpSetup(ctx);
   const isPpoe = resolveTispPackageType(ipSetup) === "PPPOE";
   // PPOE buildings have no assigned static IP — TISP still requires StaticIPAddress.
@@ -1565,7 +1586,7 @@ async function createCustomerOnTisp(ctx, meta = {}) {
   const input = tispPayloadInput(
     { ...ctx, ip_setup: ipSetup, ipSetup, ip_address: resolvedIp },
     buildingName,
-    { dueDate: meta.dueDate }
+    { dueDate: meta.dueDate, popName }
   );
   assertCatalogPackageForTisp(input);
   const payload = buildTispCreateClientPayload(input);
@@ -1652,6 +1673,7 @@ async function resolveIpForTispWrite(ctx, accountNumberHint = null) {
 
 async function updateCustomerOnTisp(ctx, meta = {}) {
   const buildingName = await resolveTispBuildingName(ctx);
+  const popName = await resolveTispPopName(ctx);
   const ipSetup = await resolveTispBuildingIpSetup(ctx);
   const accountNumber = String(
     meta.accountNumber || ctx.customer_number || ctx.customerNumber || ""
@@ -1675,7 +1697,7 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     ...tispPayloadInput(
       { ...ctx, ip_setup: ipSetup, ipSetup, ip_address: resolvedIp || ctx.ip_address },
       buildingName,
-      { dueDate: meta.dueDate }
+      { dueDate: meta.dueDate, popName }
     ),
     customerNumber: accountNumber,
     ipAddress: resolvedIp,
@@ -3196,6 +3218,7 @@ const CUSTOMER_EXPORT_COLUMNS = [
   { key: "premiseType", label: "Premise" },
   { key: "buildingName", label: "Building" },
   { key: "apartmentNumber", label: "Unit" },
+  { key: "block", label: "Block" },
   { key: "businessName", label: "Business name" },
   { key: "shopLocation", label: "Shop location" },
   { key: "productName", label: "Package" },
@@ -3239,6 +3262,7 @@ function mapCustomerExportRow(row) {
     premiseType: row.premiseType || "apartment",
     buildingName: row.buildingName,
     apartmentNumber: row.apartmentNumber,
+    block: row.block || "",
     businessName: row.businessName || "",
     shopLocation: row.shopLocation || "",
     productName: row.productName,

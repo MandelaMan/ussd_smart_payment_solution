@@ -64,6 +64,7 @@ function diffCustomerDetails(before, after, extra = {}) {
     ["isVatExempt", "VAT exempt"],
     ["ipAddress", "IP address"],
     ["apartmentNumber", "Apartment"],
+    ["block", "Block"],
     ["premiseType", "Premise"],
     ["businessName", "Business name"],
     ["shopLocation", "Shop location"],

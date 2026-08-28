@@ -268,7 +268,8 @@ const GROUP_PRESETS = [
   {
     slug: "sales",
     name: "Sales",
-    description: "Customer acquisition and lead pipeline",
+    description:
+      "Customer acquisition and lead pipeline. Can view customers, buildings, apartments, and packages to place new subscribers (no financials, no building create/edit).",
     permissions: [
       "dashboard.view",
       "dashboard.support",
@@ -282,6 +283,9 @@ const GROUP_PRESETS = [
       "leads.message",
       "communication.view",
       "communication.send",
+      "packages.view",
+      "buildings.view",
+      "apartments.view",
       "reports.view",
       "campaigns.view",
       "installations.view",
@@ -328,7 +332,7 @@ const GROUP_PRESETS = [
     slug: "support",
     name: "Support",
     description:
-      "Customer support and service management. Cancel, disconnect, and agency management are not included.",
+      "Customer support and service management. Can view and create customers, and view buildings and apartments. Cancel, disconnect, and agency management are not included.",
     permissions: [
       "dashboard.view",
       "dashboard.support",
@@ -442,6 +446,7 @@ const GROUP_PRESETS = [
       "customers.create",
       "customers.edit",
       "customers.olt",
+      "packages.view",
       "buildings.view",
       "apartments.view",
       "apartments.edit",

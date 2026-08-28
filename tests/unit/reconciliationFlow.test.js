@@ -11,6 +11,8 @@ const {
   isDisconnectedService,
   isUnknownService,
   aggregateSummary,
+  parseStatusFilter,
+  recordMatchesStatusFilter,
 } = require("../../api/utils/reconciliationEngine");
 const { detectSkippedMonthlyPayment } = require("../../api/utils/skippedPayment");
 const {
@@ -151,6 +153,78 @@ describe("reconciliation scenarios (Zoho vs TISP)", () => {
     ]);
     assert.equal(summary.connectedWithoutPayment, 1);
     assert.equal(summary.totalOutstandingBalance, 1000);
+  });
+});
+
+describe("billing gap status filters", () => {
+  const GAP_TYPES = [
+    "connected_without_payment",
+    "paid_but_disconnected",
+    "no_zoho_link",
+    "recurring_invoice_stopped",
+    "missing_invoice",
+    "disconnected_not_invoiced",
+    "skipped_payment",
+  ];
+
+  const records = GAP_TYPES.map((status, i) => ({
+    customerId: i + 1,
+    primaryStatus: status,
+    statuses: [status],
+  }));
+  records.push({
+    customerId: 99,
+    primaryStatus: "connected_without_payment",
+    statuses: ["connected_without_payment", "missing_invoice"],
+  });
+  records.push({
+    customerId: 100,
+    primaryStatus: "current",
+    statuses: ["current"],
+  });
+
+  it("parses comma-separated and single gap types", () => {
+    assert.deepEqual(parseStatusFilter(""), []);
+    assert.deepEqual(parseStatusFilter("missing_invoice"), ["missing_invoice"]);
+    assert.deepEqual(parseStatusFilter(GAP_TYPES.join(",")), GAP_TYPES);
+  });
+
+  it("matches each gap type on primary status", () => {
+    for (const status of GAP_TYPES) {
+      const matches = records.filter((r) => recordMatchesStatusFilter(r, status));
+      assert.ok(
+        matches.every((r) => r.primaryStatus === status || r.statuses.includes(status)),
+        `${status} returned a non-matching row`
+      );
+      assert.ok(
+        matches.some((r) => r.primaryStatus === status),
+        `${status} did not match its primary row`
+      );
+    }
+  });
+
+  it("matches a secondary status (missing invoice on a free-service row)", () => {
+    const matches = records.filter((r) =>
+      recordMatchesStatusFilter(r, "missing_invoice")
+    );
+    assert.ok(matches.some((r) => r.customerId === 99));
+    assert.ok(matches.every((r) => r.statuses.includes("missing_invoice")));
+  });
+
+  it("All gap types includes every gap and excludes current/paid", () => {
+    const matches = records.filter((r) =>
+      recordMatchesStatusFilter(r, GAP_TYPES.join(","))
+    );
+    assert.equal(matches.some((r) => r.customerId === 100), false);
+    assert.equal(matches.length, records.length - 1);
+  });
+
+  it("does not match unrelated types", () => {
+    const matches = records.filter((r) =>
+      recordMatchesStatusFilter(r, "paid_but_disconnected")
+    );
+    assert.ok(matches.every((r) => r.statuses.includes("paid_but_disconnected")));
+    assert.equal(matches.some((r) => r.primaryStatus === "missing_invoice"), false);
   });
 });
 

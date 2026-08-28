@@ -26,6 +26,7 @@ const baseInput = {
   tispPassword: "Ab1!xyz",
   email: "jane@example.com",
   phone: "0712345678",
+  popName: "Azalea",
 };
 
 describe("TISP PackageType from building IP setup", () => {
@@ -68,11 +69,39 @@ describe("TISP network fields: PPOE vs STATIC buildings", () => {
   });
 });
 
+describe("TISP Location and Router use POP name", () => {
+  it("sends POP name, not building name, on Location and Router", () => {
+    const payload = buildTispCreateClientPayload({
+      ...baseInput,
+      buildingName: "Azalea Heights",
+      popName: "Azalea",
+      ipSetup: "PPOE",
+      ppoeUsername: "AZE-AH-AZE-4G-BLOCK-A",
+      customerNumber: "AZE-AH-AZE-4G-BLOCK-A",
+    });
+    assert.equal(payload.Location, "AZALEA");
+    assert.equal(payload.Router, "AZALEA");
+  });
+
+  it("throws when POP name is missing", () => {
+    assert.throws(
+      () =>
+        buildTispCreateClientPayload({
+          ...baseInput,
+          popName: "",
+          buildingName: "Azalea Heights",
+          ipSetup: "PPOE",
+        }),
+      /POP name is required for TISP Router and Location/
+    );
+  });
+});
+
 describe("TISP create payload for PPOE vs STATIC buildings", () => {
   it("PPOE INSERT sets PackageType PPPOE, StaticIP 10.2.2.2, blank PppoeRemoteAddress", () => {
     const payload = buildTispCreateClientPayload({
       ...baseInput,
-      buildingName: "Azalea",
+      buildingName: "Azalea Heights",
       ipSetup: "PPOE",
       ppoeUsername: "AZE-TGA-401A",
       ipAddress: "",
@@ -82,12 +111,15 @@ describe("TISP create payload for PPOE vs STATIC buildings", () => {
     assert.equal(payload.StaticIPAddress, "10.2.2.2");
     assert.equal(payload.PppoeRemoteAddress, "");
     assert.equal(payload.PppoeUsername, "AZE-TGA-401A");
+    assert.equal(payload.Location, "AZALEA");
+    assert.equal(payload.Router, "AZALEA");
   });
 
   it("STATIC INSERT sets PackageType IP and copies the assigned IP to both fields", () => {
     const payload = buildTispCreateClientPayload({
       ...baseInput,
-      buildingName: "Enaki",
+      buildingName: "Enaki Towers",
+      popName: "Enaki",
       customerNumber: "ET-401A",
       ipSetup: "STATIC",
       ipAddress: "10.10.10.25",
@@ -128,6 +160,7 @@ describe("TISP B2B Skynest placeholder names", () => {
       middleName: "user",
       lastName: "user",
       buildingName: "Skynest",
+      popName: "Skynest",
       customerNumber: "SKYB-302",
       customerType: "B2B",
       ipSetup: "STATIC",
@@ -145,7 +178,7 @@ describe("TISP B2B Skynest placeholder names", () => {
       firstName: "Jane",
       middleName: "Q",
       lastName: "Doe",
-      buildingName: "Azalea",
+      buildingName: "Azalea Heights",
       customerNumber: "AZEB-TGA-401A",
       customerType: "B2B",
       ipSetup: "PPOE",

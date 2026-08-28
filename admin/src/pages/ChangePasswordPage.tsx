@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { meetsPasswordPolicy } from "../lib/passwordStrength";
 import { useAuth } from "../lib/authContext";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { PasswordStrengthMeter } from "../components/ui/PasswordStrengthMeter";
 import { toaster } from "../components/ui/toaster";
 import { BRAND } from "../theme";
@@ -99,8 +100,7 @@ export function ChangePasswordPage() {
 
           <Field.Root required>
             <Field.Label>New password</Field.Label>
-            <Input
-              type="password"
+            <PasswordInput
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               autoComplete="new-password"
@@ -111,8 +111,7 @@ export function ChangePasswordPage() {
 
           <Field.Root required>
             <Field.Label>Confirm new password</Field.Label>
-            <Input
-              type="password"
+            <PasswordInput
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               autoComplete="new-password"

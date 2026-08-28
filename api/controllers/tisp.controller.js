@@ -723,10 +723,11 @@ function tispBillingCycle() {
   return TISP_BILLING_CYCLE;
 }
 
-function tispRouterLocation(buildingName) {
-  const location = String(buildingName ?? "").trim();
+/** TISP Location/Router catalogs are keyed by POP name, not building name. */
+function tispRouterLocation(popName) {
+  const location = String(popName ?? "").trim();
   if (!location) {
-    throw new Error("Building name is required for TISP Router and Location");
+    throw new Error("POP name is required for TISP Router and Location");
   }
   return location.toUpperCase();
 }
@@ -842,6 +843,7 @@ function collectTispClientInput({
   middleName,
   lastName,
   buildingName,
+  popName,
   customerNumber,
   customerType,
   ipSetup,
@@ -876,6 +878,7 @@ function collectTispClientInput({
     middleName: tispNamePart(middleName),
     lastName: tispNamePart(lastName),
     buildingName,
+    popName,
     customerNumber,
     customerType,
     apartmentNumber,
@@ -897,7 +900,7 @@ function buildTispSetClientPayload(input, transactionType) {
     firstName,
     middleName,
     lastName,
-    buildingName,
+    popName,
     customerNumber,
     ipSetup,
     planName,
@@ -928,7 +931,7 @@ function buildTispSetClientPayload(input, transactionType) {
     : lastRaw
       ? lastRaw.toUpperCase()
       : "-";
-  const routerLocation = tispRouterLocation(buildingName);
+  const routerLocation = tispRouterLocation(popName ?? input.pop_name);
   const packageLabel = buildTispPackageLabel({
     planName,
     categoryName,
