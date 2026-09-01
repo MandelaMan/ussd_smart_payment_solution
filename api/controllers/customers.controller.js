@@ -107,6 +107,10 @@ const {
   filterZohoInvoicesForContact,
   filterZohoPaymentsForContact,
   zohoContactMatchesDashboardCustomer,
+  isZohoContactOlderThanCustomer,
+  invoicesPredateCustomer,
+  zohoContactLooksReusedByFormerTenant,
+  filterInvoicesForCurrentTenant,
 } = require("../utils/zohoCustomerScope");
 const {
   summarizeOverdueZohoInvoices,
@@ -400,34 +404,6 @@ async function buildZohoContactPayload(customer, existingContact = null) {
 }
 
 /**
- * True when a Zoho contact predates this dashboard customer — i.e. it belonged
- * to a former apartment tenant (or was wrongly reactivated for the new one).
- */
-function isZohoContactOlderThanCustomer(contact, customer, skewMs = 120_000) {
-  const customerCreated = customer?.createdAt || customer?.created_at;
-  const contactCreated = contact?.created_time || contact?.created_at;
-  if (!customerCreated || !contactCreated) return false;
-  const custMs = new Date(customerCreated).getTime();
-  const zohoMs = new Date(contactCreated).getTime();
-  if (Number.isNaN(custMs) || Number.isNaN(zohoMs)) return false;
-  return zohoMs < custMs - skewMs;
-}
-
-/** True when any invoice on the contact was issued before this BIX customer existed. */
-function invoicesPredateCustomer(invoices, customer, skewMs = 120_000) {
-  const customerCreated = customer?.createdAt || customer?.created_at;
-  if (!customerCreated) return false;
-  const custMs = new Date(customerCreated).getTime();
-  if (Number.isNaN(custMs)) return false;
-  return (invoices || []).some((inv) => {
-    const invMs = new Date(
-      inv?.created_time || inv?.date || inv?.createdAt || ""
-    ).getTime();
-    return !Number.isNaN(invMs) && invMs < custMs - skewMs;
-  });
-}
-
-/**
  * True apartment changeover: a cancelled local tenant was archived as
  * {number}-CXL-{id} so this live number could be reused. Imports / long Zoho
  * history alone must NOT count (no -CXL- predecessor).
@@ -447,29 +423,6 @@ async function customerHasPriorCancelledTenant(customer) {
     excludeId
   );
   return Boolean(formerId);
-}
-
-/**
- * Hide former-tenant invoices only on a real apartment changeover.
- * Otherwise show full Zoho history (e.g. customers imported into BIX later).
- */
-function filterInvoicesForCurrentTenant(
-  invoices,
-  customer,
-  { isChangeover = false, skewMs = 120_000 } = {}
-) {
-  if (!isChangeover) return invoices || [];
-  const customerCreated = customer?.createdAt || customer?.created_at;
-  if (!customerCreated) return invoices || [];
-  const custMs = new Date(customerCreated).getTime();
-  if (Number.isNaN(custMs)) return invoices || [];
-  return (invoices || []).filter((inv) => {
-    const invMs = new Date(
-      inv?.created_time || inv?.date || inv?.createdAt || ""
-    ).getTime();
-    if (Number.isNaN(invMs)) return true;
-    return invMs >= custMs - skewMs;
-  });
 }
 
 /**
@@ -762,8 +715,12 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     if (isZohoContactOlderThanCustomer(contact, customer)) {
       return true;
     }
-    // Always check invoice history when replacing tenants — Zoho created_time can be
-    // missing, wrong, or newer than reality after a contact was reused/updated.
+    // A contact created for this tenant is not a reuse. Do not retire it just
+    // because a same-day signup invoice looks older under UTC date parsing.
+    if (contact.created_time || contact.created_at) {
+      return false;
+    }
+    // created_time missing — fall back to invoice calendar dates.
     if (customer.createdAt || customer.created_at) {
       try {
         const { getInvoices_JS } = require("./zoho.controller");
@@ -1059,7 +1016,8 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
             !isB2BCustomer(customer) &&
             (await customerHasPriorCancelledTenant(customer));
           const hasFormerTenantInvoices =
-            isChangeover && invoicesPredateCustomer(mapped, customer);
+            isChangeover &&
+            zohoContactLooksReusedByFormerTenant(contactRaw, customer, mapped);
           const displayMapped = isB2BCustomer(customer)
             ? mapped
             : filterInvoicesForCurrentTenant(mapped, customer, {
@@ -1262,11 +1220,14 @@ async function fetchCustomerZohoInvoices(customer, options = {}) {
     !isB2BCustomer(customer) &&
     (await customerHasPriorCancelledTenant(customer));
   const hasFormerTenantInvoices =
-    isChangeover && invoicesPredateCustomer(mapped, customer);
+    isChangeover &&
+    zohoContactLooksReusedByFormerTenant(zohoContact, customer, mapped);
 
   const displayInvoices = isB2BCustomer(customer)
     ? filterAgencyInvoicesForCustomer(mapped, customer.customerNumber)
-    : filterInvoicesForCurrentTenant(mapped, customer, { isChangeover });
+    : filterInvoicesForCurrentTenant(mapped, customer, {
+        isChangeover,
+      });
 
   const { overdueCount, totalOverdueBalance } =
     summarizeOverdueZohoInvoices(displayInvoices);
@@ -1546,6 +1507,12 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     ipSetup,
     planName: ctx.plan_name ?? ctx.planName,
     mbps: ctx.product_mbps ?? ctx.productMbps,
+    extraBandwidth:
+      ctx.product_extra_bandwidth ??
+      ctx.productExtraBandwidth ??
+      ctx.extra_bandwidth ??
+      ctx.extraBandwidth ??
+      0,
     categoryName: ctx.category_name ?? ctx.categoryName,
     productName: ctx.product_name ?? ctx.productName,
     apartmentNumber,
@@ -1595,6 +1562,10 @@ async function createCustomerOnTisp(ctx, meta = {}) {
     customerNumber: ctx.customer_number ?? ctx.customerNumber,
     operation: "set_client_create",
     parentLogId: meta.parentLogId ?? null,
+    packageMbps: input.mbps,
+    extraBandwidth: input.extraBandwidth,
+    popName: input.popName,
+    ipSetup: input.ipSetup,
   });
   if (meta.skipStatusRefresh !== true) {
     try {
@@ -1746,6 +1717,10 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     customerNumber: accountNumber,
     operation: "set_client_update",
     parentLogId: meta.parentLogId ?? null,
+    packageMbps: input.mbps,
+    extraBandwidth: input.extraBandwidth,
+    popName: input.popName,
+    ipSetup: input.ipSetup,
   });
   if (meta.skipStatusRefresh !== true) {
     try {

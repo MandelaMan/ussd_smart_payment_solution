@@ -1,4 +1,105 @@
+const moment = require("moment-timezone");
 const { isB2BCustomer } = require("./b2bBilling");
+
+const DEFAULT_TZ = process.env.TZ || "Africa/Nairobi";
+const CONTACT_AGE_SKEW_MS = 120_000;
+
+function contactCreatedRaw(contact) {
+  return contact?.created_time || contact?.created_at || null;
+}
+
+function customerCreatedRaw(customer) {
+  return customer?.createdAt || customer?.created_at || null;
+}
+
+function invoiceIssuedRaw(invoice) {
+  return invoice?.created_time || invoice?.date || invoice?.createdAt || null;
+}
+
+/**
+ * Calendar day in the billing timezone. Date-only Zoho values (`YYYY-MM-DD`)
+ * stay as that civil date — they must not be parsed as UTC midnight, which
+ * makes a same-day signup invoice look older than the customer row.
+ */
+function calendarDateInTz(value, timeZone = DEFAULT_TZ) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return moment(value).tz(timeZone).format("YYYY-MM-DD");
+  }
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = moment.tz(raw, timeZone);
+  if (!parsed.isValid()) return null;
+  return parsed.format("YYYY-MM-DD");
+}
+
+/**
+ * True when a Zoho contact predates this dashboard customer — i.e. it belonged
+ * to a former apartment tenant (or was wrongly reactivated for the new one).
+ */
+function isZohoContactOlderThanCustomer(
+  contact,
+  customer,
+  skewMs = CONTACT_AGE_SKEW_MS
+) {
+  const customerCreated = customerCreatedRaw(customer);
+  const contactCreated = contactCreatedRaw(contact);
+  if (!customerCreated || !contactCreated) return false;
+  const custMs = new Date(customerCreated).getTime();
+  const zohoMs = new Date(contactCreated).getTime();
+  if (Number.isNaN(custMs) || Number.isNaN(zohoMs)) return false;
+  return zohoMs < custMs - skewMs;
+}
+
+function invoicesPredateCustomer(invoices, customer, timeZone = DEFAULT_TZ) {
+  const custDate = calendarDateInTz(customerCreatedRaw(customer), timeZone);
+  if (!custDate) return false;
+  return (invoices || []).some((inv) => {
+    const invDate = calendarDateInTz(invoiceIssuedRaw(inv), timeZone);
+    return Boolean(invDate && invDate < custDate);
+  });
+}
+
+/**
+ * True when the linked Zoho contact still looks like the previous tenant's
+ * record (old contact and/or invoices from an earlier calendar day).
+ * A contact created for this tenant is never "reused", even on a unit that
+ * previously had a cancelled occupant.
+ */
+function zohoContactLooksReusedByFormerTenant(
+  contact,
+  customer,
+  invoices,
+  timeZone = DEFAULT_TZ
+) {
+  if (!invoicesPredateCustomer(invoices, customer, timeZone)) return false;
+  if (contactCreatedRaw(contact) && !isZohoContactOlderThanCustomer(contact, customer)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Hide invoices issued on an earlier calendar day than this tenant.
+ * Same-day signup invoices stay visible. The replace-contact banner is a
+ * separate check (`zohoContactLooksReusedByFormerTenant`).
+ */
+function filterInvoicesForCurrentTenant(
+  invoices,
+  customer,
+  { isChangeover = false, timeZone = DEFAULT_TZ } = {}
+) {
+  const list = invoices || [];
+  if (!isChangeover) return list;
+  const custDate = calendarDateInTz(customerCreatedRaw(customer), timeZone);
+  if (!custDate) return list;
+  return list.filter((inv) => {
+    const invDate = calendarDateInTz(invoiceIssuedRaw(inv), timeZone);
+    if (!invDate) return true;
+    return invDate >= custDate;
+  });
+}
 
 /** Compact compare: ET-RG02, etrg02, ET RG02 → ETRG02 */
 function normalizeCustomerRef(value) {
@@ -211,4 +312,9 @@ module.exports = {
   filterZohoInvoicesForContact,
   filterZohoPaymentsForContact,
   zohoRecordContactId,
+  calendarDateInTz,
+  isZohoContactOlderThanCustomer,
+  invoicesPredateCustomer,
+  zohoContactLooksReusedByFormerTenant,
+  filterInvoicesForCurrentTenant,
 };

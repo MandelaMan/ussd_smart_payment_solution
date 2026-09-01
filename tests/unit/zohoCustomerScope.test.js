@@ -2,6 +2,10 @@ const { describe, it } = require("node:test");
 const { assert } = require("../helpers");
 const {
   zohoContactMatchesDashboardCustomer,
+  invoicesPredateCustomer,
+  zohoContactLooksReusedByFormerTenant,
+  filterInvoicesForCurrentTenant,
+  isZohoContactOlderThanCustomer,
 } = require("../../api/utils/zohoCustomerScope");
 const {
   resolveAdvancePaymentCoverage,
@@ -50,6 +54,71 @@ describe("zohoContactMatchesDashboardCustomer after B2B → C2B", () => {
     assert.equal(
       zohoContactMatchesDashboardCustomer(legacy, c2bCustomer, "c2b-legacy"),
       true
+    );
+  });
+});
+
+describe("former-tenant Zoho reuse detection", () => {
+  const tz = "Africa/Nairobi";
+  const customer = {
+    customerNumber: "ET-C303",
+    createdAt: "2026-10-01 14:30:00",
+  };
+
+  it("does not treat a same-day date-only signup invoice as former-tenant", () => {
+    const invoices = [{ date: "2026-10-01", invoice_number: "INV-1" }];
+    assert.equal(invoicesPredateCustomer(invoices, customer, tz), false);
+    assert.equal(
+      zohoContactLooksReusedByFormerTenant(null, customer, invoices, tz),
+      false
+    );
+    const shown = filterInvoicesForCurrentTenant(invoices, customer, {
+      isChangeover: true,
+      timeZone: tz,
+    });
+    assert.equal(shown.length, 1);
+  });
+
+  it("still hides invoices from an earlier calendar day on a reused contact", () => {
+    const invoices = [
+      { date: "2026-09-15", invoice_number: "INV-OLD" },
+      { date: "2026-10-01", invoice_number: "INV-NEW" },
+    ];
+    const oldContact = {
+      contact_id: "zoho-eva",
+      created_time: "2025-01-10T09:00:00+03:00",
+    };
+    assert.equal(invoicesPredateCustomer(invoices, customer, tz), true);
+    assert.equal(
+      zohoContactLooksReusedByFormerTenant(oldContact, customer, invoices, tz),
+      true
+    );
+    const shown = filterInvoicesForCurrentTenant(invoices, customer, {
+      isChangeover: true,
+      timeZone: tz,
+    });
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].invoice_number, "INV-NEW");
+  });
+
+  it("does not flag a fresh Zoho contact even when the apartment had a prior tenant", () => {
+    const invoices = [{ date: "2026-10-01", invoice_number: "INV-1" }];
+    const freshContact = {
+      contact_id: "zoho-carolyne",
+      created_time: "2026-10-01T14:31:00+03:00",
+    };
+    assert.equal(
+      isZohoContactOlderThanCustomer(freshContact, customer),
+      false
+    );
+    assert.equal(
+      zohoContactLooksReusedByFormerTenant(
+        freshContact,
+        customer,
+        invoices,
+        tz
+      ),
+      false
     );
   });
 });

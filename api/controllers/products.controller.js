@@ -1,6 +1,8 @@
 const store = require("../services/customerModuleStore");
+const catalogStore = require("../services/packageCatalogStore");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 const { logActivitySafe } = require("../services/activityLogStore");
+const { syncProductToTispSafe } = require("./tisp.controller");
 
 async function listProducts(req, res, next) {
   try {
@@ -57,6 +59,23 @@ async function createProduct(req, res, next) {
       extraBandwidth:
         extraBandwidth != null ? Number(extraBandwidth) : undefined,
     });
+    const variant = await catalogStore.getPlanVariantDetails(
+      Number(planVariantId)
+    );
+    const building = await store.getBuildingById(Number(buildingId));
+    await syncProductToTispSafe({
+      planName: variant?.planName,
+      categoryName: variant?.categoryName,
+      categoryCode: variant?.categoryCode,
+      name: variant?.displayName,
+      mbps: mbps != null ? Number(mbps) : variant?.defaultMbps,
+      extraBandwidth:
+        extraBandwidth != null ? Number(extraBandwidth) : 0,
+      popName: building?.pop_name || building?.popName,
+      ipSetup: building?.ip_setup || building?.ipSetup,
+      monthlyPrice:
+        monthlyPrice != null ? Number(monthlyPrice) : Number(price),
+    });
     emitAdminUpdate("products", { action: "created", productId: id, buildingId: Number(buildingId) });
     await logActivitySafe({
       eventType: "product_created",
@@ -93,6 +112,7 @@ async function createProduct(req, res, next) {
 async function updateProduct(req, res, next) {
   try {
     const product = await store.updateProduct(Number(req.params.id), req.body || {});
+    await syncProductToTispSafe(product);
     emitAdminUpdate("products", {
       action: "updated",
       productId: product?.id ?? Number(req.params.id),

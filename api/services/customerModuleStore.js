@@ -1407,7 +1407,9 @@ const PRODUCT_LIST_SELECT = `
          pl.sort_order AS planSortOrder,
          c.requires_decoder_fee AS requiresDecoderFee,
          c.decoder_fee_amount AS decoderFeeAmount,
-         pop.dstv_setup AS buildingDstvSetup
+         pop.dstv_setup AS buildingDstvSetup,
+         pop.name AS popName,
+         pop.ip_setup AS ipSetup
   FROM products p
   JOIN buildings b ON b.id = p.building_id
   JOIN pops pop ON pop.id = b.pop_id
@@ -1425,6 +1427,7 @@ async function getProductListRow(id) {
 async function getProductById(id) {
   const rows = await query(
     `SELECT p.*, b.name AS building_name,
+            pop.name AS pop_name,
             pop.c2b_code, pop.b2b_code, pop.ip_setup,
             pl.id AS plan_id, pl.name AS plan_name, pl.sort_order AS plan_sort_order,
             c.code AS category_code, c.name AS category_name

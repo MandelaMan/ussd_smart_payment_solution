@@ -83,6 +83,19 @@ describe("TISP Location and Router use POP name", () => {
     assert.equal(payload.Router, "AZALEA");
   });
 
+  it("sends ENAKI POP on Router, not the Enaki building name", () => {
+    const payload = buildTispCreateClientPayload({
+      ...baseInput,
+      buildingName: "Enaki Towers",
+      popName: "Enaki",
+      ipSetup: "STATIC",
+      ipAddress: "10.10.10.25",
+      customerNumber: "ET-401A",
+    });
+    assert.equal(payload.Router, "ENAKI");
+    assert.equal(payload.Location, "ENAKI");
+  });
+
   it("throws when POP name is missing", () => {
     assert.throws(
       () =>
@@ -141,6 +154,7 @@ describe("TISP create payload for PPOE vs STATIC buildings", () => {
     assert.match(wire, /"PppoeRemoteAddress":""/);
     assert.match(wire, /"PackageType":"PPPOE"/);
     assert.match(wire, /"TransactionType":"INSERT", "PackageType"/);
+    assert.match(wire, /"PackageIPPool":""/);
   });
 });
 

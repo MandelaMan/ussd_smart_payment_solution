@@ -8,9 +8,11 @@ const {
   ISP_PAYMENT_URL,
   TISP_SET_CLIENT_URL,
   TISP_CLIENT_STATUS_URL,
+  TISP_SET_PACKAGE_URL,
 } = require("../utils/tispUrls");
 
 const SET_CLIENT_URL = TISP_SET_CLIENT_URL;
+const SET_PACKAGE_URL = TISP_SET_PACKAGE_URL;
 
 const TISP_REQUEST_TIMEOUT_MS = Number(
   process.env.TISP_REQUEST_TIMEOUT_MS || 15_000
@@ -30,10 +32,23 @@ const {
   shouldUseAgencyContactForSkynestPlaceholder,
 } = require("../utils/b2bBilling");
 
+function tispOptionalString(value) {
+  if (value == null) return "";
+  return String(value);
+}
+
 /** TISP expects compact JSON: no space after colons or commas. */
 function stringifyTispPayload(data) {
-  const json = typeof data === "string" ? data : JSON.stringify(data);
-  return json.replace(/":\s+/g, '":').replace(/,\s+/g, ",");
+  if (typeof data === "string") {
+    return data.replace(/":\s+/g, '":').replace(/,\s+/g, ",");
+  }
+  const normalized = {};
+  for (const [key, value] of Object.entries(data || {})) {
+    normalized[key] = value == null ? "" : value;
+  }
+  return JSON.stringify(normalized)
+    .replace(/":\s+/g, '":')
+    .replace(/,\s+/g, ",");
 }
 
 /** Exact field order for TISP INSERT (matches working Postman payload). */
@@ -58,15 +73,16 @@ const TISP_CREATE_FIELD_ORDER = [
   "PppoeRemoteAddress",
   "ShortCode",
   "AllowedPppoeDevices",
+  "PackageIPPool",
 ];
 
-function stringifyTispCreatePayload(payload) {
-  const keys = TISP_CREATE_FIELD_ORDER.slice();
-  // TISP UPDATE needs the existing client_account UUID; omit on INSERT.
+function stringifyTispOrderedPayload(payload, fieldOrder) {
+  const keys = fieldOrder.slice();
+  // TISP UPDATE needs the existing row UUID; omit on INSERT.
   if (payload.Id) keys.unshift("Id");
   const parts = keys.map((key) => {
-    const value = payload[key] ?? "";
-    return `"${key}":${JSON.stringify(String(value))}`;
+    const value = tispOptionalString(payload[key]);
+    return `"${key}":${JSON.stringify(value)}`;
   });
   // Match TISP's own JSON (ClientStatus): no space after colon, space after comma.
   // Their Stream parser splits on comma-space; compact "," hid TransactionType=UPDATE
@@ -74,11 +90,37 @@ function stringifyTispCreatePayload(payload) {
   return `{${parts.join(", ")}}`;
 }
 
+function stringifyTispCreatePayload(payload) {
+  return stringifyTispOrderedPayload(payload, TISP_CREATE_FIELD_ORDER);
+}
+
+/**
+ * Exact field order for TISP SetPackageDetails.
+ * Optional keys stay in the body as "" (never omitted).
+ */
+const TISP_PACKAGE_FIELD_ORDER = [
+  "TransactionType",
+  "Package",
+  "Router",
+  "PackageType",
+  "UploadSpeed",
+  "DownloadSpeed",
+  "Bandwidth",
+  "Price",
+  "PackageIPPool",
+];
+
+function stringifyTispPackagePayload(payload) {
+  return stringifyTispOrderedPayload(payload, TISP_PACKAGE_FIELD_ORDER);
+}
+
 async function postTispJson(url, payload, { timeout = 30_000, wireFormat = "default" } = {}) {
   const body =
     wireFormat === "create"
       ? stringifyTispCreatePayload(payload)
-      : stringifyTispPayload(payload);
+      : wireFormat === "package"
+        ? stringifyTispPackagePayload(payload)
+        : stringifyTispPayload(payload);
   return axios.post(url, body, {
     headers: {
       "Content-Type": "application/json",
@@ -298,13 +340,21 @@ function isTispDuplicateAccountError(err) {
   );
 }
 
+const TISP_RECORD_UUID_RE =
+  /duplicate entry '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'/i;
 const TISP_CLIENT_ACCOUNT_UUID_RE =
   /duplicate entry '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})' for key 'client_account\.primary'/i;
+
+/** UUID TISP already has when INSERT hits a unique key. */
+function extractTispDuplicateRecordId(err) {
+  const match = tispErrorMessage(err).match(TISP_RECORD_UUID_RE);
+  return match ? match[1] : "";
+}
 
 /** UUID TISP already has for this client when INSERT hits client_account.PRIMARY. */
 function extractTispDuplicateAccountId(err) {
   const match = tispErrorMessage(err).match(TISP_CLIENT_ACCOUNT_UUID_RE);
-  return match ? match[1] : "";
+  return match ? match[1] : extractTispDuplicateRecordId(err);
 }
 
 function extractTispClientAccountId(payload) {
@@ -346,6 +396,18 @@ function isTispAccountMissingError(err) {
     lower.includes("client does not exist") ||
     ((lower.includes("account") || lower.includes("client")) &&
       (lower.includes("not found") || lower.includes("does not exist")))
+  );
+}
+
+/** SetClientDetails rejected because the Package name is not in TISP's catalog. */
+function isTispPackageMissingError(err) {
+  const lower = tispErrorMessage(err).toLowerCase();
+  if (!lower || !lower.includes("package")) return false;
+  return (
+    lower.includes("package missing") ||
+    lower.includes("package not found") ||
+    lower.includes("unknown package") ||
+    (lower.includes("package") && lower.includes("does not exist"))
   );
 }
 
@@ -603,6 +665,35 @@ async function postSetClientDetails(payload, meta = {}) {
           }
         }
         return retried;
+      }
+      if (
+        isTispPackageMissingError(parsed.message) &&
+        meta._retriedAfterPackageCreate !== true &&
+        packageLabel
+      ) {
+        try {
+          await ensureTispPackage(
+            {
+              packageLabel,
+              mbps: meta.packageMbps,
+              extraBandwidth: meta.extraBandwidth,
+              popName: meta.popName,
+              price: meta.packagePrice,
+              ipSetup: meta.ipSetup || payload.PackageType,
+            },
+            {
+              parentLogId: meta.parentLogId ?? null,
+              customerId: meta.customerId ?? null,
+              customerNumber,
+            }
+          );
+          return await postSetClientDetails(payload, {
+            ...meta,
+            _retriedAfterPackageCreate: true,
+          });
+        } catch {
+          /* keep the original Package Missing error */
+        }
       }
       throw err;
     }
@@ -970,6 +1061,9 @@ function buildTispSetClientPayload(input, transactionType) {
     PppoeRemoteAddress: pppoeRemoteAddress,
     ShortCode: String(TISP_DEFAULT_SHORTCODE).trim(),
     AllowedPppoeDevices: "1",
+    PackageIPPool: tispOptionalString(
+      input.PackageIPPool ?? input.packageIpPool ?? input.packageIPPool
+    ),
   };
 }
 
@@ -992,6 +1086,323 @@ function buildSetClientDetailsPayload(input) {
   return buildTispUpdateClientDetailsPayload(input);
 }
 
+function tispPackageMbps(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n);
+}
+
+function tispPackageTotalMbps(input) {
+  const base = tispPackageMbps(
+    input?.mbps ?? input?.Bandwidth ?? input?.DownloadSpeed ?? input?.UploadSpeed
+  );
+  const extra = tispPackageMbps(
+    input?.extraBandwidth ?? input?.extra_bandwidth ?? 0
+  );
+  return base + extra;
+}
+
+function tispPackageSpeedString(input) {
+  const total = tispPackageTotalMbps(input);
+  return total > 0 ? String(total) : "";
+}
+
+function tispPackagePrice(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return String(Math.round(n));
+}
+
+/**
+ * PackageType from the building/POP ip_setup (STATIC→IP, PPOE→PPPOE).
+ * Empty when no setup is known — never default to "IP".
+ */
+function tispPackageTypeFromInput(input) {
+  const raw =
+    input?.ipSetup ??
+    input?.ip_setup ??
+    input?.PackageType ??
+    input?.packageType ??
+    "";
+  if (!String(raw).trim()) return "";
+  return resolveTispPackageType(raw);
+}
+
+/**
+ * TISP SetPackageDetails payload — PascalCase fields (INSERT and UPDATE).
+ * Package must match the SetClientDetails Package label.
+ * PackageType follows the building/POP IP setup (PPOE vs STATIC/IP).
+ * UploadSpeed / DownloadSpeed are mandatory and equal Mbps + extra bandwidth.
+ * Optional fields (Price, PackageIPPool, …) are always present as "".
+ */
+function buildTispSetPackagePayload(input, transactionType = "INSERT") {
+  const packageLabel = String(
+    input?.packageLabel || input?.Package || input?.package || ""
+  ).trim();
+  if (!isValidTispPackageLabel(packageLabel)) {
+    throw new Error(
+      packageLabel
+        ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")`
+        : "TISP package label is required"
+    );
+  }
+  const speed = tispPackageSpeedString(input);
+  if (!speed) {
+    throw new Error(
+      "TISP UploadSpeed and DownloadSpeed are required (package Mbps + extra bandwidth)"
+    );
+  }
+  const popName = input?.popName ?? input?.pop_name ?? input?.Router;
+  const router = popName ? tispRouterLocation(popName) : "";
+  const id =
+    String(transactionType || "").toUpperCase() === "UPDATE"
+      ? extractTispClientAccountId(input)
+      : "";
+  return {
+    ...(id ? { Id: id } : {}),
+    TransactionType: String(transactionType || "INSERT").toUpperCase(),
+    Package: packageLabel,
+    Router: router,
+    PackageType: tispPackageTypeFromInput(input),
+    UploadSpeed: speed,
+    DownloadSpeed: speed,
+    Bandwidth: speed,
+    Price: tispPackagePrice(input?.price ?? input?.Price),
+    PackageIPPool: tispOptionalString(
+      input?.PackageIPPool ?? input?.packageIpPool ?? input?.packageIPPool
+    ),
+  };
+}
+
+/**
+ * Create or update a package on TISP (SetPackageDetails).
+ */
+async function postSetPackageDetails(payload, meta = {}) {
+  let httpStatus = null;
+  let responseData = null;
+  const packageLabel = String(payload?.Package ?? "").trim();
+
+  if (!isValidTispPackageLabel(packageLabel)) {
+    const errorMessage = packageLabel
+      ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")`
+      : "TISP package label is required";
+    await logApiCall({
+      service: "tisp",
+      operation: meta.operation || "set_package_details",
+      method: "POST",
+      endpoint: SET_PACKAGE_URL,
+      status: "failure",
+      httpStatus: null,
+      requestPayload: payload,
+      responsePayload: null,
+      errorMessage,
+      customerId: meta.customerId ?? null,
+      customerNumber: meta.customerNumber ?? null,
+      retryable: true,
+      parentLogId: meta.parentLogId ?? null,
+    });
+    const err = new Error(errorMessage);
+    err._apiCallLogged = true;
+    throw err;
+  }
+
+  try {
+    const r = await postTispJson(SET_PACKAGE_URL, payload, {
+      wireFormat: "package",
+    });
+
+    httpStatus = r.status;
+    responseData = r.data;
+    const httpOk = r.status >= 200 && r.status < 300;
+    const parsed = parseTispOperationResponse(responseData);
+    const success = httpOk && parsed.ok;
+
+    await logApiCall({
+      service: "tisp",
+      operation: meta.operation || "set_package_details",
+      method: "POST",
+      endpoint: SET_PACKAGE_URL,
+      status: success ? "success" : "failure",
+      httpStatus: r.status,
+      requestPayload: payload,
+      responsePayload: responseData,
+      errorMessage: success ? null : parsed.message,
+      customerId: meta.customerId ?? null,
+      customerNumber: meta.customerNumber ?? null,
+      retryable: true,
+      parentLogId: meta.parentLogId ?? null,
+    });
+
+    if (!success) {
+      const err = new Error(
+        parsed.message ||
+          `SetPackageDetails HTTP ${r.status}: ${JSON.stringify(responseData)}`
+      );
+      err.response = r;
+      err._apiCallLogged = true;
+      throw err;
+    }
+
+    return responseData;
+  } catch (e) {
+    if (!e._apiCallLogged) {
+      await logApiCall({
+        service: "tisp",
+        operation: meta.operation || "set_package_details",
+        method: "POST",
+        endpoint: SET_PACKAGE_URL,
+        status: "failure",
+        httpStatus: e.response?.status ?? httpStatus,
+        requestPayload: payload,
+        responsePayload: e.response?.data ?? responseData,
+        errorMessage: e.message,
+        customerId: meta.customerId ?? null,
+        customerNumber: meta.customerNumber ?? null,
+        retryable: true,
+        parentLogId: meta.parentLogId ?? null,
+      });
+    }
+    throw e;
+  }
+}
+
+/**
+ * INSERT the catalog package on TISP; on duplicate retry as UPDATE.
+ */
+async function ensureTispPackage(input, meta = {}) {
+  const createPayload = buildTispSetPackagePayload(input, "INSERT");
+  try {
+    return await postSetPackageDetails(createPayload, {
+      ...meta,
+      operation: "set_package_create",
+    });
+  } catch (err) {
+    if (!isTispDuplicateAccountError(err)) throw err;
+    const id = extractTispDuplicateRecordId(err);
+    const updatePayload = {
+      ...buildTispSetPackagePayload({ ...input, Id: id }, "UPDATE"),
+    };
+    return postSetPackageDetails(updatePayload, {
+      ...meta,
+      operation: "set_package_update",
+    });
+  }
+}
+
+function productLooksDstvOnly(product) {
+  const { isDstvOnlyCategory } = require("../services/packageCatalogStore");
+  return isDstvOnlyCategory(
+    product?.categoryCode || product?.category_code || product?.categoryName
+  );
+}
+
+/**
+ * Push a local building product's catalog label to TISP (not per-building price).
+ * Soft callers should catch — local package save stays source of truth.
+ */
+async function syncProductToTisp(product, meta = {}) {
+  if (!product || productLooksDstvOnly(product)) {
+    return { ok: true, skipped: true, reason: "dstv_only" };
+  }
+  const packageLabel = buildTispPackageLabel({
+    planName: product.planName || product.plan_name,
+    categoryName: product.categoryName || product.category_name,
+    productName: product.name,
+  });
+  if (!packageLabel) {
+    return { ok: true, skipped: true, reason: "no_catalog_label" };
+  }
+  await ensureTispPackage(
+    {
+      packageLabel,
+      mbps: product.mbps ?? product.product_mbps,
+      extraBandwidth:
+        product.extraBandwidth ?? product.extra_bandwidth ?? 0,
+      popName: product.popName || product.pop_name,
+      price: product.monthlyPrice ?? product.monthly_price ?? 0,
+      ipSetup: product.ipSetup || product.ip_setup,
+    },
+    meta
+  );
+  return { ok: true, packageLabel };
+}
+
+async function syncProductToTispSafe(product, meta = {}) {
+  try {
+    return await syncProductToTisp(product, meta);
+  } catch (err) {
+    console.warn("TISP SetPackageDetails failed:", err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Upsert every internet catalog package (plan × category) onto TISP.
+ * DSTV-only is skipped — those customers are not provisioned on TISP.
+ */
+async function syncCatalogPackagesToTisp(meta = {}) {
+  const catalogStore = require("../services/packageCatalogStore");
+  const { listPops } = require("../services/customerModuleStore");
+  const catalog = await catalogStore.listPackageCatalog();
+  const { pops } = await listPops();
+  const popTargets = [];
+  const seenPops = new Set();
+  for (const pop of pops || []) {
+    const popName = String(pop.name || pop.popName || "").trim();
+    if (!popName || seenPops.has(popName)) continue;
+    seenPops.add(popName);
+    popTargets.push({
+      popName,
+      ipSetup: pop.ipSetup || pop.ip_setup || "",
+    });
+  }
+  const results = [];
+  const seen = new Set();
+
+  for (const category of catalog || []) {
+    if (catalogStore.isDstvOnlyCategory(category.code)) continue;
+    for (const plan of category.plans || []) {
+      const monthly = (plan.variants || []).find(
+        (v) => v.paymentFrequency === "monthly"
+      );
+      const packageLabel = buildTispPackageLabel({
+        planName: plan.name,
+        categoryName: category.name,
+      });
+      if (!packageLabel) continue;
+      const targets = popTargets.length
+        ? popTargets
+        : [{ popName: "", ipSetup: "" }];
+      for (const { popName, ipSetup } of targets) {
+        const key = `${packageLabel}::${popName}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+          await ensureTispPackage(
+            {
+              packageLabel,
+              mbps: monthly ? Number(monthly.defaultMbps) : 0,
+              popName,
+              ipSetup,
+            },
+            meta
+          );
+          results.push({ packageLabel, popName, ok: true });
+        } catch (err) {
+          results.push({
+            packageLabel,
+            popName,
+            ok: false,
+            error: err.message,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
 const test = async (req, res) => {
   const { customer_no } = req.body;
 
@@ -1004,9 +1415,11 @@ module.exports = {
   getTISPCustomer,
   postSetISPPayment,
   postSetClientDetails,
+  postSetPackageDetails,
   buildTispCreateClientPayload,
   buildTispUpdateClientDetailsPayload,
   buildSetClientDetailsPayload,
+  buildTispSetPackagePayload,
   buildTispPackageLabel,
   resolveTispPackageType,
   resolveTispNetworkFields,
@@ -1014,6 +1427,7 @@ module.exports = {
   isValidTispPackageLabel,
   stringifyTispPayload,
   stringifyTispCreatePayload,
+  stringifyTispPackagePayload,
   formatTispError,
   parseTispOperationResponse,
   accountExistsOnTisp,
@@ -1022,10 +1436,17 @@ module.exports = {
   shouldAllowTispCreateFallback,
   isTispDuplicateAccountError,
   extractTispDuplicateAccountId,
+  extractTispDuplicateRecordId,
   extractTispClientAccountId,
   isTispAccountMissingError,
+  isTispPackageMissingError,
+  ensureTispPackage,
+  syncProductToTisp,
+  syncProductToTispSafe,
+  syncCatalogPackagesToTisp,
   formatTispDueDate,
   test,
   TISP_STANDARD_DUE_DATE,
   TISP_BILLING_CYCLE,
+  TISP_PACKAGE_FIELD_ORDER,
 };

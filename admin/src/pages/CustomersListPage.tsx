@@ -12,6 +12,7 @@ import {
   Flex,
   Input,
   Stack,
+  Switch,
   Table,
   Text,
   Textarea,
@@ -119,7 +120,7 @@ import { DisplayText } from "../components/ui/DisplayText";
 import { useAuth } from "../lib/authContext";
 import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hidePricing } from "../lib/rbac";
 import { TISP_STANDARD_DUE_DATE } from "../lib/tispConstants";
-import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
+import { FilterToolbar } from "../components/ui/FilterToolbar";
 import { FILTER_CONTROL_HEIGHT } from "../theme";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobileFAB, MobilePageChrome } from "../components/ui/MobilePageChrome";
@@ -135,7 +136,22 @@ function customersListCacheKey(params: Record<string, string>) {
   return cacheKeyFromParams("customers:list", params);
 }
 
-function defaultCustomersCacheKey(statusFromUrl: string | null) {
+function parseShowCancelledParam(value: string | null | undefined): boolean {
+  return value === "1" || value === "true";
+}
+
+/** Cancelled accounts stay hidden unless the toggle is on or Cancelled is in the status filter. */
+function listIncludesCancelled(
+  showCancelled: boolean,
+  statusFilters: SubscriptionStatusLabel[]
+): boolean {
+  return showCancelled || statusFilters.includes("Cancelled");
+}
+
+function defaultCustomersCacheKey(
+  statusFromUrl: string | null,
+  showCancelledFromUrl = false
+) {
   const params: Record<string, string> = {
     page: "1",
     limit: String(PAGE_SIZE),
@@ -143,6 +159,10 @@ function defaultCustomersCacheKey(statusFromUrl: string | null) {
     sortDir: "asc",
   };
   if (statusFromUrl) params.subscriptionStatus = statusFromUrl;
+  const urlStatuses = parseStatusFilterParam(statusFromUrl);
+  if (!listIncludesCancelled(showCancelledFromUrl, urlStatuses)) {
+    params.status = "active";
+  }
   return customersListCacheKey(params);
 }
 
@@ -192,7 +212,13 @@ export function CustomersListPage() {
   const hidePrices = hidePricing(user);
   const hideFinancials = !canSeeCustomerFinancials(user);
   const seededCustomers = useMemo(
-    () => seedListState<Customer>(defaultCustomersCacheKey(searchParams.get("status"))),
+    () =>
+      seedListState<Customer>(
+        defaultCustomersCacheKey(
+          searchParams.get("status"),
+          parseShowCancelledParam(searchParams.get("showCancelled"))
+        )
+      ),
     // Seed once from URL status on mount — intentional.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount seed only
     []
@@ -223,6 +249,9 @@ export function CustomersListPage() {
   const [buildingId, setBuildingId] = useState("");
   const [statusFilters, setStatusFilters] = useState<SubscriptionStatusLabel[]>(() =>
     parseStatusFilterParam(searchParams.get("status"))
+  );
+  const [showCancelled, setShowCancelled] = useState(() =>
+    parseShowCancelledParam(searchParams.get("showCancelled"))
   );
   const [importEvents, setImportEvents] = useState<CustomerImportEvent[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -352,6 +381,9 @@ export function CustomersListPage() {
         if (statusFilters.length) {
           params.subscriptionStatus = serializeStatusFilter(statusFilters);
         }
+        if (!listIncludesCancelled(showCancelled, statusFilters)) {
+          params.status = "active";
+        }
         if (categoryId) params.categoryId = categoryId;
         if (customerType) params.customerType = customerType;
         if (premiseType) params.premiseType = premiseType;
@@ -458,7 +490,7 @@ export function CustomersListPage() {
         }
       }
     },
-    [debouncedSearch, buildingId, statusFilters, categoryId, customerType, premiseType, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]
+    [debouncedSearch, buildingId, statusFilters, showCancelled, categoryId, customerType, premiseType, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]
   );
 
   loadCustomersRef.current = loadCustomers;
@@ -635,14 +667,14 @@ export function CustomersListPage() {
               ? { ...c, status: "cancelled" as const, subscriptionStatus: "Cancelled" }
               : c
           );
-          if (statusFilters.length > 0 && !statusFilters.includes("Cancelled")) {
+          if (!listIncludesCancelled(showCancelled, statusFilters)) {
             return patched.filter((c) => !cancelledIds.has(c.id));
           }
           return patched;
         });
         setPagination((prev) => {
           if (!prev) return prev;
-          if (statusFilters.length > 0 && !statusFilters.includes("Cancelled")) {
+          if (!listIncludesCancelled(showCancelled, statusFilters)) {
             return {
               ...prev,
               total: Math.max(0, Number(prev.total || 0) - cancelledIds.size),
@@ -766,6 +798,8 @@ export function CustomersListPage() {
   useEffect(() => {
     const urlStatuses = parseStatusFilterParam(searchParams.get("status"));
     setStatusFilters((prev) => (statusFiltersEqual(prev, urlStatuses) ? prev : urlStatuses));
+    const urlShowCancelled = parseShowCancelledParam(searchParams.get("showCancelled"));
+    setShowCancelled((prev) => (prev === urlShowCancelled ? prev : urlShowCancelled));
   }, [searchParams]);
 
   function applyStatusFilters(next: SubscriptionStatusLabel[]) {
@@ -777,6 +811,19 @@ export function CustomersListPage() {
       nextParams.set("status", serializeStatusFilter(next));
     } else {
       nextParams.delete("status");
+    }
+    setSearchParams(nextParams, { replace: true });
+  }
+
+  function applyShowCancelled(next: boolean) {
+    setShowCancelled(next);
+    setPage(1);
+    setExpanded(null);
+    const nextParams = new URLSearchParams(searchParams);
+    if (next) {
+      nextParams.set("showCancelled", "1");
+    } else {
+      nextParams.delete("showCancelled");
     }
     setSearchParams(nextParams, { replace: true });
   }
@@ -839,6 +886,9 @@ export function CustomersListPage() {
       if (statusFilters.length) {
         params.subscriptionStatus = serializeStatusFilter(statusFilters);
       }
+      if (!listIncludesCancelled(showCancelled, statusFilters)) {
+        params.status = "active";
+      }
       if (categoryId) params.categoryId = categoryId;
       if (customerType) params.customerType = customerType;
       if (premiseType) params.premiseType = premiseType;
@@ -849,6 +899,7 @@ export function CustomersListPage() {
       const bldg = buildings.find((b) => String(b.id) === buildingId);
       if (bldg) filterTags.push(bldg.name);
       if (statusFilters.length) filterTags.push(...statusFilters);
+      if (showCancelled) filterTags.push("Show cancelled");
       const cat = categories.find((c) => String(c.id) === categoryId);
       if (cat) filterTags.push(cat.name);
       if (customerType) filterTags.push(customerType);
@@ -1645,20 +1696,14 @@ export function CustomersListPage() {
               c.id === res.customer.id ? { ...c, ...res.customer } : c
             );
             // Hide from current view when Cancelled is not in the status filter.
-            if (
-              statusFilters.length > 0 &&
-              !statusFilters.includes("Cancelled")
-            ) {
+            if (!listIncludesCancelled(showCancelled, statusFilters)) {
               return patched.filter((c) => c.status !== "cancelled");
             }
             return patched;
           });
           setPagination((prev) => {
             if (!prev) return prev;
-            if (
-              statusFilters.length > 0 &&
-              !statusFilters.includes("Cancelled")
-            ) {
+            if (!listIncludesCancelled(showCancelled, statusFilters)) {
               return {
                 ...prev,
                 total: Math.max(0, Number(prev.total || 0) - 1),
@@ -1685,7 +1730,7 @@ export function CustomersListPage() {
         setPanelRefreshKey((k) => k + 1);
       } else if (wasExpanded && actionType === "cancel") {
         // Keep panel open only when Cancelled is still visible in the list.
-        if (!statusFilters.length || statusFilters.includes("Cancelled")) {
+        if (listIncludesCancelled(showCancelled, statusFilters)) {
           setExpanded(customerId);
           setPanelRefreshKey((k) => k + 1);
         } else {
@@ -1704,7 +1749,7 @@ export function CustomersListPage() {
 
   const advancedFilters = (
     <>
-      <FilterField label="Building" flex={FILTER_FLEX.wide} minW={0}>
+      <FilterField label="Building" flex={{ lg: "1 1 0%" }} minW={0}>
         <SearchableSelect
           size="sm"
           value={buildingId}
@@ -1721,7 +1766,7 @@ export function CustomersListPage() {
         />
       </FilterField>
 
-      <FilterField label="Package category" flex={FILTER_FLEX.standard} minW={0}>
+      <FilterField label="Package category" flex={{ lg: "1 1 0%" }} minW={0}>
         <SelectField
           size="sm"
           isLoading={lookupsLoading}
@@ -1760,13 +1805,18 @@ export function CustomersListPage() {
           {
             key: "all",
             label: "All",
-            active: statusFilters.length === 0 && !customerType && !premiseType,
+            active: statusFilters.length === 0 && !customerType && !premiseType && !showCancelled,
             onClick: () => {
-              applyStatusFilters([]);
+              setStatusFilters([]);
+              setShowCancelled(false);
               setCustomerType("");
               setPremiseType("");
               setPage(1);
               setExpanded(null);
+              const nextParams = new URLSearchParams(searchParams);
+              nextParams.delete("status");
+              nextParams.delete("showCancelled");
+              setSearchParams(nextParams, { replace: true });
             },
           },
           ...SUBSCRIPTION_STATUS_FILTER_OPTIONS.map((option) => ({
@@ -1784,6 +1834,12 @@ export function CustomersListPage() {
           { key: "b2b", label: "B2B", active: customerType === "B2B", onClick: () => { setCustomerType(customerType === "B2B" ? "" : "B2B"); setPage(1); setExpanded(null); } },
           { key: "apartments", label: "Apartments", active: premiseType === "apartment", onClick: () => { setPremiseType(premiseType === "apartment" ? "" : "apartment"); setPage(1); setExpanded(null); } },
           { key: "shops", label: "Shops", active: premiseType === "shop", onClick: () => { setPremiseType(premiseType === "shop" ? "" : "shop"); setPage(1); setExpanded(null); } },
+          {
+            key: "show-cancelled",
+            label: "Show cancelled",
+            active: showCancelled,
+            onClick: () => applyShowCancelled(!showCancelled),
+          },
         ]}
         filterTitle="Filters"
         activeFilterCount={(buildingId ? 1 : 0) + (categoryId ? 1 : 0)}
@@ -1885,7 +1941,7 @@ export function CustomersListPage() {
             <FilterToolbar embedded>
           <FilterField
             label="Search"
-            flex={{ base: "1 1 100%", lg: "1.45" }}
+            flex={{ lg: "1 1 0%" }}
             minW={0}
             hideOnMobile
           >
@@ -1901,7 +1957,7 @@ export function CustomersListPage() {
 
           {advancedFilters}
 
-          <FilterField label="Premise" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
+          <FilterField label="Premise" flex={{ lg: "1 1 0%" }} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -1920,7 +1976,7 @@ export function CustomersListPage() {
             </SelectField>
           </FilterField>
 
-          <FilterField label="Type" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
+          <FilterField label="Type" flex={{ lg: "1 1 0%" }} minW={0} hideOnMobile>
             <SelectField
               size="sm"
               fieldProps={{
@@ -1941,8 +1997,8 @@ export function CustomersListPage() {
 
           <FilterField
             label="Status"
-            flex={{ base: "1 1 100%", sm: "1 1 calc(50% - 6px)", lg: "1.15" }}
-            minW={{ base: 0, lg: "240px" }}
+            flex={{ lg: "1 1 0%" }}
+            minW={0}
             hideOnMobile
           >
             <StatusMultiSelect
@@ -1951,6 +2007,35 @@ export function CustomersListPage() {
               onChange={applyStatusFilters}
             />
           </FilterField>
+
+          <Box
+            flexShrink={{ lg: 0 }}
+            minW={0}
+            w={{ base: "full", lg: "auto" }}
+            alignSelf={{ base: "stretch", lg: "flex-end" }}
+          >
+            <Flex h={FILTER_CONTROL_HEIGHT} align="center" gap={2}>
+              <Text
+                fontSize={{ base: "sm", lg: "xs" }}
+                fontWeight="medium"
+                color="fg.muted"
+                whiteSpace="nowrap"
+              >
+                Show cancelled
+              </Text>
+              <Switch.Root
+                size="sm"
+                checked={showCancelled}
+                onCheckedChange={(details) => applyShowCancelled(Boolean(details.checked))}
+                colorPalette="orange"
+              >
+                <Switch.HiddenInput />
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Root>
+            </Flex>
+          </Box>
             </FilterToolbar>
           </ListPageStickyChrome>
         }

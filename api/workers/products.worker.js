@@ -1,4 +1,3 @@
-const catalogStore = require("../services/packageCatalogStore");
 const integrationStateRepo = require("../repositories/integrationState.repository");
 const syncJobRepo = require("../repositories/syncJob.repository");
 const { INTEGRATIONS } = require("../queue/definitions");
@@ -22,14 +21,18 @@ async function processProductsSyncJob(job) {
     jobId: job.id,
   });
 
-  const catalog = await catalogStore.listPackageCatalog();
-  const processed = Array.isArray(catalog) ? catalog.length : 0;
+  const { syncCatalogPackagesToTisp } = require("../controllers/tisp.controller");
+  const results = await syncCatalogPackagesToTisp({
+    correlationId,
+  });
+  const processed = Array.isArray(results) ? results.length : 0;
+  const failed = (results || []).filter((row) => !row.ok);
   const now = new Date();
 
   await integrationStateRepo.upsertIntegrationState(INTEGRATION, {
     lastSyncedAt: now,
-    lastSuccessAt: now,
-    lastError: null,
+    lastSuccessAt: failed.length === processed && processed > 0 ? null : now,
+    lastError: failed[0]?.error || null,
   });
 
   await syncJobRepo.completeSyncJob(syncJobDbId, {
@@ -44,6 +47,7 @@ async function processProductsSyncJob(job) {
     ok: true,
     integration: INTEGRATION,
     processed,
+    failed: failed.length,
     durationMs,
   };
 

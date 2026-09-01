@@ -27,10 +27,15 @@ const TISP_CLIENT_STATUS_URL = resolveTispUrl(
   process.env.TISP_CLIENT_STATUS_URL,
   "ClientStatus"
 );
+const TISP_SET_PACKAGE_URL = resolveTispUrl(
+  process.env.TISP_SET_PACKAGE_URL,
+  "SetPackageDetails"
+);
 
 module.exports = {
   normalizeTispUrl,
   ISP_PAYMENT_URL,
   TISP_SET_CLIENT_URL,
   TISP_CLIENT_STATUS_URL,
+  TISP_SET_PACKAGE_URL,
 };
