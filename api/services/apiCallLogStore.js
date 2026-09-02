@@ -10,6 +10,27 @@ function parseJson(value, fallback = null) {
   }
 }
 
+/**
+ * API call logs must keep clock time (not a calendar date).
+ * mysql2 timezone "Z" means naive MySQL DATETIME strings are UTC.
+ */
+function toIsoDateTime(value) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  const s = String(value).trim();
+  if (!s) return null;
+  const naive = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?$/.exec(s);
+  if (naive) {
+    const ms = naive[3] || ".000";
+    const parsed = new Date(`${naive[1]}T${naive[2]}${ms}Z`);
+    return Number.isNaN(parsed.getTime()) ? s : parsed.toISOString();
+  }
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? s : parsed.toISOString();
+}
+
 function formatLog(row) {
   return {
     id: row.id,
@@ -28,7 +49,7 @@ function formatLog(row) {
     retryable: Boolean(row.retryable),
     retryCount: row.retry_count,
     parentLogId: row.parent_log_id,
-    createdAt: row.created_at,
+    createdAt: toIsoDateTime(row.created_at),
   };
 }
 
@@ -52,8 +73,9 @@ async function insertApiCallLog({
     `INSERT INTO api_call_logs
       (service, operation, method, endpoint, status, http_status,
        request_payload, response_payload, error_message,
-       customer_id, customer_number, reference_id, retryable, parent_log_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       customer_id, customer_number, reference_id, retryable, parent_log_id,
+       created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
     [
       service,
       operation,
@@ -170,4 +192,5 @@ module.exports = {
   getApiCallLogById,
   listApiCallLogs,
   formatLog,
+  toIsoDateTime,
 };

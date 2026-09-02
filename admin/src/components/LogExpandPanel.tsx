@@ -1,6 +1,6 @@
 import { Box, Grid, Text } from "@chakra-ui/react";
 import type { ReactNode } from "react";
-import type { ApiCallLog } from "../lib/api";
+import { formatDateTime, type ApiCallLog } from "../lib/api";
 
 function JsonBlock({ value }: { value: unknown }) {
   const text =
@@ -51,6 +51,7 @@ export function LogExpandPanel({ log }: { log: ApiCallLog }) {
       >
         <Field label="Service">{log.service.toUpperCase()}</Field>
         <Field label="Operation">{log.operation}</Field>
+        <Field label="Called">{formatDateTime(log.createdAt)}</Field>
         <Field label="HTTP status">{log.httpStatus ?? "—"}</Field>
         <Field label="Customer">{log.customerNumber ?? "—"}</Field>
         <Field label="Reference">{log.referenceId ?? "—"}</Field>

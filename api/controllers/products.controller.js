@@ -72,6 +72,7 @@ async function createProduct(req, res, next) {
       extraBandwidth:
         extraBandwidth != null ? Number(extraBandwidth) : 0,
       popName: building?.pop_name || building?.popName,
+      buildingId: Number(buildingId),
       ipSetup: building?.ip_setup || building?.ipSetup,
       monthlyPrice:
         monthlyPrice != null ? Number(monthlyPrice) : Number(price),

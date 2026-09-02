@@ -15,7 +15,7 @@ import {
   FiChevronRight,
   FiRefreshCw,
 } from "react-icons/fi";
-import { api, formatDate, type ApiCallLog } from "../lib/api";
+import { api, formatDateTime, type ApiCallLog } from "../lib/api";
 import { LogExpandPanel } from "../components/LogExpandPanel";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
@@ -447,7 +447,7 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
                       isOpen={isOpen}
                       onClick={() => setExpanded((prev) => (prev === row.id ? null : row.id))}
                       fields={[
-                        { label: "Called", value: formatDate(row.createdAt) },
+                        { label: "Called", value: formatDateTime(row.createdAt) },
                         { label: "Customer #", value: row.customerNumber ?? "—" },
                       ]}
                       footer={
@@ -527,7 +527,7 @@ export function LogsPage({ embedded = false }: { embedded?: boolean } = {}) {
                           {SERVICE_LABELS[row.service] || row.service}
                         </Badge>
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps} color="fg.muted">{formatDate(row.createdAt)}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps} color="fg.muted">{formatDateTime(row.createdAt)}</Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontFamily="mono" textTransform="uppercase">
                         {row.customerNumber ?? "—"}
                       </Table.Cell>

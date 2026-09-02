@@ -1147,6 +1147,32 @@ async function updateBuilding(id, data) {
   );
 }
 
+/**
+ * Map a TISP Router candidate to the real POP name.
+ * POP names win when they collide with a building (Enaki). Building-only
+ * names (Brookside Terraces, Azalea Heights) resolve to the parent POP.
+ */
+async function resolvePopNameForTispRouter(candidate) {
+  const raw = String(candidate || "").trim();
+  if (!raw) return "";
+  const { pickTispRouterPopName } = require("../utils/tispRouter");
+  const [popRows, buildingRows] = await Promise.all([
+    query(`SELECT name FROM pops`),
+    query(
+      `SELECT b.name, p.name AS pop_name
+       FROM buildings b
+       JOIN pops p ON p.id = b.pop_id`
+    ),
+  ]);
+  return pickTispRouterPopName(raw, {
+    pops: popRows,
+    buildings: buildingRows.map((row) => ({
+      name: row.name,
+      popName: row.pop_name,
+    })),
+  });
+}
+
 async function getBuildingById(id) {
   const rows = await query(
     `SELECT b.*,
@@ -4823,6 +4849,7 @@ module.exports = {
   mapPopOltRow,
   mapPopRow,
   getBuildingById,
+  resolvePopNameForTispRouter,
   getBuildingMapped,
   listBuildingOlts,
   listPopOlts,

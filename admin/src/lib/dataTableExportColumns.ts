@@ -7,7 +7,7 @@ import type {
   Customer,
   Product,
 } from "./api";
-import { formatCurrency, formatDate, formatDateOnly } from "./api";
+import { formatCurrency, formatDate, formatDateOnly, formatDateTime } from "./api";
 import { displayCustomerStatus } from "./customerStatus";
 import { formatTitleCase } from "./formatText";
 import type { ExportColumn } from "./tableExport";
@@ -71,7 +71,7 @@ export const logExportColumns: ExportColumn<ApiCallLog>[] = [
   { header: "Endpoint", value: (row) => row.endpoint },
   { header: "Status", value: (row) => row.status },
   { header: "Customer", value: (row) => row.customerNumber },
-  { header: "Created", value: (row) => formatDate(row.createdAt) },
+  { header: "Called", value: (row) => formatDateTime(row.createdAt) },
 ];
 
 export const apartmentHistoryExportColumns: ExportColumn<ApartmentHistoryEntry>[] = [

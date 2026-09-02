@@ -4120,12 +4120,42 @@ export function formatDate(value: string) {
   if (isDateOnlyTimestamp(value)) {
     return formatDateOnly(value);
   }
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  return formatDateTime(value);
+}
+
+/**
+ * Date and clock time in Africa/Nairobi. Use for events (API logs, activity),
+ * never for calendar-only fields.
+ */
+export function formatDateTime(value: string | Date | null | undefined) {
+  if (value == null || value === "") return "—";
+  const d = parseApiDateTime(value);
+  if (!d) return "—";
   return d.toLocaleString("en-KE", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Africa/Nairobi",
   });
+}
+
+function parseApiDateTime(value: string | Date): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  const s = String(value).trim();
+  if (!s) return null;
+  // mysql2 timezone "Z": naive DATETIME/TIMESTAMP strings are UTC.
+  const naive = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?$/.exec(s);
+  if (naive) {
+    const parsed = new Date(`${naive[1]}T${naive[2]}${naive[3] || ""}Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /** True when the value is a calendar date with no meaningful time-of-day. */

@@ -31,6 +31,7 @@ const {
   SKYNEST_PLACEHOLDER_PERSON_NAME,
   shouldUseAgencyContactForSkynestPlaceholder,
 } = require("../utils/b2bBilling");
+const { pickTispRouterPopName } = require("../utils/tispRouter");
 
 function tispOptionalString(value) {
   if (value == null) return "";
@@ -95,19 +96,20 @@ function stringifyTispCreatePayload(payload) {
 }
 
 /**
- * Exact field order for TISP SetPackageDetails.
- * Optional keys stay in the body as "" (never omitted).
+ * Exact field order for TISP SetPackageDetails (TISP stream parser).
+ * Every key stays in the body; unused values are "".
  */
 const TISP_PACKAGE_FIELD_ORDER = [
   "TransactionType",
-  "Package",
-  "Router",
   "PackageType",
+  "PackageDescription",
+  "NewPackageDescription",
+  "Router",
   "UploadSpeed",
   "DownloadSpeed",
-  "Bandwidth",
-  "Price",
+  "Cost",
   "PackageIPPool",
+  "ShortCode",
 ];
 
 function stringifyTispPackagePayload(payload) {
@@ -1107,37 +1109,39 @@ function tispPackageSpeedString(input) {
   return total > 0 ? String(total) : "";
 }
 
-function tispPackagePrice(value) {
+function tispPackageCost(value) {
   const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return "";
+  if (!Number.isFinite(n) || n < 0) return "0";
   return String(Math.round(n));
 }
 
 /**
  * PackageType from the building/POP ip_setup (STATIC→IP, PPOE→PPPOE).
- * Empty when no setup is known — never default to "IP".
+ * Required on SetPackageDetails.
  */
 function tispPackageTypeFromInput(input) {
-  const raw =
+  return resolveTispPackageType(
     input?.ipSetup ??
-    input?.ip_setup ??
-    input?.PackageType ??
-    input?.packageType ??
-    "";
-  if (!String(raw).trim()) return "";
-  return resolveTispPackageType(raw);
+      input?.ip_setup ??
+      input?.PackageType ??
+      input?.packageType
+  );
 }
 
 /**
- * TISP SetPackageDetails payload — PascalCase fields (INSERT and UPDATE).
- * Package must match the SetClientDetails Package label.
+ * TISP SetPackageDetails payload — field names and order from TISP.
+ * PackageDescription must match the SetClientDetails Package label.
  * PackageType follows the building/POP IP setup (PPOE vs STATIC/IP).
- * UploadSpeed / DownloadSpeed are mandatory and equal Mbps + extra bandwidth.
- * Optional fields (Price, PackageIPPool, …) are always present as "".
+ * Router is the POP name. Cost is the monthly price.
+ * NewPackageDescription is only set when renaming; otherwise "".
  */
 function buildTispSetPackagePayload(input, transactionType = "INSERT") {
   const packageLabel = String(
-    input?.packageLabel || input?.Package || input?.package || ""
+    input?.packageLabel ||
+      input?.PackageDescription ||
+      input?.Package ||
+      input?.package ||
+      ""
   ).trim();
   if (!isValidTispPackageLabel(packageLabel)) {
     throw new Error(
@@ -1146,31 +1150,44 @@ function buildTispSetPackagePayload(input, transactionType = "INSERT") {
         : "TISP package label is required"
     );
   }
+  const packageType = tispPackageTypeFromInput(input);
+  const popName = input?.popName ?? input?.pop_name ?? input?.Router;
+  const router = tispRouterLocation(popName);
   const speed = tispPackageSpeedString(input);
   if (!speed) {
     throw new Error(
       "TISP UploadSpeed and DownloadSpeed are required (package Mbps + extra bandwidth)"
     );
   }
-  const popName = input?.popName ?? input?.pop_name ?? input?.Router;
-  const router = popName ? tispRouterLocation(popName) : "";
+  const type = String(transactionType || "INSERT").toUpperCase();
+  const newDescription = String(
+    input?.NewPackageDescription ?? input?.newPackageDescription ?? ""
+  ).trim();
   const id =
-    String(transactionType || "").toUpperCase() === "UPDATE"
-      ? extractTispClientAccountId(input)
-      : "";
+    type === "UPDATE" ? extractTispClientAccountId(input) : "";
   return {
     ...(id ? { Id: id } : {}),
-    TransactionType: String(transactionType || "INSERT").toUpperCase(),
-    Package: packageLabel,
+    TransactionType: type,
+    PackageType: packageType,
+    PackageDescription: packageLabel,
+    NewPackageDescription: type === "UPDATE" ? newDescription : "",
     Router: router,
-    PackageType: tispPackageTypeFromInput(input),
     UploadSpeed: speed,
     DownloadSpeed: speed,
-    Bandwidth: speed,
-    Price: tispPackagePrice(input?.price ?? input?.Price),
+    Cost: tispPackageCost(
+      input?.Cost ??
+        input?.cost ??
+        input?.price ??
+        input?.Price ??
+        input?.monthlyPrice ??
+        input?.monthly_price
+    ),
     PackageIPPool: tispOptionalString(
       input?.PackageIPPool ?? input?.packageIpPool ?? input?.packageIPPool
     ),
+    ShortCode: String(
+      input?.ShortCode ?? input?.shortCode ?? TISP_DEFAULT_SHORTCODE
+    ).trim(),
   };
 }
 
@@ -1180,7 +1197,9 @@ function buildTispSetPackagePayload(input, transactionType = "INSERT") {
 async function postSetPackageDetails(payload, meta = {}) {
   let httpStatus = null;
   let responseData = null;
-  const packageLabel = String(payload?.Package ?? "").trim();
+  const packageLabel = String(
+    payload?.PackageDescription ?? payload?.Package ?? ""
+  ).trim();
 
   if (!isValidTispPackageLabel(packageLabel)) {
     const errorMessage = packageLabel
@@ -1267,10 +1286,29 @@ async function postSetPackageDetails(payload, meta = {}) {
 }
 
 /**
+ * Prefer the building's POP when we have a building id; otherwise map a
+ * building-named candidate (Brookside Terraces) to its parent POP.
+ */
+async function resolveTispPackageRouter(input) {
+  const store = require("../services/customerModuleStore");
+  const buildingId = input?.buildingId ?? input?.building_id;
+  if (buildingId) {
+    const building = await store.getBuildingById(Number(buildingId));
+    const fromBuilding = building?.pop_name || building?.popName;
+    if (fromBuilding) return fromBuilding;
+  }
+  return store.resolvePopNameForTispRouter(
+    input?.popName ?? input?.pop_name ?? input?.Router ?? ""
+  );
+}
+
+/**
  * INSERT the catalog package on TISP; on duplicate retry as UPDATE.
  */
 async function ensureTispPackage(input, meta = {}) {
-  const createPayload = buildTispSetPackagePayload(input, "INSERT");
+  const popName = await resolveTispPackageRouter(input);
+  const resolved = { ...input, popName };
+  const createPayload = buildTispSetPackagePayload(resolved, "INSERT");
   try {
     return await postSetPackageDetails(createPayload, {
       ...meta,
@@ -1280,7 +1318,7 @@ async function ensureTispPackage(input, meta = {}) {
     if (!isTispDuplicateAccountError(err)) throw err;
     const id = extractTispDuplicateRecordId(err);
     const updatePayload = {
-      ...buildTispSetPackagePayload({ ...input, Id: id }, "UPDATE"),
+      ...buildTispSetPackagePayload({ ...resolved, Id: id }, "UPDATE"),
     };
     return postSetPackageDetails(updatePayload, {
       ...meta,
@@ -1319,6 +1357,7 @@ async function syncProductToTisp(product, meta = {}) {
       extraBandwidth:
         product.extraBandwidth ?? product.extra_bandwidth ?? 0,
       popName: product.popName || product.pop_name,
+      buildingId: product.buildingId ?? product.building_id,
       price: product.monthlyPrice ?? product.monthly_price ?? 0,
       ipSetup: product.ipSetup || product.ip_setup,
     },
@@ -1370,9 +1409,8 @@ async function syncCatalogPackagesToTisp(meta = {}) {
         categoryName: category.name,
       });
       if (!packageLabel) continue;
-      const targets = popTargets.length
-        ? popTargets
-        : [{ popName: "", ipSetup: "" }];
+      const targets = popTargets.length ? popTargets : [];
+      if (!targets.length) continue;
       for (const { popName, ipSetup } of targets) {
         const key = `${packageLabel}::${popName}`;
         if (seen.has(key)) continue;
@@ -1384,6 +1422,7 @@ async function syncCatalogPackagesToTisp(meta = {}) {
               mbps: monthly ? Number(monthly.defaultMbps) : 0,
               popName,
               ipSetup,
+              price: monthly?.price ?? monthly?.defaultPrice ?? 0,
             },
             meta
           );
@@ -1421,6 +1460,7 @@ module.exports = {
   buildSetClientDetailsPayload,
   buildTispSetPackagePayload,
   buildTispPackageLabel,
+  pickTispRouterPopName,
   resolveTispPackageType,
   resolveTispNetworkFields,
   resolveTispPackageForWrite,

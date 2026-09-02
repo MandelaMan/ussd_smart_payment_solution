@@ -1533,6 +1533,12 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
         firstName
       : firstName,
     dueDate: options.dueDate || TISP_STANDARD_DUE_DATE,
+    price:
+      ctx.package_price ??
+      ctx.packagePrice ??
+      ctx.price ??
+      ctx.monthly_price ??
+      ctx.monthlyPrice,
   };
 }
 
@@ -1566,6 +1572,7 @@ async function createCustomerOnTisp(ctx, meta = {}) {
     extraBandwidth: input.extraBandwidth,
     popName: input.popName,
     ipSetup: input.ipSetup,
+    packagePrice: input.price,
   });
   if (meta.skipStatusRefresh !== true) {
     try {
@@ -1721,6 +1728,7 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     extraBandwidth: input.extraBandwidth,
     popName: input.popName,
     ipSetup: input.ipSetup,
+    packagePrice: input.price,
   });
   if (meta.skipStatusRefresh !== true) {
     try {
