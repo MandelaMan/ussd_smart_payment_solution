@@ -1,8 +1,7 @@
 const store = require("../services/customerModuleStore");
-const catalogStore = require("../services/packageCatalogStore");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 const { logActivitySafe } = require("../services/activityLogStore");
-const { syncProductToTispSafe } = require("./tisp.controller");
+const { syncProductToTispSafe, tispLabelFromProduct } = require("./tisp.controller");
 
 async function listProducts(req, res, next) {
   try {
@@ -59,24 +58,10 @@ async function createProduct(req, res, next) {
       extraBandwidth:
         extraBandwidth != null ? Number(extraBandwidth) : undefined,
     });
-    const variant = await catalogStore.getPlanVariantDetails(
-      Number(planVariantId)
-    );
-    const building = await store.getBuildingById(Number(buildingId));
-    await syncProductToTispSafe({
-      planName: variant?.planName,
-      categoryName: variant?.categoryName,
-      categoryCode: variant?.categoryCode,
-      name: variant?.displayName,
-      mbps: mbps != null ? Number(mbps) : variant?.defaultMbps,
-      extraBandwidth:
-        extraBandwidth != null ? Number(extraBandwidth) : 0,
-      popName: building?.pop_name || building?.popName,
-      buildingId: Number(buildingId),
-      ipSetup: building?.ip_setup || building?.ipSetup,
-      monthlyPrice:
-        monthlyPrice != null ? Number(monthlyPrice) : Number(price),
-    });
+    const product = await store.getProductListRow(Number(id));
+    const tisp = product
+      ? await syncProductToTispSafe(product)
+      : { ok: false, error: "Saved package could not be reloaded for TISP" };
     emitAdminUpdate("products", { action: "created", productId: id, buildingId: Number(buildingId) });
     await logActivitySafe({
       eventType: "product_created",
@@ -87,9 +72,15 @@ async function createProduct(req, res, next) {
       source: "admin",
       referenceId: String(id),
       amount: price != null ? Number(price) : null,
-      metadata: { productId: id, buildingId: Number(buildingId) },
+      metadata: {
+        productId: id,
+        buildingId: Number(buildingId),
+        tispOk: tisp?.ok !== false,
+        tispPackage: tisp?.packageLabel || null,
+        tispError: tisp?.error || null,
+      },
     });
-    return res.status(201).json({ ok: true, id });
+    return res.status(201).json({ ok: true, id, tisp });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
       const msg = String(err.message || "");
@@ -112,8 +103,10 @@ async function createProduct(req, res, next) {
 
 async function updateProduct(req, res, next) {
   try {
+    const before = await store.getProductListRow(Number(req.params.id));
+    const previousPackageLabel = tispLabelFromProduct(before);
     const product = await store.updateProduct(Number(req.params.id), req.body || {});
-    await syncProductToTispSafe(product);
+    const tisp = await syncProductToTispSafe(product, { previousPackageLabel });
     emitAdminUpdate("products", {
       action: "updated",
       productId: product?.id ?? Number(req.params.id),
@@ -129,9 +122,15 @@ async function updateProduct(req, res, next) {
       source: "admin",
       referenceId: String(productId),
       amount: product?.price != null ? Number(product.price) : null,
-      metadata: { productId, buildingId: product?.buildingId ?? null },
+      metadata: {
+        productId,
+        buildingId: product?.buildingId ?? null,
+        tispOk: tisp?.ok !== false,
+        tispPackage: tisp?.packageLabel || null,
+        tispError: tisp?.error || null,
+      },
     });
-    return res.json({ ok: true, product });
+    return res.json({ ok: true, product, tisp });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
       const msg = String(err.message || "");

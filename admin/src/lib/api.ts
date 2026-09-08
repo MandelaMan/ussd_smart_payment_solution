@@ -27,7 +27,8 @@ export function notifyAuthSessionExpired(path: string) {
     path.startsWith("/auth/me") ||
     path.startsWith("/auth/recover-account") ||
     path.startsWith("/auth/forgot-password") ||
-    path.startsWith("/auth/reset-password")
+    path.startsWith("/auth/reset-password") ||
+    path.startsWith("/public/")
   )
     return;
   // Do not set the notified flag here — AuthProvider re-checks /auth/me and
@@ -2570,7 +2571,16 @@ export const api = {
     monthlyPrice?: number;
     extraBandwidth?: number;
   }) =>
-    request<{ ok: boolean; id: number }>("/admin/products", {
+    request<{
+      ok: boolean;
+      id: number;
+      tisp?: {
+        ok: boolean;
+        skipped?: boolean;
+        error?: string;
+        packageLabel?: string;
+      };
+    }>("/admin/products", {
       method: "POST",
       body: JSON.stringify(data),
     }),
@@ -2590,7 +2600,16 @@ export const api = {
       paymentFrequency: string;
     }>
   ) =>
-    request<{ ok: boolean; product: Product }>(`/admin/products/${id}`, {
+    request<{
+      ok: boolean;
+      product: Product;
+      tisp?: {
+        ok: boolean;
+        skipped?: boolean;
+        error?: string;
+        packageLabel?: string;
+      };
+    }>(`/admin/products/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),

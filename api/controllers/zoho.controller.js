@@ -7,6 +7,14 @@ const {
   pickDepositAccountId,
   mpesaDepositLookupOptions,
 } = require("../utils/zohoDepositAccount");
+const {
+  isZohoEmail,
+  pickPrimaryZohoContactPerson,
+  invoiceEmailContactPersonIds,
+  buildInvoiceEmailContactPersonsPayload,
+  invoiceAlreadyHasEmailContactPersons,
+  isOpenReminderInvoice,
+} = require("../utils/zohoContactPersons");
 require("dotenv").config();
 
 /** ========= Config ========= **/
@@ -523,6 +531,156 @@ function rankContactMatches(query, list) {
     .sort((a, b) => b.s - a.s);
 }
 
+async function updateContactPerson_JS(contactPersonId, payload) {
+  if (!contactPersonId || !payload) return null;
+  const data = await withTimeout(
+    callZoho(`contacts/contactpersons/${contactPersonId}`, "PUT", payload),
+    12_000,
+    "update-contact-person",
+  );
+  return data.contact_person || data.contactperson || data;
+}
+
+async function createContactPerson_JS(contactId, payload) {
+  if (!contactId || !payload) return null;
+  const data = await withTimeout(
+    callZoho(
+      "contacts/contactpersons",
+      "POST",
+      { ...payload, contact_id: contactId },
+    ),
+    12_000,
+    "create-contact-person",
+  );
+  return data.contact_person || data.contactperson || data;
+}
+
+/**
+ * Zoho reminders fail when the contact has an email but the contact *person*
+ * does not. Copy the customer email onto the primary person (or create one).
+ */
+async function ensureContactPersonsHaveEmail(contact) {
+  if (!contact?.contact_id) return contact;
+  if (invoiceEmailContactPersonIds(contact).length) return contact;
+
+  const email = isZohoEmail(contact.email)
+    ? String(contact.email).trim()
+    : "";
+  if (!email) return contact;
+
+  const primary = pickPrimaryZohoContactPerson(contact);
+  try {
+    if (primary?.contact_person_id) {
+      await updateContactPerson_JS(primary.contact_person_id, {
+        email,
+        first_name:
+          primary.first_name || contact.contact_name || contact.company_name,
+        last_name: primary.last_name || "",
+      });
+    } else {
+      await createContactPerson_JS(contact.contact_id, {
+        first_name: contact.contact_name || contact.company_name || "Customer",
+        email,
+        is_primary_contact: true,
+      });
+    }
+  } catch (e) {
+    console.warn(
+      "ensureContactPersonsHaveEmail failed:",
+      e.response?.data || e.message || e,
+    );
+    return contact;
+  }
+  return (await getContactFull_JS(contact.contact_id)) || contact;
+}
+
+/**
+ * IDs + communication prefs so Zoho can email payment reminders for this
+ * customer. Fetches the full contact when callers only have a lean record.
+ */
+async function resolveInvoiceEmailContactPersons(customer_id, hints = {}) {
+  if (!customer_id) return null;
+  if (Array.isArray(hints.contact_persons) && hints.contact_persons.length) {
+    return buildInvoiceEmailContactPersonsPayload(hints.contact_persons);
+  }
+
+  let contact = hints.contact;
+  if (!Array.isArray(contact?.contact_persons) || !contact.contact_persons.length) {
+    contact = (await getContactFull_JS(customer_id)) || contact;
+  }
+  if (!contact) return null;
+
+  contact = await ensureContactPersonsHaveEmail(contact);
+  return buildInvoiceEmailContactPersonsPayload(
+    invoiceEmailContactPersonIds(contact),
+  );
+}
+
+async function mergeInvoiceEmailContactPersons(payload, customer_id, hints = {}) {
+  if (!payload || payload.contact_persons) return payload;
+  try {
+    const fields = await resolveInvoiceEmailContactPersons(customer_id, hints);
+    if (fields) Object.assign(payload, fields);
+  } catch (e) {
+    console.warn(
+      "invoice contact person association skipped:",
+      e.response?.data || e.message || e,
+    );
+  }
+  return payload;
+}
+
+const updateInvoice_JS = async (invoiceId, payload) => {
+  if (!invoiceId || !payload) return null;
+  const data = await withTimeout(
+    callZoho(`invoices/${invoiceId}`, "PUT", payload),
+    12_000,
+    "update-invoice",
+  );
+  return data.invoice || data;
+};
+
+/**
+ * Associate email-enabled contact persons on unpaid invoices so Zoho's
+ * automated payment reminders have someone to send to.
+ */
+async function associateEmailContactPersonsOnOpenInvoices(
+  customer_id,
+  hints = {},
+) {
+  if (!customer_id) return { updated: 0 };
+  const fields = await resolveInvoiceEmailContactPersons(customer_id, hints);
+  if (!fields) return { updated: 0, reason: "no_contact_person_email" };
+
+  const invoices = await getInvoices_JS({
+    customer_id,
+    per_page: 25,
+    page: 1,
+  });
+  const open = (invoices || [])
+    .filter(isOpenReminderInvoice)
+    .filter(
+      (inv) =>
+        !invoiceAlreadyHasEmailContactPersons(inv, fields.contact_persons),
+    )
+    .slice(0, 10);
+
+  let updated = 0;
+  for (const inv of open) {
+    try {
+      await updateInvoice_JS(inv.invoice_id, fields);
+      updated += 1;
+    } catch (e) {
+      console.warn(
+        "associate invoice contact persons failed:",
+        inv.invoice_number || inv.invoice_id,
+        e.response?.data || e.message || e,
+      );
+    }
+  }
+  return { updated, attempted: open.length };
+}
+
 const createRecurringInvoice_JS = async ({
   customer_id,
   recurrence_name,
@@ -534,6 +692,8 @@ const createRecurringInvoice_JS = async ({
   is_inclusive_tax,
   payment_terms,
   payment_terms_label,
+  contact_persons,
+  contact,
 }) => {
   if (!customer_id || !line_items?.length) return null;
   // Do not send inline billing_address. Zoho Books treats that field as a
@@ -549,6 +709,10 @@ const createRecurringInvoice_JS = async ({
     repeat_every,
     line_items,
   };
+  await mergeInvoiceEmailContactPersons(payload, customer_id, {
+    contact_persons,
+    contact,
+  });
   if (is_inclusive_tax != null) {
     payload.is_inclusive_tax = Boolean(is_inclusive_tax);
   }
@@ -1381,6 +1545,8 @@ const createInvoice_JS = async ({
   payment_terms,
   payment_terms_label,
   notes,
+  contact_persons,
+  contact,
 }) => {
   try {
     if (!customer_id || !items?.length) {
@@ -1424,6 +1590,10 @@ const createInvoice_JS = async ({
         invoiceData.is_discount_before_tax = Boolean(is_discount_before_tax);
       }
     }
+    await mergeInvoiceEmailContactPersons(invoiceData, customer_id, {
+      contact_persons,
+      contact,
+    });
 
     const extraParams = invoice_number
       ? { ignore_auto_number_generation: true }
@@ -1951,6 +2121,7 @@ module.exports = {
   getItemsByAllowedSkuPrefixes_JS,
   getInvoiceTemplates_JS,
   createInvoice_JS,
+  updateInvoice_JS,
   createCreditNote_JS,
   emailInvoice_JS,
   emailCustomerPayment_JS,
@@ -1960,6 +2131,8 @@ module.exports = {
   markContactActive_JS,
   invalidateZohoContactLookupCache,
   markInvoiceAsPaid_JS,
+  resolveInvoiceEmailContactPersons,
+  associateEmailContactPersonsOnOpenInvoices,
 
   // Extra helpers if you want them elsewhere
   callZoho,

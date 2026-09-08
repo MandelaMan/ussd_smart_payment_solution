@@ -4863,6 +4863,7 @@ module.exports = {
   deletePopOlt,
   listProducts,
   getProductById,
+  getProductListRow,
   createProduct,
   updateProduct,
   deleteProduct,

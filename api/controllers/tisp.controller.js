@@ -26,6 +26,7 @@ const {
   TISP_BILLING_CYCLE,
   TISP_RELEASE_PLACEHOLDER_IP,
   TISP_PPOE_PLACEHOLDER_STATIC_IP,
+  TISP_PPOE_PACKAGE_IP_POOL,
 } = require("../utils/tispConstants");
 const {
   SKYNEST_PLACEHOLDER_PERSON_NAME,
@@ -342,6 +343,10 @@ function isTispDuplicateAccountError(err) {
   );
 }
 
+function isTispDuplicatePackageError(err) {
+  return tispErrorMessage(err).toLowerCase().includes("duplicate package");
+}
+
 const TISP_RECORD_UUID_RE =
   /duplicate entry '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'/i;
 const TISP_CLIENT_ACCOUNT_UUID_RE =
@@ -544,7 +549,7 @@ async function postSetClientDetails(payload, meta = {}) {
 
   if (!isValidTispPackageLabel(packageLabel)) {
     const errorMessage = packageLabel
-      ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")`
+      ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "${TISP_PACKAGE_EXAMPLE}")`
       : 'Customer package is not on the catalog package list. Relink the customer to a current plan (Basic / Basic Plus / Premium / Premium Plus) before syncing to TISP.';
     await logApiCall({
       service: "tisp",
@@ -881,7 +886,7 @@ function resolveTispNetworkFields(ipSetup, ipAddress) {
 }
 
 /**
- * Normalize category segments for TISP Package field.
+ * Normalize category segments for matching catalog names.
  * "Internet + Apartonet Channels" → "INTERNET + APARTONET CHANNELS"
  */
 function formatTispCategorySegment(category) {
@@ -892,11 +897,137 @@ function formatTispCategorySegment(category) {
     .join(" + ");
 }
 
+const TISP_SHORT_CATEGORY = {
+  INT: "INT",
+  INT_APT: "INT_APT",
+  INT_DSTV_APT: "INT_DSTV_APT",
+};
+
+const TISP_PACKAGE_EXAMPLE = "80_BASIC_INT_MONTHLY_2";
+
+const TISP_NEW_LABEL_RE =
+  /^(\d+)_(.+)_(INT_DSTV_APT|INT_APT|INT)_(MONTHLY|QUARTERLY|YEARLY|CUSTOM_\d+|CUSTOM)_(\d+)$/;
+
 /**
- * TISP Package field for all POPs — strict `{PLAN} - {CATEGORY}` format.
- * Example: "BASIC PLUS - INTERNET + APARTONET CHANNELS"
+ * Short TISP category: INT | INT_APT | INT_DSTV_APT.
  */
-function buildTispPackageLabel({ planName, categoryName, productName }) {
+function tispPackageCategoryToken(categoryName, categoryCode) {
+  const code = String(categoryCode || "").trim().toLowerCase();
+  if (code === "internet_only") return TISP_SHORT_CATEGORY.INT;
+  if (code === "internet_apartonet") return TISP_SHORT_CATEGORY.INT_APT;
+  if (code === "internet_dstv_apartonet") return TISP_SHORT_CATEGORY.INT_DSTV_APT;
+
+  const formatted = formatTispCategorySegment(categoryName);
+  if (!formatted) return "";
+  const compact = formatted.replace(/\s+/g, "_");
+  if (
+    compact === TISP_SHORT_CATEGORY.INT ||
+    compact === TISP_SHORT_CATEGORY.INT_APT ||
+    compact === TISP_SHORT_CATEGORY.INT_DSTV_APT
+  ) {
+    return compact;
+  }
+  const hasDstv = /\bDSTV\b/.test(formatted);
+  const hasApt = /\bAPARTONET\b/.test(formatted);
+  if (hasDstv && hasApt) return TISP_SHORT_CATEGORY.INT_DSTV_APT;
+  if (hasApt) return TISP_SHORT_CATEGORY.INT_APT;
+  if (/\bINTERNET\b/.test(formatted)) return TISP_SHORT_CATEGORY.INT;
+  return compact;
+}
+
+function tispPackagePlanToken(planName) {
+  return String(planName || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[+\-]+/g, " ")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
+function tispPackageFrequencyToken(paymentFrequency, customPeriodDays) {
+  const freq = String(paymentFrequency || "monthly").trim().toLowerCase();
+  if (freq === "quarterly") return "QUARTERLY";
+  if (freq === "yearly") return "YEARLY";
+  if (freq === "custom") {
+    const days = Number(customPeriodDays);
+    if (Number.isFinite(days) && days > 0) return `CUSTOM_${Math.round(days)}`;
+    return "CUSTOM";
+  }
+  return "MONTHLY";
+}
+
+function tispPackagePriceValue(input) {
+  return (
+    input?.price ??
+    input?.Price ??
+    input?.packagePrice ??
+    input?.package_price ??
+    input?.Cost ??
+    input?.cost ??
+    input?.monthlyPrice ??
+    input?.monthly_price ??
+    0
+  );
+}
+
+/** Strip frequency+cost suffix from a legacy TISP package name. */
+const TISP_PACKAGE_UNIQUENESS_RE =
+  /\s\+\s(?:MONTHLY|QUARTERLY|YEARLY|CUSTOM(?:\s+\d+\s+DAYS)?|C\d*|M|Q|Y)\s\+\s\d+$/;
+
+function shortenTispPackageBase(label) {
+  let value = String(label || "").trim();
+  if (!value) return "";
+  value = value.replace(TISP_PACKAGE_UNIQUENESS_RE, "");
+  const replacements = [
+    ["INTERNET + DSTV CHANNELS + APARTONET CHANNELS", TISP_SHORT_CATEGORY.INT_DSTV_APT],
+    ["INTERNET + APARTONET CHANNELS", TISP_SHORT_CATEGORY.INT_APT],
+    ["INTERNET ONLY", TISP_SHORT_CATEGORY.INT],
+    ["INT DSTV APT", TISP_SHORT_CATEGORY.INT_DSTV_APT],
+    ["INT APT", TISP_SHORT_CATEGORY.INT_APT],
+  ];
+  for (const [from, to] of replacements) {
+    if (value.includes(from)) {
+      value = value.replace(from, to);
+      break;
+    }
+  }
+  return value;
+}
+
+function planAndCategoryFromLabel(label) {
+  const value = String(label || "").trim();
+  if (!value) return null;
+  const neu = value.match(TISP_NEW_LABEL_RE);
+  if (neu) {
+    return {
+      mbps: Number(neu[1]),
+      plan: neu[2].replace(/_/g, " "),
+      category: neu[3],
+      freq: neu[4],
+      cost: neu[5],
+    };
+  }
+  const stripped = shortenTispPackageBase(value);
+  const dash = stripped.match(/^(.+?)\s+-\s+(.+)$/);
+  if (!dash) return null;
+  return { plan: dash[1], category: dash[2] };
+}
+
+/**
+ * TISP Package field — `{MBPS}_{PLAN}_{INT|INT_APT|INT_DSTV_APT}_{MONTHLY|QUARTERLY|YEARLY|CUSTOM_90}_{COST}`.
+ * Example: "80_BASIC_INT_MONTHLY_2"
+ */
+function buildTispPackageLabel({
+  planName,
+  categoryName,
+  categoryCode,
+  productName,
+  paymentFrequency,
+  customPeriodDays,
+  price,
+  ...rest
+} = {}) {
   let plan = String(planName || "").trim();
   let category = String(categoryName || "").trim();
 
@@ -909,21 +1040,44 @@ function buildTispPackageLabel({ planName, categoryName, productName }) {
     if (!category && parts.length >= 2) category = parts.slice(1).join(" + ");
   }
 
-  const planUpper = plan.toUpperCase();
-  const categorySegment = formatTispCategorySegment(category);
+  const planToken = tispPackagePlanToken(plan);
+  const categoryToken = tispPackageCategoryToken(
+    category,
+    categoryCode ?? rest.category_code
+  );
 
-  if (planUpper && categorySegment) {
-    return `${planUpper} - ${categorySegment}`;
+  if (!planToken || !categoryToken) {
+    return "";
   }
 
-  return "";
+  const mbps = tispPackageTotalMbps({
+    paymentFrequency,
+    customPeriodDays,
+    price,
+    planName,
+    categoryName,
+    categoryCode,
+    productName,
+    ...rest,
+  });
+  const freq = tispPackageFrequencyToken(paymentFrequency, customPeriodDays);
+  const cost = tispPackageCost(tispPackagePriceValue({ price, ...rest }));
+  return `${mbps}_${planToken}_${categoryToken}_${freq}_${cost}`;
 }
 
-/** True when Package matches catalog `{PLAN} - {CATEGORY}` format. */
+/** True when Package is `{MBPS}_{PLAN}_{CATEGORY}_{FREQUENCY}_{COST}`. */
 function isValidTispPackageLabel(label) {
-  return /^[A-Z0-9]+(?: [A-Z0-9]+)* - [A-Z0-9]+(?: [A-Z0-9]+)*(?: \+ [A-Z0-9]+(?: [A-Z0-9]+)*)*$/.test(
-    String(label || "").trim()
-  );
+  return TISP_NEW_LABEL_RE.test(String(label || "").trim());
+}
+
+function withTispPackageUniqueness(baseLabel, input = {}) {
+  const parsed = planAndCategoryFromLabel(baseLabel);
+  if (!parsed) return "";
+  return buildTispPackageLabel({
+    ...input,
+    planName: parsed.plan,
+    categoryName: parsed.category,
+  });
 }
 
 /** Always build from the admin package catalog — never legacy TISP names. */
@@ -952,13 +1106,25 @@ function collectTispClientInput({
   contactPerson,
   agencyName,
   agencyContactPerson,
+  paymentFrequency,
+  customPeriodDays,
+  price,
+  categoryCode,
+  mbps,
+  extraBandwidth,
 }) {
   const packagetype = resolveTispPackageType(ipSetup);
   const hasIp = Boolean(ipAddress);
   const packageLabel = buildTispPackageLabel({
     planName,
     categoryName,
+    categoryCode,
     productName,
+    paymentFrequency,
+    customPeriodDays,
+    price,
+    mbps,
+    extraBandwidth,
   });
 
   return {
@@ -1028,7 +1194,18 @@ function buildTispSetClientPayload(input, transactionType) {
   const packageLabel = buildTispPackageLabel({
     planName,
     categoryName,
+    categoryCode: input.categoryCode ?? input.category_code,
     productName,
+    paymentFrequency: input.paymentFrequency ?? input.payment_frequency,
+    customPeriodDays: input.customPeriodDays ?? input.custom_period_days,
+    price:
+      input.price ??
+      input.packagePrice ??
+      input.package_price ??
+      input.monthlyPrice ??
+      input.monthly_price,
+    mbps: input.mbps ?? input.productMbps ?? input.product_mbps,
+    extraBandwidth: input.extraBandwidth ?? input.extra_bandwidth ?? 0,
   });
   const id =
     String(transactionType || "").toUpperCase() === "UPDATE"
@@ -1132,22 +1309,46 @@ function tispPackageTypeFromInput(input) {
  * TISP SetPackageDetails payload — field names and order from TISP.
  * PackageDescription must match the SetClientDetails Package label.
  * PackageType follows the building/POP IP setup (PPOE vs STATIC/IP).
- * Router is the POP name. Cost is the monthly price.
+ * Router is the POP name. Cost is the billed package price.
+ * PackageDescription is `{MBPS}_{PLAN}_{CATEGORY}_{FREQUENCY}_{COST}`.
  * NewPackageDescription is only set when renaming; otherwise "".
  */
-function buildTispSetPackagePayload(input, transactionType = "INSERT") {
-  const packageLabel = String(
+function resolveTispPackageDescription(input) {
+  const explicit = String(
     input?.packageLabel ||
       input?.PackageDescription ||
       input?.Package ||
       input?.package ||
       ""
   ).trim();
-  if (!isValidTispPackageLabel(packageLabel)) {
+  const parsed = planAndCategoryFromLabel(explicit);
+  const built = buildTispPackageLabel({
+    ...input,
+    planName: input?.planName || input?.plan_name || parsed?.plan,
+    categoryName: input?.categoryName || input?.category_name || parsed?.category,
+  });
+  if (built) return built;
+  return explicit;
+}
+
+function buildTispSetPackagePayload(input, transactionType = "INSERT") {
+  const type = String(transactionType || "INSERT").toUpperCase();
+  const useLabelAsIs = input?.usePackageLabelAsIs === true;
+  const packageLabel = useLabelAsIs
+    ? String(
+        input?.packageLabel ||
+          input?.PackageDescription ||
+          input?.Package ||
+          input?.package ||
+          ""
+      ).trim()
+    : resolveTispPackageDescription(input);
+  if (!packageLabel) {
+    throw new Error("TISP package label is required");
+  }
+  if (!useLabelAsIs && !isValidTispPackageLabel(packageLabel)) {
     throw new Error(
-      packageLabel
-        ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")`
-        : "TISP package label is required"
+      `Invalid TISP Package format "${packageLabel}" (expected e.g. "${TISP_PACKAGE_EXAMPLE}")`
     );
   }
   const packageType = tispPackageTypeFromInput(input);
@@ -1159,12 +1360,19 @@ function buildTispSetPackagePayload(input, transactionType = "INSERT") {
       "TISP UploadSpeed and DownloadSpeed are required (package Mbps + extra bandwidth)"
     );
   }
-  const type = String(transactionType || "INSERT").toUpperCase();
-  const newDescription = String(
+  const newDescriptionRaw = String(
     input?.NewPackageDescription ?? input?.newPackageDescription ?? ""
   ).trim();
-  const id =
-    type === "UPDATE" ? extractTispClientAccountId(input) : "";
+  let newDescription = "";
+  if (type === "UPDATE" && newDescriptionRaw) {
+    newDescription = isValidTispPackageLabel(newDescriptionRaw)
+      ? newDescriptionRaw
+      : withTispPackageUniqueness(newDescriptionRaw, input);
+    if (newDescription === packageLabel) newDescription = "";
+  }
+  const id = type === "UPDATE" ? extractTispClientAccountId(input) : "";
+  const packageIpPool =
+    packageType === "PPPOE" ? TISP_PPOE_PACKAGE_IP_POOL : "";
   return {
     ...(id ? { Id: id } : {}),
     TransactionType: type,
@@ -1174,17 +1382,8 @@ function buildTispSetPackagePayload(input, transactionType = "INSERT") {
     Router: router,
     UploadSpeed: speed,
     DownloadSpeed: speed,
-    Cost: tispPackageCost(
-      input?.Cost ??
-        input?.cost ??
-        input?.price ??
-        input?.Price ??
-        input?.monthlyPrice ??
-        input?.monthly_price
-    ),
-    PackageIPPool: tispOptionalString(
-      input?.PackageIPPool ?? input?.packageIpPool ?? input?.packageIPPool
-    ),
+    Cost: tispPackageCost(tispPackagePriceValue(input)),
+    PackageIPPool: packageIpPool,
     ShortCode: String(
       input?.ShortCode ?? input?.shortCode ?? TISP_DEFAULT_SHORTCODE
     ).trim(),
@@ -1200,10 +1399,12 @@ async function postSetPackageDetails(payload, meta = {}) {
   const packageLabel = String(
     payload?.PackageDescription ?? payload?.Package ?? ""
   ).trim();
+  const isUpdate =
+    String(payload?.TransactionType || "").toUpperCase() === "UPDATE";
 
-  if (!isValidTispPackageLabel(packageLabel)) {
+  if (!packageLabel || (!isUpdate && !isValidTispPackageLabel(packageLabel))) {
     const errorMessage = packageLabel
-      ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "BASIC PLUS - INTERNET + APARTONET CHANNELS")`
+      ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "${TISP_PACKAGE_EXAMPLE}")`
       : "TISP package label is required";
     await logApiCall({
       service: "tisp",
@@ -1303,11 +1504,42 @@ async function resolveTispPackageRouter(input) {
 }
 
 /**
- * INSERT the catalog package on TISP; on duplicate retry as UPDATE.
+ * INSERT the catalog package on TISP; on duplicate UPDATE in place.
+ * When previousPackageLabel differs, UPDATE renames via NewPackageDescription.
  */
 async function ensureTispPackage(input, meta = {}) {
   const popName = await resolveTispPackageRouter(input);
   const resolved = { ...input, popName };
+  const currentLabel = resolveTispPackageDescription(resolved);
+  const previousLabel = String(
+    meta.previousPackageLabel || input.previousPackageLabel || ""
+  ).trim();
+
+  if (previousLabel && previousLabel !== currentLabel) {
+    const updatePayload = buildTispSetPackagePayload(
+      {
+        ...resolved,
+        packageLabel: previousLabel,
+        usePackageLabelAsIs: true,
+        newPackageDescription: currentLabel,
+      },
+      "UPDATE"
+    );
+    try {
+      return await postSetPackageDetails(updatePayload, {
+        ...meta,
+        operation: "set_package_update",
+      });
+    } catch (err) {
+      if (
+        !isTispPackageMissingError(err) &&
+        !isTispAccountMissingError(err)
+      ) {
+        throw err;
+      }
+    }
+  }
+
   const createPayload = buildTispSetPackagePayload(resolved, "INSERT");
   try {
     return await postSetPackageDetails(createPayload, {
@@ -1315,11 +1547,22 @@ async function ensureTispPackage(input, meta = {}) {
       operation: "set_package_create",
     });
   } catch (err) {
-    if (!isTispDuplicateAccountError(err)) throw err;
+    if (
+      !isTispDuplicatePackageError(err) &&
+      !isTispDuplicateAccountError(err)
+    ) {
+      throw err;
+    }
     const id = extractTispDuplicateRecordId(err);
-    const updatePayload = {
-      ...buildTispSetPackagePayload({ ...resolved, Id: id }, "UPDATE"),
-    };
+    const updatePayload = buildTispSetPackagePayload(
+      {
+        ...resolved,
+        Id: id,
+        packageLabel: currentLabel,
+        usePackageLabelAsIs: true,
+      },
+      "UPDATE"
+    );
     return postSetPackageDetails(updatePayload, {
       ...meta,
       operation: "set_package_update",
@@ -1334,19 +1577,49 @@ function productLooksDstvOnly(product) {
   );
 }
 
+function tispLabelFromProduct(product) {
+  if (!product || productLooksDstvOnly(product)) return "";
+  return buildTispPackageLabel({
+    planName: product.planName || product.plan_name,
+    categoryName: product.categoryName || product.category_name,
+    categoryCode: product.categoryCode || product.category_code,
+    productName: product.name,
+    paymentFrequency:
+      product.paymentFrequency || product.payment_frequency || "monthly",
+    customPeriodDays:
+      product.customPeriodDays ?? product.custom_period_days,
+    price:
+      product.price ??
+      product.packagePrice ??
+      product.package_price ??
+      product.monthlyPrice ??
+      product.monthly_price ??
+      0,
+    mbps: product.mbps ?? product.product_mbps,
+    extraBandwidth: product.extraBandwidth ?? product.extra_bandwidth ?? 0,
+  });
+}
+
 /**
- * Push a local building product's catalog label to TISP (not per-building price).
- * Soft callers should catch — local package save stays source of truth.
+ * Push a local building product onto TISP with the same unique package name.
+ * Pass previousPackageLabel on edit so TISP UPDATEs / renames the existing row.
  */
 async function syncProductToTisp(product, meta = {}) {
   if (!product || productLooksDstvOnly(product)) {
     return { ok: true, skipped: true, reason: "dstv_only" };
   }
-  const packageLabel = buildTispPackageLabel({
-    planName: product.planName || product.plan_name,
-    categoryName: product.categoryName || product.category_name,
-    productName: product.name,
-  });
+  const paymentFrequency =
+    product.paymentFrequency || product.payment_frequency || "monthly";
+  const customPeriodDays =
+    product.customPeriodDays ?? product.custom_period_days;
+  const price =
+    product.price ??
+    product.packagePrice ??
+    product.package_price ??
+    product.monthlyPrice ??
+    product.monthly_price ??
+    0;
+  const packageLabel = tispLabelFromProduct(product);
   if (!packageLabel) {
     return { ok: true, skipped: true, reason: "no_catalog_label" };
   }
@@ -1358,7 +1631,9 @@ async function syncProductToTisp(product, meta = {}) {
         product.extraBandwidth ?? product.extra_bandwidth ?? 0,
       popName: product.popName || product.pop_name,
       buildingId: product.buildingId ?? product.building_id,
-      price: product.monthlyPrice ?? product.monthly_price ?? 0,
+      paymentFrequency,
+      customPeriodDays,
+      price,
       ipSetup: product.ipSetup || product.ip_setup,
     },
     meta
@@ -1376,67 +1651,49 @@ async function syncProductToTispSafe(product, meta = {}) {
 }
 
 /**
- * Upsert every internet catalog package (plan × category) onto TISP.
- * DSTV-only is skipped — those customers are not provisioned on TISP.
+ * Push every local internet package (building product) onto TISP.
+ * Unique TISP names are sent once. DSTV-only is skipped.
  */
 async function syncCatalogPackagesToTisp(meta = {}) {
-  const catalogStore = require("../services/packageCatalogStore");
-  const { listPops } = require("../services/customerModuleStore");
-  const catalog = await catalogStore.listPackageCatalog();
-  const { pops } = await listPops();
-  const popTargets = [];
-  const seenPops = new Set();
-  for (const pop of pops || []) {
-    const popName = String(pop.name || pop.popName || "").trim();
-    if (!popName || seenPops.has(popName)) continue;
-    seenPops.add(popName);
-    popTargets.push({
-      popName,
-      ipSetup: pop.ipSetup || pop.ip_setup || "",
-    });
-  }
+  const store = require("../services/customerModuleStore");
+  const listed = await store.listProducts({ unpaginated: true });
+  const products = listed?.products || listed?.data || [];
   const results = [];
   const seen = new Set();
 
-  for (const category of catalog || []) {
-    if (catalogStore.isDstvOnlyCategory(category.code)) continue;
-    for (const plan of category.plans || []) {
-      const monthly = (plan.variants || []).find(
-        (v) => v.paymentFrequency === "monthly"
-      );
-      const packageLabel = buildTispPackageLabel({
-        planName: plan.name,
-        categoryName: category.name,
+  for (const product of products) {
+    if (productLooksDstvOnly(product)) continue;
+    const packageLabel = buildTispPackageLabel({
+      planName: product.planName || product.plan_name,
+      categoryName: product.categoryName || product.category_name,
+      categoryCode: product.categoryCode || product.category_code,
+      productName: product.name,
+      paymentFrequency: product.paymentFrequency || product.payment_frequency,
+      customPeriodDays: product.customPeriodDays ?? product.custom_period_days,
+      price: product.price,
+      mbps: product.mbps,
+      extraBandwidth: product.extraBandwidth ?? product.extra_bandwidth ?? 0,
+    });
+    if (!packageLabel) {
+      results.push({
+        productId: product.id,
+        ok: true,
+        skipped: true,
+        reason: "no_catalog_label",
       });
-      if (!packageLabel) continue;
-      const targets = popTargets.length ? popTargets : [];
-      if (!targets.length) continue;
-      for (const { popName, ipSetup } of targets) {
-        const key = `${packageLabel}::${popName}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        try {
-          await ensureTispPackage(
-            {
-              packageLabel,
-              mbps: monthly ? Number(monthly.defaultMbps) : 0,
-              popName,
-              ipSetup,
-              price: monthly?.price ?? monthly?.defaultPrice ?? 0,
-            },
-            meta
-          );
-          results.push({ packageLabel, popName, ok: true });
-        } catch (err) {
-          results.push({
-            packageLabel,
-            popName,
-            ok: false,
-            error: err.message,
-          });
-        }
-      }
+      continue;
     }
+    if (seen.has(packageLabel)) continue;
+    seen.add(packageLabel);
+    const tisp = await syncProductToTispSafe(product, meta);
+    results.push({
+      packageLabel,
+      productId: product.id,
+      popName: product.popName || product.pop_name,
+      ok: tisp.ok !== false,
+      skipped: tisp.skipped || false,
+      error: tisp.error || null,
+    });
   }
 
   return results;
@@ -1475,12 +1732,14 @@ module.exports = {
   hasLocalTispAccountEvidence,
   shouldAllowTispCreateFallback,
   isTispDuplicateAccountError,
+  isTispDuplicatePackageError,
   extractTispDuplicateAccountId,
   extractTispDuplicateRecordId,
   extractTispClientAccountId,
   isTispAccountMissingError,
   isTispPackageMissingError,
   ensureTispPackage,
+  tispLabelFromProduct,
   syncProductToTisp,
   syncProductToTispSafe,
   syncCatalogPackagesToTisp,

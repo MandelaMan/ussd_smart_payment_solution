@@ -318,7 +318,7 @@ export function ProductsPage() {
     }
     setSubmitting(true);
     try {
-      await api.createProduct({
+      const res = await api.createProduct({
         planVariantId: selectedVariant.id,
         buildingId: Number(buildingId),
         mbps: isDstvOnly
@@ -330,7 +330,16 @@ export function ProductsPage() {
         monthlyPrice: monthlyPrice ? Number(monthlyPrice) : undefined,
         extraBandwidth: isDstvOnly ? 0 : extraBandwidth ? Number(extraBandwidth) : 0,
       });
-      toaster.create({ title: "Building price saved", type: "success" });
+      if (res.tisp?.ok === false) {
+        toaster.create({
+          title: `Package saved, but TISP create failed: ${res.tisp.error || "unknown error"}`,
+          type: "warning",
+        });
+      } else if (res.tisp?.skipped) {
+        toaster.create({ title: "Building price saved", type: "success" });
+      } else {
+        toaster.create({ title: "Package saved and created on TISP", type: "success" });
+      }
       resetForm();
       setShowForm(false);
       await load({ bustCache: true });
@@ -372,7 +381,13 @@ export function ProductsPage() {
           prev.map((p) => (p.id === res.product.id ? res.product : p))
         );
       }
-      toaster.create({ title: "Package updated", type: "success" });
+      toaster.create({
+        title:
+          res.tisp?.ok === false
+            ? `Package updated locally, but TISP update failed: ${res.tisp.error || "unknown error"}`
+            : "Package updated",
+        type: res.tisp?.ok === false ? "warning" : "success",
+      });
       closeEdit();
       setExpanded(expandedId);
       await load({ bustCache: true });

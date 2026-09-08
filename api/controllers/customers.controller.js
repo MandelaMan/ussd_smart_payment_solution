@@ -116,6 +116,9 @@ const {
   summarizeOverdueZohoInvoices,
   selectOverdueZohoInvoicesToVoid,
 } = require("../utils/zohoInvoiceStatus");
+const {
+  buildZohoContactPersonsPayload,
+} = require("../utils/zohoContactPersons");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 
 function notifyCustomersChanged(customerId, action = "updated") {
@@ -255,72 +258,6 @@ function resolveZohoPersonNames(customer) {
   };
 }
 
-function isZohoPrimaryContactPerson(value) {
-  // Zoho may return boolean, 0/1, or the strings "true"/"false".
-  // Never use Boolean(value) — Boolean("false") === true.
-  if (value === true || value === 1 || value === "1") return true;
-  if (typeof value === "string" && value.trim().toLowerCase() === "true") {
-    return true;
-  }
-  return false;
-}
-
-function pickPrimaryZohoContactPerson(contact) {
-  const persons = contact?.contact_persons || [];
-  if (!Array.isArray(persons) || persons.length === 0) return null;
-  return persons.find((p) => isZohoPrimaryContactPerson(p.is_primary_contact)) || persons[0];
-}
-
-function buildZohoContactPersonPayload(existingContact, personFields) {
-  const existingPerson = pickPrimaryZohoContactPerson(existingContact);
-  // Zoho rejects is_primary_contact:false on contact PUT for many orgs —
-  // only send true on the designated primary person.
-  const person = { ...personFields, is_primary_contact: true };
-  if (existingPerson?.contact_person_id) {
-    person.contact_person_id = existingPerson.contact_person_id;
-  }
-  return person;
-}
-
-/**
- * Zoho deletes omitted contact_persons on PUT. Preserve non-primary persons
- * so updates do not look like deletes (error 3043 on contacts with recurring invoices).
- *
- * Do not send is_primary_contact:false — Zoho returns code 2
- * "Invalid value passed for is_primary_contact" for that on contact updates
- * (seen on apartment moves when billing CC persons are preserved).
- */
-function buildZohoContactPersonsPayload(existingContact, primaryFields) {
-  const persons = Array.isArray(existingContact?.contact_persons)
-    ? existingContact.contact_persons
-    : [];
-  const primary = buildZohoContactPersonPayload(existingContact, primaryFields);
-  if (persons.length <= 1) return [primary];
-
-  const primaryId = primary.contact_person_id
-    ? String(primary.contact_person_id)
-    : null;
-  return persons.map((p) => {
-    const id = p?.contact_person_id ? String(p.contact_person_id) : null;
-    const isPrimaryRow =
-      (primaryId && id === primaryId) ||
-      (!primaryId && isZohoPrimaryContactPerson(p.is_primary_contact));
-    if (isPrimaryRow) {
-      return primary;
-    }
-    const secondary = {
-      contact_person_id: p.contact_person_id,
-      first_name: p.first_name || "",
-      last_name: p.last_name || "",
-    };
-    if (p.email) secondary.email = p.email;
-    if (p.phone) secondary.phone = p.phone;
-    if (p.mobile || p.phone) secondary.mobile = p.mobile || p.phone;
-    // Intentionally omit is_primary_contact on secondaries.
-    return secondary;
-  });
-}
-
 const { buildZohoBillingAddress } = require("../utils/zohoBillingAddress");
 
 async function buildZohoContactPayload(customer, existingContact = null) {
@@ -382,18 +319,12 @@ async function buildZohoContactPayload(customer, existingContact = null) {
     payload.billing_address = billingAddress;
   }
 
-  if (!isB2B && (firstName || lastName || displayName)) {
+  // Zoho payment reminders email the contact *person*, not the customer-level
+  // address. Always keep a person with the invoice email when we have one.
+  if (email || firstName || lastName || displayName) {
     payload.contact_persons = buildZohoContactPersonsPayload(existingContact, {
-      first_name: firstName || displayName,
-      last_name: lastName || firstName || displayName,
-      email,
-      phone,
-      mobile: phone,
-    });
-  } else if (isB2B && displayName && displayName !== companyName) {
-    payload.contact_persons = buildZohoContactPersonsPayload(existingContact, {
-      first_name: firstName || displayName,
-      last_name: lastName || companyName,
+      first_name: firstName || displayName || companyName,
+      last_name: lastName || (isB2B ? companyName : firstName || displayName || companyName),
       email,
       phone,
       mobile: phone,
@@ -1514,6 +1445,7 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
       ctx.extraBandwidth ??
       0,
     categoryName: ctx.category_name ?? ctx.categoryName,
+    categoryCode: ctx.category_code ?? ctx.categoryCode,
     productName: ctx.product_name ?? ctx.productName,
     apartmentNumber,
     tispPassword: ctx.tisp_password ?? ctx.tispPassword,
@@ -1521,7 +1453,9 @@ function tispPayloadInput(ctx, buildingName, options = {}) {
     ipAddress: ctx.ip_address ?? ctx.ipAddress,
     email: resolveEffectiveCustomerEmail(tispContactCustomer, agencyContact),
     phone: resolveEffectiveCustomerPhone(tispContactCustomer, agencyContact),
-    // Do not pass paymentFrequency — TISP BillingCycle is always Monthly.
+    // BillingCycle stays Monthly on TISP; frequency only uniquifies Package.
+    paymentFrequency: ctx.payment_frequency ?? ctx.paymentFrequency,
+    customPeriodDays: ctx.custom_period_days ?? ctx.customPeriodDays,
     isVatExempt: Boolean(ctx.is_vat_exempt ?? ctx.isVatExempt),
     agencyName: ctx.agency_name ?? ctx.agencyName ?? null,
     agencyContactPerson: ctx.agency_contact_person ?? ctx.agencyContactPerson ?? null,
@@ -2471,7 +2405,7 @@ async function getCustomerIntegrations(req, res, next) {
  * invoice/recurring/due-date controls from the edit form.
  *
  * Always applies:
- * - TISP package = `{PLAN} - {CATEGORY}` (e.g. BASIC PLUS - INTERNET + APARTONET CHANNELS); real TISP errors fail the sync and are logged
+ * - TISP package = `{MBPS}_{PLAN}_{INT|INT_APT|INT_DSTV_APT}_{MONTHLY}_{COST}` (e.g. 80_BASIC_INT_MONTHLY_2); real TISP errors fail the sync and are logged
  * - Live Client Status refresh after every successful TISP write
  * - Zoho lookup by customer number → email → name; update existing (by snapshot
  *   id first) instead of creating duplicates

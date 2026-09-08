@@ -26,6 +26,9 @@ const TISP_RELEASE_PLACEHOLDER_IP = "0.0.0.0";
  */
 const TISP_PPOE_PLACEHOLDER_STATIC_IP = "10.2.2.2";
 
+/** SetPackageDetails PackageIPPool — required for PPPOE, empty for IP/STATIC. */
+const TISP_PPOE_PACKAGE_IP_POOL = "192.168.85.2-192.168.85.254";
+
 function isTispPlaceholderIp(ip) {
   const value = String(ip || "").trim();
   return (
@@ -39,5 +42,6 @@ module.exports = {
   TISP_BILLING_CYCLE,
   TISP_RELEASE_PLACEHOLDER_IP,
   TISP_PPOE_PLACEHOLDER_STATIC_IP,
+  TISP_PPOE_PACKAGE_IP_POOL,
   isTispPlaceholderIp,
 };

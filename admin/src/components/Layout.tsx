@@ -11,22 +11,22 @@ import {
   MOBILE_BOTTOM_NAV_H,
   MOBILE_BOTTOM_NAV_OFFSET,
 } from "../lib/mobileNav";
-import { MobileSearchProvider, useMobileSearchOptional } from "../lib/mobileSearch";
+import { MobileSearchProvider, useMobileSearchClose, useMobileSearchOpen } from "../lib/mobileSearch";
 
 /** Float the pill 8px above the visible bottom — never safe-area (that paints the dead strip). */
 const MOBILE_NAV_BOTTOM = MOBILE_BOTTOM_NAV_GAP;
 
 function LayoutShell() {
   const [open, setOpen] = useState(false);
-  const mobileSearch = useMobileSearchOptional();
-  const hideBottomNav = Boolean(mobileSearch?.searchOpen);
+  const searchOpen = useMobileSearchOpen();
+  const closeSearch = useMobileSearchClose();
+  const hideBottomNav = searchOpen;
   const { pathname } = useLocation();
 
   useEffect(() => {
-    mobileSearch?.closeSearch();
+    closeSearch?.();
     // Reset search chrome when navigating between modules.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
+  }, [pathname, closeSearch]);
 
   return (
     <Flex

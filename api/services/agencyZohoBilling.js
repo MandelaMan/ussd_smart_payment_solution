@@ -28,6 +28,8 @@ const {
   updateRecurringInvoice_JS,
   getRecurringInvoices_JS,
   stopRecurringInvoice_JS,
+  resolveInvoiceEmailContactPersons,
+  associateEmailContactPersonsOnOpenInvoices,
 } = require("../controllers/zoho.controller");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
@@ -48,6 +50,29 @@ function withTax(lineItem) {
     lineItem.tax_id = ZOHO_VAT_TAX_ID;
   }
   return lineItem;
+}
+
+async function attachAgencyInvoiceEmailPersons(payload, zohoContact) {
+  if (!zohoContact?.contact_id) return payload;
+  const fields = await resolveInvoiceEmailContactPersons(zohoContact.contact_id, {
+    contact: zohoContact,
+  });
+  if (fields) Object.assign(payload, fields);
+  return payload;
+}
+
+async function repairAgencyOpenInvoiceEmails(zohoContact) {
+  if (!zohoContact?.contact_id) return;
+  try {
+    await associateEmailContactPersonsOnOpenInvoices(zohoContact.contact_id, {
+      contact: zohoContact,
+    });
+  } catch (e) {
+    console.warn(
+      "agency open-invoice contact person repair skipped:",
+      e.message || e
+    );
+  }
 }
 
 function billableManagedHouses(customers = []) {
@@ -175,14 +200,21 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
           ? { ...item, line_item_id: prev.line_item_id }
           : item;
       });
-      const updated = await updateRecurringInvoice_JS(id, {
-        recurrence_name: recurrenceName,
-        reference_number: referenceNumber,
-        line_items: merged,
-        is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
-        payment_terms: terms.payment_terms,
-        payment_terms_label: terms.payment_terms_label,
-      });
+      const updated = await updateRecurringInvoice_JS(
+        id,
+        await attachAgencyInvoiceEmailPersons(
+          {
+            recurrence_name: recurrenceName,
+            reference_number: referenceNumber,
+            line_items: merged,
+            is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+            payment_terms: terms.payment_terms,
+            payment_terms_label: terms.payment_terms_label,
+          },
+          zohoContact
+        )
+      );
+      await repairAgencyOpenInvoiceEmails(zohoContact);
       return {
         created: false,
         updated: true,
@@ -213,11 +245,14 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
     is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
     payment_terms: terms.payment_terms,
     payment_terms_label: terms.payment_terms_label,
+    contact: zohoContact,
   });
 
   if (!created?.recurring_invoice_id && !created?.recurringinvoice_id) {
     throw new Error("Zoho agency recurring invoice creation failed");
   }
+
+  await repairAgencyOpenInvoiceEmails(zohoContact);
 
   return {
     created: true,
@@ -265,6 +300,7 @@ async function createAgencyInitialInvoice(agency, zohoContact, customers = null)
     due_date: computeInvoiceDueDate({ customerType: "B2B" }),
     payment_terms: terms.payment_terms,
     payment_terms_label: terms.payment_terms_label,
+    contact: zohoContact,
   });
 
   if (!invoice?.invoice_id) {
@@ -312,6 +348,7 @@ async function createManagedHouseSignupInvoice(agency, zohoContact, customer) {
     due_date: computeInvoiceDueDate({ customerType: "B2B" }),
     payment_terms: terms.payment_terms,
     payment_terms_label: terms.payment_terms_label,
+    contact: zohoContact,
   });
 
   if (!invoice?.invoice_id) {

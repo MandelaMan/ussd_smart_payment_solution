@@ -25,6 +25,18 @@ import { warmSharedLookups } from "./sharedLookups";
 import { canAccessConfig } from "./rbac";
 import { cacheInvalidate } from "./moduleDataCache";
 
+function sessionUserUnchanged(prev: User | null, next: User) {
+  if (!prev) return false;
+  return (
+    prev.id === next.id &&
+    prev.role === next.role &&
+    Boolean(prev.mustChangePassword) === Boolean(next.mustChangePassword) &&
+    (prev.impersonating?.impersonator?.id ?? null) ===
+      (next.impersonating?.impersonator?.id ?? null) &&
+    JSON.stringify(prev.permissions || []) === JSON.stringify(next.permissions || [])
+  );
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -153,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         impersonating: nextUser.impersonating || null,
       };
       setSessionCache({ user: normalized, expiresAt: expiresAt ?? null });
-      setUser(normalized);
+      setUser((prev) => (sessionUserUnchanged(prev, normalized) ? prev : normalized));
       setLoading(false);
       scheduleSessionExpiry(expiresAt);
     },

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Box,
   Flex,
@@ -29,6 +29,10 @@ import { DashboardSkeleton } from "../components/PageSkeletons";
 import { BRAND } from "../theme";
 import { SelectField } from "../components/ui/SelectField";
 import { PageHeader } from "../components/ui/pageLayout";
+import {
+  LIVE_REFRESH_INTERVAL_MS,
+  useVisibilityRefresh,
+} from "../hooks/useVisibilityRefresh";
 
 const CHANGE_COLORS = [BRAND.cerulean, BRAND.sandyBrown, BRAND.paleAzure, "#805ad5", "#e53e3e"];
 
@@ -79,25 +83,35 @@ export function PartnerDashboardPage() {
   const [months, setMonths] = useState("12");
   const [data, setData] = useState<PartnerDashboard | null>(null);
   const [loading, setLoading] = useState(true);
+  const loadInFlightRef = useRef(false);
+  const loadGenRef = useRef(0);
+
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (silent && loadInFlightRef.current) return;
+    const gen = ++loadGenRef.current;
+    loadInFlightRef.current = true;
+    if (!silent) setLoading(true);
+    try {
+      const res = await api.getPartnerDashboard(Number(months));
+      if (gen !== loadGenRef.current) return;
+      setData(res);
+    } catch {
+      if (gen !== loadGenRef.current) return;
+      if (!silent) setData(null);
+    } finally {
+      if (gen === loadGenRef.current) loadInFlightRef.current = false;
+      if (gen === loadGenRef.current && !silent) setLoading(false);
+    }
+  }, [months]);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    api
-      .getPartnerDashboard(Number(months))
-      .then((res) => {
-        if (!cancelled) setData(res);
-      })
-      .catch(() => {
-        if (!cancelled) setData(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [months]);
+    void load();
+  }, [load]);
+
+  useVisibilityRefresh(() => {
+    void load({ silent: true });
+  }, LIVE_REFRESH_INTERVAL_MS);
 
   const packageChangeData = useMemo(() => {
     if (!data) return [];

@@ -8,9 +8,11 @@ const {
   stringifyTispPackagePayload,
   isTispPackageMissingError,
   extractTispDuplicateRecordId,
+  isTispDuplicatePackageError,
   syncProductToTisp,
   buildTispPackageLabel,
   pickTispRouterPopName,
+  buildTispCreateClientPayload,
 } = require("../../api/controllers/tisp.controller");
 
 const BASE_PACKAGE = {
@@ -18,6 +20,7 @@ const BASE_PACKAGE = {
   mbps: 100,
   popName: "Enaki",
   ipSetup: "STATIC",
+  paymentFrequency: "monthly",
   price: 4500,
 };
 
@@ -39,7 +42,7 @@ describe("TISP SetPackageDetails payload", () => {
     assert.equal(payload.TransactionType, "INSERT");
     assert.equal(
       payload.PackageDescription,
-      "BASIC PLUS - INTERNET + APARTONET CHANNELS"
+      "200_BASIC_PLUS_INT_APT_MONTHLY_4501"
     );
     assert.equal(payload.NewPackageDescription, "");
     assert.equal(payload.PackageType, "IP");
@@ -62,14 +65,16 @@ describe("TISP SetPackageDetails payload", () => {
     );
     assert.equal(payload.PackageType, "PPPOE");
     assert.equal(payload.Router, "ENAKI");
+    assert.equal(payload.PackageIPPool, "192.168.85.2-192.168.85.254");
     const wire = stringifyTispPackagePayload(payload);
     assert.match(wire, /"PackageType":"PPPOE"/);
-    assert.match(wire, /"NewPackageDescription":"", "Router":"ENAKI"/);
+    assert.match(wire, /"PackageIPPool":"192.168.85.2-192.168.85.254"/);
   });
 
-  it("sets PackageType IP when the building/POP is STATIC", () => {
+  it("sets PackageType IP when the building/POP is STATIC and leaves PackageIPPool blank", () => {
     const payload = buildTispSetPackagePayload(BASE_PACKAGE, "INSERT");
     assert.equal(payload.PackageType, "IP");
+    assert.equal(payload.PackageIPPool, "");
   });
 
   it("sends Router as POP name, never building name", () => {
@@ -90,6 +95,7 @@ describe("TISP SetPackageDetails payload", () => {
       { name: "Enaki" },
       { name: "Colosseum" },
       { name: "Skynest" },
+      { name: "Brookside Terraces" },
     ];
     const buildings = [
       { name: "Azalea Heights", popName: "Azalea" },
@@ -124,7 +130,7 @@ describe("TISP SetPackageDetails payload", () => {
     const wire = stringifyTispPackagePayload(payload);
     assert.equal(
       wire,
-      '{"TransactionType":"INSERT", "PackageType":"IP", "PackageDescription":"BASIC - INTERNET ONLY", "NewPackageDescription":"", "Router":"ENAKI", "UploadSpeed":"100", "DownloadSpeed":"100", "Cost":"4500", "PackageIPPool":"", "ShortCode":"000000"}'
+      '{"TransactionType":"INSERT", "PackageType":"IP", "PackageDescription":"100_BASIC_INT_MONTHLY_4500", "NewPackageDescription":"", "Router":"ENAKI", "UploadSpeed":"100", "DownloadSpeed":"100", "Cost":"4500", "PackageIPPool":"", "ShortCode":"000000"}'
     );
   });
 
@@ -143,11 +149,32 @@ describe("TISP SetPackageDetails payload", () => {
     const wire = stringifyTispPackagePayload(payload);
     assert.match(wire, /^\{"Id":"61754fdd-ace2-4c27-b3a0-a17f091dda1e"/);
     assert.match(wire, /"TransactionType":"UPDATE", "PackageType"/);
-    assert.match(wire, /"PackageDescription":"PREMIUM - INTERNET ONLY"/);
+    assert.match(wire, /"PackageDescription":"250_PREMIUM_INT_MONTHLY_4500"/);
     assert.match(wire, /"NewPackageDescription":""/);
     assert.match(wire, /"UploadSpeed":"250"/);
     assert.match(wire, /"DownloadSpeed":"250"/);
     assert.match(wire, /"ShortCode":"000000"/);
+  });
+
+  it("UPDATE rename keeps the old TISP name and sets NewPackageDescription", () => {
+    const payload = buildTispSetPackagePayload(
+      {
+        packageLabel: "80_BASIC_INT_MONTHLY_21",
+        usePackageLabelAsIs: true,
+        newPackageDescription: "80_BASIC_INT_MONTHLY_25",
+        mbps: 80,
+        price: 25,
+        paymentFrequency: "monthly",
+        popName: "Colosseum",
+        ipSetup: "STATIC",
+      },
+      "UPDATE"
+    );
+    assert.equal(payload.TransactionType, "UPDATE");
+    assert.equal(payload.PackageDescription, "80_BASIC_INT_MONTHLY_21");
+    assert.equal(payload.NewPackageDescription, "80_BASIC_INT_MONTHLY_25");
+    assert.equal(payload.Cost, "25");
+    assert.equal(payload.UploadSpeed, "80");
   });
 
   it("sets NewPackageDescription only when renaming on UPDATE", () => {
@@ -158,8 +185,14 @@ describe("TISP SetPackageDetails payload", () => {
       },
       "UPDATE"
     );
-    assert.equal(payload.PackageDescription, "BASIC - INTERNET ONLY");
-    assert.equal(payload.NewPackageDescription, "PREMIUM PLUS - INTERNET ONLY");
+    assert.equal(
+      payload.PackageDescription,
+      "100_BASIC_INT_MONTHLY_4500"
+    );
+    assert.equal(
+      payload.NewPackageDescription,
+      "100_PREMIUM_PLUS_INT_MONTHLY_4500"
+    );
   });
 
   it("keeps unused optional fields in the body as empty strings", () => {
@@ -236,6 +269,17 @@ describe("TISP package missing / duplicate helpers", () => {
       "61754fdd-ace2-4c27-b3a0-a17f091dda1e"
     );
   });
+
+  it("detects Duplicate Package Exists without a UUID", () => {
+    assert.equal(
+      isTispDuplicatePackageError("Failed. Duplicate Package Exists."),
+      true
+    );
+    assert.equal(
+      extractTispDuplicateRecordId("Failed. Duplicate Package Exists."),
+      ""
+    );
+  });
 });
 
 describe("syncProductToTisp skips DSTV-only", () => {
@@ -250,13 +294,111 @@ describe("syncProductToTisp skips DSTV-only", () => {
     assert.equal(result.reason, "dstv_only");
   });
 
-  it("builds the same label SetClientDetails uses", () => {
+  it("shortens catalog categories to INT / INT_APT / INT_DSTV_APT", () => {
+    assert.equal(
+      buildTispPackageLabel({
+        planName: "Basic",
+        categoryName: "Internet Only",
+        paymentFrequency: "monthly",
+        mbps: 80,
+        price: 2,
+      }),
+      "80_BASIC_INT_MONTHLY_2"
+    );
+    assert.equal(
+      buildTispPackageLabel({
+        planName: "Basic Plus",
+        categoryName: "Internet + Apartonet Channels",
+        paymentFrequency: "quarterly",
+        mbps: 150,
+        price: 12000,
+      }),
+      "150_BASIC_PLUS_INT_APT_QUARTERLY_12000"
+    );
     assert.equal(
       buildTispPackageLabel({
         planName: "Premium Plus",
         categoryName: "Internet + DSTV Channels + Apartonet Channels",
+        paymentFrequency: "yearly",
+        mbps: 250,
+        price: 45000,
       }),
-      "PREMIUM PLUS - INTERNET + DSTV CHANNELS + APARTONET CHANNELS"
+      "250_PREMIUM_PLUS_INT_DSTV_APT_YEARLY_45000"
+    );
+  });
+
+  it("builds the same label SetClientDetails uses, including frequency and cost", () => {
+    assert.equal(
+      buildTispPackageLabel({
+        planName: "Premium Plus",
+        categoryName: "Internet + DSTV Channels + Apartonet Channels",
+        paymentFrequency: "monthly",
+        mbps: 250,
+        price: 0,
+      }),
+      "250_PREMIUM_PLUS_INT_DSTV_APT_MONTHLY_0"
+    );
+  });
+
+  it("keeps the same catalog name unique when frequency or cost differs", () => {
+    const base = {
+      planName: "Premium Plus",
+      categoryName: "Internet + DSTV Channels + Apartonet Channels",
+      mbps: 250,
+    };
+    assert.equal(
+      buildTispPackageLabel({ ...base, paymentFrequency: "monthly", price: 4500 }),
+      "250_PREMIUM_PLUS_INT_DSTV_APT_MONTHLY_4500"
+    );
+    assert.equal(
+      buildTispPackageLabel({ ...base, paymentFrequency: "yearly", price: 4500 }),
+      "250_PREMIUM_PLUS_INT_DSTV_APT_YEARLY_4500"
+    );
+    assert.equal(
+      buildTispPackageLabel({ ...base, paymentFrequency: "monthly", price: 6500 }),
+      "250_PREMIUM_PLUS_INT_DSTV_APT_MONTHLY_6500"
+    );
+    assert.equal(
+      buildTispPackageLabel({
+        ...base,
+        paymentFrequency: "custom",
+        customPeriodDays: 90,
+        price: 4500,
+      }),
+      "250_PREMIUM_PLUS_INT_DSTV_APT_CUSTOM_90_4500"
+    );
+  });
+
+  it("does not append frequency and cost twice", () => {
+    const payload = buildTispSetPackagePayload({
+      ...BASE_PACKAGE,
+      packageLabel: "100_BASIC_INT_MONTHLY_4500",
+    });
+    assert.equal(
+      payload.PackageDescription,
+      "100_BASIC_INT_MONTHLY_4500"
+    );
+  });
+
+  it("uses the same unique label on SetClientDetails Package", () => {
+    const payload = buildTispCreateClientPayload({
+      firstName: "Jane",
+      lastName: "Doe",
+      customerNumber: "ET-401A",
+      planName: "Premium Plus",
+      categoryName: "Internet + DSTV Channels + Apartonet Channels",
+      paymentFrequency: "yearly",
+      price: 12000,
+      mbps: 250,
+      apartmentNumber: "401A",
+      tispPassword: "Ab1!xyz",
+      popName: "Enaki",
+      ipSetup: "STATIC",
+      ipAddress: "10.10.10.25",
+    });
+    assert.equal(
+      payload.Package,
+      "250_PREMIUM_PLUS_INT_DSTV_APT_YEARLY_12000"
     );
   });
 });

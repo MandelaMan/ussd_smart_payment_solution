@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Box,
   Flex,
@@ -31,6 +31,10 @@ import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { DashboardSkeleton } from "../components/PageSkeletons";
 import { PageErrorBanner, PAGE_STACK_GAP } from "../components/ui/pageLayout";
 import { SelectField } from "../components/ui/SelectField";
+import {
+  LIVE_REFRESH_INTERVAL_MS,
+  useVisibilityRefresh,
+} from "../hooks/useVisibilityRefresh";
 import { BRAND } from "../theme";
 
 type PeriodDays = 30 | 90;
@@ -212,30 +216,43 @@ export function CeoDashboardPage() {
   const [data, setData] = useState<BiDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const loadInFlightRef = useRef(false);
+  const loadGenRef = useRef(0);
+
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (silent && loadInFlightRef.current) return;
+    const gen = ++loadGenRef.current;
+    loadInFlightRef.current = true;
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
+    const { from, to } = periodBounds(days);
+    try {
+      const res = await api.getBiDashboard({ from, to });
+      if (gen !== loadGenRef.current) return;
+      setData(res);
+      if (!silent) setError("");
+    } catch (e) {
+      if (gen !== loadGenRef.current) return;
+      if (!silent) {
+        setData(null);
+        setError(e instanceof Error ? e.message : "Failed to load briefing");
+      }
+    } finally {
+      if (gen === loadGenRef.current) loadInFlightRef.current = false;
+      if (gen === loadGenRef.current && !silent) setLoading(false);
+    }
+  }, [days]);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-    const { from, to } = periodBounds(days);
-    api
-      .getBiDashboard({ from, to })
-      .then((res) => {
-        if (!cancelled) setData(res);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setData(null);
-          setError(e instanceof Error ? e.message : "Failed to load briefing");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [days]);
+    void load();
+  }, [load]);
+
+  useVisibilityRefresh(() => {
+    void load({ silent: true });
+  }, LIVE_REFRESH_INTERVAL_MS);
 
   const firstName = String(user?.name || "there").trim().split(/\s+/)[0] || "there";
 

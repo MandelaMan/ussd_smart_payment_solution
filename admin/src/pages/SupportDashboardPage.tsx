@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
   Flex,
@@ -31,6 +31,10 @@ import { BRAND } from "../theme";
 import { timeAgo } from "../lib/api";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { useActivitySocket } from "../hooks/useActivitySocket";
+import {
+  LIVE_REFRESH_INTERVAL_MS,
+  useVisibilityRefresh,
+} from "../hooks/useVisibilityRefresh";
 import {
   isVisibleCustomerActivity,
   prependActivityItem,
@@ -177,31 +181,38 @@ export function SupportDashboardPage() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const statsInFlightRef = useRef(false);
+
+  const loadStats = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (silent && statsInFlightRef.current) return;
+    statsInFlightRef.current = true;
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
+    try {
+      const data = await api.getSupportStats("30d");
+      setStats(data);
+      if (!silent) {
+        setActivity(data.activity ?? []);
+        setError("");
+      }
+    } catch (e) {
+      if (!silent) setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      statsInFlightRef.current = false;
+      if (!silent) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError("");
+    void loadStats();
+  }, [loadStats]);
 
-    api
-      .getSupportStats("30d")
-      .then((data) => {
-        if (!cancelled) {
-          setStats(data);
-          setActivity(data.activity ?? []);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useVisibilityRefresh(() => {
+    void loadStats({ silent: true });
+  }, LIVE_REFRESH_INTERVAL_MS);
 
   const onLiveActivity = useCallback(
     (item: ActivityItem) => {

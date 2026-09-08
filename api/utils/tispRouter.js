@@ -8,19 +8,19 @@ function namesMatch(a, b) {
 
 /**
  * TISP Router is the POP name (e.g. Azalea), never the building name.
- * If the candidate matches a POP, use it. If it matches a building, use that
- * building's parent POP — Brookside Terraces → Azalea.
+ * Building names win over leftover POP rows seeded from buildings
+ * (Brookside Terraces POP → Azalea). Same-named POP+building (Enaki) stays Enaki.
  */
 function pickTispRouterPopName(candidate, { pops = [], buildings = [] } = {}) {
   const raw = String(candidate || "").trim();
   if (!raw) return "";
-  const pop = pops.find((p) => namesMatch(p.name || p.popName, raw));
-  if (pop) return String(pop.name || pop.popName).trim();
   const building = buildings.find((b) =>
     namesMatch(b.name || b.buildingName, raw)
   );
   const fromBuilding = building?.popName || building?.pop_name;
   if (fromBuilding) return String(fromBuilding).trim();
+  const pop = pops.find((p) => namesMatch(p.name || p.popName, raw));
+  if (pop) return String(pop.name || pop.popName).trim();
   return raw;
 }
 

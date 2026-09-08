@@ -6,6 +6,8 @@ const {
   stopRecurringInvoice_JS,
   resumeRecurringInvoice_JS,
   getInvoices_JS,
+  resolveInvoiceEmailContactPersons,
+  associateEmailContactPersonsOnOpenInvoices,
 } = require("../controllers/zoho.controller");
 const { isB2BCustomer, resolveAgencyForCustomer } = require("../utils/b2bBilling");
 const { buildSubscriptionLineItems } = require("../utils/zohoInvoiceLineItems");
@@ -195,7 +197,7 @@ async function stopExtraActiveRecurring(profiles = []) {
   }
 }
 
-async function applyRecurringInvoiceEmailCcs(recurringInvoiceId) {
+async function applyRecurringInvoiceEmailCcs(recurringInvoiceId, zohoContact = null) {
   if (!recurringInvoiceId) return false;
   try {
     const { resolveInvoiceCcMailIds } = require("./appSettingsStore");
@@ -206,9 +208,15 @@ async function applyRecurringInvoiceEmailCcs(recurringInvoiceId) {
       );
       return false;
     }
-    await updateRecurringInvoice_JS(String(recurringInvoiceId), {
-      cc_mail_ids: ccMailIds,
-    });
+    const payload = { cc_mail_ids: ccMailIds };
+    const customerId = zohoContact?.contact_id;
+    if (customerId) {
+      const personFields = await resolveInvoiceEmailContactPersons(customerId, {
+        contact: zohoContact,
+      });
+      if (personFields) Object.assign(payload, personFields);
+    }
+    await updateRecurringInvoice_JS(String(recurringInvoiceId), payload);
     return true;
   } catch (e) {
     console.warn(
@@ -389,7 +397,17 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         referenceNumber,
         lineItems: syncLineItems ? lineItem : null,
       });
-      await applyRecurringInvoiceEmailCcs(id);
+      await applyRecurringInvoiceEmailCcs(id, zohoContact);
+      try {
+        await associateEmailContactPersonsOnOpenInvoices(zohoContact.contact_id, {
+          contact: zohoContact,
+        });
+      } catch (e) {
+        console.warn(
+          "Zoho open-invoice contact person repair skipped:",
+          e.message || e
+        );
+      }
       await stopExtraActiveRecurring(extraActives);
       return {
         created: false,
@@ -434,13 +452,24 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     payment_terms: terms.payment_terms,
     payment_terms_label: terms.payment_terms_label,
     customer,
+    contact: zohoContact,
   });
 
   if (!created?.recurring_invoice_id) {
     throw new Error("Zoho recurring invoice creation failed");
   }
 
-  await applyRecurringInvoiceEmailCcs(created.recurring_invoice_id);
+  await applyRecurringInvoiceEmailCcs(created.recurring_invoice_id, zohoContact);
+  try {
+    await associateEmailContactPersonsOnOpenInvoices(zohoContact.contact_id, {
+      contact: zohoContact,
+    });
+  } catch (e) {
+    console.warn(
+      "Zoho open-invoice contact person repair skipped:",
+      e.message || e
+    );
+  }
 
   return {
     created: true,
@@ -634,6 +663,17 @@ async function pushCustomerBillingToZoho(ctx, options = {}) {
       startDate: options.recurringStartDate,
       previousCustomerNumber: previousCustomerNumber || undefined,
     });
+  } else {
+    try {
+      await associateEmailContactPersonsOnOpenInvoices(updatedContact.contact_id, {
+        contact: updatedContact,
+      });
+    } catch (e) {
+      console.warn(
+        "Zoho open-invoice contact person repair skipped:",
+        e.message || e
+      );
+    }
   }
 
   invalidateCustomerZoho(ctx.id);

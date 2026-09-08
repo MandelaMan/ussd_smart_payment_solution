@@ -1,7 +1,5 @@
 const express = require("express");
 const { getLoginStats, zohoWebhook } = require("../controllers/public.controller");
-const { authenticate } = require("../middleware/auth");
-const { requireFinance } = require("../middleware/rbac");
 const {
   publicCors,
   getLeadFormConfig,
@@ -23,7 +21,7 @@ const leadSubmitLimiter = createRateLimiter({
   message: { error: "Too many submissions. Please try again later." },
 });
 
-router.get("/login-stats", authenticate, requireFinance, getLoginStats);
+router.get("/login-stats", getLoginStats);
 router.post("/zoho/webhook", zohoWebhook);
 
 router.options("/leads", (req, res) => {

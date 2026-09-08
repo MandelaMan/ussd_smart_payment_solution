@@ -39,6 +39,10 @@ import { BRAND } from "../theme";
 import { SelectField } from "../components/ui/SelectField";
 import { useMobileViewport } from "../hooks/useMobileViewport";
 import { useActivitySocket } from "../hooks/useActivitySocket";
+import {
+  LIVE_REFRESH_INTERVAL_MS,
+  useVisibilityRefresh,
+} from "../hooks/useVisibilityRefresh";
 import { prependActivityItem } from "../lib/activityFeed";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { useAuth } from "../lib/authContext";
@@ -165,6 +169,10 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState("");
+  const statsReqRef = useRef(0);
+  const statsInFlightRef = useRef(false);
+  const chartReqRef = useRef(0);
+  const chartInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!isMobile || mobileRevenueDefaultApplied.current) return;
@@ -174,28 +182,32 @@ export function DashboardPage() {
     setChartYear(previous.year);
   }, [isMobile]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-
-    api
-      .getStats("30d")
-      .then((s) => {
-        if (cancelled) return;
-        setStats(s);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
+  const loadStats = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (silent && statsInFlightRef.current) return;
+    const req = ++statsReqRef.current;
+    statsInFlightRef.current = true;
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
+    try {
+      const s = await api.getStats("30d");
+      if (req !== statsReqRef.current) return;
+      setStats(s);
+      if (!silent) setError("");
+    } catch (e) {
+      if (req !== statsReqRef.current) return;
+      if (!silent) setError(e instanceof Error ? e.message : "Failed to load stats");
+    } finally {
+      if (req === statsReqRef.current) statsInFlightRef.current = false;
+      if (req === statsReqRef.current && !silent) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
 
   useEffect(() => {
     if (isMobile) {
@@ -227,31 +239,40 @@ export function DashboardPage() {
 
   useActivitySocket(onLiveActivity, !isMobile);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setChartLoading(true);
-    setChartError("");
-
-    api
-      .getRevenueChart(chartMonth, chartYear, { signal: controller.signal })
-      .then((r) => {
-        if (controller.signal.aborted) return;
-        setChartData(r.chart ?? []);
-        setChartError("");
-      })
-      .catch((e) => {
-        if (controller.signal.aborted) return;
+  const loadChart = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (silent && chartInFlightRef.current) return;
+    const req = ++chartReqRef.current;
+    chartInFlightRef.current = true;
+    if (!silent) {
+      setChartLoading(true);
+      setChartError("");
+    }
+    try {
+      const r = await api.getRevenueChart(chartMonth, chartYear);
+      if (req !== chartReqRef.current) return;
+      setChartData(r.chart ?? []);
+      setChartError("");
+    } catch (e) {
+      if (req !== chartReqRef.current) return;
+      if (!silent) {
         setChartData([]);
         setChartError(e instanceof Error ? e.message : "Failed to load chart");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setChartLoading(false);
-      });
-
-    return () => {
-      controller.abort();
-    };
+      }
+    } finally {
+      if (req === chartReqRef.current) chartInFlightRef.current = false;
+      if (req === chartReqRef.current && !silent) setChartLoading(false);
+    }
   }, [chartMonth, chartYear]);
+
+  useEffect(() => {
+    void loadChart();
+  }, [loadChart]);
+
+  useVisibilityRefresh(() => {
+    void loadStats({ silent: true });
+    void loadChart({ silent: true });
+  }, LIVE_REFRESH_INTERVAL_MS);
 
   if (loading && !stats) {
     return <DashboardSkeleton />;

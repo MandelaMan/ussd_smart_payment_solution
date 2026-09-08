@@ -1,44 +1,69 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
-type MobileSearchContextValue = {
+type MobileSearchOpenValue = {
   searchOpen: boolean;
-  searchValue: string;
   setSearchOpen: (open: boolean) => void;
-  setSearchValue: (value: string) => void;
-  /** Close search mode and clear the query. */
   closeSearch: () => void;
-  /** Register the active search field value from MobilePageChrome. */
+};
+
+type MobileSearchQueryValue = {
+  searchValue: string;
+  setSearchValue: (value: string) => void;
   bindSearchValue: (value: string) => void;
 };
 
-const MobileSearchContext = createContext<MobileSearchContextValue | null>(null);
+type MobileSearchContextValue = MobileSearchOpenValue & MobileSearchQueryValue;
+
+const MobileSearchOpenContext = createContext<MobileSearchOpenValue | null>(null);
+const MobileSearchQueryContext = createContext<MobileSearchQueryValue | null>(null);
 
 export function MobileSearchProvider({ children }: { children: ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
 
-  const value = useMemo<MobileSearchContextValue>(
+  const openValue = useMemo<MobileSearchOpenValue>(
     () => ({
       searchOpen,
-      searchValue,
       setSearchOpen,
-      setSearchValue,
       closeSearch: () => {
         setSearchOpen(false);
         setSearchValue("");
       },
+    }),
+    [searchOpen]
+  );
+
+  const queryValue = useMemo<MobileSearchQueryValue>(
+    () => ({
+      searchValue,
+      setSearchValue,
       bindSearchValue: setSearchValue,
     }),
-    [searchOpen, searchValue]
+    [searchValue]
   );
 
   return (
-    <MobileSearchContext.Provider value={value}>{children}</MobileSearchContext.Provider>
+    <MobileSearchOpenContext.Provider value={openValue}>
+      <MobileSearchQueryContext.Provider value={queryValue}>
+        {children}
+      </MobileSearchQueryContext.Provider>
+    </MobileSearchOpenContext.Provider>
   );
 }
 
+function mergeSearchContext(
+  open: MobileSearchOpenValue | null,
+  query: MobileSearchQueryValue | null
+): MobileSearchContextValue | null {
+  if (!open || !query) return null;
+  return { ...open, ...query };
+}
+
 export function useMobileSearch() {
-  const ctx = useContext(MobileSearchContext);
+  const ctx = mergeSearchContext(
+    useContext(MobileSearchOpenContext),
+    useContext(MobileSearchQueryContext)
+  );
   if (!ctx) {
     throw new Error("useMobileSearch must be used within MobileSearchProvider");
   }
@@ -46,5 +71,17 @@ export function useMobileSearch() {
 }
 
 export function useMobileSearchOptional() {
-  return useContext(MobileSearchContext);
+  return mergeSearchContext(
+    useContext(MobileSearchOpenContext),
+    useContext(MobileSearchQueryContext)
+  );
+}
+
+/** Layout chrome: subscribe only to search-open, not each keystroke. */
+export function useMobileSearchOpen() {
+  return Boolean(useContext(MobileSearchOpenContext)?.searchOpen);
+}
+
+export function useMobileSearchClose() {
+  return useContext(MobileSearchOpenContext)?.closeSearch;
 }

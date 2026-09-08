@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -43,18 +44,21 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const userId = user?.id;
+  const loadedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
-    setLoading(true);
+    const firstLoad = !loadedRef.current;
+    if (firstLoad) setLoading(true);
     try {
       const res = await api.listNotifications({ limit: "30" });
       setNotifications(res.notifications || []);
       setUnreadCount(res.unreadCount || 0);
+      loadedRef.current = true;
     } catch {
       /* keep last snapshot */
     } finally {
-      setLoading(false);
+      if (firstLoad) setLoading(false);
     }
   }, [userId]);
 
@@ -97,6 +101,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     if (!userId) {
       setUnreadCount(0);
       setNotifications([]);
+      loadedRef.current = false;
       return;
     }
     void refresh();
@@ -108,14 +113,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     function onVisible() {
       if (document.visibilityState === "visible") void refresh();
     }
-    function onFocus() {
-      void refresh();
-    }
     document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onFocus);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onFocus);
     };
   }, [userId, refresh]);
 

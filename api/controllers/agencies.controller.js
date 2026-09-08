@@ -13,12 +13,14 @@ const {
 const { logActivity } = require("../services/activityLogStore");
 const {
   getCustomerByCompanyName_JS,
+  getContactFull_JS,
   createContact_JS,
   updateContact_JS,
   createInvoice_JS,
   getInvoices_JS,
 } = require("./zoho.controller");
 const { summarizeOverdueZohoInvoices } = require("../utils/zohoInvoiceStatus");
+const { buildZohoContactPersonsPayload } = require("../utils/zohoContactPersons");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
   String(process.env.ZOHO_INVOICE_TAX_INCLUSIVE || "true").toLowerCase() !==
@@ -92,7 +94,7 @@ async function findZohoContactForAgency(agency) {
   return null;
 }
 
-function buildAgencyZohoContactPayload(agency) {
+function buildAgencyZohoContactPayload(agency, existingContact = null) {
   const phone = formatZohoPhone(agency.phone);
   const payload = {
     contact_name: agency.name,
@@ -105,17 +107,14 @@ function buildAgencyZohoContactPayload(agency) {
     payload.phone = phone;
     payload.mobile = phone;
   }
-  if (agency.contactPerson) {
-    payload.contact_persons = [
-      {
-        first_name: String(agency.contactPerson).trim(),
-        last_name: agency.name,
-        email: payload.email,
-        phone,
-        mobile: phone,
-        is_primary_contact: true,
-      },
-    ];
+  if (agency.contactPerson || payload.email) {
+    payload.contact_persons = buildZohoContactPersonsPayload(existingContact, {
+      first_name: String(agency.contactPerson || agency.name || "").trim(),
+      last_name: String(agency.name || "").trim(),
+      email: payload.email,
+      phone,
+      mobile: phone,
+    });
   }
   return payload;
 }
@@ -152,7 +151,9 @@ async function syncAgencyZohoContact(agency, existingContact = null) {
   }
 
   try {
-    const payload = buildAgencyZohoContactPayload(agency);
+    const fullContact =
+      (await getContactFull_JS(contact.contact_id)) || contact;
+    const payload = buildAgencyZohoContactPayload(agency, fullContact);
     const updated = await updateContact_JS(contact.contact_id, payload);
     return updated || contact;
   } catch (e) {
