@@ -225,6 +225,7 @@ export type Product = {
   requiresDecoderFee?: number | null;
   decoderFeeAmount?: number | null;
   buildingDstvSetup?: "headend_coax" | "decoder";
+  customerCount?: number;
 };
 
 export type PackagePlanVariant = {

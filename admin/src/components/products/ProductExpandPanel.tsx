@@ -130,6 +130,36 @@ export function ProductExpandPanel({
           )}
         </Box>
 
+        <Box
+          bg="bg.subtle"
+          border="1px solid"
+          borderColor="border.muted"
+          borderRadius="md"
+          px={{ base: 2.5, md: 4 }}
+          py={{ base: 2, md: 3 }}
+          minW={{ md: "180px" }}
+          w={{ base: "full", md: "auto" }}
+        >
+          <Text
+            fontSize="2xs"
+            fontWeight="semibold"
+            color="fg.muted"
+            textTransform="uppercase"
+            letterSpacing="0.04em"
+            mb={0.5}
+          >
+            Users on this package
+          </Text>
+          <Text fontSize={{ base: "lg", md: "xl" }} fontWeight="bold" color="fg" lineHeight="1.2">
+            {Number(product.customerCount || 0).toLocaleString()}
+          </Text>
+          <Text fontSize={{ base: "xs", md: "sm" }} color="fg.muted" mt={1}>
+            {Number(product.customerCount || 0) === 1
+              ? "1 active customer"
+              : `${Number(product.customerCount || 0).toLocaleString()} active customers`}
+          </Text>
+        </Box>
+
         {extras.length > 0 && (
           <Box
             bg="bg.subtle"

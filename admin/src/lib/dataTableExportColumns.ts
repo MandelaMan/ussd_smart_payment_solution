@@ -38,6 +38,7 @@ export const productExportColumns: ExportColumn<Product>[] = [
   { header: "Mbps", value: (row) => row.mbps },
   { header: "Extra Mbps", value: (row) => row.extraBandwidth },
   { header: "Price", value: (row) => row.price },
+  { header: "Users", value: (row) => Number(row.customerCount || 0) },
   { header: "Frequency", value: (row) => row.paymentFrequency },
   { header: "Active", value: (row) => (row.isActive ? "Yes" : "No") },
 ];

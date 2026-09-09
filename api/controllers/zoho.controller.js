@@ -15,6 +15,12 @@ const {
   invoiceAlreadyHasEmailContactPersons,
   isOpenReminderInvoice,
 } = require("../utils/zohoContactPersons");
+const {
+  withRequiredPaymentGateways,
+  looksLikePaymentGatewayError,
+  withoutPaymentOptions,
+  invoiceHasPaystackPaymentOption,
+} = require("../utils/zohoPaymentOptions");
 require("dotenv").config();
 
 /** ========= Config ========= **/
@@ -269,6 +275,43 @@ async function callZoho(
   if (data) cfg.data = data;
   const { data: body } = await zoho(cfg);
   return body;
+}
+
+/** POST/PUT with Paystack checked; drop the field if Zoho rejects the gateway name. */
+async function callZohoWithPaymentOptions(
+  endpoint,
+  method,
+  payload,
+  extraParams,
+  operation,
+  timeoutMs = 12_000,
+) {
+  const body = withRequiredPaymentGateways(payload || {});
+  try {
+    return await withTimeout(
+      callZoho(endpoint, method, body, extraParams),
+      timeoutMs,
+      operation,
+    );
+  } catch (error) {
+    if (!looksLikePaymentGatewayError(error) || !body.payment_options) {
+      throw error;
+    }
+    console.warn(
+      `${operation}: Paystack payment option rejected, retrying without:`,
+      error.response?.data || error.message,
+    );
+    return await withTimeout(
+      callZoho(
+        endpoint,
+        method,
+        withoutPaymentOptions(body),
+        extraParams,
+      ),
+      timeoutMs,
+      operation,
+    );
+  }
 }
 
 // Normalize + scoring for best local match
@@ -632,9 +675,11 @@ async function mergeInvoiceEmailContactPersons(payload, customer_id, hints = {})
 
 const updateInvoice_JS = async (invoiceId, payload) => {
   if (!invoiceId || !payload) return null;
-  const data = await withTimeout(
-    callZoho(`invoices/${invoiceId}`, "PUT", payload),
-    12_000,
+  const data = await callZohoWithPaymentOptions(
+    `invoices/${invoiceId}`,
+    "PUT",
+    payload,
+    {},
     "update-invoice",
   );
   return data.invoice || data;
@@ -650,8 +695,6 @@ async function associateEmailContactPersonsOnOpenInvoices(
 ) {
   if (!customer_id) return { updated: 0 };
   const fields = await resolveInvoiceEmailContactPersons(customer_id, hints);
-  if (!fields) return { updated: 0, reason: "no_contact_person_email" };
-
   const invoices = await getInvoices_JS({
     customer_id,
     per_page: 25,
@@ -659,16 +702,23 @@ async function associateEmailContactPersonsOnOpenInvoices(
   });
   const open = (invoices || [])
     .filter(isOpenReminderInvoice)
-    .filter(
-      (inv) =>
-        !invoiceAlreadyHasEmailContactPersons(inv, fields.contact_persons),
-    )
+    .filter((inv) => {
+      const needsPersons =
+        Boolean(fields) &&
+        !invoiceAlreadyHasEmailContactPersons(inv, fields.contact_persons);
+      const needsPaystack = !invoiceHasPaystackPaymentOption(inv);
+      return needsPersons || needsPaystack;
+    })
     .slice(0, 10);
+
+  if (!open.length) {
+    return { updated: 0, reason: fields ? "already_associated" : "no_open_invoices" };
+  }
 
   let updated = 0;
   for (const inv of open) {
     try {
-      await updateInvoice_JS(inv.invoice_id, fields);
+      await updateInvoice_JS(inv.invoice_id, fields || {});
       updated += 1;
     } catch (e) {
       console.warn(
@@ -723,9 +773,11 @@ const createRecurringInvoice_JS = async ({
     payload.payment_terms_label = String(payment_terms_label);
   }
 
-  const createResult = await withTimeout(
-    callZoho("recurringinvoices", "POST", payload),
-    12_000,
+  const createResult = await callZohoWithPaymentOptions(
+    "recurringinvoices",
+    "POST",
+    payload,
+    {},
     "create-recurring-invoice",
   );
   return (
@@ -738,9 +790,11 @@ const createRecurringInvoice_JS = async ({
 const updateRecurringInvoice_JS = async (recurringInvoiceId, payload) => {
   if (!recurringInvoiceId) return null;
   try {
-    const data = await withTimeout(
-      callZoho(`recurringinvoices/${recurringInvoiceId}`, "PUT", payload),
-      12_000,
+    const data = await callZohoWithPaymentOptions(
+      `recurringinvoices/${recurringInvoiceId}`,
+      "PUT",
+      payload || {},
+      {},
       "update-recurring-invoice",
     );
     return data.recurring_invoice || data.recurringinvoice || data;
@@ -1599,9 +1653,11 @@ const createInvoice_JS = async ({
       ? { ignore_auto_number_generation: true }
       : {};
 
-    const createResult = await withTimeout(
-      callZoho("invoices", "POST", invoiceData, extraParams),
-      12_000,
+    const createResult = await callZohoWithPaymentOptions(
+      "invoices",
+      "POST",
+      invoiceData,
+      extraParams,
       "create-invoice",
     );
 

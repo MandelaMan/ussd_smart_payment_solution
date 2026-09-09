@@ -1380,6 +1380,7 @@ async function listProducts(filters = {}) {
       { key: "mbps", sql: "p.mbps" },
       { key: "extraBandwidth", sql: "p.extra_bandwidth" },
       { key: "price", sql: "p.price" },
+      { key: "customerCount", sql: "COALESCE(cc.customer_count, 0)" },
       { key: "isActive", sql: "p.is_active" },
       { key: "paymentFrequency", sql: "p.payment_frequency" },
     ],
@@ -1435,13 +1436,20 @@ const PRODUCT_LIST_SELECT = `
          c.decoder_fee_amount AS decoderFeeAmount,
          pop.dstv_setup AS buildingDstvSetup,
          pop.name AS popName,
-         pop.ip_setup AS ipSetup
+         pop.ip_setup AS ipSetup,
+         COALESCE(cc.customer_count, 0) AS customerCount
   FROM products p
   JOIN buildings b ON b.id = p.building_id
   JOIN pops pop ON pop.id = b.pop_id
   LEFT JOIN package_plan_variants v ON v.id = p.plan_variant_id
   LEFT JOIN package_plans pl ON pl.id = v.plan_id
-  LEFT JOIN package_categories c ON c.id = pl.category_id`;
+  LEFT JOIN package_categories c ON c.id = pl.category_id
+  LEFT JOIN (
+    SELECT product_id, COUNT(*) AS customer_count
+    FROM customers
+    WHERE status = 'active'
+    GROUP BY product_id
+  ) cc ON cc.product_id = p.id`;
 
 async function getProductListRow(id) {
   const rows = await query(`${PRODUCT_LIST_SELECT} WHERE p.id = ? LIMIT 1`, [

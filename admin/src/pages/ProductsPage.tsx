@@ -65,6 +65,7 @@ import {
   DATA_TABLE_LEADING_COL_WIDTH,
   dataTableCellProps,
   dataTableTitleColumnHeaderProps,
+  dataTableWrapCellProps,
   dataTableExpandRowProps,
 } from "../components/ui/DataTable";
 import { TextStatus } from "../components/ui/TextStatus";
@@ -84,8 +85,21 @@ type ProductSortKey =
   | "mbps"
   | "extraBandwidth"
   | "price"
+  | "customerCount"
   | "isActive"
   | "paymentFrequency";
+
+const PRODUCT_CATEGORY_COL_WIDTH = "240px";
+const productCategoryHeaderProps = {
+  ...dataTableTitleColumnHeaderProps,
+  minW: PRODUCT_CATEGORY_COL_WIDTH,
+  w: PRODUCT_CATEGORY_COL_WIDTH,
+};
+const productCategoryCellProps = {
+  ...dataTableWrapCellProps,
+  minW: PRODUCT_CATEGORY_COL_WIDTH,
+  w: PRODUCT_CATEGORY_COL_WIDTH,
+};
 
 function productsListCacheKey(params: Record<string, string>) {
   return cacheKeyFromParams("products:list", params);
@@ -646,6 +660,10 @@ export function ProductsPage() {
                               }`,
                       },
                       { label: "Price", value: formatCurrency(p.price) },
+                      {
+                        label: "Users",
+                        value: String(Number(p.customerCount || 0)),
+                      },
                       { label: "Billing", value: p.paymentFrequency },
                     ]}
                   />
@@ -662,16 +680,16 @@ export function ProductsPage() {
               />
             }
             desktop={
-          <DataTable fixedLayout scrollMinW="1080px">
+          <DataTable fixedLayout scrollMinW="1120px">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader {...dataTableTitleColumnHeaderProps} w={DATA_TABLE_LEADING_COL_WIDTH} />
-                <DataTableSortHeader label="Category" column="categoryName" sorts={sorts} onSort={handleSort} />
+                <DataTableSortHeader label="Category" column="categoryName" sorts={sorts} onSort={handleSort} headerProps={productCategoryHeaderProps} />
                 <DataTableSortHeader label="Plan" column="planName" sorts={sorts} onSort={handleSort} />
                 <DataTableSortHeader label="Building" column="buildingName" sorts={sorts} onSort={handleSort} />
                 <DataTableSortHeader label="Speed" column="mbps" sorts={sorts} onSort={handleSort} defaultDir="desc" />
-                <DataTableSortHeader label="Extra bandwidth" column="extraBandwidth" sorts={sorts} onSort={handleSort} defaultDir="desc" />
                 <DataTableSortHeader label="Price" column="price" sorts={sorts} onSort={handleSort} defaultDir="desc" />
+                <DataTableSortHeader label="Users" column="customerCount" sorts={sorts} onSort={handleSort} defaultDir="desc" />
                 <DataTableSortHeader label="Status" column="isActive" sorts={sorts} onSort={handleSort} />
                 <DataTableSortHeader label="Billing" column="paymentFrequency" sorts={sorts} onSort={handleSort} />
               </Table.Row>
@@ -680,28 +698,27 @@ export function ProductsPage() {
               {products.map((p) => {
                 const isOpen = expanded === p.id;
                 const isDstvOnlyRow = p.categoryCode === "dstv_only";
+                const extra = Number(p.extraBandwidth || 0);
                 return (
                   <Fragment key={p.id}>
                     <Table.Row bg={isOpen ? "brand.50" : undefined} cursor="pointer" onClick={() => setExpanded(isOpen ? null : p.id)} _hover={{ bg: isOpen ? "brand.50" : "gray.50" }}>
                       <Table.Cell {...dataTableCellProps} w={DATA_TABLE_LEADING_COL_WIDTH}>{isOpen ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}</Table.Cell>
-                      <Table.Cell {...dataTableCellProps}>
-                        <DisplayText value={p.categoryName} />
+                      <Table.Cell {...productCategoryCellProps}>
+                        <DisplayText value={p.categoryName} maxLength={null} />
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontWeight="semibold">
-                        <DisplayText value={p.planName || p.name} />
+                        <DisplayText value={p.planName || p.name} maxLength={null} />
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps}>
-                        <DisplayText value={p.buildingName} />
+                      <Table.Cell {...dataTableWrapCellProps}>
+                        <DisplayText value={p.buildingName} maxLength={null} />
                       </Table.Cell>
-                      <Table.Cell {...dataTableCellProps}>
-                        {isDstvOnlyRow
-                          ? "—"
-                          : `${p.mbps + Number(p.extraBandwidth || 0)} Mbps`}
-                      </Table.Cell>
-                      <Table.Cell {...dataTableCellProps}>
-                        {isDstvOnlyRow ? "—" : `${Number(p.extraBandwidth || 0)} Mbps`}
+                      <Table.Cell {...dataTableCellProps} whiteSpace="nowrap">
+                        {isDstvOnlyRow ? "—" : `${p.mbps + extra} Mbps`}
                       </Table.Cell>
                       <Table.Cell {...dataTableCellProps} fontWeight="semibold" whiteSpace="nowrap">{formatCurrency(p.price)}</Table.Cell>
+                      <Table.Cell {...dataTableCellProps} whiteSpace="nowrap">
+                        {Number(p.customerCount || 0).toLocaleString()}
+                      </Table.Cell>
                       <Table.Cell {...dataTableCellProps}>
                         <TextStatus status={p.isActive ? "Active" : "Inactive"} />
                       </Table.Cell>
