@@ -2,6 +2,10 @@ const leadStore = require("../services/leadStore");
 const { emitSyncEvent } = require("../socket");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 const { logActivitySafe } = require("../services/activityLogStore");
+const {
+  normalizeApartmentUnit,
+  normalizeBlock,
+} = require("../utils/customerNumber");
 
 async function listLeads(req, res, next) {
   try {
@@ -36,6 +40,132 @@ async function getLead(req, res, next) {
     if (!lead) return res.status(404).json({ error: "Lead not found" });
     const messages = await leadStore.listMessages(lead.id);
     res.json({ lead, messages });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function resolveLeadLocation(body) {
+  const buildingId =
+    body.buildingId != null && body.buildingId !== ""
+      ? Number(body.buildingId)
+      : null;
+  let building = null;
+  let buildingInterest = body.buildingInterest
+    ? String(body.buildingInterest).trim()
+    : null;
+  if (Number.isFinite(buildingId) && buildingId > 0) {
+    const { query } = require("../config/db");
+    const rows = await query(
+      `SELECT b.id, b.name, b.building_code, pop.c2b_code, pop.b2b_code
+       FROM buildings b
+       LEFT JOIN pops pop ON pop.id = b.pop_id
+       WHERE b.id = ?
+       LIMIT 1`,
+      [buildingId]
+    );
+    building = rows[0] || null;
+    if (!building) {
+      const err = new Error("Selected building was not found");
+      err.status = 400;
+      throw err;
+    }
+    if (!buildingInterest) buildingInterest = building.name;
+  }
+
+  const apartmentRaw = String(body.apartmentNumber || "").trim();
+  let apartmentNumber = null;
+  if (apartmentRaw) {
+    try {
+      apartmentNumber = normalizeApartmentUnit(apartmentRaw, building || {});
+    } catch (e) {
+      e.status = 400;
+      throw e;
+    }
+  }
+
+  return {
+    buildingId: building ? Number(building.id) : null,
+    buildingInterest: buildingInterest || null,
+    apartmentNumber,
+    block: normalizeBlock(body.block),
+  };
+}
+
+async function createManualLead(req, res, next) {
+  try {
+    const name = String(req.body?.name || "").trim();
+    const phone = String(req.body?.phone || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const message = String(req.body?.message || req.body?.notes || "").trim();
+
+    if (!name || name.length < 2) {
+      return res.status(400).json({ error: "Name is required" });
+    }
+    if (!phone || phone.replace(/\D/g, "").length < 9) {
+      return res.status(400).json({ error: "A valid phone number is required" });
+    }
+    if (email && !email.includes("@")) {
+      return res.status(400).json({ error: "Email is invalid" });
+    }
+
+    let location;
+    try {
+      location = await resolveLeadLocation(req.body || {});
+    } catch (e) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+
+    const existing = await leadStore.getOpenLeadByPhone(phone);
+    if (existing) {
+      const lead = await leadStore.updateLead(existing.id, {
+        name,
+        email: email || existing.email || null,
+        phone,
+        apartmentNumber: location.apartmentNumber || existing.apartmentNumber || null,
+        block: location.block != null ? location.block : existing.block,
+        buildingId: location.buildingId || existing.buildingId || null,
+        buildingInterest: location.buildingInterest || existing.buildingInterest || null,
+        message: message || existing.message || null,
+      });
+      return res.json({ ok: true, lead, created: false });
+    }
+
+    const id = await leadStore.createLead({
+      source: "manual",
+      status: "new",
+      name,
+      phone,
+      email: email || null,
+      apartmentNumber: location.apartmentNumber,
+      block: location.block,
+      buildingId: location.buildingId,
+      buildingInterest: location.buildingInterest,
+      message: message || null,
+    });
+    if (message) {
+      await leadStore.addMessage({
+        leadId: id,
+        direction: "outbound",
+        channel: "system",
+        body: message,
+        payload: { type: "note", userId: req.user?.id || null },
+      });
+    }
+    const lead = await leadStore.getLeadById(id);
+    emitSyncEvent("leads:created", { leadId: id, source: "manual" });
+    emitAdminUpdate("leads", { action: "created", leadId: id, source: "manual" });
+    await logActivitySafe({
+      eventType: "lead_created",
+      title: "Lead added",
+      message: [lead?.name, lead?.phone, "manual"].filter(Boolean).join(" · "),
+      source: "admin",
+      customerRef: lead?.phone || null,
+      referenceId: String(id),
+      metadata: { leadId: id, source: "manual" },
+    });
+    res.status(201).json({ ok: true, lead, created: true });
   } catch (err) {
     next(err);
   }
@@ -155,6 +285,7 @@ async function updateLead(req, res, next) {
       "interest",
       "buildingInterest",
       "apartmentNumber",
+      "block",
       "buildingId",
       "message",
       "notes",
@@ -605,6 +736,7 @@ module.exports = {
   listLeads,
   getLeadStats,
   getLead,
+  createManualLead,
   createProspect,
   createEmailProspect,
   getWhatsAppLeadByPhone,

@@ -17,7 +17,7 @@ import {
   Text,
   Textarea,
 } from "@chakra-ui/react";
-import { FiChevronDown, FiChevronRight, FiCopy } from "react-icons/fi";
+import { FiChevronDown, FiChevronRight, FiCopy, FiPlus } from "react-icons/fi";
 import {
   api,
   type Lead,
@@ -39,7 +39,7 @@ import { toaster } from "../components/ui/toaster";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
-import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
@@ -48,6 +48,7 @@ import { SelectField } from "../components/ui/SelectField";
 import { TabStrip } from "../components/ui/TabStrip";
 import { ProspectWhatsAppInbox } from "../components/leads/ProspectWhatsAppInbox";
 import { ProspectEmailInbox } from "../components/leads/ProspectEmailInbox";
+import { CreateLeadDialog } from "../components/leads/CreateLeadDialog";
 import {
   DataTable,
   DataTableCard,
@@ -103,6 +104,7 @@ export function LeadsPage() {
   const { user } = useAuth();
   const canMutate = canMutateCustomers(user);
   const canConvert = hasPermission(user, "customers.create");
+  const canCreateLead = hasPermission(user, "leads.create");
   const isMobile = useMobileViewport();
   const [searchParams, setSearchParams] = useSearchParams();
   const sectionParam = searchParams.get("section");
@@ -182,6 +184,7 @@ export function LeadsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const { sorts, toggleSort, sortQuery } = useTableSort<LeadSortKey>({
     sortBy: "createdAt",
     sortDir: "desc",
@@ -237,6 +240,11 @@ export function LeadsPage() {
     if (section !== "all") return;
     void load({ silent: true });
   });
+
+  function handleLeadSaved() {
+    if (page !== 1) setPage(1);
+    else void load();
+  }
 
   async function openLead(id: number) {
     if (expanded === id) {
@@ -321,7 +329,9 @@ export function LeadsPage() {
       canConvert &&
       lead.status !== "converted" &&
       lead.status !== "closed" &&
-      (lead.status === "interested" || lead.source === "signup");
+      (lead.status === "interested" ||
+        lead.source === "signup" ||
+        lead.source === "manual");
     return (
     <Box px={4} py={4} bg="bg.muted" borderTopWidth="1px" borderColor="border">
       {detailLoading ? (
@@ -483,18 +493,21 @@ export function LeadsPage() {
   };
 
   const leadStatsActions = stats ? (
-    <Flex
+    <Box
+      display="grid"
+      gridTemplateColumns={{
+        base: "repeat(3, minmax(0, 1fr))",
+        lg: "repeat(9, minmax(0, 1fr))",
+      }}
       gap={2}
-      flexWrap="wrap"
-      justify="flex-end"
-      align="stretch"
-      maxW={{ lg: "min(640px, 58vw)" }}
+      w="full"
     >
       {[
         { label: "Total", value: stats.total },
         { label: "Interested", value: stats.byStatus.interested ?? 0 },
         { label: "New", value: stats.byStatus.new },
         { label: "Signup", value: stats.bySource.signup ?? 0 },
+        { label: "Manual", value: stats.bySource.manual ?? 0 },
         { label: "WhatsApp", value: stats.bySource.whatsapp },
         { label: "Email", value: stats.bySource.email ?? 0 },
         { label: "Web", value: stats.bySource.web },
@@ -502,24 +515,24 @@ export function LeadsPage() {
       ].map((card) => (
         <Box
           key={card.label}
-          px={3}
+          px={2.5}
           py={1.5}
           borderRadius="md"
           borderWidth="1px"
           borderColor="border"
           bg="bg.panel"
-          minW="72px"
+          minW={0}
           textAlign="center"
         >
-          <Text fontSize="2xs" color="fg.muted" lineHeight="1.2">
+          <Text fontSize="2xs" color="fg.muted" lineHeight="1.2" truncate>
             {card.label}
           </Text>
-          <Text fontWeight="700" fontSize="md" lineHeight="1.2" mt={0.5}>
+          <Text fontWeight="700" fontSize="sm" lineHeight="1.2" mt={0.5}>
             {card.value}
           </Text>
         </Box>
       ))}
-    </Flex>
+    </Box>
   ) : null;
 
   return (
@@ -530,17 +543,35 @@ export function LeadsPage() {
             <MobilePageChrome
         title="Leads"
         headerActions={
-          <IconButton
-            aria-label="Copy signup link"
-            size="sm"
-            variant="outline"
-            onClick={() => void copySignupLink()}
-          >
-            <FiCopy />
-          </IconButton>
+          <Flex gap={2}>
+            {canCreateLead ? (
+              <IconButton
+                aria-label="Add lead"
+                size="sm"
+                colorPalette="brand"
+                onClick={() => setAddOpen(true)}
+              >
+                <FiPlus />
+              </IconButton>
+            ) : null}
+            <IconButton
+              aria-label="Copy signup link"
+              size="sm"
+              variant="outline"
+              onClick={() => void copySignupLink()}
+            >
+              <FiCopy />
+            </IconButton>
+          </Flex>
         }
-        desktopActions={
-          <Flex gap={2} align="center" wrap="wrap" justify="flex-end">
+        titleActions={
+          <>
+            {canCreateLead ? (
+              <Button size="sm" colorPalette="brand" onClick={() => setAddOpen(true)}>
+                <FiPlus />
+                Add lead
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="outline"
@@ -549,8 +580,7 @@ export function LeadsPage() {
               <FiCopy />
               Copy signup link
             </Button>
-            {section === "all" ? leadStatsActions : null}
-          </Flex>
+          </>
         }
         searchValue={section === "all" ? searchInput : undefined}
         onSearchChange={section === "all" ? setSearchInput : undefined}
@@ -644,6 +674,8 @@ export function LeadsPage() {
         }
             />
 
+            {section === "all" && leadStatsActions ? leadStatsActions : null}
+
             <TabStrip
               tabs={[...LEAD_SECTIONS]}
               active={section}
@@ -716,15 +748,7 @@ export function LeadsPage() {
         </Box>
       ) : (
         <Stack gap={{ base: 4, lg: 5 }} pt={{ base: 2, lg: 3 }}>
-      {leadStatsActions ? (
-        <Box display={{ base: "block", lg: "none" }}>{leadStatsActions}</Box>
-      ) : null}
-
-      {error ? (
-        <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">
-          {error}
-        </Box>
-      ) : null}
+      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       <DataTableCard
         loading={loading}
@@ -745,8 +769,7 @@ export function LeadsPage() {
           />
         ) : leads.length === 0 ? (
           <EmptyState>
-            No leads yet. Share the public form or WhatsApp link to start capturing
-            enquiries.
+            No leads yet. Add a lead or share the public signup link.
           </EmptyState>
         ) : (
           <ResponsiveListViews
@@ -891,6 +914,13 @@ export function LeadsPage() {
         </Stack>
       )}
       </ListPageTableSection>
+      {canCreateLead ? (
+        <CreateLeadDialog
+          open={addOpen}
+          onOpenChange={setAddOpen}
+          onSaved={handleLeadSaved}
+        />
+      ) : null}
     </ListPageStack>
   );
 }

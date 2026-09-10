@@ -78,6 +78,7 @@ function buildLeadSources(leadStats) {
   return [
     { source: "WhatsApp", count: Number(bySource.whatsapp || 0) },
     { source: "Signup", count: Number(bySource.signup || 0) },
+    { source: "Manual", count: Number(bySource.manual || 0) },
     { source: "Website", count: Number(bySource.web || 0) },
     { source: "Embed Form", count: Number(bySource.embed || 0) },
   ].filter((r) => r.count > 0);

@@ -28,6 +28,7 @@ import {
 } from "./components/ProtectedRoute";
 import { BootSplashGate } from "./components/BootSplashGate";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { ConnectivityBanner } from "./components/ConnectivityBanner";
 import { AppToaster } from "./components/ui/AppToaster";
 import { AppUpdateBanner } from "./components/ui/AppUpdateBanner";
 import { RouteContentSkeleton } from "./components/PageSkeletons";
@@ -437,6 +438,7 @@ export default function App() {
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          <ConnectivityBanner />
           <AppUpdateBanner />
           <AppToaster />
         </AuthProvider>

@@ -2,6 +2,10 @@ const store = require("../services/customerModuleStore");
 const { emitAdminUpdate } = require("../lib/adminEvents");
 const { logActivitySafe } = require("../services/activityLogStore");
 const { syncProductToTispSafe, tispLabelFromProduct } = require("./tisp.controller");
+const {
+  syncAssignedCustomersAfterProductChange,
+  migrateAssignedCustomers,
+} = require("../services/productAssignedCustomerSync");
 
 async function listProducts(req, res, next) {
   try {
@@ -107,12 +111,16 @@ async function updateProduct(req, res, next) {
     const previousPackageLabel = tispLabelFromProduct(before);
     const product = await store.updateProduct(Number(req.params.id), req.body || {});
     const tisp = await syncProductToTispSafe(product, { previousPackageLabel });
+    const productId = product?.id ?? Number(req.params.id);
+    const billing = await syncAssignedCustomersAfterProductChange(productId, {
+      before,
+      after: product,
+    });
     emitAdminUpdate("products", {
       action: "updated",
       productId: product?.id ?? Number(req.params.id),
       buildingId: product?.buildingId ?? null,
     });
-    const productId = product?.id ?? Number(req.params.id);
     await logActivitySafe({
       eventType: "product_updated",
       title: "Package updated",
@@ -128,9 +136,13 @@ async function updateProduct(req, res, next) {
         tispOk: tisp?.ok !== false,
         tispPackage: tisp?.packageLabel || null,
         tispError: tisp?.error || null,
+        billingCustomers: billing.customers,
+        zohoUpdated: billing.zohoUpdated,
+        zohoFailed: billing.zohoFailed,
+        tispFailed: billing.tispFailed,
       },
     });
-    return res.json({ ok: true, product, tisp });
+    return res.json({ ok: true, product, tisp, billing });
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY") {
       const msg = String(err.message || "");
@@ -159,23 +171,57 @@ async function updateProduct(req, res, next) {
 
 async function deleteProduct(req, res, next) {
   try {
-    const result = await store.deleteProduct(Number(req.params.id));
+    const productId = Number(req.params.id);
+    const targetProductId = Number(
+      req.body?.targetProductId ?? req.query?.targetProductId ?? 0
+    );
+    const assigned = await store.listCustomersOnProduct(productId);
+    let billing = null;
+    if (assigned.length) {
+      if (!targetProductId) {
+        return res.status(409).json({
+          error: `This package has ${assigned.length} customer${
+            assigned.length === 1 ? "" : "s"
+          }. Choose another package in the same building to move them to.`,
+          code: "PACKAGE_HAS_CUSTOMERS",
+          customerCount: assigned.length,
+        });
+      }
+      billing = await migrateAssignedCustomers(productId, targetProductId);
+    }
+    const result = await store.deleteProduct(productId);
     emitAdminUpdate("products", {
       action: "deleted",
-      productId: Number(req.params.id),
+      productId,
     });
     await logActivitySafe({
       eventType: "product_deleted",
       title: "Package deleted",
-      message: `Package #${req.params.id}`,
+      message: `Package #${productId}`,
       source: "admin",
-      referenceId: String(req.params.id),
-      metadata: { productId: Number(req.params.id) },
+      referenceId: String(productId),
+      metadata: {
+        productId,
+        targetProductId: targetProductId || null,
+        billingCustomers: billing?.customers || 0,
+        zohoUpdated: billing?.zohoUpdated || 0,
+        zohoFailed: billing?.zohoFailed || 0,
+      },
     });
-    return res.json({ ok: true, ...result });
+    return res.json({ ok: true, ...result, billing });
   } catch (err) {
     if (err.message === "Product not found") {
       return res.status(404).json({ error: err.message });
+    }
+    if (err.code === "PACKAGE_HAS_CUSTOMERS") {
+      return res.status(409).json({
+        error: err.message,
+        code: err.code,
+        customerCount: err.customerCount || 0,
+      });
+    }
+    if (err.code === "TARGET_PRODUCT_REQUIRED" || err.code === "TARGET_PRODUCT_BUILDING") {
+      return res.status(400).json({ error: err.message, code: err.code });
     }
     if (err.code === "ER_ROW_IS_REFERENCED_2" || err.code === "ER_ROW_IS_REFERENCED") {
       return res.status(409).json({

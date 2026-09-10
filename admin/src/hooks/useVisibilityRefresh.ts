@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { CONNECTIVITY_RESTORED_EVENT } from "../lib/connectivity";
 
 /** Poll interval for live Home dashboards while the tab is visible. */
 export const LIVE_REFRESH_INTERVAL_MS = 15_000;
@@ -31,6 +32,7 @@ export function useVisibilityRefresh(onRefresh: () => void, intervalMs = 0) {
     };
 
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener(CONNECTIVITY_RESTORED_EVENT, refresh);
 
     let intervalId: number | undefined;
     if (intervalMs > 0) {
@@ -40,6 +42,7 @@ export function useVisibilityRefresh(onRefresh: () => void, intervalMs = 0) {
     return () => {
       window.clearTimeout(readyTimer);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, refresh);
       if (intervalId != null) window.clearInterval(intervalId);
     };
   }, [intervalMs]);

@@ -4,7 +4,6 @@ import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport
 import { useTableSort } from "../hooks/useTableSort";
 import {
   Badge,
-  Box,
   Flex,
   Input,
   Table,
@@ -21,7 +20,7 @@ import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
 import { DateField } from "../components/ui/DateField";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
-import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { SelectField } from "../components/ui/SelectField";
 import { DisplayText } from "../components/ui/DisplayText";
@@ -363,11 +362,7 @@ export function TransactionsPage() {
         }
       >
 
-      {error && (
-        <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">
-          {error}
-        </Box>
-      )}
+      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       <DataTableCard
         loading={loading}

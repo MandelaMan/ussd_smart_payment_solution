@@ -38,13 +38,14 @@ import {
   seedListState,
   storeListState,
 } from "../lib/listLoad";
+import { formatTitleCase } from "../lib/formatText";
 import { SelectField } from "../components/ui/SelectField";
 import { AppDialog } from "../components/ui/AppDialog";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
-import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
@@ -77,6 +78,39 @@ const FREQUENCIES = [
 ];
 
 const PAGE_SIZE = 30;
+
+function assignedCustomerCount(product: Product | null | undefined) {
+  if (!product) return 0;
+  return Number(product.assignedCustomerCount ?? product.customerCount ?? 0);
+}
+
+function billingToastDetail(billing?: {
+  customers?: number;
+  zohoUpdated?: number;
+  zohoFailed?: number;
+} | null) {
+  const total = Number(billing?.customers || 0);
+  if (total <= 0) return "";
+  const failed = Number(billing?.zohoFailed || 0);
+  const noun = total === 1 ? "customer" : "customers";
+  if (failed > 0) {
+    return ` Recurring invoices updated for ${Math.max(0, total - failed)} of ${total} ${noun} on Zoho.`;
+  }
+  return ` Recurring invoices updated for ${total} ${noun} on Zoho.`;
+}
+
+function packageChoiceOption(p: Product) {
+  const extra = Number(p.extraBandwidth || 0);
+  const speed =
+    p.categoryCode === "dstv_only" ? "No bandwidth" : `${Number(p.mbps) + extra} Mbps`;
+  const freq = formatTitleCase(p.paymentFrequency);
+  return {
+    value: String(p.id),
+    label: `${p.planName || p.name} · ${p.categoryName || "Package"}${p.isActive ? "" : " (inactive)"}`,
+    description: `${speed} · ${formatCurrency(p.price)} · ${freq}`,
+    keywords: `${p.planName || ""} ${p.categoryName || ""} ${p.name}`,
+  };
+}
 
 type ProductSortKey =
   | "categoryName"
@@ -144,6 +178,9 @@ export function ProductsPage() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const [migrateTargetId, setMigrateTargetId] = useState("");
+  const [migrateOptions, setMigrateOptions] = useState<Product[]>([]);
+  const [migrateLoading, setMigrateLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const [categoryId, setCategoryId] = useState("");
@@ -281,6 +318,40 @@ export function ProductsPage() {
     void load({ silent: true });
   });
 
+  useEffect(() => {
+    if (!deletingProduct) {
+      setMigrateTargetId("");
+      setMigrateOptions([]);
+      setMigrateLoading(false);
+      return;
+    }
+    if (assignedCustomerCount(deletingProduct) <= 0) return;
+    let cancelled = false;
+    setMigrateLoading(true);
+    api
+      .listProducts({
+        buildingId: String(deletingProduct.buildingId),
+        activeOnly: "false",
+        unpaginated: "true",
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const options = (res.products || [])
+          .filter((p) => p.id !== deletingProduct.id)
+          .sort((a, b) => Number(b.isActive) - Number(a.isActive));
+        setMigrateOptions(options);
+      })
+      .catch(() => {
+        if (!cancelled) setMigrateOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMigrateLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deletingProduct]);
+
   const buildingFilterOptions = useMemo(
     () => [
       { value: "", label: "All buildings" },
@@ -398,9 +469,12 @@ export function ProductsPage() {
       toaster.create({
         title:
           res.tisp?.ok === false
-            ? `Package updated locally, but TISP update failed: ${res.tisp.error || "unknown error"}`
-            : "Package updated",
-        type: res.tisp?.ok === false ? "warning" : "success",
+            ? `Package updated locally, but TISP update failed: ${res.tisp.error || "unknown error"}${billingToastDetail(res.billing)}`
+            : `Package updated.${billingToastDetail(res.billing)}`.trim(),
+        type:
+          res.tisp?.ok === false || Number(res.billing?.zohoFailed || 0) > 0
+            ? "warning"
+            : "success",
       });
       closeEdit();
       setExpanded(expandedId);
@@ -417,11 +491,26 @@ export function ProductsPage() {
 
   async function handleDeleteConfirm() {
     if (!deletingProduct) return;
+    const assigned = assignedCustomerCount(deletingProduct);
+    if (assigned > 0 && !migrateTargetId) {
+      toaster.create({
+        title: "Choose a package to move the customers to",
+        type: "error",
+      });
+      return;
+    }
     setDeleteSubmitting(true);
     try {
-      await api.deleteProduct(deletingProduct.id);
-      toaster.create({ title: "Package deleted", type: "success" });
+      const res = await api.deleteProduct(
+        deletingProduct.id,
+        assigned > 0 ? { targetProductId: Number(migrateTargetId) } : undefined
+      );
+      toaster.create({
+        title: `Package deleted.${billingToastDetail(res.billing)}`.trim(),
+        type: Number(res.billing?.zohoFailed || 0) > 0 ? "warning" : "success",
+      });
       setDeletingProduct(null);
+      setMigrateTargetId("");
       if (expanded === deletingProduct.id) setExpanded(null);
       if (editing?.id === deletingProduct.id) closeEdit();
       await load({ bustCache: true });
@@ -608,7 +697,7 @@ export function ProductsPage() {
         </Box>
       )}
 
-      {error && <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">{error}</Box>}
+      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       <DataTableCard
         loading={loading}
@@ -768,6 +857,7 @@ export function ProductsPage() {
             selectedCategory={selectedCategory} selectedPlan={selectedPlan} selectedVariant={selectedVariant}
             isDstvOnly={isDstvOnly}
             readOnlyStructure={false} showStatus
+            affectedCustomerCount={assignedCustomerCount(editing)}
             onSubmit={handleUpdate} submitting={editSubmitting} onCancel={closeEdit}
             submitLabel="Save changes"
           />
@@ -779,21 +869,60 @@ export function ProductsPage() {
         onOpenChange={(d) => {
           if (!d.open && !deleteSubmitting) setDeletingProduct(null);
         }}
-        maxW="md"
+        maxW={assignedCustomerCount(deletingProduct) > 0 ? "lg" : "md"}
       >
         <Box px={5} py={4} borderBottomWidth="1px" borderColor="border.muted">
-          <Heading size="sm">Delete package</Heading>
+          <Heading size="sm">
+            {assignedCustomerCount(deletingProduct) > 0
+              ? "Move customers and delete package"
+              : "Delete package"}
+          </Heading>
           {deletingProduct ? (
-            <Text fontSize="sm" color="fg.muted" mt={1}>
-              Remove{" "}
-              <Text as="span" fontWeight="semibold" color="fg">
-                {deletingProduct.planName || deletingProduct.name}
+            assignedCustomerCount(deletingProduct) > 0 ? (
+              <Text fontSize="sm" color="fg.muted" mt={1}>
+                Move{" "}
+                <Text as="span" fontWeight="semibold" color="fg">
+                  {assignedCustomerCount(deletingProduct)}{" "}
+                  {assignedCustomerCount(deletingProduct) === 1 ? "customer" : "customers"}
+                </Text>
+                {" "}
+                to another {deletingProduct.buildingName} package. Recurring invoices will follow.
               </Text>
-              {" "}
-              for {deletingProduct.buildingName}? This cannot be undone.
-            </Text>
+            ) : (
+              <Text fontSize="sm" color="fg.muted" mt={1}>
+                Remove{" "}
+                <Text as="span" fontWeight="semibold" color="fg">
+                  {deletingProduct.planName || deletingProduct.name}
+                </Text>
+                {" "}
+                for {deletingProduct.buildingName}? This cannot be undone.
+              </Text>
+            )
           ) : null}
         </Box>
+        {assignedCustomerCount(deletingProduct) > 0 ? (
+          <Box px={5} py={4}>
+            <Field.Root required>
+              <Field.Label>Move customers to</Field.Label>
+              <SearchableSelect
+                value={migrateTargetId}
+                onChange={setMigrateTargetId}
+                options={migrateOptions.map(packageChoiceOption)}
+                isLoading={migrateLoading}
+                disabled={deleteSubmitting || migrateLoading}
+                placeholder={
+                  migrateLoading
+                    ? "Loading packages…"
+                    : migrateOptions.length
+                      ? "Select a package"
+                      : "No other packages in this building"
+                }
+                searchPlaceholder="Search packages…"
+                emptyLabel="No other packages in this building. Create one first, or mark this package inactive."
+              />
+            </Field.Root>
+          </Box>
+        ) : null}
         <Flex
           px={5}
           py={4}
@@ -812,9 +941,15 @@ export function ProductsPage() {
           <Button
             colorPalette="red"
             loading={deleteSubmitting}
+            disabled={
+              assignedCustomerCount(deletingProduct) > 0 &&
+              (!migrateTargetId || migrateOptions.length === 0)
+            }
             onClick={() => void handleDeleteConfirm()}
           >
-            Delete package
+            {assignedCustomerCount(deletingProduct) > 0
+              ? "Move customers and delete"
+              : "Delete package"}
           </Button>
         </Flex>
       </AppDialog>
@@ -837,6 +972,7 @@ function ProductForm({
   selectedCategory, selectedPlan, selectedVariant,
   isDstvOnly = false,
   readOnlyStructure, showStatus,
+  affectedCustomerCount = 0,
   onSubmit, submitting, onCancel, submitLabel = "Save price",
 }: {
   catalog: PackageCategory[];
@@ -857,6 +993,7 @@ function ProductForm({
   isDstvOnly?: boolean;
   readOnlyStructure: boolean;
   showStatus: boolean;
+  affectedCustomerCount?: number;
   onSubmit: (e: FormEvent) => void; submitting: boolean; onCancel: () => void;
   submitLabel?: string;
 }) {
@@ -894,6 +1031,14 @@ function ProductForm({
 
   return (
     <form onSubmit={onSubmit}>
+      {affectedCustomerCount > 0 ? (
+        <Box mb={4} bg="brand.50" border="1px solid" borderColor="brand.100" borderRadius="md" px={3} py={2}>
+          <Text fontSize="sm" color="fg">
+            Saving will update Zoho recurring invoices for {affectedCustomerCount}{" "}
+            {affectedCustomerCount === 1 ? "customer" : "customers"} on this package.
+          </Text>
+        </Box>
+      ) : null}
       <Grid templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }} gap={4}>
         <Field.Root required>
           <Field.Label>Category</Field.Label>
@@ -977,7 +1122,7 @@ function ProductForm({
               onChange={setBuildingId}
               options={buildingOptions}
               isLoading={lookupsLoading}
-              disabled={fieldsDisabled}
+              disabled={fieldsDisabled || affectedCustomerCount > 0}
               placeholder="Select building"
               searchPlaceholder="Search buildings…"
               emptyLabel="No buildings match your search"

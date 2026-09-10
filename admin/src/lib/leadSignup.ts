@@ -11,6 +11,7 @@ export const LEAD_STATUS_OPTIONS: Array<{ value: Lead["status"]; label: string }
 
 export const LEAD_SOURCE_OPTIONS: Array<{ value: Lead["source"]; label: string }> = [
   { value: "signup", label: "Signup" },
+  { value: "manual", label: "Manual" },
   { value: "whatsapp", label: "WhatsApp" },
   { value: "web", label: "Website" },
   { value: "embed", label: "Embed" },

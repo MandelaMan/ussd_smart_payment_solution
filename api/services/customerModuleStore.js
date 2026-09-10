@@ -1437,7 +1437,8 @@ const PRODUCT_LIST_SELECT = `
          pop.dstv_setup AS buildingDstvSetup,
          pop.name AS popName,
          pop.ip_setup AS ipSetup,
-         COALESCE(cc.customer_count, 0) AS customerCount
+         COALESCE(cc.customer_count, 0) AS customerCount,
+         COALESCE(cc.assigned_count, 0) AS assignedCustomerCount
   FROM products p
   JOIN buildings b ON b.id = p.building_id
   JOIN pops pop ON pop.id = b.pop_id
@@ -1445,9 +1446,10 @@ const PRODUCT_LIST_SELECT = `
   LEFT JOIN package_plans pl ON pl.id = v.plan_id
   LEFT JOIN package_categories c ON c.id = pl.category_id
   LEFT JOIN (
-    SELECT product_id, COUNT(*) AS customer_count
+    SELECT product_id,
+           COUNT(*) AS assigned_count,
+           SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS customer_count
     FROM customers
-    WHERE status = 'active'
     GROUP BY product_id
   ) cc ON cc.product_id = p.id`;
 
@@ -1570,6 +1572,17 @@ async function updateProduct(id, data) {
     nextBuildingId = Number(data.buildingId ?? data.building_id);
     const building = await getBuildingById(nextBuildingId);
     if (!building) throw new Error("Building not found");
+    if (nextBuildingId !== Number(existing.building_id)) {
+      const [assigned] = await query(
+        `SELECT COUNT(*) AS total FROM customers WHERE product_id = ?`,
+        [id]
+      );
+      if (Number(assigned?.total || 0) > 0) {
+        throw new Error(
+          "Cannot move this package to another building while customers are assigned. Move them to another package first."
+        );
+      }
+    }
     fields.push("building_id = ?");
     params.push(nextBuildingId);
   }
@@ -1662,6 +1675,17 @@ async function updateProduct(id, data) {
   return getProductListRow(id);
 }
 
+async function listCustomersOnProduct(productId) {
+  return query(
+    `SELECT id, status, customer_type, agency_id, payment_frequency,
+            custom_period_days, package_price, product_id, building_id
+     FROM customers
+     WHERE product_id = ?
+     ORDER BY id`,
+    [productId]
+  );
+}
+
 async function deleteProduct(id) {
   const existing = await getProductById(id);
   if (!existing) throw new Error("Product not found");
@@ -1672,11 +1696,14 @@ async function deleteProduct(id) {
   );
   const linkedCustomers = Number(customerCount?.total || 0);
   if (linkedCustomers > 0) {
-    throw new Error(
-      `Cannot delete package — ${linkedCustomers} customer${
-        linkedCustomers === 1 ? " is" : "s are"
-      } still assigned to it. Reassign or deactivate them first, or mark the package inactive.`
+    const err = new Error(
+      `This package has ${linkedCustomers} customer${
+        linkedCustomers === 1 ? "" : "s"
+      }. Choose another package in the same building to move them to.`
     );
+    err.code = "PACKAGE_HAS_CUSTOMERS";
+    err.customerCount = linkedCustomers;
+    throw err;
   }
 
   const [pendingCount] = await query(
@@ -4872,6 +4899,7 @@ module.exports = {
   listProducts,
   getProductById,
   getProductListRow,
+  listCustomersOnProduct,
   createProduct,
   updateProduct,
   deleteProduct,

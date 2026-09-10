@@ -31,7 +31,7 @@ import { AppDialog } from "../components/ui/AppDialog";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
-import { EmptyState, ListPageStack } from "../components/ui/pageLayout";
+import { EmptyState, ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
@@ -365,7 +365,7 @@ export function AgenciesPage() {
         </Box>
       )}
 
-      {error && <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">{error}</Box>}
+      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       <DataTableCard
         loading={loading}

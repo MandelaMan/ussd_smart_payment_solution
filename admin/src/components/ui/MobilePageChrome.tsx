@@ -55,6 +55,8 @@ type MobilePageChromeProps = {
   sortTitle?: string;
   headerActions?: ReactNode;
   desktopActions?: ReactNode;
+  /** Desktop only: sits beside the page title (e.g. primary buttons). */
+  titleActions?: ReactNode;
   children?: ReactNode;
 };
 
@@ -83,6 +85,7 @@ export function MobilePageChrome({
   sortTitle = "Sort by",
   headerActions,
   desktopActions,
+  titleActions,
   children,
 }: MobilePageChromeProps) {
   const mobileSearch = useMobileSearchOptional();
@@ -364,22 +367,30 @@ export function MobilePageChrome({
 
       <Flex
         display={{ base: "none", lg: "flex" }}
-        justify="space-between"
         align="center"
-        gap={6}
+        gap={4}
         minW={0}
         w="full"
         py={1}
       >
-        <Box>
-          <Heading size="lg">{title}</Heading>
-          {description ? (
-            <Text fontSize="sm" color="fg.muted" mt={0.5}>
-              {description}
-            </Text>
+        <Flex align="center" gap={4} flexShrink={0} minW={0}>
+          <Box>
+            <Heading size="lg">{title}</Heading>
+            {description ? (
+              <Text fontSize="sm" color="fg.muted" mt={0.5}>
+                {description}
+              </Text>
+            ) : null}
+          </Box>
+          {titleActions ? (
+            <Flex align="center" gap={2} flexShrink={0}>
+              {titleActions}
+            </Flex>
           ) : null}
-        </Box>
-        {desktopActions ?? headerActions}
+        </Flex>
+        <Flex flex="1" minW={0} justify="flex-end" align="center">
+          {desktopActions ?? (titleActions ? null : headerActions)}
+        </Flex>
       </Flex>
 
       {children}

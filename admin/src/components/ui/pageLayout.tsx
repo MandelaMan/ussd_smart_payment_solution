@@ -2,6 +2,8 @@ import { Box, Flex, Heading, Text } from "@chakra-ui/react";
 import type { ReactNode } from "react";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { MobileFixedHeader } from "./MobileFixedHeader";
+import { useConnectivity } from "../../hooks/useConnectivity";
+import { isConnectivityErrorMessage } from "../../lib/connectivity";
 
 /** Standard vertical rhythm for admin list and detail pages. */
 export const PAGE_STACK_GAP = { base: 3, lg: 3 } as const;
@@ -52,7 +54,21 @@ export const inlineFormCardProps = {
   boxShadow: "sm",
 } as const;
 
+function shouldHideConnectivityError(children: ReactNode, connected: boolean) {
+  if (isConnectivityErrorMessage(children)) return true;
+  if (
+    !connected &&
+    typeof children === "string" &&
+    /took too long|timed out/i.test(children)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function PageErrorBanner({ children }: { children: ReactNode }) {
+  const { status } = useConnectivity();
+  if (shouldHideConnectivityError(children, status === "ok")) return null;
   return (
     <Box bg="red.50" color="red.700" px={3} py={2.5} borderRadius="md" fontSize="sm">
       {children}

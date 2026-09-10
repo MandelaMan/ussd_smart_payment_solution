@@ -9,7 +9,7 @@ const LEAD_STATUSES = [
   "converted",
   "closed",
 ];
-const LEAD_SOURCES = ["whatsapp", "web", "embed", "email", "signup"];
+const LEAD_SOURCES = ["whatsapp", "web", "embed", "email", "signup", "manual"];
 const TERMINAL_LEAD_STATUSES = ["converted", "closed"];
 
 function parseMetadata(row) {
@@ -488,6 +488,7 @@ async function getLeadStats() {
        SUM(source = 'embed') AS embedCount,
        SUM(source = 'email') AS emailCount,
        SUM(source = 'signup') AS signupCount,
+       SUM(source = 'manual') AS manualCount,
        SUM(email IS NOT NULL AND TRIM(email) <> '') AS withEmailCount
      FROM leads`
   );
@@ -508,6 +509,7 @@ async function getLeadStats() {
       embed: Number(r.embedCount || 0),
       email: Number(r.emailCount || 0),
       signup: Number(r.signupCount || 0),
+      manual: Number(r.manualCount || 0),
     },
     withEmail: Number(r.withEmailCount || 0),
   };

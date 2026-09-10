@@ -1,3 +1,17 @@
+import {
+  CONNECTIVITY_ERROR_MESSAGE,
+  REQUEST_TIMEOUT_MESSAGE,
+  SERVER_UNREACHABLE_MESSAGE,
+  isBrowserNetworkFailure,
+  reportReachabilityFailure,
+} from "./connectivity";
+
+export {
+  CONNECTIVITY_ERROR_MESSAGE,
+  REQUEST_TIMEOUT_MESSAGE,
+  isConnectivityError,
+} from "./connectivity";
+
 const API_BASE = "/api";
 
 type AuthSessionExpiredHandler = () => void;
@@ -65,13 +79,14 @@ type ApiRequestOptions = RequestInit & {
 function isTransientRequestError(err: unknown): boolean {
   if (err instanceof ApiError) {
     return (
+      err.status === 0 ||
       err.status === 408 ||
       err.status === 502 ||
       err.status === 503 ||
       err.status === 504
     );
   }
-  if (err instanceof TypeError) return true; // Failed to fetch / network
+  if (isBrowserNetworkFailure(err)) return true;
   return false;
 }
 
@@ -226,6 +241,24 @@ export type Product = {
   decoderFeeAmount?: number | null;
   buildingDstvSetup?: "headend_coax" | "decoder";
   customerCount?: number;
+  assignedCustomerCount?: number;
+};
+
+export type ProductBillingSync = {
+  customers: number;
+  active: number;
+  zohoUpdated: number;
+  zohoSkipped: number;
+  zohoFailed: number;
+  tispFailed: number;
+  agencyUpdated: number;
+  errors?: Array<{
+    customerId?: number;
+    customerNumber?: string | null;
+    agencyId?: number;
+    system?: string;
+    error?: string;
+  }>;
 };
 
 export type PackagePlanVariant = {
@@ -276,7 +309,7 @@ export type LeadStatus =
   | "converted"
   | "closed";
 
-export type LeadSource = "whatsapp" | "web" | "embed" | "email" | "signup";
+export type LeadSource = "whatsapp" | "web" | "embed" | "email" | "signup" | "manual";
 
 export type Lead = {
   id: number;
@@ -1743,9 +1776,26 @@ async function request<T>(path: string, options: ApiRequestOptions = {}): Promis
     const name = err instanceof Error ? err.name : "";
     if (name === "AbortError") {
       if (timedOutByClient) {
-        throw new ApiError(`Request timed out (${path})`, 408, path);
+        reportReachabilityFailure("timeout");
+        const offline =
+          typeof navigator !== "undefined" && navigator.onLine === false;
+        throw new ApiError(
+          offline ? CONNECTIVITY_ERROR_MESSAGE : REQUEST_TIMEOUT_MESSAGE,
+          408,
+          path
+        );
       }
       throw new ApiError(`Request cancelled (${path})`, 499, path);
+    }
+    if (isBrowserNetworkFailure(err)) {
+      reportReachabilityFailure("network");
+      const offline =
+        typeof navigator !== "undefined" && navigator.onLine === false;
+      throw new ApiError(
+        offline ? CONNECTIVITY_ERROR_MESSAGE : SERVER_UNREACHABLE_MESSAGE,
+        0,
+        path
+      );
     }
     throw err;
   } finally {
@@ -1755,7 +1805,22 @@ async function request<T>(path: string, options: ApiRequestOptions = {}): Promis
 }
 
 async function downloadExport(path: string, filename: string) {
-  const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
+  } catch (err) {
+    if (isBrowserNetworkFailure(err)) {
+      reportReachabilityFailure("network");
+      const offline =
+        typeof navigator !== "undefined" && navigator.onLine === false;
+      throw new ApiError(
+        offline ? CONNECTIVITY_ERROR_MESSAGE : SERVER_UNREACHABLE_MESSAGE,
+        0,
+        path
+      );
+    }
+    throw err;
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     rejectApiResponse(res, body, path);
@@ -2610,15 +2675,25 @@ export const api = {
         error?: string;
         packageLabel?: string;
       };
+      billing?: ProductBillingSync;
     }>(`/admin/products/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+      timeoutMs: 180_000,
     }),
 
-  deleteProduct: (id: number) =>
-    request<{ ok: boolean; id: number }>(`/admin/products/${id}`, {
-      method: "DELETE",
-    }),
+  deleteProduct: (id: number, data?: { targetProductId?: number }) =>
+    request<{ ok: boolean; id: number; billing?: ProductBillingSync }>(
+      `/admin/products/${id}`,
+      {
+        method: "DELETE",
+        body:
+          data?.targetProductId != null
+            ? JSON.stringify({ targetProductId: data.targetProductId })
+            : undefined,
+        timeoutMs: 180_000,
+      }
+    ),
 
   listAgencies: (params: Record<string, string | undefined> = {}) =>
     request<{
@@ -2682,6 +2757,21 @@ export const api = {
     }>(`/admin/leads/${id}/whatsapp-reply`, {
       method: "POST",
       body: JSON.stringify({ body }),
+    }),
+
+  createLead: (data: {
+    name: string;
+    phone: string;
+    email?: string;
+    apartmentNumber?: string;
+    block?: string;
+    buildingId?: number | null;
+    buildingInterest?: string;
+    message?: string;
+  }) =>
+    request<{ ok: boolean; lead: Lead; created: boolean }>("/admin/leads", {
+      method: "POST",
+      body: JSON.stringify(data),
     }),
 
   createProspect: (data: {

@@ -142,6 +142,7 @@ const {
   listLeads,
   getLeadStats,
   getLead,
+  createManualLead,
   createProspect,
   createEmailProspect,
   getWhatsAppLeadByPhone,
@@ -522,6 +523,7 @@ router.get(
 
 router.get("/leads/stats", requirePermission("leads.view"), getLeadStats);
 router.get("/leads/whatsapp-by-phone", requirePermission("leads.view"), getWhatsAppLeadByPhone);
+router.post("/leads", requirePermission("leads.create"), createManualLead);
 router.post("/leads/prospects", requirePermission("leads.create"), createProspect);
 router.post("/leads/email-prospects", requirePermission("leads.create"), createEmailProspect);
 router.post("/leads/whatsapp-send", requirePermission("leads.message"), sendWhatsAppToCustomer);

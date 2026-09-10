@@ -26,6 +26,7 @@ import {
 import {
   api,
   ApiError,
+  isConnectivityError,
   formatCurrency,
   formatDateOnly,
   type Building,
@@ -125,7 +126,7 @@ import { FILTER_CONTROL_HEIGHT } from "../theme";
 import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../components/ui/MobileDataList";
 import { MobileFAB, MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
-import { ListPageStack } from "../components/ui/pageLayout";
+import { ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
 import { MobileCardListSkeleton, DataTableLoadingSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { pauseAwayDays, pauseCreditLabel } from "../lib/pauseCredit";
@@ -483,7 +484,9 @@ export function CustomersListPage() {
           return;
         }
         setError(message);
-        toaster.create({ title: message, type: "error" });
+        if (!isConnectivityError(e)) {
+          toaster.create({ title: message, type: "error" });
+        }
       } finally {
         if (requestId === loadRequestRef.current) {
           endListLoad({ setLoading, setLoadingMore });
@@ -2046,11 +2049,7 @@ export function CustomersListPage() {
         </MobileFAB>
       ) : null}
 
-      {error && (
-        <Box bg="red.50" color="red.700" p={3} borderRadius="lg" fontSize="sm">
-          {error}
-        </Box>
-      )}
+      {error ? <PageErrorBanner>{error}</PageErrorBanner> : null}
 
       {canMutate && selectionMode && (
         <Flex
