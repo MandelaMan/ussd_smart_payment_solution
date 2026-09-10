@@ -49,6 +49,14 @@ import {
   BLOCK_MAX,
 } from "../../lib/customerNumber";
 import { isShopPremise, type PremiseType } from "../../lib/premise";
+import {
+  extraTvCount,
+  extraTvFee,
+  EXTRA_TV_UNIT_FEE,
+  MAX_TV_COUNT,
+  normalizeTvCount,
+  packageIncludesTv,
+} from "../../lib/extraTv";
 import { shouldUseAgencyContactForSkynestPlaceholder } from "../../lib/b2bAgencyContact";
 import { embeddedFieldInputStyles } from "../../theme";
 import { FormSection } from "./FormSection";
@@ -245,6 +253,7 @@ export function CustomerForm({
   const [shopLocation, setShopLocation] = useState("");
   const [paymentFrequency, setPaymentFrequency] = useState("monthly");
   const [customPeriodDays, setCustomPeriodDays] = useState("");
+  const [tvCount, setTvCount] = useState(1);
   const [buildingId, setBuildingId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [planId, setPlanId] = useState("");
@@ -547,6 +556,7 @@ export function CustomerForm({
     setCustomPeriodDays(
       customer.customPeriodDays != null ? String(customer.customPeriodDays) : ""
     );
+    setTvCount(normalizeTvCount(customer.tvCount || 1));
     setBuildingId(String(customer.buildingId));
     setAgencyId(customer.agencyId ? String(customer.agencyId) : "");
     setDstvDecoderSerial(customer.dstvDecoderSerial || "");
@@ -850,6 +860,16 @@ export function CustomerForm({
       customer?.decoderFeeAmount ||
       2900
     : 0;
+  const categoryCodeForTv =
+    selectedCategory?.code || (isEdit ? customer?.categoryCode : undefined);
+  const hasDstvForTv = Boolean(
+    selectedCategory?.hasDstv ||
+      selectedPackage?.hasDstv ||
+      (isEdit && customer?.hasDstv)
+  );
+  const showTvCountField = packageIncludesTv(categoryCodeForTv, hasDstvForTv);
+  const extraTvFeeAmount = showTvCountField ? extraTvFee(tvCount) : 0;
+  const extraTvs = showTvCountField ? extraTvCount(tvCount) : 0;
   const campaignDiscountPercent =
     !isEdit &&
     customerType === "C2B" &&
@@ -870,8 +890,15 @@ export function CustomerForm({
     packageAmount == null
       ? undefined
       : !isEdit
-        ? (packageAfterCampaign ?? Number(packageAmount)) + decoderFee
-        : packageAmount;
+        ? (packageAfterCampaign ?? Number(packageAmount)) +
+          extraTvFeeAmount +
+          decoderFee
+        : Number(packageAmount) + extraTvFeeAmount;
+
+  useEffect(() => {
+    const code = String(categoryCodeForTv || "").toLowerCase();
+    if (code === "internet_only" && tvCount !== 1) setTvCount(1);
+  }, [categoryCodeForTv, tvCount]);
 
   const previewCode = buildCustomerNumberPreview(
     buildings.find((x) => String(x.id) === buildingId),
@@ -889,6 +916,28 @@ export function CustomerForm({
     paymentStatusOpen ||
     initializingEdit ||
     lookupsLoading;
+
+  const tvCountField = showTvCountField ? (
+    <Field.Root>
+      <Field.Label>Number of TVs</Field.Label>
+      <Input
+        type="number"
+        min={1}
+        max={MAX_TV_COUNT}
+        value={tvCount}
+        onChange={(e) => setTvCount(normalizeTvCount(e.target.value))}
+        disabled={fieldsDisabled || !isActive}
+      />
+      <Field.HelperText>
+        1 TV is included. Each extra TV adds {formatCurrency(EXTRA_TV_UNIT_FEE)}{" "}
+        to the invoice and recurring
+        {extraTvs > 0
+          ? ` · ${extraTvs} extra (${formatCurrency(extraTvFeeAmount)})`
+          : ""}
+        .
+      </Field.HelperText>
+    </Field.Root>
+  ) : null;
 
   function clearAdvancePaymentFields() {
     setAdvancePaymentMethod("");
@@ -1108,16 +1157,31 @@ export function CustomerForm({
         ),
       });
     }
+    if (showTvCountField) {
+      items.push({
+        label: "Number of TVs",
+        value:
+          extraTvs > 0
+            ? `${tvCount} (${extraTvs} extra · ${formatCurrency(extraTvFeeAmount)})`
+            : "1 (included)",
+      });
+    }
     if (displayPrice != null) {
+      const extraTvNote =
+        extraTvFeeAmount > 0
+          ? ` + extra TV ${formatCurrency(extraTvFeeAmount)}`
+          : "";
       items.push({
         label: !isEdit && decoderFee > 0 ? "First invoice" : "Package price",
         value:
           !isEdit && campaignDiscountPercent > 0
             ? decoderFee > 0
-              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAfterCampaign)} after ${campaignDiscountPercent}% off · list ${formatCurrency(packageAmount)} + decoder ${formatCurrency(decoderFee)})`
-              : `${formatCurrency(displayPrice)} (${campaignDiscountPercent}% campaign off · list ${formatCurrency(packageAmount)})`
-            : !isEdit && decoderFee > 0
-              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAmount)} + decoder ${formatCurrency(decoderFee)})`
+              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAfterCampaign)} after ${campaignDiscountPercent}% off · list ${formatCurrency(packageAmount)}${extraTvNote} + decoder ${formatCurrency(decoderFee)})`
+              : `${formatCurrency(displayPrice)} (${campaignDiscountPercent}% campaign off · list ${formatCurrency(packageAmount)}${extraTvNote})`
+            : !isEdit && (decoderFee > 0 || extraTvFeeAmount > 0)
+              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAmount)}${extraTvNote}${
+                  decoderFee > 0 ? ` + decoder ${formatCurrency(decoderFee)}` : ""
+                })`
               : formatCurrency(displayPrice),
       });
       if (!isEdit && campaignDiscountPercent > 0 && activeCampaign) {
@@ -1258,6 +1322,10 @@ export function CustomerForm({
     customerType,
     customPeriodDays,
     decoderFee,
+    extraTvFeeAmount,
+    extraTvs,
+    showTvCountField,
+    tvCount,
     displayPrice,
     dstvDecoderSerial,
     email,
@@ -1606,11 +1674,17 @@ export function CustomerForm({
                 forceLocalPackageCorrection: true,
               }
             : {}),
+          tvCount: showTvCountField ? normalizeTvCount(tvCount) : 1,
           ...(isActive && customerType === "C2B"
             ? {
                 createInitialInvoice: createInitialInvoice || undefined,
                 createRecurringInvoice: createRecurringInvoice || undefined,
-                updateZohoRecurring: updateZohoRecurring || undefined,
+                updateZohoRecurring:
+                  updateZohoRecurring ||
+                  (showTvCountField &&
+                    normalizeTvCount(tvCount) !==
+                      normalizeTvCount(customer.tvCount || 1)) ||
+                  undefined,
                 tispDueDate: tispDueDate.trim() || undefined,
               }
             : isActive
@@ -1718,6 +1792,7 @@ export function CustomerForm({
         buildingId: Number(buildingId),
         productId: Number(productId),
         agencyId: customerType === "B2B" ? Number(agencyId) : undefined,
+        tvCount: showTvCountField ? normalizeTvCount(tvCount) : 1,
         dstvDecoderSerial: requiresDstvSerial
           ? dstvDecoderSerial.trim().toUpperCase()
           : undefined,
@@ -2136,6 +2211,7 @@ export function CustomerForm({
                 <Field.Label color="fg.muted">Payment frequency</Field.Label>
                 <Input {...lockedPackageFieldProps} value={editFrequencyLabel} />
               </Field.Root>
+              {tvCountField}
               {showDstvSerialField && (
                 <Field.Root required={requiresDstvSerial} gridColumn={{ md: "span 2" }}>
                   <Field.Label>DSTV decoder IUC/Serial number</Field.Label>
@@ -2257,6 +2333,7 @@ export function CustomerForm({
               ))}
             </SelectField>
           </Field.Root>
+          {tvCountField}
           {isEdit &&
             canEditPackage &&
             customer &&
@@ -3046,13 +3123,13 @@ export function CustomerForm({
                   ? asksDecoderFee &&
                     paymentCoversInternet &&
                     !paymentCoversDecoder
-                    ? `Creates the customer, marks the Internet invoice paid (${formatCurrency(packageAmount || 0)}), and issues a separate unpaid DSTV decoder invoice (${formatCurrency(decoderFee || 2900)}) to the customer.`
+                    ? `Creates the customer, marks the Internet invoice paid (${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}), and issues a separate unpaid DSTV decoder invoice (${formatCurrency(decoderFee || 2900)}) to the customer.`
                     : asksDecoderFee &&
                         !paymentCoversInternet &&
                         paymentCoversDecoder
-                      ? `Creates the customer, marks the decoder invoice paid (${formatCurrency(decoderFee || 2900)}), and issues a separate unpaid Internet/package invoice (${formatCurrency(packageAmount || 0)}).`
+                      ? `Creates the customer, marks the decoder invoice paid (${formatCurrency(decoderFee || 2900)}), and issues a separate unpaid Internet/package invoice (${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}).`
                       : `Creates the customer, marks the package invoice paid (${formatCurrency(
-                          (paymentCoversInternet ? Number(packageAmount || 0) : 0) +
+                          (paymentCoversInternet ? Number(packageAmount || 0) + extraTvFeeAmount : 0) +
                             (asksDecoderFee && paymentCoversDecoder
                               ? Number(decoderFee || 2900)
                               : 0)
@@ -3092,8 +3169,8 @@ export function CustomerForm({
                 : asksDecoderFee &&
                     !paymentCoversInternet &&
                     paymentCoversDecoder
-                  ? `Payment covers the DSTV decoder only. We will mark the decoder invoice paid and create a separate unpaid Internet/package invoice for ${formatCurrency(packageAmount || 0)}.`
-                  : `Selected plan: ${formatCurrency(packageAmount || 0)}${
+                  ? `Payment covers the DSTV decoder only. We will mark the decoder invoice paid and create a separate unpaid Internet/package invoice for ${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}.`
+                  : `Selected plan: ${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}${
                       asksDecoderFee && paymentCoversDecoder
                         ? ` + decoder ${formatCurrency(decoderFee || 2900)}`
                         : ""
@@ -3270,7 +3347,9 @@ export function CustomerForm({
                     </Text>
                     <Text fontSize="xs" color="fg.muted">
                       {packageAmount != null
-                        ? formatCurrency(packageAmount)
+                        ? formatCurrency(
+                            Number(packageAmount) + extraTvFeeAmount
+                          )
                         : "—"}
                     </Text>
                   </Box>
@@ -3307,7 +3386,7 @@ export function CustomerForm({
                   Invoice total:{" "}
                   {formatCurrency(
                     (paymentStatusDraft.coversInternet
-                      ? Number(packageAmount || 0)
+                      ? Number(packageAmount || 0) + extraTvFeeAmount
                       : 0) +
                       (asksDecoderFee && paymentStatusDraft.coversDecoder
                         ? Number(decoderFee || 2900)
@@ -3392,6 +3471,11 @@ export function CustomerForm({
                 {!isEdit && decoderFee > 0 && (
                   <Text as="span" fontSize="xs" display="block" color="brand.600">
                     first invoice incl. {formatCurrency(decoderFee)} decoder
+                  </Text>
+                )}
+                {!isEdit && extraTvFeeAmount > 0 && (
+                  <Text as="span" fontSize="xs" display="block" color="brand.600">
+                    incl. {formatCurrency(extraTvFeeAmount)} extra TV
                   </Text>
                 )}
               </Text>

@@ -68,6 +68,7 @@ const {
   getDowngradeQuote,
   createCustomer,
   updateCustomer,
+  updateCustomerTvCount,
   getCustomerIntegrations,
   convertCustomerType,
   upgradePackage,
@@ -481,6 +482,7 @@ router.get(
 router.post("/customers", requirePermission("customers.create"), createCustomer);
 router.post("/customers/refresh-batch", requirePermission("customers.view"), refreshCustomersBatch);
 router.patch("/customers/:id", requirePermission("customers.edit"), updateCustomer);
+router.patch("/customers/:id/tv-count", requirePermission("customers.edit"), updateCustomerTvCount);
 router.post("/customers/:id/convert-type", requirePermission("customers.edit"), convertCustomerType);
 router.post("/customers/bulk-cancel", requirePermission("customers.cancel"), bulkCancelSubscriptions);
 router.post("/customers/bulk-create-on-tisp", requirePermission("customers.edit"), bulkCreateOnTisp);

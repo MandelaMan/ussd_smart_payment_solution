@@ -1,9 +1,9 @@
 /**
- * App-wide reachability.
+ * Internet connectivity for the admin UI.
  *
- * "offline" = the browser reports no network (Wi‑Fi / mobile data).
- * "unreachable" = the browser is online but SUL Bix's API did not respond
- *   (local server down, proxy refused, etc.). Never call that "no internet".
+ * The orange banner is tied only to the browser's online/offline signal
+ * (`navigator.onLine` + `online`/`offline` events). A failed API call, a
+ * nodemon restart, or a refused local proxy is not an internet outage.
  */
 
 export const CONNECTIVITY_RESTORED_EVENT = "sul:connectivity-restored";
@@ -17,28 +17,28 @@ export const SERVER_UNREACHABLE_MESSAGE =
 export const REQUEST_TIMEOUT_MESSAGE =
   "The request took too long. Please try again.";
 
-const PROBE_TIMEOUT_MS = 5_000;
-const POLL_WHILE_OFFLINE_MS = 8_000;
+const POLL_WHILE_OFFLINE_MS = 3_000;
 
-export type ConnectivityStatus = "ok" | "offline" | "unreachable";
+export type ConnectivityStatus = "ok" | "offline";
 
 export type ConnectivityState = {
   status: ConnectivityStatus;
   checking: boolean;
 };
 
-type ReachabilityFailureReason = "network" | "timeout";
-
 const listeners = new Set<(state: ConnectivityState) => void>();
 
 let state: ConnectivityState = {
-  status: typeof navigator === "undefined" || navigator.onLine ? "ok" : "offline",
+  status: browserReportsOnline() ? "ok" : "offline",
   checking: false,
 };
 
 let started = false;
 let pollId: number | undefined;
-let probeInFlight = false;
+
+function browserReportsOnline() {
+  return typeof navigator === "undefined" || navigator.onLine !== false;
+}
 
 function emit() {
   for (const listener of listeners) listener(state);
@@ -51,14 +51,10 @@ function setState(next: Partial<ConnectivityState>) {
   emit();
 }
 
-function browserReportsOnline() {
-  return typeof navigator === "undefined" || navigator.onLine !== false;
-}
-
 function startPolling() {
   if (typeof window === "undefined" || pollId != null) return;
   pollId = window.setInterval(() => {
-    void confirmOnline({ userInitiated: false });
+    if (browserReportsOnline()) markOk();
   }, POLL_WHILE_OFFLINE_MS);
 }
 
@@ -73,37 +69,12 @@ function markOffline() {
   startPolling();
 }
 
-function markUnreachable() {
-  setState({ status: "unreachable", checking: false });
-  startPolling();
-}
-
 function markOk() {
-  const wasDisconnected = state.status !== "ok";
+  const wasOffline = state.status === "offline";
   stopPolling();
   setState({ status: "ok", checking: false });
-  if (wasDisconnected && typeof window !== "undefined") {
+  if (wasOffline && typeof window !== "undefined") {
     window.dispatchEvent(new Event(CONNECTIVITY_RESTORED_EVENT));
-  }
-}
-
-async function probeReachability(): Promise<boolean> {
-  if (typeof window === "undefined") return true;
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-  try {
-    const res = await fetch(`/api/?_cb=${Date.now()}`, {
-      method: "GET",
-      cache: "no-store",
-      credentials: "omit",
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    window.clearTimeout(timer);
   }
 }
 
@@ -118,44 +89,38 @@ export function subscribeConnectivity(listener: (state: ConnectivityState) => vo
   };
 }
 
+/** Re-read the browser's network flag (used by Try again). */
 export async function confirmOnline(
   options: { userInitiated?: boolean } = {}
 ): Promise<boolean> {
-  if (probeInFlight) return state.status === "ok";
-  probeInFlight = true;
   if (options.userInitiated) setState({ checking: true });
-  try {
-    const ok = await probeReachability();
-    if (ok) {
-      markOk();
-      return true;
-    }
-    if (browserReportsOnline()) markUnreachable();
-    else markOffline();
-    return false;
-  } finally {
-    probeInFlight = false;
-    if (state.checking) setState({ checking: false });
-  }
+  await new Promise((r) => window.setTimeout(r, options.userInitiated ? 200 : 0));
+  const online = browserReportsOnline();
+  if (online) markOk();
+  else markOffline();
+  return online;
 }
 
-/** Called from the API client when a request never reached the server. */
-export function reportReachabilityFailure(reason: ReachabilityFailureReason) {
-  if (!browserReportsOnline()) {
-    markOffline();
-    return;
-  }
-  if (reason === "network") {
-    markUnreachable();
-    return;
-  }
-  void confirmOnline({ userInitiated: false });
+/** Any HTTP response (even 4xx/5xx) means the device reached a server. */
+export function noteNetworkActivity() {
+  markOk();
+}
+
+/**
+ * API timeouts / failed fetches. Only flips the banner when the browser
+ * itself says there is no network.
+ */
+export function reportReachabilityFailure(_reason?: "network" | "timeout") {
+  if (!browserReportsOnline()) markOffline();
 }
 
 export function isBrowserNetworkFailure(err: unknown): boolean {
-  if (err instanceof TypeError) return true;
   if (!(err instanceof Error)) return false;
   const message = err.message.toLowerCase();
+  const name = err.name.toLowerCase();
+  if (name === "typeerror" && (message === "failed to fetch" || message.includes("fetch"))) {
+    return true;
+  }
   return (
     message.includes("failed to fetch") ||
     message.includes("networkerror") ||
@@ -172,9 +137,9 @@ export function isConnectivityErrorMessage(value: unknown): boolean {
   const message = value.toLowerCase();
   return (
     message.includes("check your internet") ||
+    message.includes("no internet") ||
     message.includes("can't reach sul bix") ||
     message.includes("cannot reach sul bix") ||
-    message.includes("no internet") ||
     message.includes("server isn't responding") ||
     message.includes("request timed out") ||
     message.includes("failed to fetch") ||
@@ -201,8 +166,9 @@ export function startConnectivityMonitor() {
     markOffline();
   });
   window.addEventListener("online", () => {
-    void confirmOnline({ userInitiated: false });
+    markOk();
   });
 
-  if (!navigator.onLine) markOffline();
+  if (navigator.onLine) markOk();
+  else markOffline();
 }

@@ -74,6 +74,7 @@ function diffCustomerDetails(before, after, extra = {}) {
     ["paymentFrequency", "Payment frequency"],
     ["customPeriodDays", "Custom period (days)"],
     ["packagePrice", "Package price"],
+    ["tvCount", "Number of TVs"],
   ];
 
   for (const [field, label] of pairs) {

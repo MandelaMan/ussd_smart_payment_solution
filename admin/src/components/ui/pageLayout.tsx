@@ -54,21 +54,15 @@ export const inlineFormCardProps = {
   boxShadow: "sm",
 } as const;
 
-function shouldHideConnectivityError(children: ReactNode, connected: boolean) {
+function shouldHideConnectivityError(children: ReactNode, offline: boolean) {
+  if (!offline) return false;
   if (isConnectivityErrorMessage(children)) return true;
-  if (
-    !connected &&
-    typeof children === "string" &&
-    /took too long|timed out/i.test(children)
-  ) {
-    return true;
-  }
-  return false;
+  return typeof children === "string" && /took too long|timed out/i.test(children);
 }
 
 export function PageErrorBanner({ children }: { children: ReactNode }) {
   const { status } = useConnectivity();
-  if (shouldHideConnectivityError(children, status === "ok")) return null;
+  if (shouldHideConnectivityError(children, status === "offline")) return null;
   return (
     <Box bg="red.50" color="red.700" px={3} py={2.5} borderRadius="md" fontSize="sm">
       {children}

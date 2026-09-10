@@ -21,6 +21,10 @@ const {
 } = require("./zoho.controller");
 const { summarizeOverdueZohoInvoices } = require("../utils/zohoInvoiceStatus");
 const { buildZohoContactPersonsPayload } = require("../utils/zohoContactPersons");
+const {
+  extraTvAmount,
+  buildExtraTvLineItem,
+} = require("../utils/zohoInvoiceLineItems");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
   String(process.env.ZOHO_INVOICE_TAX_INCLUSIVE || "true").toLowerCase() !==
@@ -46,11 +50,12 @@ function computeAgencyBilling(customers, discountPercent = null) {
   const active = customers.filter((c) => c.status === "active");
   const pct = normalizeAgencyDiscountPercent(discountPercent);
   const totalActiveAmount = active.reduce(
-    (sum, c) => sum + Number(c.packagePrice || 0),
+    (sum, c) => sum + Number(c.packagePrice || 0) + extraTvAmount(c),
     0
   );
   const totalInvoiceAmount = active.reduce(
-    (sum, c) => sum + applyAgencyUnitDiscount(c.packagePrice, pct),
+    (sum, c) =>
+      sum + applyAgencyUnitDiscount(c.packagePrice, pct) + extraTvAmount(c),
     0
   );
   return {
@@ -210,6 +215,13 @@ function buildCustomerLineItem(customer, discountPercent = null) {
     lineItem.tax_id = ZOHO_VAT_TAX_ID;
   }
   return lineItem;
+}
+
+function buildCustomerLineItems(customer, discountPercent = null) {
+  const items = [buildCustomerLineItem(customer, discountPercent)];
+  const extra = buildExtraTvLineItem(customer, { includeCustomerNumber: true });
+  if (extra) items.push(extra);
+  return items;
 }
 
 function lineItemsSubtotal(lineItems) {
@@ -402,8 +414,8 @@ async function createAgencyInvoice(req, res, next) {
       if (amount <= 0) {
         return res.status(400).json({ error: "Customer has no billable package price" });
       }
-      grossSubtotal = amount;
-      lineItems = [buildCustomerLineItem(customer, percentDiscount)];
+      grossSubtotal = amount + extraTvAmount(customer);
+      lineItems = buildCustomerLineItems(customer, percentDiscount);
       referenceNumber = customer.customerNumber;
       billedCustomers = [customer];
     } else if (mode === "consolidated") {
@@ -415,10 +427,12 @@ async function createAgencyInvoice(req, res, next) {
         return res.status(400).json({ error: "No billable active customers" });
       }
       grossSubtotal = billable.reduce(
-        (sum, c) => sum + Number(c.packagePrice || 0),
+        (sum, c) => sum + Number(c.packagePrice || 0) + extraTvAmount(c),
         0
       );
-      lineItems = billable.map((c) => buildCustomerLineItem(c, percentDiscount));
+      lineItems = billable.flatMap((c) =>
+        buildCustomerLineItems(c, percentDiscount)
+      );
       billedCustomers = billable;
       referenceNumber = `${agency.name} — ${billable.length} customers`;
     } else {
@@ -431,7 +445,7 @@ async function createAgencyInvoice(req, res, next) {
 
     if (effectiveDiscount?.type === "amount") {
       // Fixed amount stays as Zoho entity-level discount on full (gross) rates.
-      lineItems = billedCustomers.map((c) => buildCustomerLineItem(c, null));
+      lineItems = billedCustomers.flatMap((c) => buildCustomerLineItems(c, null));
       const subtotal = lineItemsSubtotal(lineItems);
       ({ zohoDiscountPercent, discountAmount } = resolveInvoiceDiscount(
         subtotal,

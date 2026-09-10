@@ -90,8 +90,14 @@ describe("zohoContactPersons", () => {
   });
 
   it("builds invoice payload with email communications enabled", () => {
-    const payload = buildInvoiceEmailContactPersonsPayload(["p1", "p1", ""]);
-    assert.deepEqual(payload.contact_persons, ["p1"]);
+    const payload = buildInvoiceEmailContactPersonsPayload([
+      "p1",
+      "p1",
+      "",
+      { contact_person_id: "p1" },
+    ]);
+    // Do not also send contact_persons — Zoho 3023 if the same ID is in both.
+    assert.equal("contact_persons" in payload, false);
     assert.deepEqual(payload.contact_persons_associated, [
       {
         contact_person_id: "p1",

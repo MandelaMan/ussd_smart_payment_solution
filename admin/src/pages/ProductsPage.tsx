@@ -84,6 +84,30 @@ function assignedCustomerCount(product: Product | null | undefined) {
   return Number(product.assignedCustomerCount ?? product.customerCount ?? 0);
 }
 
+function formatAmountInput(value: unknown) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return String(n);
+}
+
+function resolveMonthlyPricePayload(
+  paymentFrequency: string,
+  price: string,
+  monthlyPrice: string
+) {
+  if (paymentFrequency === "monthly") {
+    return price ? Number(price) : undefined;
+  }
+  return monthlyPrice ? Number(monthlyPrice) : undefined;
+}
+
+function pickMonthlyEquivalentPrice(products: Product[]) {
+  const preferred =
+    products.find((p) => p.paymentFrequency === "monthly" && p.isActive) ||
+    products.find((p) => p.paymentFrequency === "monthly");
+  return preferred ? formatAmountInput(preferred.price) : "";
+}
+
 function billingToastDetail(billing?: {
   customers?: number;
   zohoUpdated?: number;
@@ -385,7 +409,11 @@ export function ProductsPage() {
     setBuildingId(String(product.buildingId));
     setMbps(String(product.mbps));
     setPrice(String(product.price));
-    setMonthlyPrice(String(product.monthlyPrice ?? product.price));
+    setMonthlyPrice(
+      product.paymentFrequency === "monthly"
+        ? String(product.price)
+        : String(product.monthlyPrice ?? "")
+    );
     setExtraBandwidth(String(product.extraBandwidth ?? 0));
     setIsActive(Boolean(product.isActive));
   }
@@ -412,7 +440,7 @@ export function ProductsPage() {
             ? Number(mbps)
             : Number(selectedVariant.defaultMbps),
         price: Number(price),
-        monthlyPrice: monthlyPrice ? Number(monthlyPrice) : undefined,
+        monthlyPrice: resolveMonthlyPricePayload(paymentFrequency, price, monthlyPrice),
         extraBandwidth: isDstvOnly ? 0 : extraBandwidth ? Number(extraBandwidth) : 0,
       });
       if (res.tisp?.ok === false) {
@@ -457,7 +485,7 @@ export function ProductsPage() {
         buildingId: Number(buildingId),
         mbps: isDstvOnly ? 0 : Number(mbps),
         price: Number(price),
-        monthlyPrice: monthlyPrice ? Number(monthlyPrice) : Number(price),
+        monthlyPrice: resolveMonthlyPricePayload(paymentFrequency, price, monthlyPrice),
         extraBandwidth: isDstvOnly ? 0 : extraBandwidth ? Number(extraBandwidth) : 0,
         isActive,
       });
@@ -999,6 +1027,10 @@ function ProductForm({
 }) {
   const fieldsDisabled = submitting || lookupsLoading;
   const internetFieldsDisabled = fieldsDisabled || isDstvOnly;
+  const isMonthlyBilling = paymentFrequency === "monthly";
+  const monthlyUserEditedRef = useRef(false);
+  const prevLookupRef = useRef({ paymentFrequency, buildingId, planId });
+
   const examplePrice = useMemo(() => {
     if (!selectedCategory || !selectedPlan || !selectedVariant) return null;
     if (selectedCategory.code === "internet_apartonet" && selectedPlan.code === "basic") {
@@ -1028,6 +1060,67 @@ function ProductForm({
   const showDecoderFeeNotice = categoryHasDecoderFee && buildingUsesDecoder;
   const showHeadendNoDecoderNotice =
     categoryHasDecoderFee && selectedBuilding?.dstvSetup === "headend_coax";
+
+  function applyPrice(next: string) {
+    setPrice(next);
+    if (paymentFrequency === "monthly") {
+      setMonthlyPrice(next);
+    }
+  }
+
+  function applyPaymentFrequency(next: string) {
+    setPaymentFrequency(next);
+    monthlyUserEditedRef.current = false;
+    if (next === "monthly") {
+      setMonthlyPrice(price);
+    }
+  }
+
+  useEffect(() => {
+    const prev = prevLookupRef.current;
+    const buildingOrPlanChanged =
+      prev.buildingId !== buildingId || prev.planId !== planId;
+    const frequencyChanged = prev.paymentFrequency !== paymentFrequency;
+    prevLookupRef.current = { paymentFrequency, buildingId, planId };
+
+    if (!frequencyChanged && !buildingOrPlanChanged) return;
+    if (paymentFrequency === "monthly") return;
+    if (!buildingId || !planId) {
+      if (buildingOrPlanChanged) {
+        monthlyUserEditedRef.current = false;
+        setMonthlyPrice("");
+      }
+      return;
+    }
+
+    monthlyUserEditedRef.current = false;
+    let cancelled = false;
+    api
+      .listProducts({
+        buildingId,
+        planId,
+        paymentFrequency: "monthly",
+        activeOnly: "false",
+        unpaginated: "true",
+      })
+      .then((res) => {
+        if (cancelled || monthlyUserEditedRef.current) return;
+        const found = pickMonthlyEquivalentPrice(res.products || []);
+        if (found) {
+          setMonthlyPrice(found);
+        } else if (buildingOrPlanChanged) {
+          setMonthlyPrice("");
+        }
+      })
+      .catch(() => {
+        if (!cancelled && buildingOrPlanChanged && !monthlyUserEditedRef.current) {
+          setMonthlyPrice("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentFrequency, buildingId, planId, setMonthlyPrice]);
 
   return (
     <form onSubmit={onSubmit}>
@@ -1088,7 +1181,7 @@ function ProductForm({
             disabled={readOnlyStructure || fieldsDisabled}
             fieldProps={{
               value: paymentFrequency,
-              onChange: (e) => setPaymentFrequency(e.target.value),
+              onChange: (e) => applyPaymentFrequency(e.target.value),
             }}
           >
             {FREQUENCIES.map((f) => (
@@ -1137,11 +1230,33 @@ function ProductForm({
         )}
         <Field.Root required>
           <Field.Label>Price (KES, incl. VAT)</Field.Label>
-          <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder={examplePrice ? String(examplePrice) : undefined} disabled={fieldsDisabled} />
+          <Input
+            type="number"
+            value={price}
+            onChange={(e) => applyPrice(e.target.value)}
+            placeholder={examplePrice ? String(examplePrice) : undefined}
+            disabled={fieldsDisabled}
+          />
         </Field.Root>
         <Field.Root>
           <Field.Label>Monthly base price</Field.Label>
-          <Input type="number" value={monthlyPrice} onChange={(e) => setMonthlyPrice(e.target.value)} placeholder="e.g. 3500" disabled={fieldsDisabled} />
+          <Input
+            type="number"
+            value={monthlyPrice}
+            onChange={(e) => {
+              monthlyUserEditedRef.current = true;
+              setMonthlyPrice(e.target.value);
+            }}
+            placeholder={isMonthlyBilling ? "Same as price" : "e.g. 3500"}
+            disabled={fieldsDisabled}
+            readOnly={isMonthlyBilling}
+            bg={isMonthlyBilling ? "bg.subtle" : undefined}
+          />
+          <Field.HelperText>
+            {isMonthlyBilling
+              ? "Matches price for monthly billing."
+              : "Optional. Filled from the monthly package for this plan and building when one exists."}
+          </Field.HelperText>
         </Field.Root>
         <Field.Root>
           <Field.Label>Extra bandwidth (Mbps)</Field.Label>

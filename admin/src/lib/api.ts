@@ -3,6 +3,7 @@ import {
   REQUEST_TIMEOUT_MESSAGE,
   SERVER_UNREACHABLE_MESSAGE,
   isBrowserNetworkFailure,
+  noteNetworkActivity,
   reportReachabilityFailure,
 } from "./connectivity";
 
@@ -593,6 +594,7 @@ export type Customer = {
   onuSn?: string | null;
   tispPassword?: string | null;
   packagePrice: number;
+  tvCount?: number;
   decoderFeeAmount: number | null;
   decoderFeeRequired: boolean;
   hasDstv: boolean;
@@ -1764,6 +1766,7 @@ async function request<T>(path: string, options: ApiRequestOptions = {}): Promis
       signal: outer.signal,
       cache: fetchOptions.cache ?? "no-store",
     });
+    noteNetworkActivity();
 
     // Conditional GETs (304) have no body — treat as failure for JSON APIs.
     if (res.status === 304 || !res.ok) {
@@ -1808,6 +1811,7 @@ async function downloadExport(path: string, filename: string) {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
+    noteNetworkActivity();
   } catch (err) {
     if (isBrowserNetworkFailure(err)) {
       reportReachabilityFailure("network");
@@ -3396,6 +3400,7 @@ export const api = {
       forceLocalPackageCorrection?: boolean;
       ipAddress?: string;
       dstvDecoderSerial?: string | null;
+      tvCount?: number;
       /** Create Zoho signup invoice when provisioning a missing Zoho contact (default false). */
       createInitialInvoice?: boolean;
       /** Create Zoho recurring when provisioning missing Zoho contact (default false). */
@@ -3437,6 +3442,17 @@ export const api = {
     }>(`/admin/customers/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+
+  updateCustomerTvCount: (id: number, tvCount: number) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      changed: boolean;
+      zoho?: { ok?: boolean; error?: string; skipped?: boolean };
+    }>(`/admin/customers/${id}/tv-count`, {
+      method: "PATCH",
+      body: JSON.stringify({ tvCount }),
     }),
 
   getCustomerIntegrations: (id: number) =>

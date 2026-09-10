@@ -21,6 +21,10 @@ const {
   withoutPaymentOptions,
   invoiceHasPaystackPaymentOption,
 } = require("../utils/zohoPaymentOptions");
+const {
+  pickZohoTransactionSeries,
+  invoiceSeriesPayload,
+} = require("../utils/zohoTransactionSeries");
 require("dotenv").config();
 
 /** ========= Config ========= **/
@@ -374,6 +378,67 @@ function invalidateZohoContactLookupCache(companyName) {
   cache.delete(norm(raw));
 }
 
+const ZOHO_INVOICE_LOCATION_NAME = String(
+  process.env.ZOHO_INVOICE_LOCATION_NAME || "Internet/DSTV"
+).trim();
+const SERIES_CACHE_KEY = "zoho:invoice-transaction-series";
+
+/**
+ * Internet/DSTV location + its associated transaction series
+ * (Enaki / Skynest / Colosseum / GM Azalea).
+ */
+async function loadZohoInvoiceTransactionSeries() {
+  const cached = cache.get(SERIES_CACHE_KEY);
+  if (cached?.locationId && Array.isArray(cached.series)) return cached;
+
+  const listed = await callZoho("locations", "GET");
+  const locations = listed.locations || [];
+  const wanted = ZOHO_INVOICE_LOCATION_NAME.toLowerCase();
+  const location =
+    locations.find(
+      (row) => String(row.location_name || "").trim().toLowerCase() === wanted
+    ) ||
+    locations.find((row) => row.is_primary_location) ||
+    locations[0];
+  if (!location?.location_id) {
+    return { locationId: null, series: [] };
+  }
+
+  const detail = await callZoho(`locations/${location.location_id}`, "GET");
+  const loc = detail.location || detail;
+  const series = Array.isArray(loc.associated_series)
+    ? loc.associated_series
+    : [];
+  const value = {
+    locationId: String(location.location_id),
+    series,
+  };
+  cache.set(SERIES_CACHE_KEY, value);
+  return value;
+}
+
+async function resolveZohoInvoiceTransactionSeries(customer) {
+  if (!customer) return null;
+  try {
+    const { locationId, series } = await loadZohoInvoiceTransactionSeries();
+    const picked = pickZohoTransactionSeries(series, customer);
+    return invoiceSeriesPayload(locationId, picked);
+  } catch (e) {
+    console.warn(
+      "Zoho transaction series lookup skipped:",
+      e.response?.data || e.message || e,
+    );
+    return null;
+  }
+}
+
+async function mergeRecurringTransactionSeries(payload, customer) {
+  if (!payload || payload.autonumbergenerationgroup_id) return payload;
+  const fields = await resolveZohoInvoiceTransactionSeries(customer);
+  if (fields) Object.assign(payload, fields);
+  return payload;
+}
+
 /** ========= Core JS functions (no req/res, return raw data) ========= **/
 
 // Get invoices (array)
@@ -660,7 +725,13 @@ async function resolveInvoiceEmailContactPersons(customer_id, hints = {}) {
 }
 
 async function mergeInvoiceEmailContactPersons(payload, customer_id, hints = {}) {
-  if (!payload || payload.contact_persons) return payload;
+  if (
+    !payload ||
+    payload.contact_persons ||
+    payload.contact_persons_associated
+  ) {
+    return payload;
+  }
   try {
     const fields = await resolveInvoiceEmailContactPersons(customer_id, hints);
     if (fields) Object.assign(payload, fields);
@@ -703,9 +774,12 @@ async function associateEmailContactPersonsOnOpenInvoices(
   const open = (invoices || [])
     .filter(isOpenReminderInvoice)
     .filter((inv) => {
+      const personIds = (fields?.contact_persons_associated || []).map(
+        (p) => p.contact_person_id,
+      );
       const needsPersons =
         Boolean(fields) &&
-        !invoiceAlreadyHasEmailContactPersons(inv, fields.contact_persons);
+        !invoiceAlreadyHasEmailContactPersons(inv, personIds);
       const needsPaystack = !invoiceHasPaystackPaymentOption(inv);
       return needsPersons || needsPaystack;
     })
@@ -744,6 +818,7 @@ const createRecurringInvoice_JS = async ({
   payment_terms_label,
   contact_persons,
   contact,
+  customer,
 }) => {
   if (!customer_id || !line_items?.length) return null;
   // Do not send inline billing_address. Zoho Books treats that field as a
@@ -763,6 +838,7 @@ const createRecurringInvoice_JS = async ({
     contact_persons,
     contact,
   });
+  await mergeRecurringTransactionSeries(payload, customer);
   if (is_inclusive_tax != null) {
     payload.is_inclusive_tax = Boolean(is_inclusive_tax);
   }
@@ -2189,6 +2265,7 @@ module.exports = {
   markInvoiceAsPaid_JS,
   resolveInvoiceEmailContactPersons,
   associateEmailContactPersonsOnOpenInvoices,
+  resolveZohoInvoiceTransactionSeries,
 
   // Extra helpers if you want them elsewhere
   callZoho,

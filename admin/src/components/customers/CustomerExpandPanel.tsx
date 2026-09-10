@@ -69,6 +69,12 @@ import { DstvSerialMissingBadge } from "./DstvSerialMissingBadge";
 import { CatalogPackageMissingBadge } from "./CatalogPackageMissingBadge";
 import { AppDialog } from "../ui/AppDialog";
 import { SelectField } from "../ui/SelectField";
+import {
+  extraTvCount,
+  extraTvFee,
+  EXTRA_TV_UNIT_FEE,
+  packageIncludesTv,
+} from "../../lib/extraTv";
 
 type Props = {
   customerId: number;
@@ -958,6 +964,8 @@ export function CustomerExpandPanel({
   const [refreshing, setRefreshing] = useState(false);
   const [retryingBilling, setRetryingBilling] = useState(false);
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+  const [removeExtraTvsOpen, setRemoveExtraTvsOpen] = useState(false);
+  const [removingExtraTvs, setRemovingExtraTvs] = useState(false);
   const [paymentAlreadyMade, setPaymentAlreadyMade] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState<"" | "mpesa" | "paystack" | "bank">("");
   const [mpesaCode, setMpesaCode] = useState("");
@@ -1242,6 +1250,39 @@ export function CustomerExpandPanel({
       }
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function handleRemoveExtraTvs() {
+    if (!customer) return;
+    setRemovingExtraTvs(true);
+    try {
+      const res = await api.updateCustomerTvCount(customer.id, 1);
+      setCustomer(res.customer);
+      onCustomerUpdated?.(res.customer);
+      setRemoveExtraTvsOpen(false);
+      if (res.zoho?.ok === false) {
+        toaster.create({
+          title: "Extra TVs removed locally",
+          description: `Zoho recurring update failed: ${res.zoho.error || "unknown error"}`,
+          type: "warning",
+          duration: 10000,
+        });
+      } else {
+        toaster.create({
+          title: "Extra TVs removed",
+          description: "Recurring invoice no longer includes the Extra TV charge.",
+          type: "success",
+        });
+      }
+    } catch (e) {
+      toaster.create({
+        title: "Could not remove extra TVs",
+        description: e instanceof Error ? e.message : "Please try again",
+        type: "error",
+      });
+    } finally {
+      setRemovingExtraTvs(false);
     }
   }
 
@@ -1719,6 +1760,33 @@ export function CustomerExpandPanel({
             {!hidePricing ? (
               <DetailCard label="Package price" value={formatCurrency(customer.packagePrice)} />
             ) : null}
+            {packageIncludesTv(customer.categoryCode, customer.hasDstv) ? (
+              <DetailCard
+                label="Number of TVs"
+                value={
+                  extraTvCount(customer.tvCount) > 0 ? (
+                    <Stack gap={2} align="flex-start">
+                      <Text>
+                        {customer.tvCount || 1} (
+                        {extraTvCount(customer.tvCount)} extra ·{" "}
+                        {formatCurrency(extraTvFee(customer.tvCount))})
+                      </Text>
+                      {!readOnly && customer.status === "active" ? (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => setRemoveExtraTvsOpen(true)}
+                        >
+                          Remove extra TVs
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  ) : (
+                    "1 (included)"
+                  )
+                }
+              />
+            ) : null}
             {customer.hasDstv && (
               <DetailCard
                 label="DSTV IUC/Serial"
@@ -2195,6 +2263,48 @@ export function CustomerExpandPanel({
       </Box>
       </Box>
     </Box>
+
+      <AppDialog
+        open={removeExtraTvsOpen}
+        onOpenChange={(details) => {
+          if (!details.open && !removingExtraTvs) setRemoveExtraTvsOpen(false);
+        }}
+        maxW="sm"
+        showCloseButton
+      >
+        <Dialog.Header
+          borderBottomWidth="1px"
+          borderColor="border.muted"
+          px={5}
+          py={3.5}
+          pr={12}
+        >
+          <Dialog.Title fontSize="lg">Remove extra TVs</Dialog.Title>
+        </Dialog.Header>
+        <Dialog.Body px={5} py={4}>
+          <Text fontSize="sm">
+            This sets the account back to 1 TV and removes the Extra TV line
+            ({formatCurrency(EXTRA_TV_UNIT_FEE)} each) from the recurring invoice.
+            Existing invoices are not changed.
+          </Text>
+        </Dialog.Body>
+        <Dialog.Footer px={5} py={4} borderTopWidth="1px" borderColor="border.muted" gap={2}>
+          <Button
+            variant="ghost"
+            disabled={removingExtraTvs}
+            onClick={() => setRemoveExtraTvsOpen(false)}
+          >
+            Keep extra TVs
+          </Button>
+          <Button
+            colorPalette="brand"
+            loading={removingExtraTvs}
+            onClick={() => void handleRemoveExtraTvs()}
+          >
+            Remove extra TVs
+          </Button>
+        </Dialog.Footer>
+      </AppDialog>
 
       <AppDialog
         open={replaceDialogOpen}

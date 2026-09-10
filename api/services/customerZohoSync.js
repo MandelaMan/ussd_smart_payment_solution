@@ -8,9 +8,13 @@ const {
   getInvoices_JS,
   resolveInvoiceEmailContactPersons,
   associateEmailContactPersonsOnOpenInvoices,
+  resolveZohoInvoiceTransactionSeries,
 } = require("../controllers/zoho.controller");
 const { isB2BCustomer, resolveAgencyForCustomer } = require("../utils/b2bBilling");
-const { buildSubscriptionLineItems } = require("../utils/zohoInvoiceLineItems");
+const {
+  buildSubscriptionLineItems,
+  mergeRecurringLineItems,
+} = require("../utils/zohoInvoiceLineItems");
 const {
   computeBillingPeriod,
   computeSignupRecurringWindow,
@@ -60,6 +64,9 @@ function mapContextToCustomer(ctx, agencyName = null) {
     paymentFrequency: ctx.payment_frequency,
     customPeriodDays: ctx.custom_period_days,
     buildingName: ctx.building_name,
+    popName: ctx.pop_name || ctx.popName || null,
+    c2bCode: ctx.c2b_code || ctx.c2bCode || null,
+    b2bCode: ctx.b2b_code || ctx.b2bCode || null,
     productName: dstvOnly ? DSTV_ONLY_PRODUCT_NAME : ctx.product_name,
     productMbps: dstvOnly ? 0 : ctx.product_mbps,
     productExtraBandwidth: dstvOnly ? 0 : ctx.product_extra_bandwidth,
@@ -75,6 +82,8 @@ function mapContextToCustomer(ctx, agencyName = null) {
       ctx.decoder_fee_amount != null ? Number(ctx.decoder_fee_amount) : null,
     decoderFeeRequired: Boolean(ctx.decoder_fee_required),
     dstvDecoderSerial: ctx.dstv_decoder_serial || null,
+    tvCount: Math.max(1, Number(ctx.tv_count) || 1),
+    categoryCode: ctx.category_code || null,
     trialPeriodEnabled: Boolean(ctx.trial_period_enabled),
     trialEndsAt: ctx.trial_ends_at || null,
     createdAt: ctx.created_at || null,
@@ -229,12 +238,15 @@ async function applyRecurringInvoiceEmailCcs(recurringInvoiceId, zohoContact = n
 
 async function updateRecurringProfileFields(
   recurringInvoiceId,
-  { recurrenceName, referenceNumber, lineItems = null }
+  { recurrenceName, referenceNumber, lineItems = null, customer = null }
 ) {
+  const seriesFields =
+    (await resolveZohoInvoiceTransactionSeries(customer)) || {};
   // Identity fields first — Zoho often rejects line_items without line_item_id.
   let updated = await updateRecurringInvoice_JS(recurringInvoiceId, {
     recurrence_name: recurrenceName,
     reference_number: referenceNumber,
+    ...seriesFields,
   });
 
   if (!lineItems?.length) {
@@ -245,13 +257,7 @@ async function updateRecurringProfileFields(
     const full =
       (await getRecurringInvoice_JS(recurringInvoiceId)) || updated || {};
     const existingItems = Array.isArray(full.line_items) ? full.line_items : [];
-    const merged = lineItems.map((item, idx) => {
-      const existing = existingItems[idx];
-      if (existing?.line_item_id) {
-        return { ...item, line_item_id: existing.line_item_id };
-      }
-      return item;
-    });
+    const merged = mergeRecurringLineItems(existingItems, lineItems);
     updated = await updateRecurringInvoice_JS(recurringInvoiceId, {
       recurrence_name: recurrenceName,
       reference_number: referenceNumber,
@@ -316,6 +322,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         recurrenceName,
         referenceNumber,
         lineItems: null,
+        customer,
       });
       renamed += 1;
     }
@@ -368,6 +375,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
           recurrenceName,
           referenceNumber,
           lineItems: null,
+          customer,
         });
       } catch (e) {
         console.warn(
@@ -396,6 +404,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         recurrenceName,
         referenceNumber,
         lineItems: syncLineItems ? lineItem : null,
+        customer,
       });
       await applyRecurringInvoiceEmailCcs(id, zohoContact);
       try {
@@ -568,6 +577,7 @@ async function renumberZohoContactCustomerNumber(contact, options = {}) {
         recurrenceName,
         referenceNumber: newCustomerNumber,
         lineItems: null,
+        customer: { customerNumber: newCustomerNumber },
       });
       profilesRenamed += 1;
     } catch (e) {

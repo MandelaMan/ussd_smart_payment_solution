@@ -6480,6 +6480,7 @@ async function updateCustomer(req, res, next) {
       ipChanged,
       previousIp,
       changes: fieldChanges,
+      tvCountChanged,
     } = await store.updateCustomerDetails(
       id,
       {
@@ -6509,6 +6510,7 @@ async function updateCustomer(req, res, next) {
         ppoeUsername: body.ppoeUsername,
         ppoePassword: body.ppoePassword,
         tispPassword: body.tispPassword,
+        tvCount: body.tvCount,
       },
       {
         allowPackageEdit: isAdmin && wantsPackageEdit,
@@ -6523,7 +6525,7 @@ async function updateCustomer(req, res, next) {
       const syncResult = await syncIntegrationsOnCustomerUpdate(id, {
         createInitialInvoice,
         createRecurringInvoice,
-        updateZohoRecurring,
+        updateZohoRecurring: updateZohoRecurring || Boolean(tvCountChanged),
         disregardExistingInvoices,
         tispDueDate: tispDueDate || undefined,
         apartmentChanged: Boolean(apartmentChanged),
@@ -6535,6 +6537,21 @@ async function updateCustomer(req, res, next) {
       });
       tisp = syncResult.tisp;
       zoho = syncResult.zoho;
+
+      if (tvCountChanged && updated?.customerType === "B2B" && updated.agencyId) {
+        try {
+          const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+          const rec = await refreshAgencyRecurring(updated.agencyId);
+          zoho = {
+            ...zoho,
+            ok: rec.ok !== false,
+            recurring: rec,
+          };
+        } catch (e) {
+          console.warn("agency recurring refresh after TV count change failed:", e.message);
+          zoho = { ...zoho, ok: false, error: e.message };
+        }
+      }
 
       if (
         packageChanged &&
@@ -6599,6 +6616,73 @@ async function updateCustomer(req, res, next) {
     if (err.message && !err.statusCode) {
       return res.status(400).json({ error: err.message });
     }
+    return next(err);
+  }
+}
+
+async function updateCustomerTvCount(req, res, next) {
+  try {
+    const id = Number(req.params.id);
+    const { customer, changed, previousTvCount, tvCount } =
+      await store.updateCustomerTvCount(id, req.body?.tvCount);
+
+    let zoho = { ok: true, skipped: !changed };
+    if (changed && customer?.status === "active") {
+      if (customer.customerType === "B2B" && customer.agencyId) {
+        try {
+          const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+          zoho = await refreshAgencyRecurring(customer.agencyId);
+        } catch (e) {
+          zoho = { ok: false, error: e.message };
+        }
+      } else {
+        try {
+          const { mapContextToCustomer, ensureRecurringSubscription } = require(
+            "../services/customerZohoSync"
+          );
+          const ctx = await store.getCustomerContext(id);
+          const mapped = mapContextToCustomer(ctx);
+          const contact = await ensureZohoContactForCustomer(mapped);
+          if (!contact?.contact_id) {
+            throw new Error("Zoho contact could not be linked");
+          }
+          const recurring = await ensureRecurringSubscription(mapped, contact, {
+            syncLineItems: true,
+          });
+          zoho = { ok: true, recurring };
+        } catch (e) {
+          zoho = { ok: false, error: e.message };
+        }
+      }
+    }
+
+    const nextCustomer = await attachTispDueDate(await store.getCustomerById(id));
+    notifyCustomersChanged(id, "updated");
+    await logActivity({
+      eventType: "customer_updated",
+      title: "Update TV count",
+      message: `${nextCustomer?.firstName || ""} ${nextCustomer?.lastName || ""} (${
+        nextCustomer?.customerNumber || id
+      }) · TVs ${previousTvCount} → ${tvCount}`.trim(),
+      source: "admin",
+      status: zoho.ok === false ? "warning" : "success",
+      customerRef: nextCustomer?.customerNumber || null,
+      referenceId: String(id),
+      metadata: {
+        previousTvCount,
+        tvCount,
+        zohoOk: zoho.ok !== false,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      customer: nextCustomer,
+      changed,
+      zoho,
+    });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
     return next(err);
   }
 }
@@ -7421,6 +7505,7 @@ module.exports = {
   getDowngradeQuote,
   createCustomer,
   updateCustomer,
+  updateCustomerTvCount,
   convertCustomerType: convertCustomerTypeHandler,
   upgradePackage,
   cancelPendingUpgrade,

@@ -20,7 +20,11 @@ const {
   normalizeAgencyDiscountPercent,
   applyAgencyUnitDiscount,
 } = require("../utils/b2bBilling");
-const { buildDstvDecoderFeeLineItem } = require("../utils/zohoInvoiceLineItems");
+const {
+  buildDstvDecoderFeeLineItem,
+  buildExtraTvLineItem,
+  mergeRecurringLineItems,
+} = require("../utils/zohoInvoiceLineItems");
 const { computeRecurringStartDate } = require("../utils/zohoRecurrence");
 const {
   createInvoice_JS,
@@ -30,6 +34,7 @@ const {
   stopRecurringInvoice_JS,
   resolveInvoiceEmailContactPersons,
   associateEmailContactPersonsOnOpenInvoices,
+  resolveZohoInvoiceTransactionSeries,
 } = require("../controllers/zoho.controller");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
@@ -102,6 +107,23 @@ function buildAgencyHouseLineItem(customer, discountPercent, { recurring = false
     quantity: 1,
     description,
   });
+}
+
+function buildAgencyHouseLineItems(customer, discountPercent, { recurring = false } = {}) {
+  const items = [buildAgencyHouseLineItem(customer, discountPercent, { recurring })];
+  const extra = buildExtraTvLineItem(customer, { includeCustomerNumber: true });
+  if (extra) items.push(extra);
+  return items;
+}
+
+function lineItemsAmount(items) {
+  return (items || []).reduce(
+    (sum, item) =>
+      item?.delete
+        ? sum
+        : sum + Number(item.rate || 0) * Number(item.quantity || 1),
+    0
+  );
 }
 
 /** Signup invoices only — decoder is one-time, never on agency recurring. */
@@ -179,8 +201,8 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
   }
 
   const discountPercent = normalizeAgencyDiscountPercent(agency.discountPercent);
-  const lineItems = houses.map((c) =>
-    buildAgencyHouseLineItem(c, discountPercent, { recurring: true })
+  const lineItems = houses.flatMap((c) =>
+    buildAgencyHouseLineItems(c, discountPercent, { recurring: true })
   );
   const terms = b2bPaymentTerms();
   const recurrenceName = agencyRecurringName(agency);
@@ -194,12 +216,9 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
         (await require("../controllers/zoho.controller").getRecurringInvoice_JS(id)) ||
         existing;
       const existingItems = Array.isArray(full.line_items) ? full.line_items : [];
-      const merged = lineItems.map((item, idx) => {
-        const prev = existingItems[idx];
-        return prev?.line_item_id
-          ? { ...item, line_item_id: prev.line_item_id }
-          : item;
-      });
+      const merged = mergeRecurringLineItems(existingItems, lineItems);
+      const seriesFields =
+        (await resolveZohoInvoiceTransactionSeries(houses[0])) || {};
       const updated = await updateRecurringInvoice_JS(
         id,
         await attachAgencyInvoiceEmailPersons(
@@ -210,6 +229,7 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
             is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
             payment_terms: terms.payment_terms,
             payment_terms_label: terms.payment_terms_label,
+            ...seriesFields,
           },
           zohoContact
         )
@@ -220,7 +240,7 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
         updated: true,
         recurringInvoiceId: id,
         houseCount: houses.length,
-        totalAmount: lineItems.reduce((s, i) => s + Number(i.rate || 0), 0),
+        totalAmount: lineItemsAmount(lineItems),
         recurring: updated,
       };
     } catch (e) {
@@ -246,6 +266,7 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
     payment_terms: terms.payment_terms,
     payment_terms_label: terms.payment_terms_label,
     contact: zohoContact,
+    customer: houses[0],
   });
 
   if (!created?.recurring_invoice_id && !created?.recurringinvoice_id) {
@@ -261,7 +282,7 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
       created.recurring_invoice_id || created.recurringinvoice_id
     ),
     houseCount: houses.length,
-    totalAmount: lineItems.reduce((s, i) => s + Number(i.rate || 0), 0),
+    totalAmount: lineItemsAmount(lineItems),
     startDate,
     recurring: created,
   };
@@ -285,12 +306,12 @@ async function createAgencyInitialInvoice(agency, zohoContact, customers = null)
   }
 
   const discountPercent = normalizeAgencyDiscountPercent(agency.discountPercent);
-  const houseItems = houses.map((c) =>
-    buildAgencyHouseLineItem(c, discountPercent, { recurring: false })
+  const houseItems = houses.flatMap((c) =>
+    buildAgencyHouseLineItems(c, discountPercent, { recurring: false })
   );
   const lineItems = withAgencyDecoderFeeItems(houseItems, houses);
   const terms = b2bPaymentTerms();
-  const total = lineItems.reduce((s, i) => s + Number(i.rate || 0), 0);
+  const total = lineItemsAmount(lineItems);
 
   const invoice = await createInvoice_JS({
     customer_id: zohoContact.contact_id,
@@ -330,15 +351,11 @@ async function createManagedHouseSignupInvoice(agency, zohoContact, customer) {
 
   const discountPercent = normalizeAgencyDiscountPercent(agency.discountPercent);
   const lineItems = withAgencyDecoderFeeItems(
-    [
-      buildAgencyHouseLineItem(customer, discountPercent, {
-        recurring: false,
-      }),
-    ],
+    buildAgencyHouseLineItems(customer, discountPercent, { recurring: false }),
     [customer]
   );
   const terms = b2bPaymentTerms();
-  const itemsTotal = lineItems.reduce((s, i) => s + Number(i.rate || 0), 0);
+  const itemsTotal = lineItemsAmount(lineItems);
 
   const invoice = await createInvoice_JS({
     customer_id: zohoContact.contact_id,

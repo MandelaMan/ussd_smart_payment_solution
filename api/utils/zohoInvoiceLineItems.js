@@ -13,6 +13,9 @@ const { buildingUsesDecoder } = require("./dstvSetup");
 
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 const DSTV_ONE_TIME_FEE = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
+const EXTRA_TV_UNIT_FEE = Number(process.env.ZOHO_EXTRA_TV_FEE || 500) || 500;
+const MAX_TV_COUNT = 10;
+const EXTRA_TV_LINE_NAME_RE = /^extra tvs?\b/i;
 
 function withTax(lineItem) {
   if (ZOHO_VAT_TAX_ID) {
@@ -45,6 +48,138 @@ function shouldIncludeDstvOneTimeFee(customer) {
     Boolean(customer?.decoderFeeRequired) ||
     Boolean(customer?.decoder_fee_required)
   );
+}
+
+/** TV packages: anything except Internet Only. Fallback to DSTV when catalog is missing. */
+function packageIncludesTvService(customer) {
+  const code = String(
+    customer?.categoryCode || customer?.category_code || customer?.code || ""
+  )
+    .trim()
+    .toLowerCase();
+  if (code === "internet_only") return false;
+  if (code) return true;
+  return customerHasDstv(customer);
+}
+
+function extraTvUnitFee() {
+  const n = Number(process.env.ZOHO_EXTRA_TV_FEE || EXTRA_TV_UNIT_FEE);
+  return n > 0 ? n : 500;
+}
+
+function normalizeTvCount(value, includesTv = true) {
+  if (!includesTv) return 1;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_TV_COUNT, Math.floor(n));
+}
+
+function resolveTvCountForProduct(product, requested) {
+  return normalizeTvCount(
+    requested,
+    packageIncludesTvService({
+      categoryCode: product?.category_code || product?.categoryCode,
+      hasDstv: product?.has_dstv || product?.hasDstv,
+      product_has_dstv: product?.has_dstv || product?.hasDstv,
+    })
+  );
+}
+
+function extraTvCount(customer) {
+  if (!packageIncludesTvService(customer)) return 0;
+  const tvs = normalizeTvCount(
+    customer?.tvCount ?? customer?.tv_count,
+    true
+  );
+  return Math.max(0, tvs - 1);
+}
+
+function extraTvAmount(customer) {
+  return extraTvCount(customer) * extraTvUnitFee();
+}
+
+function isExtraTvLineItem(item) {
+  return EXTRA_TV_LINE_NAME_RE.test(String(item?.name || "").trim());
+}
+
+function extraTvLineMatchKey(item) {
+  const name = String(item?.name || "").trim().toLowerCase();
+  const house = name.match(/[—–-]\s*(.+)$/);
+  if (house) return `house:${house[1].trim()}`;
+  return "c2b";
+}
+
+function extraTvLineName(quantity, customerNumber = "") {
+  const qty = Number(quantity) || 1;
+  const base = qty === 1 ? "Extra TV" : "Extra TVs";
+  const number = String(customerNumber || "").trim();
+  return number ? `${base} — ${number}` : base;
+}
+
+/**
+ * Recurring Extra TV line (KES 500 each above the first TV), or null.
+ * options.name — override (e.g. include customer number on agency invoices)
+ */
+function buildExtraTvLineItem(customer, options = {}) {
+  const qty = extraTvCount(customer);
+  if (!(qty > 0)) return null;
+  const unit = extraTvUnitFee();
+  const customerNumber = String(
+    customer?.customerNumber || customer?.customer_number || ""
+  ).trim();
+  const name = options.name || extraTvLineName(qty, options.includeCustomerNumber ? customerNumber : "");
+  return withTax({
+    name,
+    rate: unit,
+    quantity: qty,
+    description:
+      qty === 1
+        ? `Additional TV point (KES ${Math.round(unit)} per TV)`
+        : `${qty} additional TV points (KES ${Math.round(unit)} each)`,
+  });
+}
+
+/**
+ * Merge next line items onto an existing Zoho recurring profile.
+ * Extra TV is matched by name so the package line is never overwritten.
+ * Leftover Extra TV (and any unused) lines are marked for deletion.
+ */
+function mergeRecurringLineItems(existingItems, nextItems) {
+  const existing = Array.isArray(existingItems) ? existingItems : [];
+  const next = Array.isArray(nextItems) ? nextItems : [];
+  const usedIds = new Set();
+
+  function takeExisting(predicate) {
+    const found = existing.find(
+      (item) =>
+        item?.line_item_id &&
+        !usedIds.has(String(item.line_item_id)) &&
+        predicate(item)
+    );
+    if (found?.line_item_id) usedIds.add(String(found.line_item_id));
+    return found;
+  }
+
+  const merged = next.map((item) => {
+    const prev = isExtraTvLineItem(item)
+      ? takeExisting(
+          (e) =>
+            isExtraTvLineItem(e) &&
+            extraTvLineMatchKey(e) === extraTvLineMatchKey(item)
+        )
+      : takeExisting((e) => !isExtraTvLineItem(e));
+    if (prev?.line_item_id) {
+      return { ...item, line_item_id: prev.line_item_id };
+    }
+    return item;
+  });
+
+  for (const leftover of existing) {
+    if (leftover?.line_item_id && !usedIds.has(String(leftover.line_item_id))) {
+      merged.push({ line_item_id: leftover.line_item_id, delete: true });
+    }
+  }
+  return merged;
 }
 
 /**
@@ -123,6 +258,7 @@ function expectedSignupInvoiceTotal(customer, options = {}) {
       customer?.packagePrice || customer?.package_price || 0
     );
     total += discountedPackageAmount(packagePrice, packageDiscountPercent);
+    total += extraTvAmount(customer);
   }
   if (coverage.includeDecoder && shouldIncludeDstvOneTimeFee(customer)) {
     const fee = resolveDstvOneTimeFee(customer);
@@ -162,8 +298,14 @@ function buildAdvancePaymentInvoiceNotes({
     customer?.packagePrice || customer?.package_price || 0
   );
   const decoderFee = resolveDstvOneTimeFee(customer);
+  const extraTv = extraTvAmount(customer);
   if (coverage?.includePackage) {
     lines.push(`Package (from plan): KES ${Math.round(packagePrice)}`);
+    if (extraTv > 0) {
+      lines.push(
+        `Extra TV (${extraTvCount(customer)}): KES ${Math.round(extraTv)}`
+      );
+    }
   }
   if (coverage?.includeDecoder) {
     lines.push(`Decoder (from plan): KES ${Math.round(decoderFee)}`);
@@ -183,7 +325,7 @@ function buildAdvancePaymentInvoiceNotes({
     coverage?.includeDecoder
   ) {
     lines.push(
-      `Internet/package not included in this payment — still outstanding (KES ${Math.round(packagePrice)})`
+      `Internet/package not included in this payment — still outstanding (KES ${Math.round(packagePrice + extraTv)})`
     );
   }
   if (!coverage?.includePackage && !coverage?.includeDecoder) {
@@ -290,6 +432,11 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
         .join("\n");
     }
     items.push(packageLine);
+
+    const extraTvLine = buildExtraTvLineItem(customer, {
+      includeCustomerNumber: b2b,
+    });
+    if (extraTvLine) items.push(extraTvLine);
   }
 
   if (options.includeOneTimeDstvFee === true) {
@@ -311,13 +458,25 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
 module.exports = {
   buildSubscriptionLineItems,
   buildDstvDecoderFeeLineItem,
+  buildExtraTvLineItem,
   customerHasDstv,
   resolveDstvOneTimeFee,
   shouldIncludeDstvOneTimeFee,
+  packageIncludesTvService,
+  extraTvUnitFee,
+  extraTvCount,
+  extraTvAmount,
+  extraTvLineName,
+  normalizeTvCount,
+  resolveTvCountForProduct,
+  isExtraTvLineItem,
+  mergeRecurringLineItems,
   resolveAdvancePaymentCoverage,
   expectedSignupInvoiceTotal,
   buildAdvancePaymentInvoiceNotes,
   discountedPackageAmount,
   normalizePackageDiscountPercent,
   DSTV_ONE_TIME_FEE,
+  EXTRA_TV_UNIT_FEE,
+  MAX_TV_COUNT,
 };

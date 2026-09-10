@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Box, Button, Flex, Text } from "@chakra-ui/react";
-import { FiCloudOff, FiWifiOff } from "react-icons/fi";
+import { FiWifiOff } from "react-icons/fi";
 import { confirmOnline } from "../lib/connectivity";
 import { useConnectivity } from "../hooks/useConnectivity";
 import { toaster } from "./ui/toaster";
@@ -8,34 +8,21 @@ import { BRAND } from "../theme";
 
 export function ConnectivityBanner() {
   const { status, checking } = useConnectivity();
-  const previousStatusRef = useRef(status);
+  const wasOfflineRef = useRef(status === "offline");
 
   useEffect(() => {
-    const previous = previousStatusRef.current;
-    previousStatusRef.current = status;
-    if (previous === "ok" || status !== "ok") return;
-
-    if (previous === "offline") {
+    if (wasOfflineRef.current && status === "ok") {
       toaster.create({
         id: "connectivity-restored",
         title: "You're back online",
         description: "Connection restored.",
         type: "success",
       });
-      return;
     }
-
-    toaster.create({
-      id: "connectivity-restored",
-      title: "SUL Bix is back",
-      description: "The server is responding again.",
-      type: "success",
-    });
+    wasOfflineRef.current = status === "offline";
   }, [status]);
 
-  if (status === "ok") return null;
-
-  const offline = status === "offline";
+  if (status !== "offline") return null;
 
   return (
     <Box
@@ -65,16 +52,14 @@ export function ConnectivityBanner() {
       >
         <Flex align="center" gap={2.5} minW={0}>
           <Box flexShrink={0} aria-hidden>
-            {offline ? <FiWifiOff size={18} /> : <FiCloudOff size={18} />}
+            <FiWifiOff size={18} />
           </Box>
           <Box minW={0}>
             <Text fontSize="sm" fontWeight="bold" lineHeight="short">
-              {offline ? "No internet connection" : "Can't reach SUL Bix"}
+              No internet connection
             </Text>
             <Text fontSize="xs" lineHeight="short">
-              {offline
-                ? "SUL Bix can't reach the network. Check your Wi‑Fi or mobile data — we'll notify you when it's back."
-                : "Your internet is connected, but the server isn't responding. We'll keep trying."}
+              Check your Wi‑Fi or mobile data — we&apos;ll notify you when you&apos;re back online.
             </Text>
           </Box>
         </Flex>

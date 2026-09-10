@@ -750,17 +750,21 @@ async function overlayReferralDiscountOnLineItems(customerId, lineItems) {
   if (!applied || !(applied.rewardPercent > 0) || !lineItems?.length) {
     return lineItems;
   }
-  return lineItems.map((item) => ({
-    ...item,
-    rate: discountRate(item.rate, applied.rewardPercent),
-    description: [
-      item.description,
-      `Referral reward: ${applied.rewardPercent}% off this billing cycle`,
-    ]
-      .filter(Boolean)
-      .join("\n")
-      .slice(0, 2000),
-  }));
+  const { isExtraTvLineItem } = require("../utils/zohoInvoiceLineItems");
+  return lineItems.map((item) => {
+    if (isExtraTvLineItem(item)) return item;
+    return {
+      ...item,
+      rate: discountRate(item.rate, applied.rewardPercent),
+      description: [
+        item.description,
+        `Referral reward: ${applied.rewardPercent}% off this billing cycle`,
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2000),
+    };
+  });
 }
 
 module.exports = {

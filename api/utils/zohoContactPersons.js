@@ -80,8 +80,16 @@ function buildZohoContactPersonsPayload(existingContact, primaryFields) {
   });
 }
 
+function contactPersonIdOf(value) {
+  if (value == null) return "";
+  if (typeof value === "object") {
+    return String(value.contact_person_id || "").trim();
+  }
+  return String(value).trim();
+}
+
 function uniqueContactPersonIds(ids) {
-  return [...new Set((ids || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  return [...new Set((ids || []).map(contactPersonIdOf).filter(Boolean))];
 }
 
 /**
@@ -112,8 +120,11 @@ function invoiceEmailContactPersonIds(contact) {
 function buildInvoiceEmailContactPersonsPayload(contactPersonIds) {
   const ids = uniqueContactPersonIds(contactPersonIds);
   if (!ids.length) return null;
+  // Zoho error 3023 ("Some contacts have been provided more than once")
+  // if the same person is listed in both contact_persons and
+  // contact_persons_associated. Associated alone sets the invoice
+  // recipients and enables email reminders.
   return {
-    contact_persons: ids,
     contact_persons_associated: ids.map((contact_person_id) => ({
       contact_person_id,
       communication_preference: { is_email_enabled: true },

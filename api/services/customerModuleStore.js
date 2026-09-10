@@ -8,6 +8,7 @@ const {
 } = require("../utils/lastPaymentDate");
 const { computeTrialEndDate } = require("../utils/billingPeriod");
 const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
+const { resolveTvCountForProduct } = require("../utils/zohoInvoiceLineItems");
 const {
   buildCustomerNumber,
   liveCustomerNumber,
@@ -513,6 +514,7 @@ function mapCustomerRow(row) {
       row.decoder_fee_amount != null ? Number(row.decoder_fee_amount) : null,
     decoderFeeRequired: Boolean(row.decoder_fee_required),
     hasDstv: Boolean(row.product_has_dstv),
+    tvCount: Math.max(1, Number(row.tv_count) || 1),
     buildingDstvSetup,
     dstvSerialRequired,
     dstvDecoderSerial: row.dstv_decoder_serial || null,
@@ -2604,6 +2606,7 @@ async function createCustomer(data) {
     data.paymentFrequency,
     data.customPeriodDays ?? data.customPeriodMonths
   );
+  const tvCount = resolveTvCountForProduct(product, data.tvCount);
 
   let decoderFeeRequired = 0;
   let decoderFeeAmount = null;
@@ -2665,10 +2668,10 @@ async function createCustomer(data) {
        is_vat_exempt, customer_type, premise_type, apartment_number, block,
        business_name, shop_location, payment_frequency,
        custom_period_days, building_id, product_id, agency_id,
-       customer_number, tisp_password, ppoe_username, package_price,
+       customer_number, tisp_password, ppoe_username, package_price, tv_count,
        decoder_fee_amount, decoder_fee_required, dstv_decoder_serial,
        trial_period_enabled, trial_ends_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       names.first_name,
       names.middle_name,
@@ -2701,6 +2704,7 @@ async function createCustomer(data) {
       tispPassword,
       ppoeUsername,
       packagePrice,
+      tvCount,
       decoderFeeAmount,
       decoderFeeRequired,
       dstvDecoderSerial,
@@ -2754,6 +2758,7 @@ async function createCustomer(data) {
     shopLocation: premiseType === "shop" ? shopLocation : null,
     tispPassword,
     packagePrice,
+    tvCount,
     decoderFeeAmount,
     decoderFeeRequired: Boolean(decoderFeeRequired),
     customerName,
@@ -2799,6 +2804,12 @@ async function changeCustomerProduct(customerId, newProductId, eventType) {
     decoderFeeSql =
       "product_id = ?, package_price = ?, decoder_fee_required = 1, decoder_fee_amount = ?";
     decoderParams.push(feeAmount);
+  }
+
+  const nextTvCount = resolveTvCountForProduct(newProduct, customer.tv_count);
+  if (nextTvCount !== Number(customer.tv_count || 1)) {
+    decoderFeeSql += ", tv_count = ?";
+    decoderParams.push(nextTvCount);
   }
 
   await query(
@@ -3510,6 +3521,7 @@ async function updateCustomerDetails(id, data, options = {}) {
   let packageChanged = false;
   let previousPackagePrice = existing.packagePrice;
   let previousHasDstv = Boolean(existing.hasDstv);
+  let tvCount = Number(existing.tvCount || 1);
 
   if (options.allowPackageEdit) {
     if (data.paymentFrequency != null) {
@@ -3578,6 +3590,11 @@ async function updateCustomerDetails(id, data, options = {}) {
 
   const effectiveProduct = await getProductById(productId);
   if (!effectiveProduct) throw new Error("Product not found");
+
+  const requestedTvCount =
+    data.tvCount !== undefined ? data.tvCount : existing.tvCount;
+  tvCount = resolveTvCountForProduct(effectiveProduct, requestedTvCount);
+  const tvCountChanged = tvCount !== Number(existing.tvCount || 1);
 
   const dstvDecoderSerial =
     data.dstvDecoderSerial !== undefined
@@ -3713,7 +3730,7 @@ async function updateCustomerDetails(id, data, options = {}) {
          tisp_password = ?, ppoe_username = ?,
          business_name = ?, shop_location = ?, block = ?,
          product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?,
-         decoder_fee_required = ?, decoder_fee_amount = ?
+         tv_count = ?, decoder_fee_required = ?, decoder_fee_amount = ?
      WHERE id = ?`,
     [
       firstName,
@@ -3744,6 +3761,7 @@ async function updateCustomerDetails(id, data, options = {}) {
       paymentFrequency,
       customPeriodDays,
       packagePrice,
+      tvCount,
       decoderFeeRequired,
       decoderFeeAmount,
       id,
@@ -3760,6 +3778,14 @@ async function updateCustomerDetails(id, data, options = {}) {
         productId,
         `Local package correction (DB only): ${existing.paymentFrequency} → ${paymentFrequency}`,
       ]
+    );
+  }
+
+  if (tvCountChanged && !packageChanged) {
+    await query(
+      `INSERT INTO customer_events (customer_id, event_type, notes)
+       VALUES (?, 'tv_count', ?)`,
+      [id, `TVs ${Number(existing.tvCount || 1)} → ${tvCount}`]
     );
   }
 
@@ -3816,7 +3842,42 @@ async function updateCustomerDetails(id, data, options = {}) {
     previousCustomerNumber,
     ipChanged: ipChanged && !apartmentChanged,
     previousIp: ipChanged && !apartmentChanged ? previousIp : null,
+    tvCountChanged,
     changes,
+  };
+}
+
+async function updateCustomerTvCount(id, tvCount) {
+  const existing = await getCustomerById(id);
+  if (!existing) throw new Error("Customer not found");
+
+  const product = await getProductById(existing.productId);
+  if (!product) throw new Error("Product not found");
+
+  const next = resolveTvCountForProduct(product, tvCount);
+  const previous = Number(existing.tvCount || 1);
+  if (next === previous) {
+    return {
+      customer: existing,
+      changed: false,
+      previousTvCount: previous,
+      tvCount: next,
+    };
+  }
+
+  await query(`UPDATE customers SET tv_count = ? WHERE id = ?`, [next, id]);
+  await query(
+    `INSERT INTO customer_events (customer_id, event_type, notes)
+     VALUES (?, 'tv_count', ?)`,
+    [id, `TVs ${previous} → ${next}`]
+  );
+
+  const customer = await getCustomerById(id);
+  return {
+    customer,
+    changed: true,
+    previousTvCount: previous,
+    tvCount: next,
   };
 }
 
@@ -4934,6 +4995,7 @@ module.exports = {
   clearCustomerOnuMapping,
   deleteCustomerCompletely,
   updateCustomerDetails,
+  updateCustomerTvCount,
   revertCustomerIpAddress,
   convertCustomerType,
   findActiveTenantInApartment,
