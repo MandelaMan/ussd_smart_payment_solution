@@ -71,6 +71,24 @@ function createZohoModuleProcessor(integration) {
       },
     });
 
+    let emailRepair = null;
+    if (integration === "invoices") {
+      try {
+        const {
+          repairZohoInvoiceEmailAssociations,
+        } = require("../services/zohoInvoiceEmailRepair");
+        emailRepair = await repairZohoInvoiceEmailAssociations({
+          correlationId,
+        });
+      } catch (err) {
+        syncLog.warn("zoho_invoice_email_repair_skipped", {
+          integration,
+          correlationId,
+          error: err.message || String(err),
+        });
+      }
+    }
+
     await syncJobRepo.completeSyncJob(syncJobDbId, {
       recordsProcessed: result.processed,
       recordsCreated: 0,
@@ -86,6 +104,7 @@ function createZohoModuleProcessor(integration) {
       ok: true,
       integration,
       ...result,
+      emailRepair,
       durationMs,
       correlationId,
       syncJobDbId,

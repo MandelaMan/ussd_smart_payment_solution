@@ -725,13 +725,13 @@ async function resolveInvoiceEmailContactPersons(customer_id, hints = {}) {
 }
 
 async function mergeInvoiceEmailContactPersons(payload, customer_id, hints = {}) {
-  if (
-    !payload ||
-    payload.contact_persons ||
-    payload.contact_persons_associated
-  ) {
-    return payload;
-  }
+  if (!payload) return payload;
+  const alreadyHasPersons =
+    (Array.isArray(payload.contact_persons) &&
+      payload.contact_persons.length > 0) ||
+    (Array.isArray(payload.contact_persons_associated) &&
+      payload.contact_persons_associated.length > 0);
+  if (alreadyHasPersons) return payload;
   try {
     const fields = await resolveInvoiceEmailContactPersons(customer_id, hints);
     if (fields) Object.assign(payload, fields);

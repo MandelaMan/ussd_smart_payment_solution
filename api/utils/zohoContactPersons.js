@@ -170,6 +170,31 @@ function isOpenReminderInvoice(invoice) {
   return OPEN_REMINDER_INVOICE_STATUSES.has(status);
 }
 
+function isActiveRecurringProfile(recurring) {
+  const status = String(
+    recurring?.status || recurring?.recurrence_status || "active"
+  ).toLowerCase();
+  return !["stopped", "expired", "inactive"].includes(status);
+}
+
+function emailContactPersonIdsFromPayload(fields) {
+  return (fields?.contact_persons_associated || []).map(
+    (p) => p?.contact_person_id
+  );
+}
+
+/** Active recurring profiles that Zoho cannot auto-email yet. */
+function recurringNeedsEmailContactPersons(recurring, fields = null) {
+  const id =
+    recurring?.recurring_invoice_id || recurring?.recurringinvoice_id;
+  if (!id || !isActiveRecurringProfile(recurring)) return false;
+  if (!fields) return !invoiceAlreadyHasEmailContactPersons(recurring, []);
+  return !invoiceAlreadyHasEmailContactPersons(
+    recurring,
+    emailContactPersonIdsFromPayload(fields)
+  );
+}
+
 module.exports = {
   isZohoEmail,
   isZohoPrimaryContactPerson,
@@ -180,4 +205,7 @@ module.exports = {
   buildInvoiceEmailContactPersonsPayload,
   invoiceAlreadyHasEmailContactPersons,
   isOpenReminderInvoice,
+  isActiveRecurringProfile,
+  emailContactPersonIdsFromPayload,
+  recurringNeedsEmailContactPersons,
 };

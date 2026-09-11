@@ -9,6 +9,7 @@ const {
   buildInvoiceEmailContactPersonsPayload,
   invoiceAlreadyHasEmailContactPersons,
   isOpenReminderInvoice,
+  recurringNeedsEmailContactPersons,
 } = require("../../api/utils/zohoContactPersons");
 
 describe("zohoContactPersons", () => {
@@ -154,5 +155,40 @@ describe("zohoContactPersons", () => {
     );
     assert.equal(isZohoEmail("roman@x.com"), true);
     assert.equal(isZohoEmail(""), false);
+  });
+
+  it("flags active recurring profiles that have no email contact persons", () => {
+    const fields = buildInvoiceEmailContactPersonsPayload(["p1"]);
+    assert.equal(
+      recurringNeedsEmailContactPersons(
+        { recurring_invoice_id: "r1", status: "active", contact_persons: [] },
+        fields
+      ),
+      true
+    );
+    assert.equal(
+      recurringNeedsEmailContactPersons(
+        {
+          recurring_invoice_id: "r1",
+          status: "active",
+          contact_persons_associated: [
+            {
+              contact_person_id: "p1",
+              contact_person_email: "a@x.com",
+              communication_preference: { is_email_enabled: true },
+            },
+          ],
+        },
+        fields
+      ),
+      false
+    );
+    assert.equal(
+      recurringNeedsEmailContactPersons(
+        { recurring_invoice_id: "r1", status: "stopped", contact_persons: [] },
+        fields
+      ),
+      false
+    );
   });
 });

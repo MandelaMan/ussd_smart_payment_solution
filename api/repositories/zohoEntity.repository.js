@@ -303,6 +303,31 @@ async function refreshSingleCustomerFromZoho(customer, billingService) {
   };
 }
 
+async function listZohoContactIdsForEmailRepair({ afterId = "", limit = 40 } = {}) {
+  const after = String(afterId || "").trim();
+  const take = Math.max(1, Math.min(Number(limit) || 40, 200));
+  const rows = await query(
+    `SELECT contactId FROM (
+        SELECT zoho_contact_id AS contactId
+        FROM zoho_customer_contacts
+        WHERE zoho_contact_id IS NOT NULL AND TRIM(zoho_contact_id) <> ''
+        UNION
+        SELECT JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.customer_id')) AS contactId
+        FROM zoho_recurring_invoices
+        WHERE raw_json IS NOT NULL
+      ) ids
+     WHERE contactId IS NOT NULL
+       AND TRIM(contactId) <> ''
+       AND (? = '' OR contactId > ?)
+     ORDER BY contactId ASC
+     LIMIT ${take}`,
+    [after, after]
+  );
+  return (rows || [])
+    .map((row) => String(row.contactId || "").trim())
+    .filter(Boolean);
+}
+
 module.exports = {
   resolveCustomerIdForZohoRecord,
   upsertContactRecord,
@@ -312,4 +337,5 @@ module.exports = {
   upsertEstimateRecord,
   upsertCreditNoteRecord,
   refreshSingleCustomerFromZoho,
+  listZohoContactIdsForEmailRepair,
 };

@@ -211,13 +211,14 @@ async function applyRecurringInvoiceEmailCcs(recurringInvoiceId, zohoContact = n
   try {
     const { resolveInvoiceCcMailIds } = require("./appSettingsStore");
     const ccMailIds = await resolveInvoiceCcMailIds();
-    if (!ccMailIds.length) {
+    const payload = {};
+    if (ccMailIds.length) {
+      payload.cc_mail_ids = ccMailIds;
+    } else {
       console.warn(
         "Zoho recurring invoice CC skipped: invoice CC emails are required"
       );
-      return false;
     }
-    const payload = { cc_mail_ids: ccMailIds };
     const customerId = zohoContact?.contact_id;
     if (customerId) {
       const personFields = await resolveInvoiceEmailContactPersons(customerId, {
@@ -225,6 +226,7 @@ async function applyRecurringInvoiceEmailCcs(recurringInvoiceId, zohoContact = n
       });
       if (personFields) Object.assign(payload, personFields);
     }
+    if (!Object.keys(payload).length) return false;
     await updateRecurringInvoice_JS(String(recurringInvoiceId), payload);
     return true;
   } catch (e) {
@@ -238,15 +240,21 @@ async function applyRecurringInvoiceEmailCcs(recurringInvoiceId, zohoContact = n
 
 async function updateRecurringProfileFields(
   recurringInvoiceId,
-  { recurrenceName, referenceNumber, lineItems = null, customer = null }
+  { recurrenceName, referenceNumber, lineItems = null, customer = null, zohoContact = null }
 ) {
   const seriesFields =
     (await resolveZohoInvoiceTransactionSeries(customer)) || {};
+  const personFields = zohoContact?.contact_id
+    ? (await resolveInvoiceEmailContactPersons(zohoContact.contact_id, {
+        contact: zohoContact,
+      })) || {}
+    : {};
   // Identity fields first — Zoho often rejects line_items without line_item_id.
   let updated = await updateRecurringInvoice_JS(recurringInvoiceId, {
     recurrence_name: recurrenceName,
     reference_number: referenceNumber,
     ...seriesFields,
+    ...personFields,
   });
 
   if (!lineItems?.length) {
@@ -263,6 +271,7 @@ async function updateRecurringProfileFields(
       reference_number: referenceNumber,
       line_items: merged,
       is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+      ...personFields,
     });
     return { updated, identityUpdated: true, lineItemsUpdated: true };
   } catch (e) {
@@ -323,6 +332,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         referenceNumber,
         lineItems: null,
         customer,
+        zohoContact,
       });
       renamed += 1;
     }
@@ -376,6 +386,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
           referenceNumber,
           lineItems: null,
           customer,
+          zohoContact,
         });
       } catch (e) {
         console.warn(
@@ -405,6 +416,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         referenceNumber,
         lineItems: syncLineItems ? lineItem : null,
         customer,
+        zohoContact,
       });
       await applyRecurringInvoiceEmailCcs(id, zohoContact);
       try {
@@ -578,6 +590,7 @@ async function renumberZohoContactCustomerNumber(contact, options = {}) {
         referenceNumber: newCustomerNumber,
         lineItems: null,
         customer: { customerNumber: newCustomerNumber },
+        zohoContact: contact,
       });
       profilesRenamed += 1;
     } catch (e) {
