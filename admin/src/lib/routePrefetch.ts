@@ -8,6 +8,7 @@ type Prefetcher = () => Promise<unknown>;
 const prefetchers: Record<string, Prefetcher> = {
   "/": () => import("../pages/RoleHomePage"),
   "/customers": () => import("../pages/CustomersListPage"),
+  "/notes": () => import("../pages/CustomerNotesPage"),
   "/customers/new": () => import("../pages/NewCustomerPage"),
   "/leads": () => import("../pages/LeadsPage"),
   "/communication": () => import("../pages/CommunicationPage"),
@@ -24,6 +25,7 @@ const prefetchers: Record<string, Prefetcher> = {
   "/settings": () => import("../pages/SettingsPage"),
   "/activity": () => import("../pages/ActivityPage"),
   "/activity-audit": () => import("../pages/ActivityAuditPage"),
+  "/iptv": () => import("../pages/IptvConsolePage"),
   "/billing": () => import("../pages/billing/BillingReconciliationLayout"),
   "/billing/overview": () => import("../pages/billing/BillingOverviewPage"),
   "/billing/billing-gaps": () => import("../pages/billing/BillingModulePage"),

@@ -35,6 +35,7 @@ export const productExportColumns: ExportColumn<Product>[] = [
   { header: "Category", value: (row) => row.categoryName },
   { header: "Plan", value: (row) => row.planName },
   { header: "Building", value: (row) => row.buildingName },
+  { header: "Premise", value: (row) => (row.premiseType === "shop" ? "Shop" : "Apartment") },
   { header: "Mbps", value: (row) => row.mbps },
   { header: "Extra Mbps", value: (row) => row.extraBandwidth },
   { header: "Price", value: (row) => row.price },
@@ -111,10 +112,8 @@ export const customerListExportColumns = (
     value: (row) => (row.tispDueDate ? formatDateOnly(row.tispDueDate) : ""),
   },
   {
-    header: "Pause credit days",
+    header: "Pause days remaining",
     value: (row) =>
-      row.pauseCreditDays != null && row.pauseCreditDays > 0
-        ? String(row.pauseCreditDays)
-        : "",
+      row.pauseDaysRemaining != null ? String(row.pauseDaysRemaining) : "",
   },
 ];

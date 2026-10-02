@@ -80,10 +80,8 @@ async function handleSubscriptionPaymentReceived({
   if (customerRow?.id) {
     const ctx = await customerStore.getCustomerContext(customerRow.id);
     subscriptionStatus = ctx?.subscription_status;
-    const { isDstvOnlyCategory } = require("./packageCatalogStore");
-    skipTispForDstvOnly =
-      isDstvOnlyCategory(ctx?.category_code) ||
-      isDstvOnlyCategory(ctx?.category_name);
+    const { isDstvOnlyRecord } = require("./packageCatalogStore");
+    skipTispForDstvOnly = isDstvOnlyRecord(ctx);
   }
 
   await customerStore.recordCustomerLastPayment(canonicalRef, paidOn);

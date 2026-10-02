@@ -40,6 +40,9 @@ export function ProductExpandPanel({
 
   const extras: string[] = [];
   if (product.hasDstv) extras.push("Includes DSTV");
+  extras.unshift(
+    product.premiseType === "shop" ? "Shop package" : "Apartment package"
+  );
   if (
     product.requiresDecoderFee &&
     product.buildingDstvSetup !== "headend_coax"
@@ -60,6 +63,8 @@ export function ProductExpandPanel({
             : formatTitleCase(product.name)
       }
       subtitle={`${formatTitleCase(product.buildingName)} · ${
+        product.premiseType === "shop" ? "Shop" : "Apartment"
+      } · ${
         isDstvOnly ? "No bandwidth" : `${totalBandwidth} Mbps`
       }${
         !isDstvOnly && extraBandwidth > 0

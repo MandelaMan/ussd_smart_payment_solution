@@ -7,8 +7,9 @@ const {
   formatDateOnly,
 } = require("../utils/lastPaymentDate");
 const { computeTrialEndDate } = require("../utils/billingPeriod");
+const { resolvePauseBalance } = require("../utils/pauseCredit");
 const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
-const { resolveTvCountForProduct } = require("../utils/zohoInvoiceLineItems");
+const { resolveTvCountForProduct, resolveExtraDecoderCountForProduct } = require("../utils/zohoInvoiceLineItems");
 const {
   buildCustomerNumber,
   liveCustomerNumber,
@@ -20,6 +21,12 @@ const {
   normalizeApartmentUnit,
   normalizeBlock,
 } = require("../utils/customerNumber");
+const {
+  parseRequiredPremiseType,
+  productPremiseType,
+  assertProductMatchesPremise,
+  assertProductAssignable,
+} = require("../utils/productPremise");
 
 /** Keep sync error columns short — TISP often returns full HTML error pages. */
 function sanitizeSyncError(message, maxLen = 240) {
@@ -425,6 +432,13 @@ function mapCustomerRow(row) {
   if (!row) return null;
   const buildingDstvSetup = row.building_dstv_setup || "decoder";
   const dstvSerialRequired = Boolean(row.product_has_dstv) && buildingDstvSetup === "decoder";
+  const pauseBalance = resolvePauseBalance({
+    paymentFrequency: row.payment_frequency,
+    customPeriodDays: row.custom_period_days,
+    lastPaymentDate: row.last_payment_date,
+    pauseCreditDays: row.pause_credit_days,
+    pauseCreditAppliedAt: row.pause_credit_applied_at,
+  });
   return {
     id: row.id,
     firstName: row.first_name,
@@ -515,6 +529,7 @@ function mapCustomerRow(row) {
     decoderFeeRequired: Boolean(row.decoder_fee_required),
     hasDstv: Boolean(row.product_has_dstv),
     tvCount: Math.max(1, Number(row.tv_count) || 1),
+    extraDecoderCount: Math.max(0, Number(row.extra_decoder_count) || 0),
     buildingDstvSetup,
     dstvSerialRequired,
     dstvDecoderSerial: row.dstv_decoder_serial || null,
@@ -533,36 +548,34 @@ function mapCustomerRow(row) {
         ? Number(row.referred_by_customer_id)
         : null,
     campaignId: row.campaign_id != null ? Number(row.campaign_id) : null,
-    lastPaymentDate: row.last_payment_date
-      ? String(row.last_payment_date).slice(0, 10)
-      : null,
+    lastPaymentDate: formatDateOnly(row.last_payment_date),
     tispDueDate: row.tisp_due_date ? String(row.tisp_due_date) : null,
     status: row.status,
     cancellationReason: row.cancellation_reason || null,
+    staffNotes: row.staff_notes || null,
+    staffNotesUpdatedAt: row.staff_notes_updated_at
+      ? new Date(row.staff_notes_updated_at).toISOString()
+      : null,
     onuCollectedAt: row.onu_collected_at
       ? String(row.onu_collected_at).slice(0, 10)
       : null,
     dstvDecoderCollectedAt: row.dstv_decoder_collected_at
       ? String(row.dstv_decoder_collected_at).slice(0, 10)
       : null,
-    pauseStartDate: row.pause_start_date
-      ? String(row.pause_start_date).slice(0, 10)
-      : null,
-    pauseEndDate: row.pause_end_date
-      ? String(row.pause_end_date).slice(0, 10)
-      : null,
+    pauseStartDate: formatDateOnly(row.pause_start_date),
+    pauseEndDate: formatDateOnly(row.pause_end_date),
     pauseReason: row.pause_reason || null,
+    pauseIndefinite: Number(row.pause_indefinite) === 1,
     pauseCreditDays:
       row.pause_credit_days != null ? Number(row.pause_credit_days) : null,
-    pauseOriginalDueDate: row.pause_original_due_date
-      ? String(row.pause_original_due_date).slice(0, 10)
-      : null,
-    pauseCreditedDueDate: row.pause_credited_due_date
-      ? String(row.pause_credited_due_date).slice(0, 10)
-      : null,
+    pauseOriginalDueDate: formatDateOnly(row.pause_original_due_date),
+    pauseCreditedDueDate: formatDateOnly(row.pause_credited_due_date),
     pauseCreditAppliedAt: row.pause_credit_applied_at
       ? String(row.pause_credit_applied_at)
       : null,
+    pauseAllowanceDays: pauseBalance.allowance,
+    pauseDaysUsed: pauseBalance.used,
+    pauseDaysRemaining: pauseBalance.remaining,
     upgradePaymentStatus: row.upgrade_payment_status || "none",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1357,6 +1370,13 @@ async function listProducts(filters = {}) {
     clauses.push("pl.id = ?");
     params.push(filters.planId);
   }
+  const listPremise = String(filters.premiseType || "")
+    .trim()
+    .toLowerCase();
+  if (listPremise === "apartment" || listPremise === "shop") {
+    clauses.push("p.premise_type = ?");
+    params.push(listPremise);
+  }
   if (filters.activeOnly) {
     clauses.push("p.is_active = 1");
   }
@@ -1379,6 +1399,7 @@ async function listProducts(filters = {}) {
       { key: "categoryName", sql: "c.name" },
       { key: "planName", sql: "COALESCE(pl.name, p.name)" },
       { key: "buildingName", sql: "b.name" },
+      { key: "premiseType", sql: "p.premise_type" },
       { key: "mbps", sql: "p.mbps" },
       { key: "extraBandwidth", sql: "p.extra_bandwidth" },
       { key: "price", sql: "p.price" },
@@ -1429,6 +1450,7 @@ const PRODUCT_LIST_SELECT = `
          p.extra_bandwidth AS extraBandwidth,
          p.payment_frequency AS paymentFrequency,
          p.has_dstv AS hasDstv, p.building_id AS buildingId, b.name AS buildingName,
+         p.premise_type AS premiseType,
          p.price, p.monthly_price AS monthlyPrice, p.is_active AS isActive,
          p.created_at AS createdAt,
          c.id AS categoryId, c.code AS categoryCode, c.name AS categoryName,
@@ -1481,11 +1503,16 @@ async function getProductById(id) {
   return rows[0] || null;
 }
 
-async function assertUniquePriceInBuilding(buildingId, price, excludeProductId = null) {
-  const params = [buildingId, Number(price)];
+async function assertUniquePriceInBuilding(
+  buildingId,
+  price,
+  excludeProductId = null,
+  premiseType = "apartment"
+) {
+  const params = [buildingId, Number(price), productPremiseType({ premiseType })];
   let sql = `SELECT id
              FROM products
-             WHERE building_id = ? AND price = ?`;
+             WHERE building_id = ? AND price = ? AND premise_type = ?`;
   if (excludeProductId != null) {
     sql += ` AND id <> ?`;
     params.push(Number(excludeProductId));
@@ -1494,12 +1521,16 @@ async function assertUniquePriceInBuilding(buildingId, price, excludeProductId =
 
   const rows = await query(sql, params);
   if (rows[0]) {
-    throw new Error("Another package in this building already uses this price");
+    const label = params[2] === "shop" ? "shop" : "apartment";
+    throw new Error(
+      `Another ${label} package in this building already uses this price`
+    );
   }
 }
 
 async function createProduct(data) {
   const { planVariantId, buildingId, mbps, price, monthlyPrice, extraBandwidth } = data;
+  const premiseType = parseRequiredPremiseType(data.premiseType);
 
   if (!planVariantId || !buildingId || price == null) {
     throw new Error("Plan variant, building, and price are required");
@@ -1510,7 +1541,7 @@ async function createProduct(data) {
 
   const building = await getBuildingById(buildingId);
   if (!building) throw new Error("Building not found");
-  await assertUniquePriceInBuilding(buildingId, price);
+  await assertUniquePriceInBuilding(buildingId, price, null, premiseType);
 
   const dstvOnly = Boolean(variant.isDstvOnly);
   let resolvedMbps;
@@ -1529,7 +1560,8 @@ async function createProduct(data) {
   if (monthly == null) {
     monthly = await catalogStore.getMonthlyProductPriceForPlan(
       buildingId,
-      variant.planId
+      variant.planId,
+      premiseType
     );
   }
   if (monthly == null) {
@@ -1545,8 +1577,8 @@ async function createProduct(data) {
   const result = await query(
     `INSERT INTO products (
        plan_variant_id, name, mbps, extra_bandwidth, payment_frequency, has_dstv,
-       building_id, price, monthly_price
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       building_id, premise_type, price, monthly_price
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       planVariantId,
       variant.displayName,
@@ -1555,6 +1587,7 @@ async function createProduct(data) {
       variant.paymentFrequency,
       variant.hasDstv ? 1 : 0,
       buildingId,
+      premiseType,
       Number(price),
       monthly,
     ]
@@ -1587,6 +1620,26 @@ async function updateProduct(id, data) {
     }
     fields.push("building_id = ?");
     params.push(nextBuildingId);
+  }
+
+  let nextPremiseType = productPremiseType(existing);
+  if (data.premiseType != null || data.premise_type != null) {
+    nextPremiseType = parseRequiredPremiseType(
+      data.premiseType ?? data.premise_type
+    );
+    if (nextPremiseType !== productPremiseType(existing)) {
+      const [assigned] = await query(
+        `SELECT COUNT(*) AS total FROM customers WHERE product_id = ?`,
+        [id]
+      );
+      if (Number(assigned?.total || 0) > 0) {
+        throw new Error(
+          "Cannot change apartment/shop on a package that has customers. Move them first."
+        );
+      }
+    }
+    fields.push("premise_type = ?");
+    params.push(nextPremiseType);
   }
 
   let nextMbps = Number(existing.mbps);
@@ -1669,7 +1722,7 @@ async function updateProduct(id, data) {
 
   const nextPrice =
     data.price !== undefined ? Number(data.price) : Number(existing.price);
-  await assertUniquePriceInBuilding(nextBuildingId, nextPrice, id);
+  await assertUniquePriceInBuilding(nextBuildingId, nextPrice, id, nextPremiseType);
 
   if (!fields.length) throw new Error("No changes to save");
   params.push(id);
@@ -1905,6 +1958,9 @@ async function listCustomers(filters = {}) {
     clauses.push("cat.id = ?");
     params.push(filters.categoryId);
   }
+  if (filters.hasDstv === true || filters.hasDstv === 1 || filters.hasDstv === "true") {
+    clauses.push("p.has_dstv = 1");
+  }
   if (filters.customerType) {
     clauses.push("c.customer_type = ?");
     params.push(filters.customerType);
@@ -1946,8 +2002,9 @@ async function listCustomers(filters = {}) {
     defaultOrderClause: "c.created_at DESC",
   });
 
+  const needsProductJoin = Boolean(filters.categoryId) || Boolean(filters.hasDstv);
   const [countRow] = await query(
-    filters.categoryId
+    needsProductJoin
       ? `SELECT COUNT(*) AS total
      FROM customers c
      JOIN products p ON p.id = c.product_id
@@ -2508,6 +2565,7 @@ async function createCustomer(data) {
   if (product.building_id !== building.id) {
     throw new Error("Product does not belong to the selected building");
   }
+  assertProductMatchesPremise(product, data.premiseType);
 
   if (data.customerType === "B2B" && !data.agencyId) {
     throw new Error("B2B customers must be linked to an agency");
@@ -2528,11 +2586,15 @@ async function createCustomer(data) {
   const email = await validateAndNormalizeCustomerEmail(data);
   const phone = await validateAndNormalizeCustomerPhone(data);
 
-  const ipCheck = validateIpForBuilding(building, data.ipAddress);
-  if (!ipCheck.ok) {
-    throw new Error(ipCheck.error);
+  const dstvOnly = catalogStore.isDstvOnlyRecord(product);
+  let resolvedIp = null;
+  if (!dstvOnly) {
+    const ipCheck = validateIpForBuilding(building, data.ipAddress);
+    if (!ipCheck.ok) {
+      throw new Error(ipCheck.error);
+    }
+    resolvedIp = ipCheck.ip;
   }
-  const resolvedIp = ipCheck.ip;
 
   const premiseType = normalizePremiseType(data.premiseType);
   const businessName =
@@ -2582,22 +2644,24 @@ async function createCustomer(data) {
     dstvDecoderSerial,
   });
 
-  const tispPassword =
-    building.ip_setup === "STATIC"
+  const tispPassword = dstvOnly
+    ? null
+    : building.ip_setup === "STATIC"
       ? apartmentNumber
       : normalizePppoePassword(
           data.ppoePassword || data.tispPassword,
           { required: false }
         ) || generatePppoePassword();
 
-  const ppoeUsername =
-    building.ip_setup === "PPOE"
+  const ppoeUsername = dstvOnly
+    ? null
+    : building.ip_setup === "PPOE"
       ? normalizePppoeUsername(
           data.ppoeUsername,
           customerNumber
         )
       : null;
-  if (building.ip_setup === "PPOE" && !ppoeUsername) {
+  if (!dstvOnly && building.ip_setup === "PPOE" && !ppoeUsername) {
     throw new Error("PPPoE username is required");
   }
 
@@ -2607,6 +2671,11 @@ async function createCustomer(data) {
     data.customPeriodDays ?? data.customPeriodMonths
   );
   const tvCount = resolveTvCountForProduct(product, data.tvCount);
+  const extraDecoderCount = resolveExtraDecoderCountForProduct(
+    product,
+    data.extraDecoderCount,
+    building
+  );
 
   let decoderFeeRequired = 0;
   let decoderFeeAmount = null;
@@ -2669,9 +2738,10 @@ async function createCustomer(data) {
        business_name, shop_location, payment_frequency,
        custom_period_days, building_id, product_id, agency_id,
        customer_number, tisp_password, ppoe_username, package_price, tv_count,
+       extra_decoder_count,
        decoder_fee_amount, decoder_fee_required, dstv_decoder_serial,
        trial_period_enabled, trial_ends_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       names.first_name,
       names.middle_name,
@@ -2705,6 +2775,7 @@ async function createCustomer(data) {
       ppoeUsername,
       packagePrice,
       tvCount,
+      extraDecoderCount,
       decoderFeeAmount,
       decoderFeeRequired,
       dstvDecoderSerial,
@@ -2745,6 +2816,10 @@ async function createCustomer(data) {
     ]
   );
 
+  if (dstvOnly) {
+    await updateCustomerTispSync(customerId, "skipped", null);
+  }
+
   return {
     customerId,
     customerNumber,
@@ -2759,11 +2834,13 @@ async function createCustomer(data) {
     tispPassword,
     packagePrice,
     tvCount,
+    extraDecoderCount,
     decoderFeeAmount,
     decoderFeeRequired: Boolean(decoderFeeRequired),
     customerName,
     trialPeriodEnabled,
     trialEndsAt,
+    dstvOnly,
   };
 }
 
@@ -2779,6 +2856,11 @@ async function changeCustomerProduct(customerId, newProductId, eventType) {
   if (newProduct.building_id !== customer.building_id) {
     throw new Error("New product must belong to the same building");
   }
+  const currentProduct = await getProductById(customer.product_id);
+  assertProductAssignable(newProduct, {
+    customerPremise: customer.premise_type,
+    currentProductPremise: productPremiseType(currentProduct),
+  });
 
   const packagePrice = resolvePackagePrice(
     newProduct,
@@ -2810,6 +2892,15 @@ async function changeCustomerProduct(customerId, newProductId, eventType) {
   if (nextTvCount !== Number(customer.tv_count || 1)) {
     decoderFeeSql += ", tv_count = ?";
     decoderParams.push(nextTvCount);
+  }
+  const nextExtraDecoders = resolveExtraDecoderCountForProduct(
+    newProduct,
+    customer.extra_decoder_count,
+    customer
+  );
+  if (nextExtraDecoders !== Number(customer.extra_decoder_count || 0)) {
+    decoderFeeSql += ", extra_decoder_count = ?";
+    decoderParams.push(nextExtraDecoders);
   }
 
   await query(
@@ -2876,6 +2967,7 @@ async function findProductForBillingFrequency(customer, paymentFrequency) {
        WHERE p.building_id = ?
          AND cur.id = ?
          AND p.payment_frequency = ?
+         AND p.premise_type = ?
          AND p.is_active = 1
        ORDER BY (p.has_dstv = ?) DESC, p.id
        LIMIT 1`,
@@ -2883,6 +2975,7 @@ async function findProductForBillingFrequency(customer, paymentFrequency) {
         customer.building_id,
         currentProduct.plan_variant_id,
         freqForProduct,
+        productPremiseType(currentProduct),
         currentProduct.has_dstv ? 1 : 0,
       ]
     );
@@ -2895,6 +2988,7 @@ async function findProductForBillingFrequency(customer, paymentFrequency) {
      WHERE p.building_id = ?
        AND p.mbps = ?
        AND p.payment_frequency = ?
+       AND p.premise_type = ?
        AND p.is_active = 1
      ORDER BY (p.has_dstv = ?) DESC, p.name = ? DESC, p.id
      LIMIT 1`,
@@ -2902,6 +2996,7 @@ async function findProductForBillingFrequency(customer, paymentFrequency) {
       customer.building_id,
       currentProduct.mbps,
       freqForProduct,
+      productPremiseType(currentProduct),
       currentProduct.has_dstv ? 1 : 0,
       currentProduct.name,
     ]
@@ -3011,8 +3106,11 @@ async function switchCustomerApartment(
     customerId
   );
 
+  const dstvOnly = catalogStore.isDstvOnlyRecord(customer);
   let resolvedIp = customer.ip_address || null;
-  if (String(building.ip_setup || "").toUpperCase() === "PPOE") {
+  if (dstvOnly) {
+    resolvedIp = customer.ip_address || null;
+  } else if (String(building.ip_setup || "").toUpperCase() === "PPOE") {
     resolvedIp = null;
   } else {
     const providedIp =
@@ -3051,13 +3149,17 @@ async function switchCustomerApartment(
     excludeCustomerId: customerId,
   });
 
-  const tispPassword =
-    building.ip_setup === "STATIC" ? newApartment : generatePppoePassword();
+  const tispPassword = dstvOnly
+    ? customer.tisp_password || null
+    : building.ip_setup === "STATIC"
+      ? newApartment
+      : generatePppoePassword();
 
   const previousIp = customer.ip_address || null;
   const previousPpoeUsername = String(customer.ppoe_username || "").trim().toUpperCase();
-  const ppoeUsername =
-    String(building.ip_setup || "").toUpperCase() === "PPOE"
+  const ppoeUsername = dstvOnly
+    ? null
+    : String(building.ip_setup || "").toUpperCase() === "PPOE"
       ? !previousPpoeUsername ||
         previousPpoeUsername === String(previousCustomerNumber || "").toUpperCase()
         ? newCustomerNumber
@@ -3298,12 +3400,6 @@ async function pauseCustomer(customerId, payload = {}) {
     throw new Error("Pause end date must be on or after the start date");
   }
 
-  const creditDays = Math.max(0, Number(payload?.creditDays ?? payload?.pause_credit_days ?? 0) || 0);
-  const originalDueDate =
-    formatDateOnly(payload?.originalDueDate ?? payload?.pause_original_due_date) || null;
-  const creditedDueDate =
-    formatDateOnly(payload?.creditedDueDate ?? payload?.pause_credited_due_date) || null;
-
   const customer = await getCustomerContext(customerId);
   if (!customer) throw new Error("Customer not found");
   if (customer.status === "cancelled") {
@@ -3312,6 +3408,31 @@ async function pauseCustomer(customerId, payload = {}) {
   if (customer.status !== "active") {
     throw new Error("Customer is not active");
   }
+
+  const episodeDays = Math.max(
+    0,
+    Number(payload?.episodeDays ?? payload?.creditDays ?? payload?.pause_credit_days ?? 0) || 0
+  );
+  const pendingCredit =
+    !customer.pause_credit_applied_at &&
+    Math.max(0, Number(customer.pause_credit_days) || 0) > 0;
+  const previousUsed = pendingCredit
+    ? Math.max(0, Number(customer.pause_credit_days) || 0)
+    : 0;
+  const creditDays = Math.max(
+    0,
+    Number(payload?.totalCreditDays ?? previousUsed + episodeDays) || 0
+  );
+  const originalDueDate =
+    formatDateOnly(
+      pendingCredit
+        ? customer.pause_original_due_date ||
+            payload?.originalDueDate ||
+            payload?.pause_original_due_date
+        : payload?.originalDueDate ?? payload?.pause_original_due_date
+    ) || null;
+  const creditedDueDate =
+    formatDateOnly(payload?.creditedDueDate ?? payload?.pause_credited_due_date) || null;
 
   try {
     await query(
@@ -3340,9 +3461,17 @@ async function pauseCustomer(customerId, payload = {}) {
     );
   }
 
+  const remainingDays = Math.max(
+    0,
+    Number(payload?.remainingDays ?? 0) || 0
+  );
   const creditNote =
     creditDays > 0
-      ? ` · ${creditDays} day${creditDays === 1 ? "" : "s"} credited on next subscription`
+      ? ` · ${episodeDays || creditDays} day${(episodeDays || creditDays) === 1 ? "" : "s"} this stay · ${creditDays} day${creditDays === 1 ? "" : "s"} used${
+          remainingDays > 0
+            ? ` · ${remainingDays} remaining`
+            : " · pause days exhausted"
+        }`
       : "";
   try {
     await query(
@@ -3357,6 +3486,186 @@ async function pauseCustomer(customerId, payload = {}) {
   return getCustomerContext(customerId);
 }
 
+/**
+ * Resume internet after a temporary pause without applying pause credit.
+ * Used days stay on the current billing period so later pauses consume the remainder.
+ */
+async function resumeCustomer(customerId) {
+  const customer = await getCustomerContext(customerId);
+  if (!customer) throw new Error("Customer not found");
+  if (customer.status === "cancelled") {
+    throw new Error("Cannot resume a cancelled customer");
+  }
+  if (normalizeSubscriptionStatus(customer.subscription_status) !== "Paused") {
+    throw new Error("Customer is not paused");
+  }
+
+  await query(
+    `UPDATE customers
+     SET subscription_status = ?
+     WHERE id = ?`,
+    ["Active", customerId]
+  );
+
+  const start = formatDateOnly(customer.pause_start_date);
+  const end = formatDateOnly(customer.pause_end_date);
+  const range = start && end ? ` (${start} → ${end})` : "";
+  try {
+    await query(
+      `INSERT INTO customer_events (customer_id, event_type, notes)
+       VALUES (?, 'resume', ?)`,
+      [customerId, `Service resumed after pause${range}`]
+    );
+  } catch (err) {
+    try {
+      await query(
+        `INSERT INTO customer_events (customer_id, event_type, notes)
+         VALUES (?, 'pause', ?)`,
+        [customerId, `Service resumed after pause${range}`]
+      );
+    } catch (fallbackErr) {
+      console.warn("resume event insert skipped:", fallbackErr.message || err.message);
+    }
+  }
+
+  return getCustomerContext(customerId);
+}
+
+/**
+ * Open-ended hold. Does not consume pause-day allowance or pause credit.
+ * Caller stops services and recurring billing.
+ */
+async function pauseCustomerIndefinitely(customerId, payload = {}) {
+  const reason = String(payload?.reason ?? payload?.notes ?? "").trim();
+  if (!reason) throw new Error("Pause reason is required");
+
+  const customer = await getCustomerContext(customerId);
+  if (!customer) throw new Error("Customer not found");
+  if (customer.status === "cancelled") {
+    throw new Error("Cannot pause a cancelled customer");
+  }
+  if (customer.status !== "active") {
+    throw new Error("Customer is not active");
+  }
+  const subscriptionStatus = normalizeSubscriptionStatus(customer.subscription_status);
+  if (subscriptionStatus === "Paused Indefinitely") {
+    throw new Error("Customer is already paused indefinitely");
+  }
+  if (subscriptionStatus !== "Active") {
+    throw new Error("Only customers with an active subscription can pause indefinitely");
+  }
+
+  const start = formatDateOnly(new Date().toISOString());
+  const dueDate =
+    formatDateOnly(payload?.dueDate ?? payload?.indefinitePauseDueDate) ||
+    formatDateOnly(customer.tisp_due_date) ||
+    null;
+  const iptvUserId = payload?.iptvUserId
+    ? String(payload.iptvUserId).slice(0, 64)
+    : null;
+
+  await query(
+    `UPDATE customers
+     SET subscription_status = 'Paused Indefinitely',
+         pause_indefinite = 1,
+         pause_start_date = ?,
+         pause_end_date = NULL,
+         pause_reason = ?,
+         indefinite_pause_due_date = ?,
+         indefinite_pause_iptv_user_id = ?,
+         pause_stopped_recurring_ids = NULL
+     WHERE id = ?`,
+    [start, reason, dueDate, iptvUserId, customerId]
+  );
+
+  try {
+    await query(
+      `INSERT INTO customer_events (customer_id, event_type, notes)
+       VALUES (?, 'pause', ?)`,
+      [customerId, `Indefinite pause: ${reason} (from ${start})`]
+    );
+  } catch (err) {
+    console.warn("indefinite pause event insert skipped:", err.message);
+  }
+
+  return getCustomerById(customerId);
+}
+
+async function setIndefinitePauseRecurringIds(customerId, ids = []) {
+  const value = (Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .join(",")
+    .slice(0, 1000);
+  await query(
+    `UPDATE customers SET pause_stopped_recurring_ids = ? WHERE id = ?`,
+    [value || null, customerId]
+  );
+}
+
+/**
+ * End an indefinite hold. Leaves dated-pause credit columns untouched.
+ * Returns the saved restore snapshot captured before the row is cleared.
+ */
+async function restartIndefinitePause(customerId) {
+  const customer = await getCustomerContext(customerId);
+  if (!customer) throw new Error("Customer not found");
+  if (customer.status === "cancelled") {
+    throw new Error("Cannot restart a cancelled customer");
+  }
+  const indefinite =
+    Number(customer.pause_indefinite) === 1 ||
+    normalizeSubscriptionStatus(customer.subscription_status) === "Paused Indefinitely";
+  if (!indefinite) {
+    throw new Error("Customer is not paused indefinitely");
+  }
+
+  const snapshot = {
+    reason: customer.pause_reason || null,
+    startDate: formatDateOnly(customer.pause_start_date),
+    dueDate: formatDateOnly(customer.indefinite_pause_due_date),
+    recurringIds: String(customer.pause_stopped_recurring_ids || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean),
+    iptvUserId: customer.indefinite_pause_iptv_user_id || null,
+  };
+
+  await query(
+    `UPDATE customers
+     SET subscription_status = 'Active',
+         pause_indefinite = 0,
+         pause_start_date = NULL,
+         pause_end_date = NULL,
+         pause_reason = NULL,
+         indefinite_pause_due_date = NULL,
+         indefinite_pause_iptv_user_id = NULL,
+         pause_stopped_recurring_ids = NULL
+     WHERE id = ?`,
+    [customerId]
+  );
+
+  try {
+    await query(
+      `INSERT INTO customer_events (customer_id, event_type, notes)
+       VALUES (?, 'resume', ?)`,
+      [
+        customerId,
+        `Service restarted after indefinite pause${
+          snapshot.reason ? `: ${snapshot.reason}` : ""
+        }`,
+      ]
+    );
+  } catch (err) {
+    console.warn("indefinite restart event insert skipped:", err.message);
+  }
+
+  return {
+    customer: await getCustomerById(customerId),
+    snapshot,
+  };
+}
+
 async function markPauseCreditApplied(customerId, appliedDueDate = null) {
   const id = Number(customerId);
   if (!id) return null;
@@ -3367,7 +3676,9 @@ async function markPauseCreditApplied(customerId, appliedDueDate = null) {
        SET pause_credit_applied_at = NOW(),
            pause_credited_due_date = COALESCE(?, pause_credited_due_date),
            subscription_status = CASE
-             WHEN LOWER(TRIM(COALESCE(subscription_status, ''))) LIKE '%pause%' THEN 'Active'
+             WHEN LOWER(TRIM(COALESCE(subscription_status, ''))) LIKE '%pause%'
+              AND LOWER(TRIM(COALESCE(subscription_status, ''))) NOT LIKE '%indefinite%'
+              AND COALESCE(pause_indefinite, 0) = 0 THEN 'Active'
              ELSE subscription_status
            END
        WHERE id = ?
@@ -3379,7 +3690,8 @@ async function markPauseCreditApplied(customerId, appliedDueDate = null) {
     await query(
       `UPDATE customers
        SET subscription_status = CASE
-             WHEN LOWER(TRIM(COALESCE(subscription_status, ''))) LIKE '%pause%' THEN 'Active'
+             WHEN LOWER(TRIM(COALESCE(subscription_status, ''))) LIKE '%pause%'
+              AND LOWER(TRIM(COALESCE(subscription_status, ''))) NOT LIKE '%indefinite%' THEN 'Active'
              ELSE subscription_status
            END
        WHERE id = ?`,
@@ -3493,12 +3805,28 @@ async function updateCustomerDetails(id, data, options = {}) {
   const building = await getBuildingById(existing.buildingId);
   if (!building) throw new Error("Building not found");
 
-  const ipCheck = validateIpForBuilding(building, data.ipAddress);
-  if (!ipCheck.ok) {
-    throw new Error(ipCheck.error);
+  let incomingProduct = null;
+  if (options.allowPackageEdit && data.productId != null) {
+    incomingProduct = await getProductById(Number(data.productId));
+  }
+  const skipIpRequirement =
+    catalogStore.isDstvOnlyRecord(existing) ||
+    catalogStore.isDstvOnlyRecord(incomingProduct);
+
+  let nextIp = existing.ipAddress || null;
+  if (skipIpRequirement) {
+    if (data.ipAddress) {
+      const ipCheck = validateIpForBuilding(building, data.ipAddress);
+      if (ipCheck.ok) nextIp = ipCheck.ip || nextIp;
+    }
+  } else {
+    const ipCheck = validateIpForBuilding(building, data.ipAddress);
+    if (!ipCheck.ok) {
+      throw new Error(ipCheck.error);
+    }
+    nextIp = ipCheck.ip || null;
   }
   const previousIp = existing.ipAddress || null;
-  const nextIp = ipCheck.ip || null;
   const ipChanged =
     String(previousIp || "").trim() !== String(nextIp || "").trim();
   if (ipChanged && nextIp) {
@@ -3522,6 +3850,7 @@ async function updateCustomerDetails(id, data, options = {}) {
   let previousPackagePrice = existing.packagePrice;
   let previousHasDstv = Boolean(existing.hasDstv);
   let tvCount = Number(existing.tvCount || 1);
+  let extraDecoderCount = Number(existing.extraDecoderCount || 0);
 
   if (options.allowPackageEdit) {
     if (data.paymentFrequency != null) {
@@ -3550,6 +3879,11 @@ async function updateCustomerDetails(id, data, options = {}) {
     if (product.building_id !== existing.buildingId) {
       throw new Error("Package must belong to the same building");
     }
+    const currentProduct = await getProductById(existing.productId);
+    assertProductAssignable(product, {
+      customerPremise: existing.premiseType,
+      currentProductPremise: productPremiseType(currentProduct),
+    });
     packagePrice = resolvePackagePrice(product, paymentFrequency, customPeriodDays);
     const decoderFee = await resolveDecoderFeeForProduct(product, {
       dstv_setup: existing.buildingDstvSetup,
@@ -3595,6 +3929,17 @@ async function updateCustomerDetails(id, data, options = {}) {
     data.tvCount !== undefined ? data.tvCount : existing.tvCount;
   tvCount = resolveTvCountForProduct(effectiveProduct, requestedTvCount);
   const tvCountChanged = tvCount !== Number(existing.tvCount || 1);
+  const requestedExtraDecoders =
+    data.extraDecoderCount !== undefined
+      ? data.extraDecoderCount
+      : existing.extraDecoderCount;
+  extraDecoderCount = resolveExtraDecoderCountForProduct(
+    effectiveProduct,
+    requestedExtraDecoders,
+    existing
+  );
+  const extraDecoderCountChanged =
+    extraDecoderCount !== Number(existing.extraDecoderCount || 0);
 
   const dstvDecoderSerial =
     data.dstvDecoderSerial !== undefined
@@ -3730,7 +4075,7 @@ async function updateCustomerDetails(id, data, options = {}) {
          tisp_password = ?, ppoe_username = ?,
          business_name = ?, shop_location = ?, block = ?,
          product_id = ?, payment_frequency = ?, custom_period_days = ?, package_price = ?,
-         tv_count = ?, decoder_fee_required = ?, decoder_fee_amount = ?
+         tv_count = ?, extra_decoder_count = ?, decoder_fee_required = ?, decoder_fee_amount = ?
      WHERE id = ?`,
     [
       firstName,
@@ -3762,6 +4107,7 @@ async function updateCustomerDetails(id, data, options = {}) {
       customPeriodDays,
       packagePrice,
       tvCount,
+      extraDecoderCount,
       decoderFeeRequired,
       decoderFeeAmount,
       id,
@@ -3786,6 +4132,17 @@ async function updateCustomerDetails(id, data, options = {}) {
       `INSERT INTO customer_events (customer_id, event_type, notes)
        VALUES (?, 'tv_count', ?)`,
       [id, `TVs ${Number(existing.tvCount || 1)} → ${tvCount}`]
+    );
+  }
+
+  if (extraDecoderCountChanged && !packageChanged) {
+    await query(
+      `INSERT INTO customer_events (customer_id, event_type, notes)
+       VALUES (?, 'extra_decoder_count', ?)`,
+      [
+        id,
+        `Extra decoders ${Number(existing.extraDecoderCount || 0)} → ${extraDecoderCount}`,
+      ]
     );
   }
 
@@ -3843,7 +4200,95 @@ async function updateCustomerDetails(id, data, options = {}) {
     ipChanged: ipChanged && !apartmentChanged,
     previousIp: ipChanged && !apartmentChanged ? previousIp : null,
     tvCountChanged,
+    extraDecoderCountChanged,
     changes,
+  };
+}
+
+async function updateCustomerNotes(id, notes) {
+  const existing = await getCustomerById(id);
+  if (!existing) throw new Error("Customer not found");
+  const value = String(notes ?? "").trim();
+  if (value.length > 4000) {
+    throw new Error("Notes must be 4000 characters or fewer");
+  }
+  const stored = value || null;
+  await query(
+    `UPDATE customers
+     SET staff_notes = ?,
+         staff_notes_updated_at = CASE WHEN ? IS NULL THEN NULL ELSE NOW() END
+     WHERE id = ?`,
+    [stored, stored, id]
+  );
+  return getCustomerById(id);
+}
+
+async function listCustomerNotes(filters = {}) {
+  const { subscriptionStatusFilterClause } = require("../utils/subscriptionStatus");
+  const clauses = [
+    "c.staff_notes IS NOT NULL",
+    "CHAR_LENGTH(TRIM(c.staff_notes)) > 0",
+  ];
+  const params = [];
+
+  if (filters.buildingId) {
+    clauses.push("c.building_id = ?");
+    params.push(Number(filters.buildingId));
+  }
+  if (filters.hasDstv === true || filters.hasDstv === 1 || filters.hasDstv === "true") {
+    clauses.push("p.has_dstv = 1");
+  }
+  const subscriptionFilter = subscriptionStatusFilterClause(filters.subscriptionStatus);
+  if (subscriptionFilter) {
+    clauses.push(subscriptionFilter.sql);
+    params.push(...subscriptionFilter.params);
+  }
+
+  const raw = String(filters.search || "").trim();
+  if (raw && raw !== "undefined") {
+    const like = `%${escapeLike(raw)}%`;
+    clauses.push(`(
+      c.first_name LIKE ?
+      OR c.middle_name LIKE ?
+      OR c.last_name LIKE ?
+      OR CONCAT_WS(' ', c.first_name, c.middle_name, c.last_name) LIKE ?
+      OR c.customer_number LIKE ?
+      OR c.apartment_number LIKE ?
+      OR c.business_name LIKE ?
+      OR b.name LIKE ?
+      OR c.staff_notes LIKE ?
+    )`);
+    params.push(like, like, like, like, like, like, like, like, like);
+  }
+
+  const page = Math.max(1, Number(filters.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(filters.limit) || 25));
+  const offset = (page - 1) * limit;
+  const where = clauses.join(" AND ");
+  const [countRow] = await query(
+    `SELECT COUNT(*) AS total
+     FROM customers c
+     JOIN buildings b ON b.id = c.building_id
+     JOIN products p ON p.id = c.product_id
+     WHERE ${where}`,
+    params
+  );
+  const total = Number(countRow?.total || 0);
+  const rows = await query(
+    `${CUSTOMER_SELECT} WHERE ${where}
+     ORDER BY COALESCE(c.staff_notes_updated_at, c.updated_at) DESC, c.id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  return {
+    data: rows.map(mapCustomerRow),
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit) || 1,
+    },
   };
 }
 
@@ -4287,9 +4732,15 @@ async function getBuildingByName(name) {
   return rows[0] || null;
 }
 
-async function findProductForImport(buildingId, productName, paymentFrequency) {
+async function findProductForImport(
+  buildingId,
+  productName,
+  paymentFrequency,
+  premiseType
+) {
   const freq = paymentFrequency === "custom" ? "monthly" : paymentFrequency;
   const trimmed = String(productName || "").trim();
+  const premise = normalizePremiseType(premiseType);
   const rows = await query(
     `SELECT p.id
      FROM products p
@@ -4298,6 +4749,7 @@ async function findProductForImport(buildingId, productName, paymentFrequency) {
      LEFT JOIN package_categories c ON c.id = pl.category_id
      WHERE p.building_id = ?
        AND p.payment_frequency = ?
+       AND p.premise_type = ?
        AND p.is_active = 1
        AND (
          p.name = ?
@@ -4306,7 +4758,7 @@ async function findProductForImport(buildingId, productName, paymentFrequency) {
          OR CONCAT(pl.name, ' - ', c.name) = ?
        )
      LIMIT 1`,
-    [buildingId, freq, trimmed, trimmed, trimmed, trimmed]
+    [buildingId, freq, premise, trimmed, trimmed, trimmed, trimmed]
   );
   return rows[0] || null;
 }
@@ -4541,11 +4993,12 @@ async function importCustomerFromRow(row, batchSeen) {
   const product = await findProductForImport(
     building.id,
     row.product_name,
-    paymentFrequency
+    paymentFrequency,
+    premiseType
   );
   if (!product) {
     throw new Error(
-      `Product "${row.product_name}" not found for ${row.building_name} (${paymentFrequency})`
+      `Product "${row.product_name}" not found for ${row.building_name} (${paymentFrequency}, ${premiseType})`
     );
   }
 
@@ -4567,11 +5020,16 @@ async function importCustomerFromRow(row, batchSeen) {
     premiseType
   );
 
-  const ipCheck = validateIpForBuilding(building, ipAddress);
-  if (!ipCheck.ok) {
-    throw new Error(ipCheck.error);
+  const dstvOnly = catalogStore.isDstvOnlyRecord(product);
+  if (dstvOnly) {
+    ipAddress = null;
+  } else {
+    const ipCheck = validateIpForBuilding(building, ipAddress);
+    if (!ipCheck.ok) {
+      throw new Error(ipCheck.error);
+    }
+    ipAddress = ipCheck.ip;
   }
-  ipAddress = ipCheck.ip;
 
   await assertImportNotDuplicate({
     customerNumber,
@@ -4663,11 +5121,11 @@ async function getSubscriberStats(days = 29) {
       LIMIT 20
     `),
     query(`
-      SELECT p.name AS package_name, p.mbps, COUNT(*) AS subscribers
+      SELECT p.name AS package_name, p.mbps, p.premise_type, COUNT(*) AS subscribers
       FROM customers c
       JOIN products p ON p.id = c.product_id
       WHERE c.status = 'active'
-      GROUP BY p.id, p.name, p.mbps
+      GROUP BY p.name, p.mbps, p.premise_type
       ORDER BY subscribers DESC
       LIMIT 8
     `),
@@ -4709,6 +5167,7 @@ async function getSubscriberStats(days = 29) {
     topPackages: topPackages.map((d) => ({
       package: formatProductNameForDisplay(d.package_name),
       mbps: Number(d.mbps),
+      premiseType: String(d.premise_type || "apartment").toLowerCase() === "shop" ? "shop" : "apartment",
       subscribers: Number(d.subscribers),
     })),
     avgCustomerPayment: 0,
@@ -4970,6 +5429,7 @@ module.exports = {
   updateAgency,
   listCustomersByAgency,
   listCustomers,
+  listCustomerNotes,
   getCustomerById,
   getCustomerContext,
   updateCustomerSubscriptionStatus,
@@ -4990,11 +5450,16 @@ module.exports = {
   cancelCustomer,
   disconnectCustomer,
   pauseCustomer,
+  resumeCustomer,
+  pauseCustomerIndefinitely,
+  setIndefinitePauseRecurringIds,
+  restartIndefinitePause,
   markPauseCreditApplied,
   updateCustomerOltMapping,
   clearCustomerOnuMapping,
   deleteCustomerCompletely,
   updateCustomerDetails,
+  updateCustomerNotes,
   updateCustomerTvCount,
   revertCustomerIpAddress,
   convertCustomerType,

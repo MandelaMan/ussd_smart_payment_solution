@@ -3,6 +3,8 @@
  * Each template is keyed by billing status or explicit template id.
  */
 
+const { plainIssueText } = require("./productNameDisplay");
+
 function roundMoney(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -223,7 +225,9 @@ function buildTemplateContext(record, customer) {
     billingFrequency: metrics.billingFrequency || "monthly",
     subscriptionStatus: metrics.subscriptionStatus || "Unknown",
     primaryStatus: record.primaryStatus,
-    issueBasis: record.issueBasis || record.validations?.[0]?.message || null,
+    issueBasis: plainIssueText(
+      record.issueBasis || record.validations?.[0]?.message || null
+    ),
     email: customer?.email || null,
   };
 }

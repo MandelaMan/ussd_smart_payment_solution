@@ -1,9 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
-import { Link, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Badge,
   Box,
@@ -53,6 +53,7 @@ import {
   seedListState,
   storeListState,
 } from "../lib/listLoad";
+import { AddCustomerChoiceDialog } from "../components/customers/AddCustomerChoiceDialog";
 import { CustomerEditDialog } from "../components/customers/CustomerEditDialog";
 import { DstvSerialMissingBadge } from "../components/customers/DstvSerialMissingBadge";
 import { CatalogPackageMissingBadge } from "../components/customers/CatalogPackageMissingBadge";
@@ -103,6 +104,8 @@ import {
   serializeStatusFilter,
   statusFiltersEqual,
   canCreateCustomerOnTisp,
+  canRestartCustomer,
+  canResumeCustomer,
   type SubscriptionStatusLabel,
 } from "../lib/customerStatus";
 import { StatusMultiSelect } from "../components/ui/StatusMultiSelect";
@@ -119,7 +122,7 @@ import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { formatDisplayText } from "../lib/formatText";
 import { DisplayText } from "../components/ui/DisplayText";
 import { useAuth } from "../lib/authContext";
-import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hidePricing } from "../lib/rbac";
+import { canDeleteCustomer, canMutateCustomers, canSeeCustomerFinancials, hasPermission, hidePricing, isDstvPartner } from "../lib/rbac";
 import { TISP_STANDARD_DUE_DATE } from "../lib/tispConstants";
 import { FilterToolbar } from "../components/ui/FilterToolbar";
 import { FILTER_CONTROL_HEIGHT } from "../theme";
@@ -127,9 +130,9 @@ import { MobileDataCard, MobileDataList, ResponsiveListViews } from "../componen
 import { MobileFAB, MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
-import { MobileCardListSkeleton, DataTableLoadingSkeleton } from "../components/PageSkeletons";
+import { MobileCardListSkeleton, DataTableLoadingSkeleton, TransactionExpandSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
-import { pauseAwayDays, pauseCreditLabel } from "../lib/pauseCredit";
+import { addCalendarDays, exhaustedPauseDaysMessage, pauseAwayDays, pauseBalanceLabel, pauseCreditLabel, resolvePauseBalance } from "../lib/pauseCredit";
 
 const PAGE_SIZE = 30;
 
@@ -206,8 +209,12 @@ const expandPanelRowMotion = {
 
 export function CustomersListPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [addChoiceOpen, setAddChoiceOpen] = useState(false);
   const canMutate = canMutateCustomers(user);
+  const dstvPartner = isDstvPartner(user);
+  const canExportCustomers = hasPermission(user, "customers.export");
   const isMobile = useMobileViewport();
   const allowPermanentDelete = canDeleteCustomer(user);
   const hidePrices = hidePricing(user);
@@ -244,7 +251,10 @@ export function CustomersListPage() {
   const customersRef = useRef(customers);
   customersRef.current = customers;
   const [error, setError] = useState("");
-  const [searchInput, setSearchInput] = useState("");
+  const [searchInput, setSearchInput] = useState(() => searchParams.get("q") || "");
+  const pendingCustomerRef = useRef<number | null>(
+    Number(searchParams.get("customer")) || null
+  );
   const debouncedSearch = useDebouncedValue(searchInput, 450);
   const loadRequestRef = useRef(0);
   const [buildingId, setBuildingId] = useState("");
@@ -261,6 +271,8 @@ export function CustomersListPage() {
   const [premiseType, setPremiseType] = useState("");
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<number | null>(null);
+  // Highlight the row on the click, then mount the heavy panel after paint.
+  const [mountedPanelId, setMountedPanelId] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -282,8 +294,9 @@ export function CustomersListPage() {
     todayDateInputValue
   );
   const [pauseStartDate, setPauseStartDate] = useState(todayDateInputValue());
-  const [pauseEndDate, setPauseEndDate] = useState("");
+  const [pauseDays, setPauseDays] = useState("");
   const [pauseReason, setPauseReason] = useState("");
+  const [pauseMode, setPauseMode] = useState<"away" | "indefinite">("away");
   const [actionPackages, setActionPackages] = useState<Product[]>([]);
   const [apartmentHistory, setApartmentHistory] = useState<ApartmentHistoryEntry[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
@@ -446,6 +459,11 @@ export function CustomersListPage() {
         if (!append) {
           storeListState(customersListCacheKey(params), nextRows, res.pagination);
           setSelectedIds(new Set());
+          const pendingId = pendingCustomerRef.current;
+          if (pendingId && nextRows.some((row) => row.id === pendingId)) {
+            pendingCustomerRef.current = null;
+            setExpanded(pendingId);
+          }
         }
 
         // After search: show DB rows immediately, then patch with live TISP status/due date.
@@ -543,6 +561,11 @@ export function CustomersListPage() {
   const tispCreateSelectedCustomers = useMemo(
     () => selectedCustomers.filter((customer) => canCreateCustomerOnTisp(customer)),
     [selectedCustomers]
+  );
+
+  const visibleCategories = useMemo(
+    () => (dstvPartner ? categories.filter((c) => c.hasDstv) : categories),
+    [categories, dstvPartner]
   );
 
   const bulkCancelFormValid =
@@ -838,6 +861,18 @@ export function CustomersListPage() {
     };
   }, [loadCustomers]);
 
+  useEffect(() => {
+    if (expanded == null) {
+      setMountedPanelId(null);
+      return;
+    }
+    const id = expanded;
+    const handle = window.requestAnimationFrame(() => {
+      startTransition(() => setMountedPanelId(id));
+    });
+    return () => window.cancelAnimationFrame(handle);
+  }, [expanded]);
+
   function toggleRow(id: number) {
     setExpanded((prev) => {
       const next = prev === id ? null : id;
@@ -953,6 +988,7 @@ export function CustomersListPage() {
       paymentFrequency: freq,
       activeOnly: "true",
       unpaginated: "true",
+      premiseType: customer.premiseType === "shop" ? "shop" : "apartment",
     });
 
     const baselinePrice = resolveActionBaselinePrice(
@@ -1072,6 +1108,31 @@ export function CustomersListPage() {
       return;
     }
 
+    if (type === "pause" && displayCustomerStatus(customer) !== "Active") {
+      toaster.create({
+        title: "Cannot pause service",
+        description: "The customer must have an active subscription",
+        type: "error",
+      });
+      return;
+    }
+    if (type === "resume" && !canResumeCustomer(customer)) {
+      toaster.create({
+        title: "Cannot resume service",
+        description: "The customer must be paused",
+        type: "error",
+      });
+      return;
+    }
+    if (type === "restart" && !canRestartCustomer(customer)) {
+      toaster.create({
+        title: "Cannot restart service",
+        description: "The customer must be paused indefinitely",
+        type: "error",
+      });
+      return;
+    }
+
     setActionCustomer(customer);
     setActionType(type);
     setActionProductId("");
@@ -1084,9 +1145,11 @@ export function CustomersListPage() {
     setCancelNotes("");
     setCancelOnuCollectedAt(todayDateInputValue());
     setCancelDstvDecoderCollectedAt(todayDateInputValue());
-    setPauseStartDate(todayDateInputValue());
-    setPauseEndDate("");
+    const pauseStart = todayDateInputValue();
+    setPauseStartDate(pauseStart);
+    setPauseDays("");
     setPauseReason("");
+    setPauseMode(resolvePauseBalance(customer).exhausted ? "indefinite" : "away");
     setActionPackages([]);
     setApartmentHistory([]);
     setUpgradeQuote(null);
@@ -1214,6 +1277,7 @@ export function CustomersListPage() {
         paymentFrequency: freq,
         activeOnly: "true",
         unpaginated: "true",
+        premiseType: customer.premiseType === "shop" ? "shop" : "apartment",
       });
       const currentHasDstv = Boolean(customer.hasDstv);
       const match =
@@ -1429,7 +1493,7 @@ export function CustomersListPage() {
     setEditCustomer(null);
   }
 
-  function handleEditSaved(updated: Customer, tisp?: { ok: boolean; error?: string }) {
+  function handleEditSaved(updated: Customer, _tisp?: { ok: boolean; error?: string }) {
     setEditCustomer(null);
     setCustomers((prev) =>
       prev.map((row) => (row.id === updated.id ? { ...row, ...updated } : row))
@@ -1439,16 +1503,7 @@ export function CustomersListPage() {
     if (expanded === updated.id) {
       setPanelRefreshKey((k) => k + 1);
     }
-    if (tisp && !tisp.ok) {
-      toaster.create({
-        title: "Customer updated",
-        description: `TISP sync failed: ${tisp.error}`,
-        type: "warning",
-        duration: 10000,
-      });
-    } else {
-      toaster.create({ title: "Customer updated", type: "success" });
-    }
+    // CustomerForm already toasts success / TISP failure for this save.
   }
 
   function handleTypeConverted(
@@ -1635,7 +1690,48 @@ export function CustomersListPage() {
             type: "success",
           });
         }
+      } else if (actionType === "pause" && pauseMode === "indefinite") {
+        const res = await api.pauseCustomerIndefinitely(actionCustomer.id, {
+          reason: pauseReason.trim(),
+        });
+        if (res.customer) {
+          setCustomers((prev) =>
+            prev.map((c) => (c.id === res.customer.id ? { ...c, ...res.customer } : c))
+          );
+        }
+        const emailSkipped = res.email && res.email.ok !== true;
+        const issues = [
+          res.tisp && res.tisp.ok === false ? res.tisp.error || "TISP update failed" : null,
+          res.zoho && res.zoho.ok === false ? res.zoho.error || "Recurring invoice was not stopped" : null,
+          res.iptv && res.iptv.ok === false ? res.iptv.error || "IPTV was not suspended" : null,
+        ].filter(Boolean);
+        toaster.create({
+          title: issues.length ? "Paused indefinitely with sync issues" : "Paused indefinitely",
+          description: [
+            pauseReason.trim(),
+            res.zoho?.b2b
+              ? "Removed from the agency recurring invoice"
+              : res.zoho?.stopped
+                ? `Recurring invoice stopped (${res.zoho.stopped})`
+                : null,
+            emailSkipped ? "Pause email was not sent" : "Customer notified by email",
+            ...issues,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          type: issues.length || emailSkipped ? "warning" : "success",
+          duration: issues.length ? 10000 : undefined,
+        });
       } else if (actionType === "pause") {
+        const days = Math.max(0, Math.floor(Number(pauseDays) || 0));
+        const pauseEndDate = addCalendarDays(pauseStartDate, days);
+        if (!pauseEndDate || days < 1) {
+          toaster.create({
+            title: "Enter the number of pause days",
+            type: "error",
+          });
+          return;
+        }
         const res = await api.pauseCustomer(actionCustomer.id, {
           reason: pauseReason.trim(),
           pauseStartDate,
@@ -1648,6 +1744,15 @@ export function CustomersListPage() {
         }
         const creditDays = res.pause?.creditDays ?? 0;
         const zohoDeferred = res.zoho?.recurring?.deferred ?? 0;
+        const zohoCredit = res.zoho?.creditNote?.amount ?? res.pause?.creditAmount ?? 0;
+        const remainingAfter = res.pause?.daysRemaining;
+        const remainingLabel =
+          remainingAfter == null
+            ? null
+            : remainingAfter > 0
+              ? `${pauseCreditLabel(remainingAfter)} remaining`
+              : "pause days exhausted";
+        const emailSkipped = res.email && res.email.ok !== true;
         if (res.tisp && res.tisp.ok === false) {
           toaster.create({
             title: "Paused with TISP issues",
@@ -1658,7 +1763,7 @@ export function CustomersListPage() {
         } else if (res.zoho && res.zoho.ok === false) {
           toaster.create({
             title: "Paused with billing sync issues",
-            description: res.zoho.error || "Zoho recurring update failed",
+            description: res.zoho.error || "Zoho credit or recurring update failed",
             type: "warning",
             duration: 10000,
           });
@@ -1668,15 +1773,92 @@ export function CustomersListPage() {
             description: [
               res.pause?.endDate ? `Away until ${res.pause.endDate}` : null,
               creditDays > 0
-                ? `${pauseCreditLabel(creditDays)} credited on next subscription`
+                ? `${pauseCreditLabel(creditDays)} credited in Zoho`
                 : null,
+              remainingLabel,
+              zohoCredit > 0 ? `KES ${zohoCredit}` : null,
               zohoDeferred > 0
-                ? `${zohoDeferred} recurring profile${zohoDeferred === 1 ? "" : "s"} deferred`
+                ? `${zohoDeferred} recurring profile${zohoDeferred === 1 ? "" : "s"} updated`
                 : null,
-              res.tisp?.dueDate ? `TISP due ${res.tisp.dueDate}` : null,
+              emailSkipped
+                ? "Pause email was not sent"
+                : "Customer notified by email",
             ]
               .filter(Boolean)
               .join(" · "),
+            type: emailSkipped ? "warning" : "success",
+          });
+        }
+      } else if (actionType === "restart") {
+        const res = await api.restartCustomer(actionCustomer.id);
+        if (res.customer) {
+          setCustomers((prev) =>
+            prev.map((c) => (c.id === res.customer.id ? { ...c, ...res.customer } : c))
+          );
+        }
+        const issues = [
+          res.tisp && res.tisp.ok === false ? res.tisp.error || "TISP update failed" : null,
+          res.zoho && res.zoho.ok === false ? res.zoho.error || "Recurring invoice was not resumed" : null,
+          res.iptv && res.iptv.ok === false ? res.iptv.error || "IPTV was not reconnected" : null,
+        ].filter(Boolean);
+        toaster.create({
+          title: issues.length ? "Restarted with sync issues" : "Service restarted",
+          description: [
+            res.pause?.dueDate ? `Due ${res.pause.dueDate}` : null,
+            res.zoho?.b2b
+              ? "Added back to the agency recurring invoice"
+              : res.zoho?.resumed
+                ? `Recurring invoice resumed (${res.zoho.resumed})`
+                : null,
+            ...issues,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined,
+          type: issues.length ? "warning" : "success",
+          duration: issues.length ? 10000 : undefined,
+        });
+      } else if (actionType === "resume") {
+        const res = await api.resumeCustomer(actionCustomer.id);
+        if (res.customer) {
+          setCustomers((prev) =>
+            prev.map((c) => (c.id === res.customer.id ? { ...c, ...res.customer } : c))
+          );
+        }
+        const remaining = res.pause?.daysRemaining;
+        const zohoIssue = res.zoho && res.zoho.ok === false;
+        if ((res.tisp && res.tisp.ok === false) || zohoIssue) {
+          toaster.create({
+            title: "Resumed with sync issues",
+            description: [
+              res.tisp?.ok === false ? res.tisp.error || "TISP update failed" : null,
+              zohoIssue ? res.zoho?.error || "Recurring invoice was not updated" : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            type: "warning",
+            duration: 10000,
+          });
+        } else {
+          toaster.create({
+            title: "Service resumed",
+            description: [
+              res.tisp?.dueDate ? `TISP due ${res.tisp.dueDate}` : null,
+              res.zoho?.updated
+                ? `Recurring invoice updated (${res.zoho.updated})`
+                : null,
+              remaining == null
+                ? null
+                : remaining > 0
+                  ? `${pauseCreditLabel(remaining)} remaining this billing period`
+                  : exhaustedPauseDaysMessage({
+                      allowance: res.pause?.allowanceDays ?? 0,
+                      used: res.pause?.daysUsed ?? 0,
+                      remaining: 0,
+                      exhausted: true,
+                    }),
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined,
             type: "success",
           });
         }
@@ -1783,8 +1965,8 @@ export function CustomersListPage() {
             borderRadius: "md",
           }}
         >
-          <option value="">{lookupsLoading ? "Loading…" : "All categories"}</option>
-          {categories.map((c) => (
+          <option value="">{lookupsLoading ? "Loading…" : dstvPartner ? "All DSTV categories" : "All categories"}</option>
+          {visibleCategories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
@@ -1800,7 +1982,7 @@ export function CustomersListPage() {
         chrome={
           <ListPageStickyChrome>
             <MobilePageChrome
-        title="Customers"
+        title={dstvPartner ? "DSTV customers" : "Customers"}
         searchValue={searchInput}
         onSearchChange={setSearchInput}
         searchPlaceholder="Name, shop, apt, customer no."
@@ -1892,14 +2074,16 @@ export function CustomersListPage() {
         ]}
         desktopActions={
           <Flex gap={2} align="center" flexShrink={0}>
-            <DataTableExportButton
-              entityLabel="customers"
-              viewCount={customers.length}
-              totalCount={pagination.total}
-              columnOptions={CUSTOMER_EXPORT_COLUMN_OPTIONS}
-              loading={exporting}
-              onExport={handleExport}
-            />
+            {canExportCustomers ? (
+              <DataTableExportButton
+                entityLabel="customers"
+                viewCount={customers.length}
+                totalCount={pagination.total}
+                columnOptions={CUSTOMER_EXPORT_COLUMN_OPTIONS}
+                loading={exporting}
+                onExport={handleExport}
+              />
+            ) : null}
             {canMutate ? (
               <>
                 <Button
@@ -1929,11 +2113,13 @@ export function CustomersListPage() {
                     if (file) void handleImport(file);
                   }}
                 />
-                <Button asChild size="sm" colorPalette="brand">
-                  <Link to="/customers/new">
-                    <FiUserPlus />
-                    Add customer
-                  </Link>
+                <Button
+                  size="sm"
+                  colorPalette="brand"
+                  onClick={() => setAddChoiceOpen(true)}
+                >
+                  <FiUserPlus />
+                  Add customer
                 </Button>
               </>
             ) : null}
@@ -2044,7 +2230,7 @@ export function CustomersListPage() {
         }
       >
       {canMutate ? (
-        <MobileFAB to="/customers/new" aria-label="Add customer">
+        <MobileFAB onClick={() => setAddChoiceOpen(true)} aria-label="Add customer">
           <FiUserPlus size={24} />
         </MobileFAB>
       ) : null}
@@ -2163,8 +2349,13 @@ export function CustomersListPage() {
               No customers found
             </Text>
             {canMutate ? (
-              <Button asChild size="sm" colorPalette="brand" variant="outline">
-                <Link to="/customers/new">Add your first customer</Link>
+              <Button
+                size="sm"
+                colorPalette="brand"
+                variant="outline"
+                onClick={() => setAddChoiceOpen(true)}
+              >
+                Add your first customer
               </Button>
             ) : null}
           </Stack>
@@ -2221,7 +2412,8 @@ export function CustomersListPage() {
                     />
                   );
                 }}
-                renderExpanded={(c) => (
+                renderExpanded={(c) =>
+                  mountedPanelId === c.id ? (
                   <CustomerExpandPanel
                     key={`${c.id}-${panelRefreshKey}`}
                     customerId={c.id}
@@ -2239,7 +2431,10 @@ export function CustomersListPage() {
                       );
                     }}
                   />
-                )}
+                  ) : (
+                    <TransactionExpandSkeleton />
+                  )
+                }
               />
             }
             desktop={
@@ -2413,6 +2608,7 @@ export function CustomersListPage() {
                           borderBottom="2px solid"
                           borderColor="brand.200"
                         >
+                          {mountedPanelId === c.id ? (
                           <CustomerExpandPanel
                             key={`${c.id}-${panelRefreshKey}`}
                             customerId={c.id}
@@ -2430,6 +2626,9 @@ export function CustomersListPage() {
                               );
                             }}
                           />
+                          ) : (
+                            <TransactionExpandSkeleton />
+                          )}
                         </Table.Cell>
                       </Table.Row>
                     )}
@@ -2446,6 +2645,16 @@ export function CustomersListPage() {
 
       {canMutate ? (
         <>
+      <AddCustomerChoiceDialog
+        open={addChoiceOpen}
+        onClose={() => setAddChoiceOpen(false)}
+        onContinue={(intake) => {
+          setAddChoiceOpen(false);
+          navigate(
+            intake === "existing" ? "/customers/new?intake=existing" : "/customers/new"
+          );
+        }}
+      />
       <CustomerEditDialog
         customer={editCustomer}
         onClose={closeEdit}
@@ -2479,8 +2688,9 @@ export function CustomersListPage() {
         cancelOnuCollectedAt={cancelOnuCollectedAt}
         cancelDstvDecoderCollectedAt={cancelDstvDecoderCollectedAt}
         pauseStartDate={pauseStartDate}
-        pauseEndDate={pauseEndDate}
+        pauseDays={pauseDays}
         pauseReason={pauseReason}
+        pauseMode={pauseMode}
         actionPackages={actionPackages}
         apartmentHistory={apartmentHistory}
         upgradeQuote={upgradeQuote}
@@ -2510,8 +2720,9 @@ export function CustomersListPage() {
         onOnuCollectedAtChange={setCancelOnuCollectedAt}
         onDstvDecoderCollectedAtChange={setCancelDstvDecoderCollectedAt}
         onPauseStartDateChange={setPauseStartDate}
-        onPauseEndDateChange={setPauseEndDate}
+        onPauseDaysChange={setPauseDays}
         onPauseReasonChange={setPauseReason}
+        onPauseModeChange={setPauseMode}
       />
       <CustomerImportProgressDialog
         open={importDialogOpen}
@@ -2633,6 +2844,17 @@ export function CustomersListPage() {
 }
 
 function CustomerStatusText({ customer }: { customer: Customer }) {
+  if (displayCustomerStatus(customer) === "Paused Indefinitely") {
+    return (
+      <Stack gap={0.5}>
+        <TextStatus status="Paused indefinitely" />
+        <Text fontSize="xs" color="purple.700" textTransform="none">
+          {customer.pauseReason ? customer.pauseReason : "Services and billing stopped"}
+        </Text>
+      </Stack>
+    );
+  }
+  const pauseBalance = resolvePauseBalance(customer);
   const creditDays =
     customer.pauseCreditDays != null && customer.pauseCreditDays > 0
       ? customer.pauseCreditDays
@@ -2640,10 +2862,18 @@ function CustomerStatusText({ customer }: { customer: Customer }) {
   const showCredit =
     creditDays > 0 &&
     (displayCustomerStatus(customer) === "Paused" || !customer.pauseCreditAppliedAt);
+  const showBalance =
+    displayCustomerStatus(customer) === "Paused" ||
+    pauseBalance.used > 0 ||
+    pauseBalance.exhausted;
   return (
     <Stack gap={0.5}>
       <TextStatus status={displayCustomerStatus(customer)} />
-      {showCredit ? (
+      {showBalance ? (
+        <Text fontSize="xs" color={pauseBalance.exhausted ? "red.700" : "blue.700"} textTransform="none">
+          {pauseBalanceLabel(pauseBalance)}
+        </Text>
+      ) : showCredit ? (
         <Text fontSize="xs" color="blue.700" textTransform="none">
           {pauseCreditLabel(creditDays)}{" "}
           {customer.pauseCreditAppliedAt ? "credited" : "credit on next sub"}

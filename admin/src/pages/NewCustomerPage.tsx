@@ -11,6 +11,7 @@ export function NewCustomerPage() {
   const [searchParams] = useSearchParams();
   const leadIdRaw = Number(searchParams.get("leadId") || 0);
   const leadId = Number.isFinite(leadIdRaw) && leadIdRaw > 0 ? leadIdRaw : null;
+  const existingCustomer = searchParams.get("intake") === "existing" && !leadId;
   const [leadPrefill, setLeadPrefill] = useState<LeadSignupPrefill | null>(null);
   const [leadLoading, setLeadLoading] = useState(Boolean(leadId));
 
@@ -63,6 +64,7 @@ export function NewCustomerPage() {
   return (
     <CustomerForm
       leadPrefill={leadPrefill}
+      existingCustomer={existingCustomer}
       onCreated={() => {
         navigate("/customers");
       }}

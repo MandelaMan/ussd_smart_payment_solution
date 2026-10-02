@@ -125,6 +125,14 @@ async function migrateAssignedCustomers(fromProductId, toProductId) {
     err.code = "TARGET_PRODUCT_BUILDING";
     throw err;
   }
+  const { productPremiseType } = require("../utils/productPremise");
+  if (productPremiseType(target) !== productPremiseType(source)) {
+    const err = new Error(
+      "Destination package must be for the same premise (apartment or shop)"
+    );
+    err.code = "TARGET_PRODUCT_PREMISE";
+    throw err;
+  }
 
   const customers = await store.listCustomersOnProduct(sourceId);
   if (!customers.length) {

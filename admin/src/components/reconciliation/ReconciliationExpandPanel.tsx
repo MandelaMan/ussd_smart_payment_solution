@@ -29,6 +29,7 @@ import { DataTable, dataTableCellProps, DataTableColumnHeader } from "../ui/Data
 import { ReconciliationStatusBadge } from "./ReconciliationStatusBadge";
 import { ReconciliationSystemChecks } from "./ReconciliationSystemChecks";
 import { TextStatus } from "../ui/TextStatus";
+import { readableIntegrationError } from "../../lib/integrationError";
 
 type Props = {
   customerId: number;
@@ -223,11 +224,16 @@ export function ReconciliationExpandPanel({
 
         {(detail.zohoError || detail.tispError) && (
           <Box bg="orange.50" border="1px solid" borderColor="orange.200" borderRadius="md" px={{ base: 2.5, md: 3 }} py={{ base: 1.5, md: 2 }}>
-            <Text fontSize="xs" color="orange.800">
-              {detail.zohoError && `Zoho: ${detail.zohoError}`}
+            <Text fontSize="xs" color="orange.800" lineHeight="1.45" wordBreak="break-word">
+              {detail.zohoError && `Zoho: ${readableIntegrationError(detail.zohoError)}`}
               {detail.zohoError && detail.tispError ? " · " : ""}
-              {detail.tispError && `TISP: ${detail.tispError}`}
+              {detail.tispError && `TISP: ${readableIntegrationError(detail.tispError)}`}
             </Text>
+            {detail.tispError ? (
+              <Text fontSize="2xs" color="orange.900" mt={1} lineHeight="1.4">
+                Overview uses the last saved TISP status.
+              </Text>
+            ) : null}
           </Box>
         )}
 

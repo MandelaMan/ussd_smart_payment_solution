@@ -85,6 +85,9 @@ async function getSettings(req, res, next) {
         xtreamSyncEnabled: process.env.XTREAM_SYNC_ENABLED !== "false",
         mpesaStkLiveAmount: process.env.MPESA_STK_USE_LIVE_AMOUNT === "true",
         zohoTaxInclusive: process.env.ZOHO_INVOICE_TAX_INCLUSIVE === "true",
+        iptv: appSettingsStore.toPublicStartlyxSettings(
+          await appSettingsStore.getStartlyxSettings()
+        ),
       },
       roles: [
         {
@@ -113,7 +116,9 @@ async function getSettings(req, res, next) {
           "Network Operations",
           "Management",
           "Installations",
-          "Customer Relations",
+          "Partner — Internet",
+          "Partner — DSTV",
+          "Partner — Investor",
           "Billing",
         ],
       },

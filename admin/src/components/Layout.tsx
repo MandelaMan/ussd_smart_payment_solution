@@ -1,6 +1,6 @@
 import { Box, Flex } from "@chakra-ui/react";
 import { useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { MobilePageTransition } from "./MobilePageTransition";
@@ -20,13 +20,16 @@ function LayoutShell() {
   const [open, setOpen] = useState(false);
   const searchOpen = useMobileSearchOpen();
   const closeSearch = useMobileSearchClose();
+  const closeSearchRef = useRef(closeSearch);
+  closeSearchRef.current = closeSearch;
   const hideBottomNav = searchOpen;
   const { pathname } = useLocation();
 
   useEffect(() => {
-    closeSearch?.();
     // Reset search chrome when navigating between modules.
-  }, [pathname, closeSearch]);
+    // Depend only on pathname — closeSearch changes identity must not dismiss an open search.
+    closeSearchRef.current?.();
+  }, [pathname]);
 
   return (
     <Flex

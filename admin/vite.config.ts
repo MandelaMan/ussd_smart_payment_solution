@@ -37,8 +37,25 @@ function apiProxy(extra: ProxyOptions = {}): ProxyOptions {
               );
               return;
             }
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (cb as any)?.(error, errorReq, errorRes, target);
+            // http-proxy skips its `error` event when a callback is passed, and
+            // Vite calls `web()` with no callback. Without this, a refused API
+            // never ends the response and the admin client waits out its 30s timeout.
+            if (typeof cb === "function") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (cb as any)(error, errorReq, errorRes, target);
+              return;
+            }
+            const response = res as
+              | { headersSent?: boolean; writeHead?: (code: number, headers: Record<string, string>) => void; end?: (body?: string) => void }
+              | undefined;
+            if (response?.writeHead && response.end && !response.headersSent) {
+              response.writeHead(502, { "Content-Type": "application/json" });
+              response.end(
+                JSON.stringify({
+                  message: "Can't reach SUL Bix. The server isn't responding.",
+                })
+              );
+            }
           });
         };
         tryOnce(0);
@@ -131,6 +148,9 @@ export default defineConfig({
       "/leads": apiProxy(),
       "/signup": apiProxy(),
     },
+  },
+  resolve: {
+    dedupe: ["react", "react-dom"],
   },
   optimizeDeps: {
     include: [

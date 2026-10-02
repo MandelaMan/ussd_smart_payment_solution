@@ -33,7 +33,7 @@ import { PAGE_STACK_GAP, PageErrorBanner, PageHeader } from "../components/ui/pa
 import { toaster } from "../components/ui/toaster";
 import { AppDialog } from "../components/ui/AppDialog";
 import { useAuth } from "../lib/authContext";
-import { canAccessAnalytics, isPartner } from "../lib/rbac";
+import { canAccessAnalytics, getPartnerType, isPartner } from "../lib/rbac";
 import {
   getFavoriteReportIds,
   toggleFavoriteReport,
@@ -793,7 +793,15 @@ export function ReportsPage() {
 
       <Text fontSize="sm" color="fg.muted">
         {filtered.length} report{filtered.length === 1 ? "" : "s"}
-        {partnerView ? " · partner catalog" : ""}
+        {partnerView
+          ? ` · ${
+              getPartnerType(user) === "dstv"
+                ? "DSTV partner catalog"
+                : getPartnerType(user) === "investor"
+                  ? "investor catalog"
+                  : "partner catalog"
+            }`
+          : ""}
       </Text>
 
       <Stack gap={6}>

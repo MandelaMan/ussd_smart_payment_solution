@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useVisibilityRefresh } from "../hooks/useVisibilityRefresh";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
@@ -36,6 +36,7 @@ import {
   publicSignupUrl,
 } from "../lib/leadSignup";
 import { toaster } from "../components/ui/toaster";
+import { beginListLoad, endListLoad } from "../lib/listLoad";
 import { DataTableLoadingSkeleton, MobileCardListSkeleton } from "../components/PageSkeletons";
 import { FilterField } from "../components/module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../components/ui/FilterToolbar";
@@ -163,6 +164,8 @@ export function LeadsPage() {
   }
 
   const [leads, setLeads] = useState<Lead[]>([]);
+  const leadsRef = useRef(leads);
+  leadsRef.current = leads;
   const [pagination, setPagination] = useState<ListPagination>({
     page: 1,
     limit: PAGE_SIZE,
@@ -197,10 +200,13 @@ export function LeadsPage() {
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const append = isMobile && page > 1;
-    if (!opts?.silent) {
-      if (append) setLoadingMore(true);
-      else setLoading(true);
-    }
+    beginListLoad({
+      hasRows: leadsRef.current.length > 0,
+      append,
+      silent: opts?.silent,
+      setLoading,
+      setLoadingMore,
+    });
     setError("");
     try {
       const params: Record<string, string> = {
@@ -226,8 +232,7 @@ export function LeadsPage() {
         setError(e instanceof Error ? e.message : "Failed to load leads");
       }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      endListLoad({ setLoading, setLoadingMore });
     }
   }, [search, page, status, source, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 

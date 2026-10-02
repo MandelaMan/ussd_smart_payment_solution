@@ -115,6 +115,76 @@ function selectRecurringProfileToUpdate(profiles = []) {
   return { existing: list[0] || null, extraActives: [] };
 }
 
+function recurringProfileId(row) {
+  return String(row?.recurring_invoice_id || row?.recurringinvoice_id || "").trim();
+}
+
+function recurringMatchesCustomerRefs(row, refs = []) {
+  const rowRef = String(row?.reference_number || "").trim().toUpperCase();
+  const rowName = String(row?.recurrence_name || "").trim().toUpperCase();
+  return refs.some(
+    (ref) =>
+      rowRef === ref ||
+      rowRef.includes(ref) ||
+      rowName === ref ||
+      rowName.startsWith(`${ref} `) ||
+      rowName.startsWith(`${ref}-`) ||
+      rowName.includes(`${ref} `)
+  );
+}
+
+/** Every matching profile, including stopped leftovers, with nothing kept. */
+function recurringIdsForCustomerRemoval(profiles = [], customerNumbers = []) {
+  const refs = (Array.isArray(customerNumbers) ? customerNumbers : [customerNumbers])
+    .map((value) => String(value || "").trim().toUpperCase())
+    .filter(Boolean);
+  if (!refs.length) return [];
+  const matched = (Array.isArray(profiles) ? profiles : []).filter((row) =>
+    recurringMatchesCustomerRefs(row, refs)
+  );
+  return listRecurringIdsToRemove(matched, "");
+}
+
+function listRecurringIdsToRemove(profiles = [], keepId = "") {
+  const keep = String(keepId || "").trim();
+  const seen = new Set();
+  const ids = [];
+  for (const row of profiles) {
+    const id = recurringProfileId(row);
+    if (!id || id === keep || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function zohoErrorText(err) {
+  return String(err?.response?.data?.message || err?.message || "");
+}
+
+function isZohoRecurringAlreadyGone(err) {
+  const status = Number(err?.response?.status || err?.status || 0);
+  if (status === 404) return true;
+  const lower = zohoErrorText(err).toLowerCase();
+  return (
+    lower.includes("not found") ||
+    lower.includes("does not exist") ||
+    lower.includes("has been deleted") ||
+    lower.includes("already deleted")
+  );
+}
+
+function zohoRecurringDeleteNeedsStop(err) {
+  if (isZohoRecurringAlreadyGone(err)) return false;
+  const lower = zohoErrorText(err).toLowerCase();
+  return (
+    lower.includes("stop") ||
+    (lower.includes("active") && lower.includes("delete")) ||
+    lower.includes("cannot be deleted") ||
+    lower.includes("cannot delete")
+  );
+}
+
 module.exports = {
   mapPaymentFrequencyToRecurrence,
   computeRecurringStartDate,
@@ -122,4 +192,10 @@ module.exports = {
   recurrenceMatches,
   isActiveRecurring,
   selectRecurringProfileToUpdate,
+  recurringProfileId,
+  recurringMatchesCustomerRefs,
+  recurringIdsForCustomerRemoval,
+  listRecurringIdsToRemove,
+  isZohoRecurringAlreadyGone,
+  zohoRecurringDeleteNeedsStop,
 };

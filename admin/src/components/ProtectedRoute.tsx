@@ -141,6 +141,14 @@ export function RemindersRoute() {
   return <PermissionRoute permissions={["action_items.view"]} />;
 }
 
+export function ActivityAuditRoute() {
+  return <PermissionRoute permissions={["activity_audit.view"]} />;
+}
+
+export function IptvRoute() {
+  return <PermissionRoute permissions={["iptv.view"]} />;
+}
+
 export function LeadsRoute() {
   return <PermissionRoute permissions={["leads.view"]} />;
 }

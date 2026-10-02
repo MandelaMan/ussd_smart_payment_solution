@@ -1,6 +1,7 @@
 import { Box, Flex, Stack, Text } from "@chakra-ui/react";
 import { formatCurrency } from "../../lib/api";
-import { formatTitleCase } from "../../lib/formatText";
+import { formatBillingIssueText, formatTitleCase } from "../../lib/formatText";
+import { readableIntegrationError } from "../../lib/integrationError";
 import type { ReconciliationCustomerDetail } from "../../lib/api";
 
 type Tone = "ok" | "warn" | "error" | "neutral";
@@ -152,7 +153,7 @@ export function buildSystemChecks(detail: ReconciliationCustomerDetail): SystemC
       system: "Other",
       status: formatTitleCase(v.code.replace(/_/g, " ")),
       tone,
-      explanation: v.message,
+      explanation: readableIntegrationError(v.message),
     });
   }
 
@@ -229,8 +230,8 @@ export function ReconciliationSystemChecks({ detail }: Props) {
                     {row.status}
                   </Text>
                 </Flex>
-                <Text fontSize="2xs" color="fg" lineHeight="1.4">
-                  {row.explanation}
+                <Text fontSize="2xs" color="fg" lineHeight="1.4" wordBreak="break-word">
+                  {formatBillingIssueText(row.explanation)}
                 </Text>
               </Box>
             </Flex>

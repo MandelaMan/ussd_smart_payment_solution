@@ -60,16 +60,17 @@ export function AppDialog({
           justifyContent="center"
           p={nearFullScreen ? { base: 3, sm: 4, md: 6 } : { base: 0, sm: 4 }}
           inset={0}
+          h="auto"
+          maxH="100%"
           overflow="hidden"
         >
           <Dialog.Content
             borderRadius={nearFullScreen ? "xl" : { base: 0, sm: "xl" }}
-            mx={nearFullScreen ? 0 : { base: 0, sm: 4 }}
-            mb={0}
+            m={0}
             w="full"
-            h={nearFullScreen ? undefined : { base: "100dvh", sm: "auto" }}
+            h={nearFullScreen ? "100%" : { base: "100%", sm: "auto" }}
             maxW={nearFullScreen ? "100%" : { base: "100%", sm: maxW }}
-            maxH={nearFullScreen ? "100%" : { base: "100dvh", sm: "calc(100dvh - 2rem)" }}
+            maxH="100%"
             minH={0}
             alignSelf={nearFullScreen ? "stretch" : undefined}
             overflow="hidden"
@@ -81,6 +82,37 @@ export function AppDialog({
             borderColor="border"
             zIndex={zIndex + 1}
             position="relative"
+            css={{
+              // Header and footer stay put; a long body scrolls inside the dialog.
+              "& .chakra-dialog__header, & .chakra-dialog__footer": {
+                flex: "0 0 auto",
+              },
+              "& .chakra-dialog__body": {
+                flex: "1 1 auto",
+                minHeight: 0,
+                overflowY: "auto",
+                WebkitOverflowScrolling: "touch",
+                overscrollBehavior: "contain",
+              },
+              "& .chakra-dialog__footer": {
+                flexWrap: "wrap",
+              },
+              "@media (max-width: 479px)": {
+                "& .chakra-dialog__footer": {
+                  alignItems: "stretch",
+                },
+                "& .chakra-dialog__footer > *": {
+                  maxWidth: "100%",
+                },
+                "& .chakra-dialog__footer > button, & .chakra-dialog__footer > a": {
+                  width: "100%",
+                  height: "auto",
+                  minHeight: "2.75rem",
+                  whiteSpace: "normal",
+                  lineHeight: "1.3",
+                },
+              },
+            }}
             pb={
               nearFullScreen
                 ? 0

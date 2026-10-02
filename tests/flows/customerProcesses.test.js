@@ -137,6 +137,7 @@ describe("process: Downgrade issues credit; frequency change classifies by price
 describe("process: Pause vs Suspend status semantics", () => {
   it("Paused and Suspended normalize distinctly; cancel archives identity", () => {
     assert.equal(normalizeSubscriptionStatus("Paused"), "Paused");
+    assert.equal(normalizeSubscriptionStatus("Paused Indefinitely"), "Paused Indefinitely");
     assert.equal(normalizeSubscriptionStatus("Suspended"), "Suspended");
     // Resume is payment-driven — paid+disconnected is the ops signal
     const scenarios = detectBillingScenarios({

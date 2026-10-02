@@ -44,6 +44,7 @@ const EVENT_ICONS: Record<string, typeof FiCreditCard> = {
   customer_cancelled: FiAlertCircle,
   customer_disconnected: FiWifi,
   customer_paused: FiUser,
+  customer_resumed: FiWifi,
   customer_deleted: FiAlertCircle,
   customer_apartment_switched: FiHome,
   installation_assigned: FiCalendar,

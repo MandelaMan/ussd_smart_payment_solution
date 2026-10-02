@@ -190,6 +190,126 @@ function zohoContactMatchesCustomerIdentity(contact, customer) {
   return false;
 }
 
+function customerPersonNames(customer) {
+  const first = String(customer?.firstName || customer?.first_name || "").trim();
+  const middle = String(
+    customer?.middleName || customer?.middle_name || ""
+  ).trim();
+  const last = String(customer?.lastName || customer?.last_name || "").trim();
+  return {
+    full: [first, middle, last].filter(Boolean).join(" ").trim(),
+    short: [first, last].filter(Boolean).join(" ").trim(),
+    first,
+    last,
+  };
+}
+
+function zohoContactPersonRecords(contact) {
+  return Array.isArray(contact?.contact_persons) ? contact.contact_persons : [];
+}
+
+function zohoContactNameKeys(contact) {
+  const names = [
+    contact?.contact_name,
+    contact?.customer_name,
+    contact?.company_name,
+  ];
+  for (const person of zohoContactPersonRecords(contact)) {
+    names.push(
+      [person?.first_name, person?.last_name].filter(Boolean).join(" "),
+      [person?.first_name, person?.middle_name, person?.last_name]
+        .filter(Boolean)
+        .join(" ")
+    );
+  }
+  return names.map((value) => normalizeCustomerRef(value)).filter(Boolean);
+}
+
+function zohoContactEmails(contact) {
+  const emails = [contact?.email];
+  for (const person of zohoContactPersonRecords(contact)) {
+    emails.push(person?.email);
+  }
+  return emails
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function zohoContactPhones(contact) {
+  const phones = [contact?.phone, contact?.mobile];
+  for (const person of zohoContactPersonRecords(contact)) {
+    phones.push(person?.phone, person?.mobile);
+  }
+  return phones.filter(Boolean);
+}
+
+function zohoNamesCompatible(customer, contact) {
+  const { full, short, first, last } = customerPersonNames(customer);
+  const fields = zohoContactNameKeys(contact);
+  const targets = [full, short]
+    .map((value) => normalizeCustomerRef(value))
+    .filter((value) => value.length >= 3);
+  if (targets.some((target) => fields.includes(target))) return true;
+  const firstKey = normalizeCustomerRef(first);
+  const lastKey = normalizeCustomerRef(last);
+  if (firstKey.length < 2 || lastKey.length < 2) return false;
+  return fields.some(
+    (field) => field.includes(firstKey) && field.includes(lastKey)
+  );
+}
+
+function zohoCompanyIsForeignNumber(contact, customer) {
+  const company = String(contact?.company_name || "").trim();
+  if (!looksLikeCustomerNumber(company)) return false;
+  const ourNumber = String(
+    customer?.customerNumber || customer?.customer_number || ""
+  ).trim();
+  if (!ourNumber) return true;
+  return normalizeCustomerRef(company) !== normalizeCustomerRef(ourNumber);
+}
+
+/**
+ * Identity score for an already-existing customer being linked in Zoho.
+ * Accept email, phone, person name, or business name. A contact whose
+ * company_name is a different customer number is linked only when name and
+ * email or phone agree, so another apartment is not overwritten.
+ */
+function scoreExistingZohoContact(contact, customer) {
+  if (!contact?.contact_id || !customer) {
+    return { score: 0, accept: false };
+  }
+
+  const ourEmail = String(customer.email || "")
+    .trim()
+    .toLowerCase();
+  const emailHit = Boolean(ourEmail && zohoContactEmails(contact).includes(ourEmail));
+  const custPhone = customer.phone || customer.mobile || customer.phoneNumber;
+  const phoneHit = zohoContactPhones(contact).some((phone) =>
+    phonesMatch(custPhone, phone)
+  );
+  const nameHit = zohoNamesCompatible(customer, contact);
+  const business = String(
+    customer.businessName || customer.business_name || ""
+  ).trim();
+  const businessHit = Boolean(
+    business &&
+      zohoContactNameKeys(contact).includes(normalizeCustomerRef(business))
+  );
+  const foreign = zohoCompanyIsForeignNumber(contact, customer);
+
+  let score = 0;
+  if (emailHit) score += 100;
+  if (phoneHit) score += 80;
+  if (nameHit) score += 70;
+  if (businessHit) score += 60;
+
+  const accept = foreign
+    ? (emailHit || phoneHit) && nameHit
+    : emailHit || phoneHit || nameHit || businessHit;
+
+  return { score, accept, emailHit, phoneHit, nameHit, businessHit, foreign };
+}
+
 /**
  * True when a Zoho contact belongs to this dashboard customer (C2B: company_name
  * must match customer number; B2B: agency name).
@@ -256,6 +376,65 @@ function zohoRecordContactId(record) {
   );
 }
 
+function zohoErrorText(errorOrBody) {
+  if (errorOrBody == null) return "";
+  if (typeof errorOrBody === "string" || typeof errorOrBody === "number") {
+    return String(errorOrBody);
+  }
+  const data = errorOrBody.response?.data || errorOrBody;
+  const parts = [
+    data?.message,
+    data?.code,
+    errorOrBody.message,
+    data?.contact_name,
+  ];
+  return parts
+    .flatMap((part) => {
+      if (part == null || part === "") return [];
+      if (typeof part === "string" || typeof part === "number") return [String(part)];
+      if (Array.isArray(part)) {
+        return part.map((item) =>
+          item && typeof item === "object"
+            ? String(item.message || item.code || "")
+            : String(item || "")
+        );
+      }
+      return [];
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** Zoho Books Display Name (contact_name) is unique org-wide. */
+function isZohoDuplicateContactError(errorOrBody) {
+  const data = errorOrBody?.response?.data || errorOrBody;
+  const code = Number(data?.code);
+  if (code === 3062) return true;
+  return /already exists|duplicate contact|contact name already/i.test(
+    zohoErrorText(errorOrBody)
+  );
+}
+
+/**
+ * Zoho Books rejects a second customer with the same Display Name.
+ * Keep the person name, then suffix the BIX customer number.
+ */
+function uniquifyZohoContactDisplayName(contactName, customerNumber) {
+  const name = String(contactName || "").trim();
+  const number = String(customerNumber || "").trim();
+  if (!number) return name;
+  if (!name) return number;
+  const nameNorm = normalizeCustomerRef(name);
+  const numberNorm = normalizeCustomerRef(number);
+  if (!numberNorm) return name;
+  if (nameNorm === numberNorm || nameNorm.includes(numberNorm)) return name;
+  const suffix = ` (${number})`;
+  const maxLen = 200;
+  if (name.length + suffix.length <= maxLen) return `${name}${suffix}`;
+  const keep = Math.max(1, maxLen - suffix.length);
+  return `${name.slice(0, keep)}${suffix}`;
+}
+
 /** Keep only invoices that belong to the resolved Zoho contact. */
 function filterZohoInvoicesForContact(invoices, contactId, customer = null) {
   const id = contactId != null ? String(contactId) : null;
@@ -309,6 +488,7 @@ module.exports = {
   normalizePhoneDigits,
   zohoContactMatchesDashboardCustomer,
   zohoContactMatchesCustomerIdentity,
+  scoreExistingZohoContact,
   filterZohoInvoicesForContact,
   filterZohoPaymentsForContact,
   zohoRecordContactId,
@@ -317,4 +497,7 @@ module.exports = {
   invoicesPredateCustomer,
   zohoContactLooksReusedByFormerTenant,
   filterInvoicesForCurrentTenant,
+  zohoErrorText,
+  isZohoDuplicateContactError,
+  uniquifyZohoContactDisplayName,
 };

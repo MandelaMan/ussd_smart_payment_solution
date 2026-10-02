@@ -28,9 +28,8 @@ async function applyPendingPauseCredit(customerId, { paymentDate } = {}) {
   }
 
   const ctx = await customerStore.getCustomerContext(id);
-  const { isDstvOnlyCategory } = require("./packageCatalogStore");
-  const dstvOnly =
-    isDstvOnlyCategory(ctx?.category_code) || isDstvOnlyCategory(ctx?.category_name);
+  const { isDstvOnlyRecord } = require("./packageCatalogStore");
+  const dstvOnly = isDstvOnlyRecord(ctx);
 
   const periodEnd = computeServiceDueDate({
     anchorDate: paymentAnchorDate(customer, paymentDate),

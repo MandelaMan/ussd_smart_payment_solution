@@ -2,13 +2,19 @@ import { Box, Grid, Text } from "@chakra-ui/react";
 import type { ReactNode } from "react";
 import { formatDateTime, type ApiCallLog } from "../lib/api";
 
-function JsonBlock({ value }: { value: unknown }) {
-  const text =
-    value == null
-      ? "—"
-      : typeof value === "string"
-        ? value
+function JsonBlock({ value, compact = false }: { value: unknown; compact?: boolean }) {
+  let text = "—";
+  if (value != null) {
+    if (typeof value === "string") {
+      text = compact
+        ? value.replace(/":\s+/g, '":').replace(/,\s+/g, ",")
+        : value;
+    } else {
+      text = compact
+        ? JSON.stringify(value).replace(/":\s+/g, '":').replace(/,\s+/g, ",")
         : JSON.stringify(value, null, 2);
+    }
+  }
 
   return (
     <Box
@@ -74,13 +80,19 @@ export function LogExpandPanel({ log }: { log: ApiCallLog }) {
           <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
             Request payload
           </Text>
-          <JsonBlock value={log.requestPayload} />
+          <JsonBlock
+            value={log.requestPayload}
+            compact={log.service === "tisp"}
+          />
         </Box>
         <Box minW={0}>
           <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>
             Response
           </Text>
-          <JsonBlock value={log.responsePayload} />
+          <JsonBlock
+            value={log.responsePayload}
+            compact={log.service === "tisp"}
+          />
         </Box>
       </Grid>
     </Box>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
@@ -37,6 +37,7 @@ import {
   dataTableTitleColumnHeaderProps,
 } from "../components/ui/DataTable";
 import { toaster } from "../components/ui/toaster";
+import { beginListLoad, endListLoad } from "../lib/listLoad";
 
 const PAGE_SIZE = 30;
 
@@ -56,6 +57,8 @@ export function ApartmentsPage() {
   const navigate = useNavigate();
   const isMobile = useMobileViewport();
   const [rows, setRows] = useState<ApartmentUnit[]>([]);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const [pagination, setPagination] = useState<ListPagination>({
     page: 1,
     limit: PAGE_SIZE,
@@ -99,8 +102,12 @@ export function ApartmentsPage() {
 
   const load = useCallback(async () => {
     const append = isMobile && page > 1;
-    if (append) setLoadingMore(true);
-    else setLoading(true);
+    beginListLoad({
+      hasRows: rowsRef.current.length > 0,
+      append,
+      setLoading,
+      setLoadingMore,
+    });
     setError("");
     try {
       const params: Record<string, string> = {
@@ -129,8 +136,7 @@ export function ApartmentsPage() {
       setError(message);
       toaster.create({ title: message, type: "error" });
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      endListLoad({ setLoading, setLoadingMore });
     }
   }, [
     search,

@@ -2,6 +2,7 @@ export type SubscriptionStatusLabel =
   | "Active"
   | "Suspended"
   | "Paused"
+  | "Paused Indefinitely"
   | "Cancelled";
 
 /** @deprecated Prefer Suspended — kept for URL/API backwards compatibility. */
@@ -32,6 +33,12 @@ export const SUBSCRIPTION_STATUS_FILTER_OPTIONS: Array<{
     color: "blue.500",
   },
   {
+    value: "Paused Indefinitely",
+    label: "Paused indefinitely",
+    description: "Open-ended hold — services and recurring invoices stopped",
+    color: "purple.500",
+  },
+  {
     value: "Cancelled",
     label: "Cancelled",
     description: "Churned — excluded from customer counts and reports",
@@ -43,12 +50,16 @@ const ALLOWED = new Set<SubscriptionStatusLabel>([
   "Active",
   "Suspended",
   "Paused",
+  "Paused Indefinitely",
   "Cancelled",
 ]);
 
 const CANONICAL_BY_LOWER = new Map<string, SubscriptionStatusLabel>([
   ["active", "Active"],
   ["suspended", "Suspended"],
+  ["paused indefinitely", "Paused Indefinitely"],
+  ["paused_indefinitely", "Paused Indefinitely"],
+  ["indefinite", "Paused Indefinitely"],
   ["paused", "Paused"],
   ["pause", "Paused"],
   ["not on tisp", "Suspended"],
@@ -91,6 +102,7 @@ export function normalizeSubscriptionStatus(
   if (!raw) return "Suspended";
   const lower = raw.toLowerCase();
   if (lower === "active" || lower.startsWith("active ")) return "Active";
+  if (lower.includes("indefinite")) return "Paused Indefinitely";
   if (lower.includes("pause")) return "Paused";
   if (lower.includes("suspend")) return "Suspended";
   if (lower.includes("cancel")) return "Cancelled";
@@ -118,6 +130,27 @@ export function statusFiltersEqual(
 ): boolean {
   if (a.length !== b.length) return false;
   return a.every((value, index) => value === b[index]);
+}
+
+export function canPauseCustomer(customer: {
+  status: "active" | "cancelled";
+  subscriptionStatus?: string | null;
+}): boolean {
+  return displayCustomerStatus(customer) === "Active";
+}
+
+export function canResumeCustomer(customer: {
+  status: "active" | "cancelled";
+  subscriptionStatus?: string | null;
+}): boolean {
+  return displayCustomerStatus(customer) === "Paused";
+}
+
+export function canRestartCustomer(customer: {
+  status: "active" | "cancelled";
+  subscriptionStatus?: string | null;
+}): boolean {
+  return displayCustomerStatus(customer) === "Paused Indefinitely";
 }
 
 export function isDstvOnlyCustomer(customer: {

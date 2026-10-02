@@ -286,6 +286,21 @@ server.listen(env.PORT, () => {
     .catch((e) => {
       console.warn("[rbac] initialize error:", e.message);
     });
+  Promise.resolve()
+    .then(() =>
+      require("./api/utils/canonicalAdminAccount").ensureCanonicalAdminAccount()
+    )
+    .then((adminAccount) => {
+      if (adminAccount?.renamed) {
+        syncLog.info("canonical_admin_renamed", {
+          from: adminAccount.from,
+          to: adminAccount.to,
+        });
+      }
+    })
+    .catch((e) => {
+      console.warn("[admin] canonical account error:", e.message);
+    });
 });
 
 module.exports = { app, server };

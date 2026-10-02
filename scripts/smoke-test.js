@@ -36,6 +36,8 @@ async function testModuleLoads() {
     "../api/utils/tispSetIspLogger.js",
     "../api/utils/xtreamSyncLogger.js",
     "../api/services/xtream/xtreamClient.js",
+    "../api/services/startlyx/startlyxClient.js",
+    "../api/controllers/startlyx.controller.js",
     "../api/services/transactionStore.js",
     "../jobs/xtreamSyncJob.js",
     "../jobs/xtreamDailyScheduler.js",

@@ -3,7 +3,7 @@ const {
   getRecurringInvoice_JS,
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
-  stopRecurringInvoice_JS,
+  deleteRecurringInvoice_JS,
   resumeRecurringInvoice_JS,
   getInvoices_JS,
   resolveInvoiceEmailContactPersons,
@@ -18,12 +18,17 @@ const {
 const {
   computeBillingPeriod,
   computeSignupRecurringWindow,
+  computeRecurringStartBeforeDue,
+  clampRecurringStartDate,
 } = require("../utils/billingPeriod");
 const {
   mapPaymentFrequencyToRecurrence,
   recurrenceMatches,
   isActiveRecurring,
   selectRecurringProfileToUpdate,
+  listRecurringIdsToRemove,
+  recurringMatchesCustomerRefs,
+  recurringIdsForCustomerRemoval,
 } = require("../utils/zohoRecurrence");
 const { invalidateCustomerZoho } = require("../utils/zohoInvoiceCache");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
@@ -35,12 +40,10 @@ const ZOHO_INVOICE_TAX_INCLUSIVE =
 
 function mapContextToCustomer(ctx, agencyName = null) {
   const {
-    isDstvOnlyCategory,
+    isDstvOnlyRecord,
     DSTV_ONLY_PRODUCT_NAME,
   } = require("./packageCatalogStore");
-  const dstvOnly =
-    isDstvOnlyCategory(ctx.category_code) ||
-    isDstvOnlyCategory(ctx.category_name);
+  const dstvOnly = isDstvOnlyRecord(ctx);
   return {
     id: ctx.id,
     firstName: ctx.first_name,
@@ -83,6 +86,7 @@ function mapContextToCustomer(ctx, agencyName = null) {
     decoderFeeRequired: Boolean(ctx.decoder_fee_required),
     dstvDecoderSerial: ctx.dstv_decoder_serial || null,
     tvCount: Math.max(1, Number(ctx.tv_count) || 1),
+    extraDecoderCount: Math.max(0, Number(ctx.extra_decoder_count) || 0),
     categoryCode: ctx.category_code || null,
     trialPeriodEnabled: Boolean(ctx.trial_period_enabled),
     trialEndsAt: ctx.trial_ends_at || null,
@@ -121,20 +125,6 @@ function buildRecurringProfileName(
     freqLabel = days > 0 ? `${days}-Day` : "Custom";
   }
   return `${number} - ${freqLabel} Invoice`;
-}
-
-function recurringMatchesCustomerRefs(row, refs = []) {
-  const rowRef = String(row?.reference_number || "").trim().toUpperCase();
-  const rowName = String(row?.recurrence_name || "").trim().toUpperCase();
-  return refs.some(
-    (ref) =>
-      rowRef === ref ||
-      rowRef.includes(ref) ||
-      rowName === ref ||
-      rowName.startsWith(`${ref} `) ||
-      rowName.startsWith(`${ref}-`) ||
-      rowName.includes(`${ref} `)
-  );
 }
 
 async function listMatchedRecurringForCustomer(
@@ -194,14 +184,51 @@ async function findRecurringForCustomer(
   return existing || null;
 }
 
-async function stopExtraActiveRecurring(profiles = []) {
-  for (const row of profiles) {
-    const extraId = String(row?.recurring_invoice_id || row?.recurringinvoice_id || "");
-    if (!extraId) continue;
+/**
+ * Permanently delete every Zoho recurring profile for this customer,
+ * including stopped leftovers. Nothing is kept.
+ */
+async function deleteMatchedRecurringForCustomer(
+  contactId,
+  customerNumber,
+  previousCustomerNumber = null
+) {
+  if (!contactId || !customerNumber) {
+    return { deleted: 0, matched: 0, failed: 0 };
+  }
+  const list = await getRecurringInvoices_JS({
+    customer_id: contactId,
+    per_page: 200,
+    filter_by: "Status.All",
+  });
+  const ids = recurringIdsForCustomerRemoval(list || [], [
+    customerNumber,
+    previousCustomerNumber,
+  ]);
+  let deleted = 0;
+  let failed = 0;
+  for (const id of ids) {
     try {
-      await stopRecurringInvoice_JS(extraId);
+      await deleteRecurringInvoice_JS(id);
+      deleted += 1;
     } catch (e) {
-      console.warn("stop extra Zoho recurring profile failed:", e.message || e);
+      failed += 1;
+      console.warn(
+        `delete recurring ${id} for ${customerNumber} failed:`,
+        e.message || e
+      );
+    }
+  }
+  return { deleted, matched: ids.length, failed };
+}
+
+/** Delete previous Zoho recurring profiles. Stopped leftovers are removed, not kept. */
+async function removeRecurringProfiles(profiles = [], { keepId = "" } = {}) {
+  for (const extraId of listRecurringIdsToRemove(profiles, keepId)) {
+    try {
+      await deleteRecurringInvoice_JS(extraId);
+    } catch (e) {
+      console.warn("delete Zoho recurring profile failed:", e.message || e);
     }
   }
 }
@@ -236,6 +263,92 @@ async function applyRecurringInvoiceEmailCcs(recurringInvoiceId, zohoContact = n
     );
     return false;
   }
+}
+
+async function applyRecurringStartDate(
+  recurringInvoiceId,
+  startDate,
+  currentNext = null
+) {
+  if (!recurringInvoiceId || !startDate) return null;
+  const next = clampRecurringStartDate(startDate);
+  if (!next) return null;
+  const current = currentNext ? String(currentNext).slice(0, 10) : "";
+  if (current && current === next) return null;
+  return updateRecurringInvoice_JS(String(recurringInvoiceId), {
+    start_date: next,
+  });
+}
+
+/**
+ * Shift an existing Zoho recurring profile so the next invoice is sent 7 days
+ * before the (new) TISP / service due date.
+ */
+async function syncRecurringStartToDueDate(
+  zohoContact,
+  customer,
+  dueDate,
+  options = {}
+) {
+  const startDate = clampRecurringStartDate(
+    computeRecurringStartBeforeDue(dueDate)
+  );
+  if (!startDate || !zohoContact?.contact_id) {
+    return { updated: false, reason: "no_start_date" };
+  }
+
+  const matched = await listActiveRecurringForCustomer(
+    zohoContact.contact_id,
+    customer.customerNumber,
+    options.previousCustomerNumber
+  );
+  if (!matched.length) {
+    return {
+      created: false,
+      updated: false,
+      reason: "no_active_recurring",
+      startDate,
+      dueDate: String(dueDate).slice(0, 10),
+    };
+  }
+
+  let last = null;
+  let updatedCount = 0;
+  const profiles = [];
+  for (const row of matched) {
+    const id = String(row.recurring_invoice_id || row.recurringinvoice_id || "");
+    if (!id) continue;
+    const previousNext = row.next_invoice_date || row.start_date || null;
+    try {
+      const updated = await applyRecurringStartDate(id, startDate, previousNext);
+      if (!updated) continue;
+      last = updated;
+      updatedCount += 1;
+      profiles.push({
+        recurringInvoiceId: id,
+        previousNextInvoiceDate: previousNext
+          ? String(previousNext).slice(0, 10)
+          : null,
+        startDate,
+      });
+    } catch (e) {
+      console.warn(
+        "Zoho recurring start_date sync for due date failed:",
+        e.message || e
+      );
+      throw e;
+    }
+  }
+
+  return {
+    created: false,
+    updated: updatedCount > 0,
+    startDate,
+    dueDate: String(dueDate).slice(0, 10),
+    profilesUpdated: updatedCount,
+    profiles,
+    recurring: last,
+  };
 }
 
 async function updateRecurringProfileFields(
@@ -313,9 +426,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     customer.customerNumber,
     previousCustomerNumber
   );
-  const { existing, extraActives } = selectRecurringProfileToUpdate(
-    matchedProfiles
-  );
+  const { existing } = selectRecurringProfileToUpdate(matchedProfiles);
 
   // Apartment move with no package price: still rename existing profile(s).
   if (amount <= 0) {
@@ -371,32 +482,6 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     console.warn("referral overlay on recurring lines failed:", e.message);
   }
 
-  // Renumber: rename every matched profile (old + new refs) so nothing
-  // keeps the previous customer number as order/profile name.
-  if (previousCustomerNumber && matchedProfiles.length > 1) {
-    const keepId = String(
-      existing?.recurring_invoice_id || existing?.recurringinvoice_id || ""
-    );
-    for (const row of matchedProfiles) {
-      const extraId = String(row.recurring_invoice_id || row.recurringinvoice_id || "");
-      if (!extraId || extraId === keepId) continue;
-      try {
-        await updateRecurringProfileFields(extraId, {
-          recurrenceName,
-          referenceNumber,
-          lineItems: null,
-          customer,
-          zohoContact,
-        });
-      } catch (e) {
-        console.warn(
-          "Zoho extra recurring rename after apartment move failed:",
-          e.message || e
-        );
-      }
-    }
-  }
-
   if (existing?.recurring_invoice_id || existing?.recurringinvoice_id) {
     const id = String(existing.recurring_invoice_id || existing.recurringinvoice_id);
     // List payloads omit cadence fields. Load the profile before deciding
@@ -419,6 +504,23 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         zohoContact,
       });
       await applyRecurringInvoiceEmailCcs(id, zohoContact);
+      let startDateApplied = null;
+      if (options.startDate) {
+        try {
+          startDateApplied = clampRecurringStartDate(options.startDate);
+          const shifted = await applyRecurringStartDate(
+            id,
+            startDateApplied,
+            full.next_invoice_date || full.start_date
+          );
+          if (shifted) result.updated = shifted;
+        } catch (e) {
+          console.warn(
+            "Zoho recurring start_date update failed:",
+            e.message || e
+          );
+        }
+      }
       try {
         await associateEmailContactPersonsOnOpenInvoices(zohoContact.contact_id, {
           contact: zohoContact,
@@ -429,7 +531,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
           e.message || e
         );
       }
-      await stopExtraActiveRecurring(extraActives);
+      await removeRecurringProfiles(matchedProfiles, { keepId: id });
       return {
         created: false,
         updated: true,
@@ -437,6 +539,7 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
         recurring: result.updated,
         recurrenceName,
         referenceNumber,
+        startDate: startDateApplied || undefined,
         lineItemsUpdated: result.lineItemsUpdated,
         warning: result.warning,
         previousCustomerNumber: previousCustomerNumber || undefined,
@@ -444,19 +547,21 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
     }
 
     try {
-      await stopRecurringInvoice_JS(id);
+      await deleteRecurringInvoice_JS(id);
     } catch (e) {
-      console.warn("stop recurring before recreate failed:", e.message);
+      console.warn("delete recurring before recreate failed:", e.message);
+      throw e;
     }
-    await stopExtraActiveRecurring(extraActives);
+    await removeRecurringProfiles(matchedProfiles);
   }
 
-  const startDate =
+  const startDate = clampRecurringStartDate(
     options.startDate ||
-    computeSignupRecurringWindow({
-      paymentFrequency: customer.paymentFrequency,
-      customPeriodDays: customer.customPeriodDays,
-    }).startDate;
+      computeSignupRecurringWindow({
+        paymentFrequency: customer.paymentFrequency,
+        customPeriodDays: customer.customPeriodDays,
+      }).startDate
+  );
 
   const { resolveZohoPaymentTerms } = require("../utils/billingPeriod");
   const terms = resolveZohoPaymentTerms(customer);
@@ -481,6 +586,9 @@ async function ensureRecurringSubscription(customer, zohoContact, options = {}) 
   }
 
   await applyRecurringInvoiceEmailCcs(created.recurring_invoice_id, zohoContact);
+  await removeRecurringProfiles(matchedProfiles, {
+    keepId: String(created.recurring_invoice_id),
+  });
   try {
     await associateEmailContactPersonsOnOpenInvoices(zohoContact.contact_id, {
       contact: zohoContact,
@@ -736,9 +844,11 @@ module.exports = {
   mapContextToCustomer,
   buildRecurringProfileName,
   ensureRecurringSubscription,
+  syncRecurringStartToDueDate,
   updateZohoContactDetails,
   renumberZohoContactCustomerNumber,
   pushCustomerBillingToZoho,
   isActiveRecurring,
   selectRecurringProfileToUpdate,
+  deleteMatchedRecurringForCustomer,
 };

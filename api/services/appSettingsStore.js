@@ -206,6 +206,7 @@ const CUSTOMER_EMAIL_TEMPLATE_DEFS = {
   <strong>Building:</strong> {{buildingName}} · apt {{apartmentNumber}}
 </p>
 <p>{{pauseCreditNote}}</p>
+<p>Unused pause days have been credited in Zoho Books and your recurring invoice has been updated.</p>
 <p>Service will remain stopped until the pause ends (or you ask us to resume earlier).</p>
 <p>This is a no-reply email. If you have any issues, please email wecare@sulsolutions.biz or support@sulsolutions.biz.</p>
 <p>Thank you,<br/>Starlynx Customer Support</p>`,
@@ -712,6 +713,68 @@ function toPublicWhatsAppSettings(settings) {
   };
 }
 
+const DEFAULT_STARTLYX_BASE_URL =
+  "https://startlyx.iptvconsole.hydeinnovations.com";
+
+function normalizeStartlyxBaseUrl(raw) {
+  const base = String(raw || "").trim();
+  if (!base) return DEFAULT_STARTLYX_BASE_URL;
+  return base.replace(/\/+$/, "").replace(/\/doc\/api\/.*$/i, "");
+}
+
+function normalizeStartlyxSettings(saved = {}, env = process.env) {
+  return {
+    baseUrl: normalizeStartlyxBaseUrl(
+      saved.baseUrl || env.STARTLYX_BASE_URL || DEFAULT_STARTLYX_BASE_URL
+    ),
+    adminEmail: String(
+      saved.adminEmail || saved.email || env.STARTLYX_ADMIN_EMAIL || ""
+    ).trim(),
+    adminPassword: String(
+      saved.adminPassword || saved.password || env.STARTLYX_ADMIN_PASSWORD || ""
+    ).trim(),
+  };
+}
+
+async function getStartlyxSettings() {
+  const saved = (await getSetting("iptv.startlyx")) || {};
+  return normalizeStartlyxSettings(saved);
+}
+
+async function saveStartlyxSettings(patch = {}, updatedBy = null) {
+  const current = await getStartlyxSettings();
+  const next = {
+    baseUrl: normalizeStartlyxBaseUrl(
+      patch.baseUrl != null ? patch.baseUrl : current.baseUrl
+    ),
+    adminEmail:
+      patch.adminEmail != null
+        ? String(patch.adminEmail).trim()
+        : current.adminEmail,
+    adminPassword: pickSecret(patch.adminPassword, current.adminPassword),
+  };
+  if (!next.baseUrl) {
+    throw new Error("Startlyx URL is required");
+  }
+  if (!next.adminEmail || !next.adminEmail.includes("@")) {
+    throw new Error("A valid Startlyx admin email is required");
+  }
+  if (!next.adminPassword) {
+    throw new Error("Startlyx admin password is required");
+  }
+  await setSetting("iptv.startlyx", next, updatedBy);
+  return next;
+}
+
+function toPublicStartlyxSettings(settings) {
+  return {
+    baseUrl: settings.baseUrl || DEFAULT_STARTLYX_BASE_URL,
+    adminEmail: settings.adminEmail || "",
+    passwordConfigured: Boolean(settings.adminPassword),
+    configured: Boolean(settings.adminEmail && settings.adminPassword),
+  };
+}
+
 module.exports = {
   getSetting,
   setSetting,
@@ -723,6 +786,12 @@ module.exports = {
   getCommunicationWhatsAppSettings,
   saveCommunicationWhatsAppSettings,
   toPublicWhatsAppSettings,
+  getStartlyxSettings,
+  saveStartlyxSettings,
+  toPublicStartlyxSettings,
+  normalizeStartlyxSettings,
+  normalizeStartlyxBaseUrl,
+  DEFAULT_STARTLYX_BASE_URL,
   normalizeEmailList,
   DEFAULT_INVOICE_CC_EMAILS,
   DEFAULT_WELCOME_SUBJECT,

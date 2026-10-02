@@ -3,10 +3,9 @@ export const DISPLAY_TEXT_MAX_LENGTH = 30;
 /** Display person/entity names stored as ALL CAPS in title case. */
 export function formatTitleCase(value: string | null | undefined): string {
   if (!value?.trim()) return "";
-  return value
-    .trim()
+  return repairUtf8Mojibake(value.trim())
     .toLowerCase()
-    .replace(/\b(\w)/g, (_, letter: string) => letter.toUpperCase());
+    .replace(/(^|[^\w'])(\w)/g, (_, prefix: string, letter: string) => prefix + letter.toUpperCase());
 }
 
 export function isLikelyCode(value: string | null | undefined): boolean {
@@ -49,9 +48,19 @@ const PRODUCT_NAME_SEPARATORS =
  */
 function repairUtf8Mojibake(value: string): string {
   return value
+    .replace(/(\p{L})\?{1,3}(?=\p{L})/gu, "$1'")
+    .replace(/â€™|â€˜|ΓÇÖ|ΓÇÿ|’|‘/g, "'")
     .replace(/ΓÇö|γçö|â€"|â€”|—|–/gi, "-")
     .replace(/ΓÇô|γçô|â€“/gi, "-")
-    .replace(/Â·|ΓÇ£|γç£|·/gi, "-");
+    .replace(/Â·|ΓÇ£|γç£|·|┬╖|┬╢/gi, "-");
+}
+
+/**
+ * Billing issue sentences. Keeps wording as written and only swaps
+ * em dashes / middle dots (and their mojibake) for an ASCII hyphen.
+ */
+export function formatBillingIssueText(value: string | null | undefined): string {
+  return repairUtf8Mojibake(String(value || "").trim()).replace(/[ \t]{2,}/g, " ").trim();
 }
 
 /**
@@ -59,9 +68,9 @@ function repairUtf8Mojibake(value: string): string {
  * Uses ASCII " - " so chart/UI fonts never render em-dash mojibake (γçö).
  */
 export function formatProductNameForDisplay(value: string | null | undefined): string {
-  const raw = repairUtf8Mojibake(String(value || "").trim());
+  const raw = String(value || "").trim();
   if (!raw) return "";
-  return raw.replace(PRODUCT_NAME_SEPARATORS, " - ");
+  return repairUtf8Mojibake(raw.replace(PRODUCT_NAME_SEPARATORS, " - "));
 }
 
 /** Sentence-case labels for table headers (first letter upper, rest lower). Preserves C2B/B2B/TISP acronyms. */

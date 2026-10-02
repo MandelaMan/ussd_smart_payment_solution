@@ -38,6 +38,7 @@ const PLACEHOLDER_KEYS = [
   "pauseReason",
   "pauseCreditDays",
   "pauseCreditedDueDate",
+  "pauseCreditAmount",
   "pauseCreditNote",
   "trialEndsAt",
   "installationDate",
@@ -130,6 +131,7 @@ function buildCustomerTemplateVars(customer, extra = {}) {
     pauseReason: "",
     pauseCreditDays: "",
     pauseCreditedDueDate: "",
+    pauseCreditAmount: "",
     pauseCreditNote: "",
     trialEndsAt: String(
       extra.trialEndsAt != null

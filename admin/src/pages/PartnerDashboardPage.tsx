@@ -29,6 +29,9 @@ import { DashboardSkeleton } from "../components/PageSkeletons";
 import { BRAND } from "../theme";
 import { SelectField } from "../components/ui/SelectField";
 import { PageHeader } from "../components/ui/pageLayout";
+import { useAuth } from "../lib/authContext";
+import { getPartnerType } from "../lib/rbac";
+import { Link } from "react-router-dom";
 import {
   LIVE_REFRESH_INTERVAL_MS,
   useVisibilityRefresh,
@@ -80,6 +83,8 @@ function PartnerChartCard({
 }
 
 export function PartnerDashboardPage() {
+  const { user } = useAuth();
+  const partnerType = getPartnerType(user);
   const [months, setMonths] = useState("12");
   const [data, setData] = useState<PartnerDashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,10 +149,26 @@ export function PartnerDashboardPage() {
     );
   }
 
+  const dashboardTitle =
+    partnerType === "investor"
+      ? "Investor overview"
+      : partnerType === "dstv"
+        ? "DSTV partner overview"
+        : partnerType === "internet"
+          ? "Internet partner overview"
+          : "Partner overview";
+  const dashboardSubtitle =
+    partnerType === "dstv"
+      ? "DSTV subscribers only · view only"
+      : partnerType === "investor"
+        ? "Reports and dashboards · all customers · view only"
+        : "All customers · view only";
+
   return (
     <Stack gap={{ base: 2.5, md: 4 }} p={{ base: 0, md: 4 }}>
       <PageHeader
-        title="Partner overview"
+        title={dashboardTitle}
+        description={dashboardSubtitle}
         actions={
           <Box minW={{ base: "full", sm: "160px" }} maxW={{ base: "full", sm: "200px" }}>
             <Text fontSize="xs" color="fg.muted" mb={1}>
@@ -167,6 +188,41 @@ export function PartnerDashboardPage() {
           </Box>
         }
       />
+
+      {partnerType === "investor" ? (
+        <Flex gap={2} flexWrap="wrap" px={{ base: 1, xl: 0 }}>
+          <Link to="/reports">
+            <Box
+              bg="bg.panel"
+              border="1px solid"
+              borderColor="brand.100"
+              borderRadius="lg"
+              px={3}
+              py={2}
+              fontSize="sm"
+              fontWeight="medium"
+              _hover={{ borderColor: "brand.300" }}
+            >
+              Open reports
+            </Box>
+          </Link>
+          <Link to="/analytics">
+            <Box
+              bg="bg.panel"
+              border="1px solid"
+              borderColor="brand.100"
+              borderRadius="lg"
+              px={3}
+              py={2}
+              fontSize="sm"
+              fontWeight="medium"
+              _hover={{ borderColor: "brand.300" }}
+            >
+              Open analytics
+            </Box>
+          </Link>
+        </Flex>
+      ) : null}
 
       <Grid
         templateColumns={{ base: "1fr 1fr", md: "repeat(2, 1fr)", xl: "repeat(4, 1fr)" }}

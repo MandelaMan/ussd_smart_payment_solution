@@ -1198,9 +1198,12 @@ async function processUnallocatedMpesaPayment(row, meta = {}) {
       });
     }
     if (customer) {
+      const currentStatus = normalizeSubscriptionStatus(
+        customer.subscriptionStatus || customer.subscription_status
+      );
       const tisp = await getTISPCustomer(customer.customerNumber);
       const status = tisp?.status ?? tisp?.Status ?? null;
-      if (status) {
+      if (status && currentStatus !== "Paused Indefinitely") {
         await customerStore.updateCustomerSubscriptionStatus(
           customer.id,
           normalizeSubscriptionStatus(String(status))

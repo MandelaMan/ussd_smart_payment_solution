@@ -2,11 +2,13 @@ const { describe, it } = require("node:test");
 const { assert } = require("../helpers");
 const {
   normalizeSubscriptionStatus,
+  subscriptionStatusAfterTispRefresh,
   subscriptionStatusFilterClause,
   SUBSCRIPTION_STATUSES,
 } = require("../../api/utils/subscriptionStatus");
 const {
   detectBillingScenarios,
+  recordToIssuePreview,
   isActiveService,
   isDisconnectedService,
   isUnknownService,
@@ -27,10 +29,12 @@ describe("subscription status normalization (pause / suspend / cancel)", () => {
       "Active",
       "Suspended",
       "Paused",
+      "Paused Indefinitely",
       "Cancelled",
     ]);
     assert.equal(normalizeSubscriptionStatus("active"), "Active");
     assert.equal(normalizeSubscriptionStatus("Paused — away"), "Paused");
+    assert.equal(normalizeSubscriptionStatus("Paused Indefinitely"), "Paused Indefinitely");
     assert.equal(normalizeSubscriptionStatus("Suspended"), "Suspended");
     assert.equal(normalizeSubscriptionStatus("Cancelled"), "Cancelled");
   });
@@ -45,6 +49,25 @@ describe("subscription status normalization (pause / suspend / cancel)", () => {
     const clause = subscriptionStatusFilterClause("active");
     assert.ok(clause.sql.includes("c.status = 'active'"));
     assert.ok(clause.sql.toLowerCase().includes("'active'"));
+  });
+
+  it("keeps an admin pause when TISP still reports Active", () => {
+    assert.equal(subscriptionStatusAfterTispRefresh("Paused", "Active"), "Paused");
+    assert.equal(subscriptionStatusAfterTispRefresh("Paused", "ENABLE"), "Paused");
+    assert.equal(
+      subscriptionStatusAfterTispRefresh("Paused Indefinitely", "Active"),
+      "Paused Indefinitely"
+    );
+    assert.equal(subscriptionStatusAfterTispRefresh("Active", "Suspended"), "Suspended");
+    assert.equal(subscriptionStatusAfterTispRefresh("Suspended", null), "Active");
+  });
+
+  it("keeps indefinite pause out of the dated pause filter", () => {
+    const dated = subscriptionStatusFilterClause("paused");
+    const indefinite = subscriptionStatusFilterClause("Paused Indefinitely");
+    assert.match(dated.sql, /NOT LIKE '%indefinite%'/);
+    assert.match(indefinite.sql, /LIKE '%indefinite%'/);
+    assert.equal(normalizeSubscriptionStatus("paused indefinitely"), "Paused Indefinitely");
   });
 });
 
@@ -136,6 +159,65 @@ describe("reconciliation scenarios (Zoho vs TISP)", () => {
     assert.equal(isUnknownService(""), true);
     assert.equal(isUnknownService("Suspended"), false);
     assert.equal(isUnknownService("Active"), false);
+  });
+
+  it("writes issue text with ASCII hyphens", () => {
+    const failed = detectBillingScenarios({
+      ...base,
+      tispSyncStatus: "failed",
+      subscriptionStatus: "Unknown",
+    });
+    const failedMessage = failed.validations.find((v) => v.code === "tisp_sync_failed")?.message;
+    assert.equal(
+      failedMessage,
+      "TISP: Sync failed - service status may be stale (Suspended)"
+    );
+
+    const unknown = detectBillingScenarios({
+      ...base,
+      serviceActive: false,
+      serviceUnknown: true,
+      subscriptionStatus: "Not on TISP",
+      zohoLinked: true,
+    });
+    const unknownMessage = unknown.validations.find((v) => v.code === "tisp_status_unknown")?.message;
+    assert.equal(
+      unknownMessage,
+      "TISP: Not on TISP - Zoho: Paid up - cannot confirm service matches billing"
+    );
+    for (const message of [failedMessage, unknownMessage]) {
+      assert.equal(/[—·ΓÇö┬╢]/.test(message), false);
+    }
+  });
+
+  it("repairs cached issue text that already contains mojibake", () => {
+    const syncFailed = recordToIssuePreview({
+      validations: [
+        {
+          severity: "high",
+          message:
+            "TISP: Sync failed \u0393\u00c7\u00f6 service status may be stale (Unknown)",
+        },
+      ],
+    });
+    assert.equal(
+      syncFailed.issueBasis,
+      "TISP: Sync failed - service status may be stale (Unknown)"
+    );
+
+    const unknown = recordToIssuePreview({
+      validations: [
+        {
+          severity: "medium",
+          message:
+            "TISP: Status unknown \u252c\u2562 Zoho: Paid up \u2014 cannot confirm service matches billing",
+        },
+      ],
+    });
+    assert.equal(
+      unknown.issueBasis,
+      "TISP: Status unknown - Zoho: Paid up - cannot confirm service matches billing"
+    );
   });
 
   it("aggregates summary counts", () => {

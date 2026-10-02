@@ -7,8 +7,9 @@ import { Layout } from "./components/Layout";
 import { ScrollToTop } from "./components/ScrollToTop";
 import {
   ProtectedRoute,
-  AdminRoute,
   SettingsRoute,
+  ActivityAuditRoute,
+  IptvRoute,
   TransactionsRoute,
   BillingRoute,
   AnalyticsRoute,
@@ -89,6 +90,10 @@ const CustomersListPage = lazyPage(
   () => import("./pages/CustomersListPage"),
   "CustomersListPage"
 );
+const CustomerNotesPage = lazyPage(
+  () => import("./pages/CustomerNotesPage"),
+  "CustomerNotesPage"
+);
 const NewCustomerPage = lazyPage(() => import("./pages/NewCustomerPage"), "NewCustomerPage");
 const ApartmentHistoryPage = lazyPage(
   () => import("./pages/ApartmentHistoryPage"),
@@ -113,6 +118,7 @@ const AgenciesPage = lazyPage(() => import("./pages/AgenciesPage"), "AgenciesPag
 const CampaignsPage = lazyPage(() => import("./pages/CampaignsPage"), "CampaignsPage");
 const InstallationsPage = lazyPage(() => import("./pages/InstallationsPage"), "InstallationsPage");
 const RemindersPage = lazyPage(() => import("./pages/RemindersPage"), "RemindersPage");
+const IptvConsolePage = lazyPage(() => import("./pages/IptvConsolePage"), "IptvConsolePage");
 const AgencyDetailPage = lazyPage(
   () => import("./pages/AgencyDetailPage"),
   "AgencyDetailPage"
@@ -268,7 +274,7 @@ export default function App() {
                     }
                   />
                 </Route>
-                <Route element={<AdminRoute />}>
+                <Route element={<ActivityAuditRoute />}>
                   <Route
                     path="activity-audit"
                     element={
@@ -277,18 +283,36 @@ export default function App() {
                       </LazyRoute>
                     }
                   />
-                  <Route
-                    path="logs"
-                    element={<Navigate to="/settings?tab=logs" replace />}
-                  />
-                  <Route path="users" element={<Navigate to="/settings" replace />} />
                 </Route>
+                <Route element={<IptvRoute />}>
+                  <Route
+                    path="iptv"
+                    element={
+                      <LazyRoute>
+                        <IptvConsolePage />
+                      </LazyRoute>
+                    }
+                  />
+                </Route>
+                <Route
+                  path="logs"
+                  element={<Navigate to="/settings?tab=logs" replace />}
+                />
+                <Route path="users" element={<Navigate to="/settings" replace />} />
                 <Route element={<CustomerReadRoute />}>
                   <Route
                     path="customers"
                     element={
                       <LazyRoute>
                         <CustomersListPage />
+                      </LazyRoute>
+                    }
+                  />
+                  <Route
+                    path="notes"
+                    element={
+                      <LazyRoute>
+                        <CustomerNotesPage />
                       </LazyRoute>
                     }
                   />

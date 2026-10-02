@@ -6,7 +6,13 @@ function repairUtf8Mojibake(value) {
   return String(value || "")
     .replace(/ΓÇö|γçö|â€"|â€”|—|–/gi, "-")
     .replace(/ΓÇô|γçô|â€“/gi, "-")
-    .replace(/Â·|ΓÇ£|γç£|·/gi, "-");
+    .replace(/Â·|ΓÇ£|γç£|·|┬╖|┬╢/gi, "-");
+}
+
+/** Issue sentences: keep wording, replace em dashes and middle dots with "-". */
+function plainIssueText(value) {
+  if (value == null || value === "") return value;
+  return repairUtf8Mojibake(String(value)).replace(/[ \t]{2,}/g, " ").trim();
 }
 
 const PRODUCT_NAME_SEPARATORS =
@@ -21,5 +27,6 @@ function formatProductNameForDisplay(value) {
 
 module.exports = {
   repairUtf8Mojibake,
+  plainIssueText,
   formatProductNameForDisplay,
 };

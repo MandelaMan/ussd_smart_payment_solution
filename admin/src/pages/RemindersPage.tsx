@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -14,6 +14,7 @@ import { useSearchParams } from "react-router-dom";
 import { api, type ActionItem } from "../lib/api";
 import { useAuth } from "../lib/authContext";
 import { hasPermission } from "../lib/rbac";
+import { beginListLoad, endListLoad } from "../lib/listLoad";
 
 import { DateField } from "../components/ui/DateField";
 import { SelectField } from "../components/ui/SelectField";
@@ -66,6 +67,8 @@ export function RemindersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<ActionItem[]>([]);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 40,
@@ -83,7 +86,10 @@ export function RemindersPage() {
 
   const load = useCallback(
     async (page = pagination.page) => {
-      setLoading(true);
+      beginListLoad({
+        hasRows: rowsRef.current.length > 0,
+        setLoading,
+      });
       setError("");
       try {
         const res = await api.listActionItems({
@@ -102,7 +108,7 @@ export function RemindersPage() {
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load reminders");
       } finally {
-        setLoading(false);
+        endListLoad({ setLoading });
       }
     },
     [status, typeKey, scope, q, from, to, pagination.limit, pagination.page]
@@ -250,7 +256,7 @@ export function RemindersPage() {
                   <Table.Cell>
                     <Text fontWeight="medium">{row.title}</Text>
                     <Text fontSize="xs" color="fg.muted">
-                      {row.typeName}
+                      {row.typeKey === "note_followup" ? "From a customer note" : row.typeName}
                       {row.stepCount
                         ? ` · ${row.stepsDone}/${row.stepCount} steps`
                         : ""}
@@ -274,7 +280,8 @@ export function RemindersPage() {
                   </Table.Cell>
                   <Table.Cell>
                     <Text fontSize="sm" lineClamp={2}>
-                      {row.assigneeNames || "—"}
+                      {row.assigneeNames ||
+                        (row.typeKey === "note_followup" ? "Reminders" : "—")}
                     </Text>
                   </Table.Cell>
                   <Table.Cell>

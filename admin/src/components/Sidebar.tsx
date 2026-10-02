@@ -26,6 +26,8 @@ import {
   FiGift,
   FiTool,
   FiCheckSquare,
+  FiMonitor,
+  FiFileText,
 } from "react-icons/fi";
 import { BillingNavGroup } from "./billing/BillingNavGroup";
 import { NotificationBell } from "./notifications/NotificationBell";
@@ -35,11 +37,13 @@ import {
   canAccessActivityAudit,
   canAccessAnalytics,
   canAccessBilling,
+  canAccessIptvConsole,
   canAccessReports,
   canAccessSettings,
   canAccessTransactions,
   canViewCampaigns,
   hasPermission,
+  isInvestorPartner,
   roleLabel,
 } from "../lib/rbac";
 
@@ -56,13 +60,32 @@ type Props = { open: boolean; onClose: () => void };
 
 export function Sidebar({ open, onClose }: Props) {
   const { user, logout } = useAuth();
+  const investor = isInvestorPartner(user);
 
   const links: NavLinkDef[] = [
     { to: "/", label: "Dashboard", icon: FiGrid, end: true, visible: hasPermission(user, "dashboard.view") },
     {
+      to: "/reports",
+      label: "Reports",
+      icon: FiBarChart2,
+      visible: investor && canAccessReports(user),
+    },
+    {
+      to: "/analytics",
+      label: "Analytics",
+      icon: FiPieChart,
+      visible: investor && canAccessAnalytics(user),
+    },
+    {
       to: "/customers",
       label: "Customers",
       icon: FiUser,
+      visible: hasPermission(user, "customers.view"),
+    },
+    {
+      to: "/notes",
+      label: "Notes",
+      icon: FiFileText,
       visible: hasPermission(user, "customers.view"),
     },
     {
@@ -126,6 +149,12 @@ export function Sidebar({ open, onClose }: Props) {
       visible: canAccessActivityAudit(user),
     },
     {
+      to: "/iptv",
+      label: "IPTV",
+      icon: FiMonitor,
+      visible: canAccessIptvConsole(user),
+    },
+    {
       to: "/transactions",
       label: "Transactions",
       icon: FiCreditCard,
@@ -142,13 +171,13 @@ export function Sidebar({ open, onClose }: Props) {
       to: "/analytics",
       label: "Analytics",
       icon: FiPieChart,
-      visible: canAccessAnalytics(user),
+      visible: !investor && canAccessAnalytics(user),
     },
     {
       to: "/reports",
       label: "Reports",
       icon: FiBarChart2,
-      visible: canAccessReports(user),
+      visible: !investor && canAccessReports(user),
     },
     {
       to: "/settings",

@@ -20,8 +20,31 @@ const MODULES = [
       { key: "dashboard.finance", label: "Finance home", description: "Finance KPIs and revenue dashboard" },
       { key: "dashboard.support", label: "Support home", description: "Support / customer-ops dashboard" },
       { key: "dashboard.partner", label: "Partner home", description: "Partner-facing dashboard" },
+      { key: "dashboard.investor", label: "Investor home", description: "Investor reports-first partner dashboard" },
       { key: "dashboard.executive", label: "Executive home", description: "CEO / executive dashboard" },
       { key: "dashboard.activity", label: "Activity feed", description: "View the activity / event feed" },
+    ],
+  },
+  {
+    key: "partner",
+    label: "Partner types",
+    description: "View-only partner access profiles (Investor, DSTV, Internet)",
+    permissions: [
+      {
+        key: "partner.investor",
+        label: "Investor",
+        description: "All customers, reports and dashboards, view-only",
+      },
+      {
+        key: "partner.dstv",
+        label: "DSTV partner",
+        description: "DSTV subscribers only, view-only",
+      },
+      {
+        key: "partner.internet",
+        label: "Internet partner",
+        description: "All customers, view-only",
+      },
     ],
   },
   {
@@ -31,7 +54,7 @@ const MODULES = [
     permissions: [
       { key: "customers.view", label: "View", description: "List and open customer records" },
       { key: "customers.create", label: "Create", description: "Onboard new customers" },
-      { key: "customers.edit", label: "Edit", description: "Update customer details and packages" },
+      { key: "customers.edit", label: "Edit", description: "Update customer details, package, and billing frequency" },
       { key: "customers.delete", label: "Wipe local records", description: "Hard-delete cancelled customers from the admin DB (TISP/Zoho untouched)", dangerous: true },
       { key: "customers.export", label: "Export", description: "Export customer data" },
       { key: "customers.import", label: "Import", description: "Bulk-import customers" },
@@ -39,7 +62,7 @@ const MODULES = [
       { key: "customers.pricing", label: "View pricing", description: "See package prices and commercial terms" },
       { key: "customers.disconnect", label: "Disconnect", description: "Disconnect customer network service" },
       { key: "customers.pause", label: "Pause / resume", description: "Pause or resume service" },
-      { key: "customers.package_edit", label: "Edit package (admin)", description: "Local package corrections without Zoho invoice" },
+      { key: "customers.package_edit", label: "Correct package locally", description: "Change package or billing frequency on the customer record without creating a Zoho invoice", dangerous: true },
       { key: "customers.cancel", label: "Cancel & release apartment", description: "Cancel subscription, archive identity, free apartment for reuse" },
       { key: "customers.olt", label: "OLT / ONU", description: "Link OLT equipment and view ONU status" },
     ],
@@ -172,6 +195,39 @@ const MODULES = [
     ],
   },
   {
+    key: "activity_audit",
+    label: "Activity",
+    description: "Customer and user change audit trail",
+    permissions: [
+      {
+        key: "activity_audit.view",
+        label: "View",
+        description: "View the activity audit log of customer and user changes",
+        dangerous: true,
+      },
+    ],
+  },
+  {
+    key: "iptv",
+    label: "IPTV",
+    description: "Startlyx IPTV test console and connection settings",
+    permissions: [
+      { key: "iptv.view", label: "View", description: "Access the IPTV console, channels, packages, and users" },
+      {
+        key: "iptv.operate",
+        label: "Operate",
+        description: "Create test subscribers and disconnect or reconnect Startlyx users",
+        dangerous: true,
+      },
+      {
+        key: "iptv.settings",
+        label: "Connection settings",
+        description: "Configure the Startlyx URL and admin credentials",
+        dangerous: true,
+      },
+    ],
+  },
+  {
     key: "campaigns",
     label: "Campaigns",
     description: "Acquisition campaigns, first-month discounts, and referrals",
@@ -256,7 +312,7 @@ function getPermission(key) {
  * When narrowing GROUP_PRESETS, bump SYSTEM_GROUP_PRESET_REVISION so existing
  * databases replace system-group grants on next boot.
  */
-const SYSTEM_GROUP_PRESET_REVISION = 2;
+const SYSTEM_GROUP_PRESET_REVISION = 3;
 
 const USER_ROLE_DEFAULTS = Object.freeze(["dashboard.view"]);
 
@@ -461,14 +517,46 @@ const GROUP_PRESETS = [
   },
   {
     slug: "customer-relations",
-    name: "Customer Relations",
-    description: "Partner / limited customer visibility (no financials)",
+    name: "Partner — Internet",
+    description:
+      "Internet partner: view all customers, dashboard, and reports. No create or edit.",
     permissions: [
       "dashboard.view",
       "dashboard.partner",
+      "partner.internet",
       "customers.view",
       "reports.view",
       "reports.export",
+    ],
+  },
+  {
+    slug: "partner-dstv",
+    name: "Partner — DSTV",
+    description:
+      "DSTV partner: view DSTV subscribers only, dashboard, and reports. No create or edit.",
+    permissions: [
+      "dashboard.view",
+      "dashboard.partner",
+      "partner.dstv",
+      "customers.view",
+      "reports.view",
+      "reports.export",
+    ],
+  },
+  {
+    slug: "partner-investor",
+    name: "Partner — Investor",
+    description:
+      "Investor: view all customers with a reports and dashboards focus. No create or edit.",
+    permissions: [
+      "dashboard.view",
+      "dashboard.partner",
+      "dashboard.investor",
+      "partner.investor",
+      "customers.view",
+      "reports.view",
+      "reports.export",
+      "analytics.view",
     ],
   },
   {

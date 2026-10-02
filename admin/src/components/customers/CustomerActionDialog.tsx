@@ -34,7 +34,7 @@ import { PaymentFrequencyForm } from "./PaymentFrequencyForm";
 import type { CustomerAction } from "./CustomerActionMenu";
 import type { Product, PendingUpgrade, UpgradePaymentMethod, UpgradeQuote } from "../../lib/api";
 import { InstallationScheduleFields } from "../installations/InstallationScheduleFields";
-import { addCalendarDays, pauseAwayDays, pauseCreditLabel } from "../../lib/pauseCredit";
+import { addCalendarDays, exhaustedPauseDaysMessage, pauseCreditLabel, resolvePauseBalance } from "../../lib/pauseCredit";
 
 type Props = {
   customer: Customer | null;
@@ -51,8 +51,9 @@ type Props = {
   cancelOnuCollectedAt: string;
   cancelDstvDecoderCollectedAt: string;
   pauseStartDate: string;
-  pauseEndDate: string;
+  pauseDays: string;
   pauseReason: string;
+  pauseMode: "away" | "indefinite";
   actionPackages: Product[];
   apartmentHistory: ApartmentHistoryEntry[];
   upgradeQuote: UpgradeQuote | null;
@@ -82,8 +83,9 @@ type Props = {
   onOnuCollectedAtChange: (value: string) => void;
   onDstvDecoderCollectedAtChange: (value: string) => void;
   onPauseStartDateChange: (value: string) => void;
-  onPauseEndDateChange: (value: string) => void;
+  onPauseDaysChange: (value: string) => void;
   onPauseReasonChange: (value: string) => void;
+  onPauseModeChange: (value: "away" | "indefinite") => void;
 };
 
 function ModalHeader({
@@ -383,8 +385,9 @@ export function CustomerActionDialog({
   cancelOnuCollectedAt,
   cancelDstvDecoderCollectedAt,
   pauseStartDate,
-  pauseEndDate,
+  pauseDays,
   pauseReason,
+  pauseMode,
   actionPackages,
   apartmentHistory,
   upgradeQuote,
@@ -414,8 +417,9 @@ export function CustomerActionDialog({
   onOnuCollectedAtChange,
   onDstvDecoderCollectedAtChange,
   onPauseStartDateChange,
-  onPauseEndDateChange,
+  onPauseDaysChange,
   onPauseReasonChange,
+  onPauseModeChange,
 }: Props) {
   const needsDstvDecoder =
     Boolean(customer?.hasDstv) && Boolean(customer?.dstvSerialRequired);
@@ -423,14 +427,23 @@ export function CustomerActionDialog({
     cancelNotes.trim().length > 0 &&
     Boolean(cancelOnuCollectedAt) &&
     (!needsDstvDecoder || Boolean(cancelDstvDecoderCollectedAt));
-  const pauseFormValid =
-    pauseReason.trim().length > 0 &&
-    Boolean(pauseStartDate) &&
-    Boolean(pauseEndDate) &&
-    pauseEndDate >= pauseStartDate;
-  const pauseCreditDays = pauseAwayDays(pauseStartDate, pauseEndDate);
-  const pauseCreditedDue = pauseCreditDays
-    ? addCalendarDays(customer?.tispDueDate || pauseEndDate, pauseCreditDays)
+  const pauseBalance = resolvePauseBalance(customer);
+  const pauseDayCount = Math.max(0, Math.floor(Number(pauseDays) || 0));
+  const pauseEndDate =
+    pauseStartDate && pauseDayCount > 0
+      ? addCalendarDays(pauseStartDate, pauseDayCount)
+      : "";
+  const indefinitePause = pauseMode === "indefinite";
+  const pauseFormValid = indefinitePause
+    ? pauseReason.trim().length > 0
+    : !pauseBalance.exhausted &&
+      pauseReason.trim().length > 0 &&
+      Boolean(pauseStartDate) &&
+      pauseDayCount >= 1 &&
+      pauseDayCount <= pauseBalance.remaining;
+  const pauseRemainingAfter = Math.max(0, pauseBalance.remaining - pauseDayCount);
+  const pauseCreditedDue = pauseDayCount
+    ? addCalendarDays(customer?.tispDueDate || pauseEndDate || pauseStartDate, pauseDayCount)
     : null;
   const [cancelStep, setCancelStep] = useState<1 | 2>(1);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
@@ -455,7 +468,11 @@ export function CustomerActionDialog({
     title = isShopPremise(customer) ? "Move unit" : "Move apartment";
   }
   if (actionType === "disconnect") title = "Suspend on TISP";
-  if (actionType === "pause") title = "Pause service";
+  if (actionType === "pause") {
+    title = indefinitePause ? "Pause indefinitely" : "Pause service";
+  }
+  if (actionType === "resume") title = "Resume service";
+  if (actionType === "restart") title = "Restart service";
   if (actionType === "cancel") {
     title = isShopPremise(customer)
       ? "Cancel & release shop"
@@ -555,50 +572,133 @@ export function CustomerActionDialog({
 
         {actionType === "pause" ? (
           <Stack gap={4}>
-            <Text fontSize="sm" color="fg.muted">
-              Stops internet now. Away days are added to the next subscription when they return.
-            </Text>
-            <Field.Root required>
-              <Field.Label>Pause start date</Field.Label>
-              <Input
-                type="date"
-                value={pauseStartDate}
-                onChange={(e) => onPauseStartDateChange(e.target.value)}
-              />
-            </Field.Root>
-            <Field.Root required>
-              <Field.Label>Pause end date (return)</Field.Label>
-              <Input
-                type="date"
-                value={pauseEndDate}
-                min={pauseStartDate || undefined}
-                onChange={(e) => onPauseEndDateChange(e.target.value)}
-              />
-            </Field.Root>
-            {pauseCreditDays > 0 ? (
+            <Flex gap={2}>
+              <Button
+                size="sm"
+                variant={indefinitePause ? "outline" : "solid"}
+                colorPalette="blue"
+                onClick={() => onPauseModeChange("away")}
+                disabled={pauseBalance.exhausted}
+              >
+                Away for set days
+              </Button>
+              <Button
+                size="sm"
+                variant={indefinitePause ? "solid" : "outline"}
+                colorPalette="purple"
+                onClick={() => onPauseModeChange("indefinite")}
+              >
+                Pause indefinitely
+              </Button>
+            </Flex>
+            {indefinitePause ? (
+              <Text fontSize="sm" color="fg.muted">
+                Stops internet, ONU, IPTV when linked, and DSTV billing. The recurring invoice stops until you restart the service. This does not use pause days.
+              </Text>
+            ) : pauseBalance.exhausted ? (
               <Box
                 borderWidth="1px"
-                borderColor="blue.200"
-                bg="blue.50"
+                borderColor="red.200"
+                bg="red.50"
                 borderRadius="md"
                 px={3}
                 py={2}
               >
-                <Text fontSize="sm" color="blue.800">
-                  {pauseCreditLabel(pauseCreditDays)} away will be credited on the next
-                  subscription
-                  {pauseCreditedDue
-                    ? ` (next due ${formatDateOnly(pauseCreditedDue)}).`
-                    : "."}
+                <Text fontSize="sm" color="red.800">
+                  Pause days exhausted ({pauseBalance.used} of {pauseBalance.allowance} used). A new allowance starts after the next payment. Use pause indefinitely if the hold has no return date.
                 </Text>
               </Box>
-            ) : null}
+            ) : (
+              <Text fontSize="sm" color="fg.muted">
+                Stops internet now. {pauseBalance.used > 0
+                  ? `${pauseBalance.remaining} of ${pauseBalance.allowance} pause days left this period.`
+                  : `${pauseBalance.allowance} pause days left this period.`}
+              </Text>
+            )}
+            {indefinitePause ? null : (
+              <>
+                <Field.Root required>
+                  <Field.Label>Pause start date</Field.Label>
+                  <Input
+                    type="date"
+                    value={pauseStartDate}
+                    disabled={pauseBalance.exhausted}
+                    onChange={(e) => onPauseStartDateChange(e.target.value)}
+                  />
+                </Field.Root>
+                <Field.Root required>
+                  <Field.Label>Number of days</Field.Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={pauseBalance.remaining || undefined}
+                    step={1}
+                    value={pauseDays}
+                    disabled={pauseBalance.exhausted}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === "") {
+                        onPauseDaysChange("");
+                        return;
+                      }
+                      const next = Math.floor(Number(raw));
+                      if (!Number.isFinite(next) || next < 1) {
+                        onPauseDaysChange("");
+                        return;
+                      }
+                      const cap = Math.max(1, pauseBalance.remaining);
+                      onPauseDaysChange(String(Math.min(next, cap)));
+                    }}
+                    placeholder={
+                      pauseBalance.remaining > 0
+                        ? `1–${pauseBalance.remaining}`
+                        : undefined
+                    }
+                  />
+                  {pauseEndDate && !pauseBalance.exhausted ? (
+                    <Field.HelperText>
+                      Return {formatDateOnly(pauseEndDate)}
+                    </Field.HelperText>
+                  ) : null}
+                </Field.Root>
+                {pauseDayCount > 0 && !pauseBalance.exhausted ? (
+                  <Box
+                    borderWidth="1px"
+                    borderColor={pauseDayCount > pauseBalance.remaining ? "red.200" : "blue.200"}
+                    bg={pauseDayCount > pauseBalance.remaining ? "red.50" : "blue.50"}
+                    borderRadius="md"
+                    px={3}
+                    py={2}
+                  >
+                    <Text
+                      fontSize="sm"
+                      color={pauseDayCount > pauseBalance.remaining ? "red.800" : "blue.800"}
+                    >
+                      {pauseDayCount > pauseBalance.remaining
+                        ? `Only ${pauseBalance.remaining} day${pauseBalance.remaining === 1 ? "" : "s"} remaining.`
+                        : pauseRemainingAfter > 0
+                          ? `${pauseRemainingAfter} day${pauseRemainingAfter === 1 ? "" : "s"} remaining after this stay. Credited on the next subscription${
+                              pauseCreditedDue ? ` (due ${formatDateOnly(pauseCreditedDue)})` : ""
+                            }.`
+                          : `Last ${pauseCreditLabel(pauseDayCount)} of the allowance. Credited on the next subscription${
+                              pauseCreditedDue ? ` (due ${formatDateOnly(pauseCreditedDue)})` : ""
+                            }.`}
+                    </Text>
+                  </Box>
+                ) : null}
+              </>
+            )}
             <Field.Root required>
               <Field.Label>Reason for pause</Field.Label>
               <Input
                 value={pauseReason}
                 onChange={(e) => onPauseReasonChange(e.target.value)}
-                placeholder="e.g. Travelling abroad, renovation…"
+                placeholder={
+                  indefinitePause
+                    ? "e.g. Moving out for now, construction, extended travel…"
+                    : "e.g. Travelling abroad, renovation…"
+                }
+                disabled={!indefinitePause && pauseBalance.exhausted}
               />
             </Field.Root>
             <Flex justify="flex-end" gap={2}>
@@ -606,12 +706,48 @@ export function CustomerActionDialog({
                 Keep active
               </Button>
               <Button
-                colorPalette="blue"
+                colorPalette={indefinitePause ? "purple" : "blue"}
                 loading={loading}
                 disabled={!pauseFormValid}
                 onClick={onSubmit}
               >
-                Pause service
+                {indefinitePause ? "Pause indefinitely" : "Pause service"}
+              </Button>
+            </Flex>
+          </Stack>
+        ) : null}
+
+        {actionType === "restart" ? (
+          <Stack gap={4}>
+            <Text fontSize="sm" color="fg.muted">
+              Turns services back on and resumes the recurring invoice.
+              {customer?.pauseReason ? ` Paused because: ${customer.pauseReason}.` : ""}
+            </Text>
+            <Flex justify="flex-end" gap={2}>
+              <Button variant="ghost" onClick={onClose}>
+                Stay paused
+              </Button>
+              <Button colorPalette="purple" loading={loading} onClick={onSubmit}>
+                Restart service
+              </Button>
+            </Flex>
+          </Stack>
+        ) : null}
+
+        {actionType === "resume" ? (
+          <Stack gap={4}>
+            <Text fontSize="sm" color="fg.muted">
+              Restores internet now.
+              {pauseBalance.remaining > 0
+                ? ` ${pauseBalance.remaining} of ${pauseBalance.allowance} pause days still remaining.`
+                : ` ${exhaustedPauseDaysMessage(pauseBalance)}.`}
+            </Text>
+            <Flex justify="flex-end" gap={2}>
+              <Button variant="ghost" onClick={onClose}>
+                Stay paused
+              </Button>
+              <Button colorPalette="blue" loading={loading} onClick={onSubmit}>
+                Resume service
               </Button>
             </Flex>
           </Stack>

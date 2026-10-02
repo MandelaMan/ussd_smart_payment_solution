@@ -45,14 +45,14 @@ export function BillingSyncProgressBanner({
 
   const detail =
     total > 0
-      ? `Scanned ${processed} of ${total} customers · ${issuesFound} issue${issuesFound === 1 ? "" : "s"} found`
+      ? `Scanned ${processed} of ${total} customers - ${issuesFound} issue${issuesFound === 1 ? "" : "s"} found`
       : "Connecting to billing systems…";
 
   const rowNote =
     rowCount > 0
-      ? `${rowCount} matching record${rowCount === 1 ? "" : "s"} shown — more may appear as the scan continues`
+      ? `${rowCount} matching record${rowCount === 1 ? "" : "s"} shown - more may appear as the scan continues`
       : partialReady && running
-        ? "No matches in the first batch yet — keep this page open while the scan continues"
+        ? "No matches in the first batch yet - keep this page open while the scan continues"
         : "Results will appear here as customers are checked";
 
   return (
@@ -75,7 +75,7 @@ export function BillingSyncProgressBanner({
             {title}
           </Text>
           <Text fontSize="xs" color="fg.muted" mt={1}>
-            {phaseLabel(progress?.phase)} · {detail}
+            {phaseLabel(progress?.phase)} - {detail}
           </Text>
           {running && total > 0 && (
             <Box mt={3}>

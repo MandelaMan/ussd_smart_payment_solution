@@ -1,4 +1,5 @@
 const { normalizeSubscriptionStatus } = require("./subscriptionStatus");
+const { plainIssueText } = require("./productNameDisplay");
 const {
   isOverdueZohoInvoice,
 } = require("./zohoInvoiceStatus");
@@ -645,7 +646,17 @@ function detectBillingScenarios(ctx) {
     }
   }
 
-  return { statuses, validations, scenarioRecs };
+  return {
+    statuses,
+    validations: validations.map((v) => ({
+      ...v,
+      message: plainIssueText(v.message),
+    })),
+    scenarioRecs: scenarioRecs.map((r) => ({
+      ...r,
+      detail: r.detail ? plainIssueText(r.detail) : r.detail,
+    })),
+  };
 }
 
 function buildRecommendations(statuses, context, scenarioRecs = []) {
@@ -824,8 +835,14 @@ function computeCustomerReconciliation(context = {}) {
   return {
     primaryStatus,
     statuses: finalStatuses,
-    validations,
-    recommendations,
+    validations: validations.map((v) => ({
+      ...v,
+      message: plainIssueText(v.message),
+    })),
+    recommendations: recommendations.map((r) => ({
+      ...r,
+      detail: r.detail ? plainIssueText(r.detail) : r.detail,
+    })),
     metrics: {
       expectedAmount,
       monthlyPrice: monthlyPrice != null ? roundMoney(monthlyPrice) : null,
@@ -963,11 +980,12 @@ function recordToIssuePreview(record) {
     subscriptionStatus: record.metrics?.subscriptionStatus || "Not on TISP",
     accountStatus: record.metrics?.accountStatus || record.customerStatus || null,
     actionLabel: record.recommendations?.[0]?.label || null,
-    issueBasis:
+    issueBasis: plainIssueText(
       topValidation?.message ||
-      record.recommendations?.[0]?.detail ||
-      record.recommendations?.[0]?.label ||
-      null,
+        record.recommendations?.[0]?.detail ||
+        record.recommendations?.[0]?.label ||
+        null
+    ),
     primaryStatus: record.primaryStatus,
   };
 }
@@ -1012,7 +1030,9 @@ function buildIssueTiles(records = [], unmatchedMpesa = []) {
           billingFrequency: null,
           subscriptionStatus: null,
           actionLabel: "Allocate Payment",
-          issueBasis: `M-Pesa ${p.referenceId || "—"} · ${p.phone || "no phone"} · not linked to Zoho`,
+          issueBasis: plainIssueText(
+            `M-Pesa ${p.referenceId || "-"} - ${p.phone || "no phone"} - not linked to Zoho`
+          ),
           primaryStatus: "unmatched_payment",
           mpesaPaymentId: p.id,
         })),

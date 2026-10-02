@@ -12,6 +12,7 @@ import {
   FiWifi,
   FiWifiOff,
   FiPauseCircle,
+  FiPlayCircle,
   FiXCircle,
   FiCheckSquare,
 } from "react-icons/fi";
@@ -20,7 +21,14 @@ import { isShopPremise } from "../../lib/premise";
 import { FLOATING_MENU_Z_INDEX } from "../ui/floatingMenu";
 import { useAuth } from "../../lib/authContext";
 import { hasPermission } from "../../lib/rbac";
-import { canCreateCustomerOnTisp } from "../../lib/customerStatus";
+import {
+  canCreateCustomerOnTisp,
+  canPauseCustomer,
+  canRestartCustomer,
+  canResumeCustomer,
+  displayCustomerStatus,
+} from "../../lib/customerStatus";
+import { resolvePauseBalance } from "../../lib/pauseCredit";
 
 export type CustomerAction =
   | "edit"
@@ -30,6 +38,8 @@ export type CustomerAction =
   | "switch"
   | "disconnect"
   | "pause"
+  | "resume"
+  | "restart"
   | "cancel"
   | "history"
   | "convertType"
@@ -47,7 +57,18 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
   const { user } = useAuth();
   const canCreateReminder = hasPermission(user, "action_items.create");
   const canEdit = hasPermission(user, "customers.edit");
-  const canPause = hasPermission(user, "customers.pause");
+  const canManagePause = hasPermission(user, "customers.pause");
+  const serviceStatus = displayCustomerStatus(customer);
+  // Pause and resume are mutually exclusive: a paused account only offers resume.
+  const canPause =
+    canManagePause && serviceStatus === "Active" && canPauseCustomer(customer);
+  const canResume =
+    canManagePause && serviceStatus === "Paused" && canResumeCustomer(customer);
+  const canRestart =
+    canManagePause &&
+    serviceStatus === "Paused Indefinitely" &&
+    canRestartCustomer(customer);
+  const pauseBalance = resolvePauseBalance(customer);
   const canDisconnect = hasPermission(user, "customers.disconnect");
   const canCancel = hasPermission(user, "customers.cancel");
   const canDelete = hasPermission(user, "customers.delete");
@@ -104,7 +125,7 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
                 Create reminder
               </Menu.Item>
             ) : null}
-            {active && (canEdit || canPause || canDisconnect || canCancel) && (
+            {active && (canEdit || canPause || canResume || canRestart || canDisconnect || canCancel) && (
               <>
                 <Menu.Separator />
                 {canEdit ? (
@@ -137,10 +158,24 @@ export function CustomerActionMenu({ customer, onAction, allowPermanentDelete }:
                     ) : null}
                   </>
                 ) : null}
-                {canPause ? (
+                {canResume ? (
+                  <Menu.Item value="resume">
+                    <FiPlayCircle />
+                    Resume service
+                  </Menu.Item>
+                ) : canRestart ? (
+                  <Menu.Item value="restart">
+                    <FiPlayCircle />
+                    Restart service
+                  </Menu.Item>
+                ) : canPause ? (
                   <Menu.Item value="pause">
                     <FiPauseCircle />
-                    Pause service (away)
+                    {pauseBalance.exhausted
+                      ? "Pause service (days exhausted)"
+                      : pauseBalance.used > 0
+                        ? `Pause service (${pauseBalance.remaining} days left)`
+                        : "Pause service (away)"}
                   </Menu.Item>
                 ) : null}
                 {canDisconnect ? (

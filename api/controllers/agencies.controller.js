@@ -23,7 +23,9 @@ const { summarizeOverdueZohoInvoices } = require("../utils/zohoInvoiceStatus");
 const { buildZohoContactPersonsPayload } = require("../utils/zohoContactPersons");
 const {
   extraTvAmount,
+  extraDecoderAmount,
   buildExtraTvLineItem,
+  buildExtraDecoderLineItem,
 } = require("../utils/zohoInvoiceLineItems");
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
@@ -50,12 +52,16 @@ function computeAgencyBilling(customers, discountPercent = null) {
   const active = customers.filter((c) => c.status === "active");
   const pct = normalizeAgencyDiscountPercent(discountPercent);
   const totalActiveAmount = active.reduce(
-    (sum, c) => sum + Number(c.packagePrice || 0) + extraTvAmount(c),
+    (sum, c) =>
+      sum + Number(c.packagePrice || 0) + extraTvAmount(c) + extraDecoderAmount(c),
     0
   );
   const totalInvoiceAmount = active.reduce(
     (sum, c) =>
-      sum + applyAgencyUnitDiscount(c.packagePrice, pct) + extraTvAmount(c),
+      sum +
+      applyAgencyUnitDiscount(c.packagePrice, pct) +
+      extraTvAmount(c) +
+      extraDecoderAmount(c),
     0
   );
   return {
@@ -221,6 +227,10 @@ function buildCustomerLineItems(customer, discountPercent = null) {
   const items = [buildCustomerLineItem(customer, discountPercent)];
   const extra = buildExtraTvLineItem(customer, { includeCustomerNumber: true });
   if (extra) items.push(extra);
+  const extraDecoder = buildExtraDecoderLineItem(customer, {
+    includeCustomerNumber: true,
+  });
+  if (extraDecoder) items.push(extraDecoder);
   return items;
 }
 
@@ -414,7 +424,7 @@ async function createAgencyInvoice(req, res, next) {
       if (amount <= 0) {
         return res.status(400).json({ error: "Customer has no billable package price" });
       }
-      grossSubtotal = amount + extraTvAmount(customer);
+      grossSubtotal = amount + extraTvAmount(customer) + extraDecoderAmount(customer);
       lineItems = buildCustomerLineItems(customer, percentDiscount);
       referenceNumber = customer.customerNumber;
       billedCustomers = [customer];
@@ -427,7 +437,8 @@ async function createAgencyInvoice(req, res, next) {
         return res.status(400).json({ error: "No billable active customers" });
       }
       grossSubtotal = billable.reduce(
-        (sum, c) => sum + Number(c.packagePrice || 0) + extraTvAmount(c),
+        (sum, c) =>
+          sum + Number(c.packagePrice || 0) + extraTvAmount(c) + extraDecoderAmount(c),
         0
       );
       lineItems = billable.flatMap((c) =>

@@ -11,6 +11,10 @@ type CacheEntry = {
 const store = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<unknown>>();
 
+/** Join reads that start together, including React StrictMode's delayed remount. */
+const COALESCE_WINDOW_MS = 400;
+const coalesceInflightStore = new Map<string, { promise: Promise<unknown>; startedAt: number }>();
+
 export const MODULE_CACHE_TTL_MS = 60_000;
 export const LOOKUP_CACHE_TTL_MS = 5 * 60_000;
 
@@ -91,5 +95,23 @@ export async function cachedFetch<T>(
     });
 
   inflight.set(key, promise);
+  return promise;
+}
+
+/**
+ * Share one network call when the same read starts twice in the same turn.
+ * A later call (after a save, for example) starts its own request.
+ */
+export function coalesceInflight<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  const existing = coalesceInflightStore.get(key);
+  if (existing && Date.now() - existing.startedAt < COALESCE_WINDOW_MS) {
+    return existing.promise as Promise<T>;
+  }
+
+  const promise = loader().finally(() => {
+    const current = coalesceInflightStore.get(key);
+    if (current?.promise === promise) coalesceInflightStore.delete(key);
+  });
+  coalesceInflightStore.set(key, { promise, startedAt: Date.now() });
   return promise;
 }

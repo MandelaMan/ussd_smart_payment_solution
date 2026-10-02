@@ -6,6 +6,7 @@ import {
   noteNetworkActivity,
   reportReachabilityFailure,
 } from "./connectivity";
+import { coalesceInflight } from "./moduleDataCache";
 
 export {
   CONNECTIVITY_ERROR_MESSAGE,
@@ -227,6 +228,7 @@ export type Product = {
   hasDstv: number;
   buildingId: number;
   buildingName: string;
+  premiseType?: "apartment" | "shop";
   price: number;
   monthlyPrice: number;
   isActive: number;
@@ -528,6 +530,7 @@ export type AppSettings = {
     xtreamSyncEnabled: boolean;
     mpesaStkLiveAmount: boolean;
     zohoTaxInclusive: boolean;
+    iptv?: IptvSettings;
   };
   roles: Array<{
     id: string;
@@ -595,6 +598,7 @@ export type Customer = {
   tispPassword?: string | null;
   packagePrice: number;
   tvCount?: number;
+  extraDecoderCount?: number;
   decoderFeeAmount: number | null;
   decoderFeeRequired: boolean;
   hasDstv: boolean;
@@ -617,15 +621,27 @@ export type Customer = {
   tispDueDate: string | null;
   status: "active" | "cancelled";
   cancellationReason?: string | null;
+  staffNotes?: string | null;
+  staffNotesUpdatedAt?: string | null;
+  noteFollowUp?: {
+    id: number;
+    status: string;
+    dueDate: string | null;
+    title?: string;
+  } | null;
   onuCollectedAt?: string | null;
   dstvDecoderCollectedAt?: string | null;
   pauseStartDate?: string | null;
   pauseEndDate?: string | null;
   pauseReason?: string | null;
+  pauseIndefinite?: boolean;
   pauseCreditDays?: number | null;
   pauseOriginalDueDate?: string | null;
   pauseCreditedDueDate?: string | null;
   pauseCreditAppliedAt?: string | null;
+  pauseAllowanceDays?: number | null;
+  pauseDaysUsed?: number | null;
+  pauseDaysRemaining?: number | null;
   upgradePaymentStatus?: "none" | "payment_pending";
   createdAt: string;
   updatedAt: string;
@@ -961,6 +977,98 @@ export type ActivityAuditItem = ActivityItem & {
   } | null;
 };
 
+export type IptvChannel = {
+  id: string | null;
+  name: string;
+  channelNumber: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  enabled: boolean;
+  drmEnabled: boolean;
+  status: string;
+  alive: boolean | null;
+  bitrate: number | null;
+  clientCount: number | null;
+  lastError: string | null;
+  uptimeMs: number | null;
+};
+
+export type IptvPackage = {
+  id: string | null;
+  name: string | null;
+  rank: number | null;
+  price: string | number | null;
+  currency: string;
+  sessions: number | null;
+  channelCount: number | null;
+  features: string[];
+  active: boolean;
+};
+
+export type IptvRemoteUser = {
+  id: string | null;
+  email: string | null;
+  username: string | null;
+  phoneNumber: string | null;
+  address: string | null;
+  status?: string | null;
+  starlynxUserId?: string | null;
+  lastPackageId?: string | null;
+  lastPackageName?: string | null;
+};
+
+export type IptvSubscription = {
+  id: string | null;
+  userId: string | null;
+  username: string | null;
+  packageId: string | null;
+  packageName: string | null;
+  status: string | null;
+  startDate: string | null;
+  endDate: string | null;
+};
+
+export type IptvStatus = {
+  ok: boolean;
+  configured: boolean;
+  authenticated: boolean;
+  baseUrl: string;
+  adminEmail: string | null;
+  error: string | null;
+};
+
+export type IptvSettings = {
+  ok?: boolean;
+  baseUrl: string;
+  adminEmail: string;
+  passwordConfigured: boolean;
+  configured: boolean;
+};
+
+export type IptvSimulateResult = {
+  ok: boolean;
+  user: IptvRemoteUser | null;
+  subscription: IptvSubscription | null;
+  userCreated: boolean;
+  subscriptionCreated: boolean;
+  reusedExistingUser: boolean;
+};
+
+export type IptvUserAccessResult = {
+  ok: boolean;
+  userId: string;
+  disconnected?: boolean;
+  reconnected?: boolean;
+  alreadyActive?: boolean;
+  alreadyDisconnected?: boolean;
+  cancelledSubscriptions?: number;
+  sessionsEnded?: number;
+  userStatus?: string | null;
+  user?: IptvRemoteUser | null;
+  subscription: IptvSubscription | null;
+  subscriptions?: IptvSubscription[];
+};
+
 export type ReconciliationRecommendation = {
   action: string;
   label: string;
@@ -1282,7 +1390,12 @@ export type Stats = {
     buildings: number;
     agencies: number;
     topBuildings: Array<{ building: string; subscribers: number }>;
-    topPackages: Array<{ package: string; mbps: number; subscribers: number }>;
+    topPackages: Array<{
+      package: string;
+      mbps: number;
+      premiseType?: "apartment" | "shop";
+      subscribers: number;
+    }>;
     avgCustomerPayment: number;
     avgPaymentsPerCustomer: number;
     tispActive: number;
@@ -1324,6 +1437,8 @@ export type Stats = {
 
 export type PartnerDashboard = {
   period: { months: number; from: string };
+  partnerType?: "investor" | "dstv" | "internet" | null;
+  customerScope?: "all" | "dstv";
   customers: {
     total: number;
     active: number;
@@ -2135,6 +2250,93 @@ export const api = {
     }>(`/admin/activity/audit${qs ? `?${qs}` : ""}`);
   },
 
+  getIptvStatus: () => request<IptvStatus>("/admin/iptv/status"),
+
+  getIptvSettings: () => request<IptvSettings>("/admin/iptv/settings"),
+
+  updateIptvSettings: (data: {
+    baseUrl?: string;
+    adminEmail?: string;
+    adminPassword?: string;
+  }) =>
+    request<{
+      ok: boolean;
+      settings: IptvSettings;
+      status: IptvStatus;
+    }>("/admin/iptv/settings", {
+      method: "PUT",
+      body: JSON.stringify(data),
+      timeoutMs: 45_000,
+    }),
+
+  getIptvChannels: async () => {
+    const res = await request<{
+      ok: boolean;
+      items?: IptvChannel[];
+      channels?: IptvChannel[];
+      total?: number;
+    }>("/admin/iptv/channels", { timeoutMs: 45_000 });
+    const items = Array.isArray(res.items)
+      ? res.items
+      : Array.isArray(res.channels)
+        ? res.channels
+        : [];
+    return {
+      ...res,
+      items,
+      total: Number.isFinite(Number(res.total)) ? Number(res.total) : items.length,
+    };
+  },
+
+  getIptvPackages: async () => {
+    const res = await request<{ ok: boolean; packages?: IptvPackage[] }>(
+      "/admin/iptv/packages",
+      { timeoutMs: 45_000 }
+    );
+    return { ...res, packages: Array.isArray(res.packages) ? res.packages : [] };
+  },
+
+  getIptvUsers: async () => {
+    const res = await request<{ ok: boolean; users?: IptvRemoteUser[] }>(
+      "/admin/iptv/users",
+      { timeoutMs: 45_000 }
+    );
+    return { ...res, users: Array.isArray(res.users) ? res.users : [] };
+  },
+
+  simulateIptvCustomer: (data: {
+    email: string;
+    username: string;
+    phoneNumber?: string;
+    address?: string;
+    packageId: string;
+    durationMonths?: number;
+  }) =>
+    request<IptvSimulateResult>("/admin/iptv/simulate", {
+      method: "POST",
+      body: JSON.stringify(data),
+      timeoutMs: 45000,
+    }),
+
+  disconnectIptvUser: (userId: string) =>
+    request<IptvUserAccessResult>(
+      `/admin/iptv/users/${encodeURIComponent(userId)}/disconnect`,
+      { method: "POST", timeoutMs: 45_000 }
+    ),
+
+  reconnectIptvUser: (
+    userId: string,
+    data: { packageId?: string; durationMonths?: number } = {}
+  ) =>
+    request<IptvUserAccessResult>(
+      `/admin/iptv/users/${encodeURIComponent(userId)}/reconnect`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+        timeoutMs: 45_000,
+      }
+    ),
+
   getTransactions: (params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request<Paginated<UnifiedTransaction>>(
@@ -2640,6 +2842,7 @@ export const api = {
     price: number;
     monthlyPrice?: number;
     extraBandwidth?: number;
+    premiseType: "apartment" | "shop";
   }) =>
     request<{
       ok: boolean;
@@ -2668,6 +2871,7 @@ export const api = {
       isActive: boolean;
       hasDstv: boolean;
       paymentFrequency: string;
+      premiseType: "apartment" | "shop";
     }>
   ) =>
     request<{
@@ -3200,8 +3404,12 @@ export const api = {
   },
 
   getCustomer: (id: number, refresh = false) =>
-    request<{ customer: Customer; events: CustomerEvent[]; pendingUpgrade?: PendingUpgrade | null }>(
-      `/admin/customers/${id}${refresh ? "?refresh=true" : ""}`
+    coalesceInflight(
+      `customer:${id}:${refresh ? "refresh" : "read"}`,
+      () =>
+        request<{ customer: Customer; events: CustomerEvent[]; pendingUpgrade?: PendingUpgrade | null }>(
+          `/admin/customers/${id}${refresh ? "?refresh=true" : ""}`
+        )
     ),
 
   refreshCustomer: (id: number) =>
@@ -3269,20 +3477,22 @@ export const api = {
     }),
 
   getCustomerInvoices: (id: number) =>
-    request<{
-      invoices: ZohoInvoice[];
-      zohoLinked: boolean;
-      zohoContactId: string | null;
-      billedViaAgency?: boolean;
-      agencyName?: string | null;
-      billingNote?: string | null;
-      lastSyncedAt?: string | null;
-      fromSnapshot?: boolean;
-      cacheFresh?: boolean;
-      creditBalance?: number;
-      hasFormerTenantInvoices?: boolean;
-      formerTenantInvoiceCount?: number;
-    }>(`/admin/customers/${id}/invoices`),
+    coalesceInflight(`customer:${id}:invoices`, () =>
+      request<{
+        invoices: ZohoInvoice[];
+        zohoLinked: boolean;
+        zohoContactId: string | null;
+        billedViaAgency?: boolean;
+        agencyName?: string | null;
+        billingNote?: string | null;
+        lastSyncedAt?: string | null;
+        fromSnapshot?: boolean;
+        cacheFresh?: boolean;
+        creditBalance?: number;
+        hasFormerTenantInvoices?: boolean;
+        formerTenantInvoiceCount?: number;
+      }>(`/admin/customers/${id}/invoices`)
+    ),
 
   getCustomerPayments: (id: number, params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
@@ -3315,7 +3525,7 @@ export const api = {
     request<{
       ok: boolean;
       customer: Customer;
-      tisp: { ok: boolean; error?: string };
+      tisp: { ok: boolean; error?: string; skipped?: boolean; reason?: string; dueDate?: string };
       zoho?: {
         ok: boolean;
         error?: string;
@@ -3394,13 +3604,15 @@ export const api = {
       customPeriodDays?: number;
       productId?: number;
       /**
-       * Allow admin package/frequency correction on edit without Upgrade/Downgrade.
+       * Local package/frequency correction on edit without Upgrade/Downgrade.
        * Updates the database only; does not create Zoho price-difference invoices.
+       * Requires customers.package_edit.
        */
       forceLocalPackageCorrection?: boolean;
       ipAddress?: string;
       dstvDecoderSerial?: string | null;
       tvCount?: number;
+      extraDecoderCount?: number;
       /** Create Zoho signup invoice when provisioning a missing Zoho contact (default false). */
       createInitialInvoice?: boolean;
       /** Create Zoho recurring when provisioning missing Zoho contact (default false). */
@@ -3419,6 +3631,8 @@ export const api = {
         error?: string;
         created?: boolean;
         updated?: boolean;
+        skipped?: boolean;
+        reason?: string;
         dueDate?: string | null;
       };
       zoho?: {
@@ -3437,11 +3651,46 @@ export const api = {
         recurring?: {
           created?: boolean;
           updated?: boolean;
+          startDate?: string;
         };
       };
     }>(`/admin/customers/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+
+  listCustomerNotes: (params: Record<string, string | undefined> = {}) =>
+    request<Paginated<Customer>>(`/admin/customers/notes${buildQueryString(params)}`),
+
+  getCustomerNoteFollowUp: (id: number) =>
+    request<{
+      ok: boolean;
+      followUp: Customer["noteFollowUp"];
+    }>(`/admin/customers/${id}/note-followup`),
+
+  updateCustomerNotes: (
+    id: number,
+    notes: string,
+    followUp?: { dueDate?: string | null; priority?: string } | null
+  ) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      followUp?: {
+        ok: boolean;
+        id?: number;
+        title?: string;
+        dueDate?: string | null;
+        status?: string;
+        created?: boolean;
+        error?: string;
+      } | null;
+    }>(`/admin/customers/${id}/notes`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        notes,
+        ...(followUp ? { followUp } : {}),
+      }),
     }),
 
   updateCustomerTvCount: (id: number, tvCount: number) =>
@@ -3456,30 +3705,32 @@ export const api = {
     }),
 
   getCustomerIntegrations: (id: number) =>
-    request<{
-      customerId: number;
-      customerNumber: string;
-      customerType: string;
-      status?: string;
-      onTisp: boolean;
-      onZoho: boolean;
-      zohoContactId: string | null;
-      zohoContactStatus?: string | null;
-      zohoCompanyName?: string | null;
-      zohoInactive?: boolean;
-      formerTenantArchived?: boolean;
-      tispDueDate: string | null;
-      isB2B: boolean;
-      invoiceCount: number;
-      invoicesInSync: boolean;
-      lastPaymentDate: string | null;
-      zohoLastPaymentDate: string | null;
-      paymentsInSync: boolean;
-      hasActiveRecurring: boolean;
-      recurringCount: number;
-      recurringStatus: string | null;
-      nextRecurringDate: string | null;
-    }>(`/admin/customers/${id}/integrations`),
+    coalesceInflight(`customer:${id}:integrations`, () =>
+      request<{
+        customerId: number;
+        customerNumber: string;
+        customerType: string;
+        status?: string;
+        onTisp: boolean;
+        onZoho: boolean;
+        zohoContactId: string | null;
+        zohoContactStatus?: string | null;
+        zohoCompanyName?: string | null;
+        zohoInactive?: boolean;
+        formerTenantArchived?: boolean;
+        tispDueDate: string | null;
+        isB2B: boolean;
+        invoiceCount: number;
+        invoicesInSync: boolean;
+        lastPaymentDate: string | null;
+        zohoLastPaymentDate: string | null;
+        paymentsInSync: boolean;
+        hasActiveRecurring: boolean;
+        recurringCount: number;
+        recurringStatus: string | null;
+        nextRecurringDate: string | null;
+      }>(`/admin/customers/${id}/integrations`)
+    ),
 
   getCustomerOltStatus: (id: number) =>
     request<{
@@ -3745,8 +3996,12 @@ export const api = {
         endDate: string;
         reason: string;
         creditDays?: number;
+        creditAmount?: number;
         originalDueDate?: string | null;
         creditedDueDate?: string | null;
+        allowanceDays?: number;
+        daysUsed?: number;
+        daysRemaining?: number;
       };
       tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
       zoho?: {
@@ -3756,12 +4011,90 @@ export const api = {
         recurring?: {
           deferred: number;
           matched: number;
+          failed?: number;
           resumeDate?: string;
         };
+        creditNote?: {
+          skipped?: boolean;
+          amount?: number;
+          creditNoteId?: string | null;
+          creditNoteNumber?: string | null;
+          error?: string;
+        };
+      };
+      email?: {
+        ok?: boolean;
+        skipped?: boolean;
+        reason?: string;
+        error?: string;
       };
     }>(`/admin/customers/${id}/pause`, {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+
+  pauseCustomerIndefinitely: (id: number, payload: { reason: string; notes?: string }) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      pause?: { indefinite: boolean; reason: string; startDate?: string | null };
+      tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+      olt?: { ok?: boolean; skipped?: boolean; error?: string; reason?: string };
+      iptv?: { ok?: boolean; skipped?: boolean; error?: string; reason?: string; userId?: string };
+      zoho?: {
+        ok?: boolean;
+        skipped?: boolean;
+        b2b?: boolean;
+        stopped?: number;
+        error?: string;
+        reason?: string;
+      };
+      email?: { ok?: boolean; skipped?: boolean; reason?: string; error?: string };
+    }>(`/admin/customers/${id}/pause-indefinite`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  restartCustomer: (id: number) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      pause?: { indefinite?: boolean; reason?: string | null; dueDate?: string | null };
+      tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+      olt?: { ok?: boolean; skipped?: boolean; error?: string; reason?: string };
+      iptv?: { ok?: boolean; skipped?: boolean; error?: string; reason?: string };
+      zoho?: {
+        ok?: boolean;
+        skipped?: boolean;
+        b2b?: boolean;
+        resumed?: number;
+        error?: string;
+        reason?: string;
+      };
+    }>(`/admin/customers/${id}/restart`, {
+      method: "POST",
+    }),
+
+  resumeCustomer: (id: number) =>
+    request<{
+      ok: boolean;
+      customer: Customer;
+      pause?: {
+        allowanceDays?: number;
+        daysUsed?: number;
+        daysRemaining?: number;
+      };
+      tisp?: { ok: boolean; skipped?: boolean; dueDate?: string; error?: string; reason?: string };
+      olt?: { ok?: boolean; skipped?: boolean; error?: string; reason?: string };
+      zoho?: {
+        ok?: boolean;
+        skipped?: boolean;
+        updated?: number;
+        error?: string;
+        reason?: string;
+      };
+    }>(`/admin/customers/${id}/resume`, {
+      method: "POST",
     }),
 
   deleteCustomerPermanently: (id: number) =>

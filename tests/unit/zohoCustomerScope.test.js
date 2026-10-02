@@ -4,8 +4,11 @@ const {
   zohoContactMatchesDashboardCustomer,
   invoicesPredateCustomer,
   zohoContactLooksReusedByFormerTenant,
+  scoreExistingZohoContact,
   filterInvoicesForCurrentTenant,
   isZohoContactOlderThanCustomer,
+  isZohoDuplicateContactError,
+  uniquifyZohoContactDisplayName,
 } = require("../../api/utils/zohoCustomerScope");
 const {
   resolveAdvancePaymentCoverage,
@@ -131,5 +134,109 @@ describe("B2B → C2B conversion invoice coverage", () => {
     );
     assert.equal(coverage.includePackage, true);
     assert.equal(coverage.includeDecoder, false);
+  });
+});
+
+describe("Zoho duplicate contact recovery", () => {
+  it("detects Books duplicate Display Name errors", () => {
+    assert.equal(
+      isZohoDuplicateContactError({
+        code: 3062,
+        message: "Customer already exists with this name.",
+      }),
+      true
+    );
+    assert.equal(
+      isZohoDuplicateContactError({
+        response: {
+          data: { message: "The contact name already exists" },
+        },
+      }),
+      true
+    );
+    assert.equal(
+      isZohoDuplicateContactError({ message: "Invalid email address" }),
+      false
+    );
+  });
+
+  it("suffixes the customer number when Display Name is taken", () => {
+    assert.equal(
+      uniquifyZohoContactDisplayName("Tickle Right", "ET-H302"),
+      "Tickle Right (ET-H302)"
+    );
+    assert.equal(
+      uniquifyZohoContactDisplayName("Tickle Right (ET-H302)", "ET-H302"),
+      "Tickle Right (ET-H302)"
+    );
+    assert.equal(uniquifyZohoContactDisplayName("", "ET-H302"), "ET-H302");
+    assert.equal(
+      uniquifyZohoContactDisplayName("ET-H302", "ET-H302"),
+      "ET-H302"
+    );
+  });
+});
+
+describe("scoreExistingZohoContact", () => {
+  const customer = {
+    customerNumber: "ET-H12",
+    firstName: "Jane",
+    lastName: "Doe",
+    email: "jane@example.com",
+    phone: "0712345678",
+  };
+
+  it("accepts an email match when company name is not another customer number", () => {
+    const scored = scoreExistingZohoContact(
+      {
+        contact_id: "1",
+        contact_name: "Someone Else",
+        company_name: "Jane Doe",
+        email: "jane@example.com",
+      },
+      customer
+    );
+    assert.equal(scored.accept, true);
+    assert.equal(scored.emailHit, true);
+  });
+
+  it("accepts a contact-person email and name", () => {
+    const scored = scoreExistingZohoContact(
+      {
+        contact_id: "2",
+        contact_name: "Household",
+        company_name: "",
+        contact_persons: [
+          { first_name: "Jane", last_name: "Doe", email: "jane@example.com" },
+        ],
+      },
+      customer
+    );
+    assert.equal(scored.accept, true);
+    assert.equal(scored.nameHit, true);
+  });
+
+  it("rejects a different apartment number unless name and email both match", () => {
+    const otherApartment = scoreExistingZohoContact(
+      {
+        contact_id: "3",
+        contact_name: "Jane Doe",
+        company_name: "CL-A10",
+        email: "other@example.com",
+      },
+      customer
+    );
+    assert.equal(otherApartment.accept, false);
+
+    const samePerson = scoreExistingZohoContact(
+      {
+        contact_id: "4",
+        contact_name: "Jane Doe",
+        company_name: "CL-A10",
+        email: "jane@example.com",
+      },
+      customer
+    );
+    assert.equal(samePerson.accept, true);
   });
 });

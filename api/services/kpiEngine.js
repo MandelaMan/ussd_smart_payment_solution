@@ -8,7 +8,8 @@
  * - MRR: sum of frequency-normalized package_price for status=active customers
  * - ARR: MRR × 12
  * - ARPU: MRR / active customers
- * - Revenue (collected): SUCCESS payment_transactions.amount in period
+ * - Revenue (collected): SUCCESS M-Pesa amounts plus each Zoho payment_id once
+ *   (agency remittances are stored on every customer of that Zoho contact)
  * - Collection Rate: Revenue(collected in period) / MRR × 100
  *   (period collections vs current monthly recurring obligation)
  * - Outstanding Balance: SUM(zoho balance_due > 0)
@@ -22,6 +23,7 @@
  */
 
 const { query } = require("../config/db");
+const { zohoDistinctPaymentsSql } = require("../utils/collectedRevenueSql");
 
 const METRIC_DICTIONARY = [
   { key: "mrr", label: "Monthly Recurring Revenue (MRR)", unit: "KES" },
@@ -180,6 +182,8 @@ async function getKpiSnapshot(filters = {}, rangeInput = {}) {
     [mrrRow],
     [revenueNow],
     [revenuePrev],
+    [zohoRevenueNow],
+    [zohoRevenuePrev],
     [outstanding],
     [dstvRow],
     [paymentMix],
@@ -241,6 +245,22 @@ async function getKpiSnapshot(filters = {}, rangeInput = {}) {
       [...prevDateParams, ...filterParams]
     ),
     query(
+      `SELECT COALESCE(SUM(zp.amount), 0) AS revenue
+       FROM ${zohoDistinctPaymentsSql("WHERE payment_date >= ? AND payment_date <= ?")} zp
+       JOIN customers c ON c.id = zp.customer_id
+       LEFT JOIN products p ON p.id = c.product_id
+       WHERE 1=1${filterSql}`,
+      [range.from, range.to, ...filterParams]
+    ),
+    query(
+      `SELECT COALESCE(SUM(zp.amount), 0) AS revenue
+       FROM ${zohoDistinctPaymentsSql("WHERE payment_date >= ? AND payment_date <= ?")} zp
+       JOIN customers c ON c.id = zp.customer_id
+       LEFT JOIN products p ON p.id = c.product_id
+       WHERE 1=1${filterSql}`,
+      [prev.from, prev.to, ...filterParams]
+    ),
+    query(
       `SELECT COALESCE(SUM(zi.balance_due), 0) AS outstanding
        FROM zoho_customer_invoices zi
        JOIN customers c ON c.id = zi.customer_id
@@ -286,8 +306,8 @@ async function getKpiSnapshot(filters = {}, rangeInput = {}) {
   const prevChurned = Number(prevCounts?.churned || 0);
   const prevActive = Number(prevCounts?.active || 0);
   const mrr = round0(mrrRow?.mrr);
-  const collected = Number(revenueNow?.revenue || 0);
-  const collectedPrev = Number(revenuePrev?.revenue || 0);
+  const collected = Number(revenueNow?.revenue || 0) + Number(zohoRevenueNow?.revenue || 0);
+  const collectedPrev = Number(revenuePrev?.revenue || 0) + Number(zohoRevenuePrev?.revenue || 0);
   const outstandingBal = Number(outstanding?.outstanding || 0);
   const collectionRate = computeCollectionRate(collected, mrr);
   const churnRate = computeChurnRate(churned, active);

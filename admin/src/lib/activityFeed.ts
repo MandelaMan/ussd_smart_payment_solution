@@ -20,6 +20,7 @@ export const CUSTOMER_ACTIVITY_EVENT_TYPES = [
   "installation_updated",
   "customer_type_changed",
   "customer_paused",
+  "customer_resumed",
   "tisp_reconnected",
   "tisp_reconnect_failed",
   "customer_disconnected",

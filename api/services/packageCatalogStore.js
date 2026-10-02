@@ -5,11 +5,55 @@ const DSTV_ONLY_CATEGORY_CODE = "dstv_only";
 const DSTV_ONLY_PRODUCT_NAME = "DSTV Only";
 
 function isDstvOnlyCategory(codeOrName) {
-  const raw = String(codeOrName || "").trim().toLowerCase();
+  const raw = String(codeOrName || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  if (!raw) return false;
+  return raw === "dstv only" || raw.includes("dstv only");
+}
+
+/**
+ * True when a product / customer context is DSTV Only (no ISP bandwidth).
+ * These accounts are billed in Zoho Books and must never be created on TISP.
+ */
+function isDstvOnlyRecord(record) {
+  if (record == null) return false;
+  if (typeof record !== "object") return isDstvOnlyCategory(record);
+  const labels = [
+    record.category_code,
+    record.categoryCode,
+    record.category_name,
+    record.categoryName,
+    record.product_name,
+    record.productName,
+    record.plan_name,
+    record.planName,
+    record.name,
+  ];
+  if (labels.some((value) => isDstvOnlyCategory(value))) return true;
+
+  const mbps = Number(
+    record.product_mbps ?? record.productMbps ?? record.mbps
+  );
+  const extra = Number(
+    record.product_extra_bandwidth ??
+      record.productExtraBandwidth ??
+      record.extra_bandwidth ??
+      record.extraBandwidth ??
+      0
+  );
+  const hasDstv = Boolean(
+    record.has_dstv ||
+      record.hasDstv ||
+      record.product_has_dstv ||
+      record.productHasDstv
+  );
   return (
-    raw === DSTV_ONLY_CATEGORY_CODE ||
-    raw === "dstv only" ||
-    raw === "dstv_only"
+    hasDstv &&
+    Number.isFinite(mbps) &&
+    mbps <= 0 &&
+    (!Number.isFinite(extra) || extra <= 0)
   );
 }
 
@@ -133,15 +177,21 @@ async function getPlanVariantDetails(planVariantId) {
   };
 }
 
-async function getMonthlyProductPriceForPlan(buildingId, planId) {
-  const rows = await query(
-    `SELECT p.price
+async function getMonthlyProductPriceForPlan(buildingId, planId, premiseType) {
+  const params = [buildingId, planId];
+  let sql = `SELECT p.price
      FROM products p
      JOIN package_plan_variants v ON v.id = p.plan_variant_id
-     WHERE p.building_id = ? AND v.plan_id = ? AND v.payment_frequency = 'monthly'
-     LIMIT 1`,
-    [buildingId, planId]
-  );
+     WHERE p.building_id = ? AND v.plan_id = ? AND v.payment_frequency = 'monthly'`;
+  const premise = String(premiseType || "")
+    .trim()
+    .toLowerCase();
+  if (premise === "apartment" || premise === "shop") {
+    sql += ` AND p.premise_type = ?`;
+    params.push(premise);
+  }
+  sql += ` LIMIT 1`;
+  const rows = await query(sql, params);
   return rows[0] ? Number(rows[0].price) : null;
 }
 
@@ -150,6 +200,7 @@ module.exports = {
   DSTV_ONLY_CATEGORY_CODE,
   DSTV_ONLY_PRODUCT_NAME,
   isDstvOnlyCategory,
+  isDstvOnlyRecord,
   buildProductName,
   listPackageCatalog,
   getPlanVariantDetails,

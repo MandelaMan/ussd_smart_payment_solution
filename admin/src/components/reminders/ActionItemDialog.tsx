@@ -301,6 +301,11 @@ export function ActionItemDialog({ itemId, onClose, onChanged }: Props) {
               </Text>
             ) : null}
 
+            {item.typeKey === "note_followup" ? (
+              <Text fontSize="xs" color="fg.muted" mb={1}>
+                Customer note
+              </Text>
+            ) : null}
             {item.description ? (
               <Text fontSize="sm" color="fg" mb={3} whiteSpace="pre-wrap">
                 {item.description}

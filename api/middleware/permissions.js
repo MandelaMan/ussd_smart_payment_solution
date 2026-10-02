@@ -35,6 +35,22 @@ async function ensureReqPermissionSet(req) {
 }
 
 /**
+ * True when the authenticated user may perform `key`.
+ * Administrators always pass; other users need the key on this request.
+ */
+function hasReqPermission(req, key) {
+  if (!req?.user || !key) return false;
+  if (isAdministrator(req.user.role)) return true;
+  if (req.userPermissionSet instanceof Set) {
+    return req.userPermissionSet.has(key);
+  }
+  if (Array.isArray(req.userPermissions)) {
+    return req.userPermissions.includes(key);
+  }
+  return false;
+}
+
+/**
  * Require at least one of the given permission keys.
  */
 function requirePermission(...keys) {
@@ -100,6 +116,7 @@ function requireAdministrator(req, res, next) {
 module.exports = {
   attachPermissions,
   ensureReqPermissionSet,
+  hasReqPermission,
   requirePermission,
   requireAllPermissions,
   requireAdministrator,

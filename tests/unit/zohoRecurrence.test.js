@@ -67,7 +67,7 @@ describe("recurrenceMatches against Zoho payloads", () => {
     assert.equal(recurrenceMatches({ frequency: "Yearly" }, yearly), true);
   });
 
-  it("prefers the active profile and leaves extras to stop", () => {
+  it("prefers the active profile and leaves extras to remove", () => {
     const stopped = {
       recurring_invoice_id: "old",
       status: "stopped",

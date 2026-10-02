@@ -23,7 +23,7 @@ export function useBillingSync(onComplete?: () => void) {
       }
       toaster.success({
         title: "Sync completed",
-        description: `${result.customersScanned} customers · ${result.issuesFound} issues`,
+        description: `${result.customersScanned} customers - ${result.issuesFound} issues`,
       });
       onComplete?.();
       return true;

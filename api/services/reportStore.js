@@ -1,4 +1,5 @@
 const { query } = require("../config/db");
+const { liveCustomerNumber } = require("../utils/customerNumber");
 const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
 const { attributeDocumentAmount, unitWeight } = require("../utils/b2bDocumentAttribution");
 const { projectRecurringDatesInSpan } = require("../utils/billingMatrixProjection");
@@ -8,6 +9,13 @@ const {
   resolveDateRange: resolveKpiDateRange,
 } = require("./kpiEngine");
 const { monthYearLabel } = require("./billingForecastStore");
+const {
+  runWithPartnerCustomerScope,
+  dstvCustomerSql,
+  dstvProductSql,
+  dstvPaymentSql,
+  kpiFiltersForPartnerScope,
+} = require("../rbac/partnerAccess");
 
 /**
  * Report catalog. `family` is the Reports IA grouping.
@@ -384,6 +392,15 @@ const REPORT_DEFINITIONS = [
     dateFilter: true,
   },
   {
+    id: "customer-cancellation",
+    title: "Customer Cancellation Report",
+    description:
+      "Cancelled customers in the selected period, with contact, premise, package, equipment collection, and move-out reason.",
+    category: "Customer",
+    family: "Customer",
+    dateFilter: true,
+  },
+  {
     id: "dstv-iuc-roster",
     title: "DSTV IUC / Serial Roster",
     description: "DSTV customers with IUC/serial, building, and status.",
@@ -591,6 +608,7 @@ const PARTNER_REPORT_IDS = new Set([
   "customer-lifecycle",
   "new-subscribers",
   "churn-analysis",
+  "customer-cancellation",
   "monthly-payment-churn",
   "payment-frequency-mix",
   "business-health-summary",
@@ -607,12 +625,15 @@ function listReportDefinitions() {
   }));
 }
 
-function listPartnerReportDefinitions() {
-  return listReportDefinitions().filter((r) => PARTNER_REPORT_IDS.has(r.id));
+const DSTV_PARTNER_EXTRA_REPORT_IDS = new Set(["dstv-iuc-roster"]);
+
+function listPartnerReportDefinitions(partnerType) {
+  return listReportDefinitions().filter((r) => isPartnerReport(r.id, partnerType));
 }
 
-function isPartnerReport(id) {
-  return PARTNER_REPORT_IDS.has(id);
+function isPartnerReport(id, partnerType) {
+  if (PARTNER_REPORT_IDS.has(id)) return true;
+  return partnerType === "dstv" && DSTV_PARTNER_EXTRA_REPORT_IDS.has(id);
 }
 
 function getReportDefinition(id) {
@@ -720,7 +741,7 @@ async function revenueSummary(from, to) {
       SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
       SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
       COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-     FROM payment_transactions ${clause}
+     FROM payment_transactions ${clause}${dstvPaymentSql("payment_transactions")}
      GROUP BY DATE(created_at)
      ORDER BY day ASC`,
     params
@@ -797,7 +818,7 @@ async function channelBreakdown(from, to) {
       SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
       SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
       COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-     FROM payment_transactions ${clause}
+     FROM payment_transactions ${clause}${dstvPaymentSql("payment_transactions")}
      GROUP BY channel
      ORDER BY revenue DESC`,
     params
@@ -852,6 +873,7 @@ async function subscriberCensus() {
       COUNT(*) AS total_count
      FROM customers c
      JOIN buildings b ON b.id = c.building_id
+     WHERE 1=1${dstvCustomerSql("c")}
      GROUP BY b.name, c.customer_type
      ORDER BY b.name, c.customer_type`
   );
@@ -879,6 +901,7 @@ async function packageDistribution() {
      FROM customers c
      JOIN products p ON p.id = c.product_id
      JOIN buildings b ON b.id = c.building_id
+     WHERE 1=1${dstvProductSql("p")}
      GROUP BY b.name, p.name, p.mbps, p.payment_frequency
      ORDER BY b.name, p.mbps DESC`
   );
@@ -914,7 +937,7 @@ async function customersByPopPackage() {
      FROM customers c
      JOIN products p ON p.id = c.product_id
      JOIN buildings b ON b.id = c.building_id
-     WHERE c.status = 'active'
+     WHERE c.status = 'active'${dstvProductSql("p")}
      GROUP BY b.id, b.name, p.id, p.name, p.mbps, c.payment_frequency
      ORDER BY b.name ASC, total_amount DESC, p.mbps DESC`
   );
@@ -968,7 +991,7 @@ async function buildingOccupancy() {
       SUM(CASE WHEN c.status = 'active' AND c.customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b_count,
       SUM(CASE WHEN c.status = 'active' AND c.customer_type = 'B2B' THEN 1 ELSE 0 END) AS b2b_count
      FROM buildings b
-     LEFT JOIN customers c ON c.building_id = b.id
+     LEFT JOIN customers c ON c.building_id = b.id${dstvCustomerSql("c")}
      GROUP BY b.id, b.name
      ORDER BY active_customers DESC`
   );
@@ -998,6 +1021,7 @@ async function agencyPerformance(from, to) {
      LEFT JOIN payment_transactions pt ON pt.account_reference = c.customer_number
        AND pt.status = 'SUCCESS'
        AND pt.created_at >= ? AND pt.created_at <= ?
+     WHERE 1=1${dstvCustomerSql("c")}
      GROUP BY a.id, a.name, a.email, a.phone
      ORDER BY revenue DESC`,
     [from, `${to} 23:59:59`]
@@ -1058,7 +1082,7 @@ async function customerLifecycle(from, to) {
      JOIN customers c ON c.id = e.customer_id
      LEFT JOIN products op ON op.id = e.old_product_id
      LEFT JOIN products np ON np.id = e.new_product_id
-     ${clause}
+     ${clause}${dstvCustomerSql("c")}
      ORDER BY e.created_at DESC
      LIMIT 5000`,
     params
@@ -1116,7 +1140,7 @@ async function newSubscribers(from, to) {
      FROM customers c
      JOIN buildings b ON b.id = c.building_id
      JOIN products p ON p.id = c.product_id
-     ${clause}
+     ${clause}${dstvProductSql("p")}
      ORDER BY c.created_at DESC
      LIMIT 5000`,
     params
@@ -1171,7 +1195,7 @@ async function collectionEfficiency(from, to) {
       SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
       ROUND(SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS success_rate,
       COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-     FROM payment_transactions ${clause}
+     FROM payment_transactions ${clause}${dstvPaymentSql("payment_transactions")}
      GROUP BY DATE(created_at)
      ORDER BY day ASC`,
     params
@@ -1201,6 +1225,7 @@ async function arpuAnalysis(from, to) {
      LEFT JOIN payment_transactions pt ON pt.account_reference = c.customer_number
        AND pt.status = 'SUCCESS'
        AND pt.created_at >= ? AND pt.created_at <= ?
+     WHERE 1=1${dstvCustomerSql("c")}
      GROUP BY b.id, b.name
      HAVING payers > 0
      ORDER BY arpu DESC`,
@@ -1210,6 +1235,180 @@ async function arpuAnalysis(from, to) {
     title: "ARPU by Building",
     headers,
     rows: rows.map((r) => formatRow(r, headers)),
+  };
+}
+
+/** Prefer the stored cancellation reason; older cancels only have it in the event note. */
+function resolveMoveOutReason(cancellationReason, eventNotes) {
+  const direct = String(cancellationReason || "").trim();
+  if (direct) return direct;
+  const notes = String(eventNotes || "").trim();
+  if (!notes) return "";
+  const labeled = notes.match(/^Reason:\s*(.*?)(?:\s*·|$)/i);
+  if (labeled && labeled[1].trim()) return labeled[1].trim();
+  return notes;
+}
+
+function originalCustomerNumber(historyNumber, archivedNumber) {
+  const fromHistory = String(historyNumber || "").trim();
+  if (fromHistory) return fromHistory.toUpperCase();
+  return liveCustomerNumber(archivedNumber);
+}
+
+function reportDateOnly(value) {
+  if (value == null || value === "") return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
+}
+
+function reportDateTime(value) {
+  if (value == null || value === "") return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().replace("T", " ").slice(0, 16);
+  }
+  return String(value).replace("T", " ").slice(0, 16);
+}
+
+async function customerCancellationReport(from, to) {
+  const headers = [
+    { key: "cancelled_at", label: "Cancelled" },
+    { key: "moved_out_at", label: "Moved out" },
+    { key: "original_customer_number", label: "Customer No." },
+    { key: "customer_number", label: "Archived account no." },
+    { key: "full_name", label: "Name" },
+    { key: "phone", label: "Phone" },
+    { key: "email", label: "Email" },
+    { key: "customer_type", label: "Type" },
+    { key: "premise_type", label: "Premise" },
+    { key: "business_name", label: "Business name" },
+    { key: "agency", label: "Agency" },
+    { key: "building", label: "Building" },
+    { key: "block", label: "Block" },
+    { key: "apartment_number", label: "Unit" },
+    { key: "shop_location", label: "Shop location" },
+    { key: "package", label: "Package" },
+    { key: "package_price", label: "Price (KES)" },
+    { key: "payment_frequency", label: "Billing" },
+    { key: "custom_period_days", label: "Custom period (days)" },
+    { key: "tv_count", label: "TVs" },
+    { key: "extra_decoder_count", label: "Extra decoders" },
+    { key: "subscription_status", label: "Service status" },
+    { key: "last_payment_date", label: "Last payment" },
+    { key: "created_at", label: "Signed up" },
+    { key: "tenure_days", label: "Tenure (days)" },
+    { key: "ip_address", label: "IP at move-out" },
+    { key: "move_out_reason", label: "Move-out reason" },
+    { key: "onu_collected_at", label: "ONU collected" },
+    { key: "dstv_decoder_collected_at", label: "DSTV decoder collected" },
+  ];
+
+  const rows = await query(
+    `SELECT
+       COALESCE(ev.created_at, h.moved_out_at, c.updated_at) AS cancelled_at,
+       h.moved_out_at,
+       c.customer_number,
+       h.customer_number AS history_customer_number,
+       TRIM(CONCAT_WS(' ',
+         NULLIF(TRIM(c.first_name), ''),
+         NULLIF(TRIM(c.middle_name), ''),
+         NULLIF(TRIM(c.last_name), '')
+       )) AS full_name,
+       c.phone,
+       c.email,
+       c.customer_type,
+       c.premise_type,
+       c.business_name,
+       a.name AS agency,
+       b.name AS building,
+       c.block,
+       c.apartment_number,
+       c.shop_location,
+       p.name AS package,
+       c.package_price,
+       c.payment_frequency,
+       c.custom_period_days,
+       c.tv_count,
+       c.extra_decoder_count,
+       c.subscription_status,
+       c.last_payment_date,
+       c.created_at,
+       DATEDIFF(COALESCE(ev.created_at, h.moved_out_at, c.updated_at), c.created_at) AS tenure_days,
+       NULLIF(TRIM(h.ip_address), '') AS ip_address,
+       c.cancellation_reason,
+       ev.notes AS cancel_notes,
+       COALESCE(c.onu_collected_at, h.onu_collected_at) AS onu_collected_at,
+       COALESCE(c.dstv_decoder_collected_at, h.dstv_decoder_collected_at) AS dstv_decoder_collected_at
+     FROM customers c
+     JOIN buildings b ON b.id = c.building_id
+     JOIN products p ON p.id = c.product_id
+     LEFT JOIN agencies a ON a.id = c.agency_id
+     LEFT JOIN apartment_history h
+       ON h.id = (
+         SELECT MAX(h2.id)
+         FROM apartment_history h2
+         WHERE h2.customer_id = c.id AND h2.reason = 'cancel'
+       )
+     LEFT JOIN customer_events ev
+       ON ev.id = (
+         SELECT MAX(e2.id)
+         FROM customer_events e2
+         WHERE e2.customer_id = c.id AND e2.event_type = 'cancel'
+       )
+     WHERE c.status = 'cancelled'
+       AND COALESCE(ev.created_at, h.moved_out_at, c.updated_at) >= ?
+       AND COALESCE(ev.created_at, h.moved_out_at, c.updated_at) <= ?
+       ${dstvProductSql("p")}
+     ORDER BY cancelled_at DESC
+     LIMIT 10000`,
+    [from, `${to} 23:59:59`]
+  );
+
+  const mapped = rows.map((row) => {
+    const moveOutReason = resolveMoveOutReason(row.cancellation_reason, row.cancel_notes);
+    return formatRow(
+      {
+        ...row,
+        cancelled_at: reportDateTime(row.cancelled_at),
+        moved_out_at: reportDateTime(row.moved_out_at),
+        created_at: reportDateTime(row.created_at),
+        last_payment_date: reportDateOnly(row.last_payment_date),
+        onu_collected_at: reportDateOnly(row.onu_collected_at),
+        dstv_decoder_collected_at: reportDateOnly(row.dstv_decoder_collected_at),
+        original_customer_number: originalCustomerNumber(
+          row.history_customer_number,
+          row.customer_number
+        ),
+        full_name: String(row.full_name || "").replace(/\s+/g, " ").trim(),
+        move_out_reason: moveOutReason,
+        subscription_status: String(row.subscription_status || "").trim()
+          ? normalizeSubscriptionStatus(row.subscription_status)
+          : "Cancelled",
+      },
+      headers
+    );
+  });
+
+  const reasonCounts = new Map();
+  for (const row of mapped) {
+    const label = String(row.move_out_reason || "").trim() || "Not recorded";
+    reasonCounts.set(label, (reasonCounts.get(label) || 0) + 1);
+  }
+  const reasonLines = [...reasonCounts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 8)
+    .map(([label, count]) => ({ label, value: count }));
+
+  return {
+    title: "Customer Cancellation Report",
+    headers,
+    rows: mapped,
+    summary: {
+      total: mapped.length,
+      totalLabel: "Cancellations",
+      lines: reasonLines,
+    },
   };
 }
 
@@ -1239,6 +1438,7 @@ async function churnAnalysis(from, to) {
      JOIN products p ON p.id = c.product_id
      WHERE c.status = 'cancelled'
        AND c.updated_at >= ? AND c.updated_at <= ?
+       ${dstvProductSql("p")}
      ORDER BY c.updated_at DESC
      LIMIT 5000`,
     [from, `${to} 23:59:59`]
@@ -1250,7 +1450,9 @@ async function churnAnalysis(from, to) {
   };
 }
 
-const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
+function monthlyPaymentChurnUnionSql() {
+  const dstv = dstvProductSql("p");
+  return `
   SELECT
     'cancelled' AS churn_reason,
     c.updated_at AS churned_at,
@@ -1272,6 +1474,7 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
   WHERE c.status = 'cancelled'
     AND c.updated_at >= ?
     AND c.updated_at <= ?
+    ${dstv}
 
   UNION ALL
 
@@ -1297,6 +1500,7 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
   WHERE e.event_type = 'disconnect'
     AND e.created_at >= ?
     AND e.created_at <= ?
+    ${dstv}
 
   UNION ALL
 
@@ -1328,6 +1532,7 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
       c.last_payment_date IS NULL
       OR c.last_payment_date < DATE_SUB(zi.due_date, INTERVAL 1 DAY)
     )
+    ${dstv}
   GROUP BY c.id, c.customer_number, c.first_name, c.middle_name, c.last_name,
            b.name, p.name, c.customer_type, c.subscription_status, c.last_payment_date
   HAVING DATE_ADD(MIN(zi.due_date), INTERVAL 14 DAY) <= ?
@@ -1360,9 +1565,11 @@ const MONTHLY_PAYMENT_CHURN_UNION_SQL = `
       c.last_payment_date IS NULL
       OR c.last_payment_date < DATE_SUB(?, INTERVAL 60 DAY)
     )
+    ${dstv}
   GROUP BY c.id, c.customer_number, c.first_name, c.middle_name, c.last_name,
            b.name, p.name, c.customer_type, c.subscription_status, c.last_payment_date
 `;
+}
 
 function monthlyPaymentChurnParams(period) {
   return [
@@ -1397,7 +1604,7 @@ async function getMonthlyPaymentChurnSummary(month) {
       `SELECT x.churn_reason AS reason,
               COUNT(*) AS count,
               COALESCE(SUM(x.outstanding_balance), 0) AS outstanding
-       FROM (${MONTHLY_PAYMENT_CHURN_UNION_SQL}) x
+       FROM (${monthlyPaymentChurnUnionSql()}) x
        GROUP BY x.churn_reason
        ORDER BY count DESC`,
       params
@@ -1405,7 +1612,7 @@ async function getMonthlyPaymentChurnSummary(month) {
     query(
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(x.outstanding_balance), 0) AS total_outstanding
-       FROM (${MONTHLY_PAYMENT_CHURN_UNION_SQL}) x`,
+       FROM (${monthlyPaymentChurnUnionSql()}) x`,
       params
     ),
   ]);
@@ -1477,7 +1684,7 @@ async function monthlyPaymentChurn(month) {
        x.last_payment_date,
        x.oldest_overdue_date,
        x.outstanding_balance
-     FROM (${MONTHLY_PAYMENT_CHURN_UNION_SQL}) x
+     FROM (${monthlyPaymentChurnUnionSql()}) x
      ORDER BY x.churned_at DESC
      LIMIT 10000`,
     [period.month, ...monthlyPaymentChurnParams(period)]
@@ -1513,9 +1720,9 @@ async function paymentFrequencyMix() {
   const rows = await query(
     `SELECT payment_frequency AS frequency,
       COUNT(*) AS active_count,
-      ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM customers WHERE status = 'active'), 1) AS share_pct
+      ROUND(COUNT(*) * 100.0 / NULLIF((SELECT COUNT(*) FROM customers WHERE status = 'active'${dstvCustomerSql("customers")}), 0), 1) AS share_pct
      FROM customers
-     WHERE status = 'active'
+     WHERE status = 'active'${dstvCustomerSql("customers")}
      GROUP BY payment_frequency
      ORDER BY active_count DESC`
   );
@@ -2700,7 +2907,7 @@ async function collectionGapByCustomer(month) {
 }
 
 async function businessHealthSummary(from, to) {
-  const kpis = await getKpiSnapshot({}, { from, to });
+  const kpis = await getKpiSnapshot(kpiFiltersForPartnerScope(), { from, to });
   const expected = await getExpectedCollections({ days: 30 }).catch(() => ({
     expectedCollections: 0,
     invoiceCount: 0,
@@ -2854,7 +3061,7 @@ async function revenueByPackageReport(from, to) {
      FROM payment_transactions pt
      JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
      LEFT JOIN products p ON p.id = c.product_id
-     ${clause} AND pt.status = 'SUCCESS'
+     ${clause} AND pt.status = 'SUCCESS'${dstvProductSql("p")}
      GROUP BY COALESCE(p.name, 'Unknown')
      ORDER BY revenue DESC
      LIMIT 500`,
@@ -2885,7 +3092,7 @@ async function revenueByRegionReport(from, to) {
      FROM payment_transactions pt
      JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
      LEFT JOIN buildings b ON b.id = c.building_id
-     ${clause} AND pt.status = 'SUCCESS'
+     ${clause} AND pt.status = 'SUCCESS'${dstvCustomerSql("c")}
      GROUP BY COALESCE(b.name, 'Unassigned')
      ORDER BY revenue DESC
      LIMIT 500`,
@@ -3129,7 +3336,7 @@ async function activeCustomersReport() {
      FROM customers c
      LEFT JOIN buildings b ON b.id = c.building_id
      LEFT JOIN products p ON p.id = c.product_id
-     WHERE c.status = 'active'
+     WHERE c.status = 'active'${dstvProductSql("p")}
      ORDER BY c.customer_number ASC
      LIMIT 15000`
   );
@@ -3214,6 +3421,7 @@ const RUNNERS = {
   "collection-efficiency": collectionEfficiency,
   "arpu-analysis": arpuAnalysis,
   "churn-analysis": churnAnalysis,
+  "customer-cancellation": customerCancellationReport,
   "monthly-payment-churn": monthlyPaymentChurn,
   "payment-frequency-mix": paymentFrequencyMix,
   "dstv-iuc-roster": dstvIucRoster,
@@ -3245,7 +3453,13 @@ const RUNNERS = {
   "customer-lifetime-value": customerLifetimeValueReport,
 };
 
-async function runReport(reportId, { from, to, month, year, monthFrom, monthTo } = {}) {
+async function runReport(reportId, { from, to, month, year, monthFrom, monthTo, customerScope = "all" } = {}) {
+  return runWithPartnerCustomerScope(customerScope, () =>
+    runReportInner(reportId, { from, to, month, year, monthFrom, monthTo })
+  );
+}
+
+async function runReportInner(reportId, { from, to, month, year, monthFrom, monthTo } = {}) {
   const def = getReportDefinition(reportId);
   if (!def) return null;
   if (def.available === false) {
@@ -3296,6 +3510,7 @@ module.exports = {
   listPartnerReportDefinitions,
   isPartnerReport,
   getReportDefinition,
+  resolveMoveOutReason,
   runReport,
   getMonthlyPaymentChurnSummary,
   getInvoicesVsPaymentsSummary,

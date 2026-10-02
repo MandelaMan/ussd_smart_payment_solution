@@ -240,7 +240,9 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
     [
       "One-time DSTV decoder charge",
       "Issued separately because advance payment covered Internet/package only",
-      `Decoder (from plan): KES ${Math.round(Number(decoderLine.rate) || 0)}`,
+      Number(decoderLine.quantity || 1) > 1
+        ? `Decoder (from plan): KES ${Math.round(Number(decoderLine.rate) || 0)} × ${decoderLine.quantity} = KES ${Math.round(Number(decoderLine.rate || 0) * Number(decoderLine.quantity || 1))}`
+        : `Decoder (from plan): KES ${Math.round(Number(decoderLine.rate) || 0)}`,
     ].join("\n");
 
   const invoice = await createInvoice_JS({
@@ -271,7 +273,10 @@ async function createDstvDecoderFeeInvoice(customer, zohoContact, options = {}) 
     created: true,
     invoiceId: String(invoice.invoice_id),
     invoiceNumber: invoice.invoice_number || null,
-    total: Number(invoice.total || decoderLine.rate),
+    total: Number(
+      invoice.total ||
+        Number(decoderLine.rate || 0) * Number(decoderLine.quantity || 1)
+    ),
     emailed: emailResult.emailed,
     emailReason: emailResult.reason,
     decoderOnly: true,
@@ -754,8 +759,8 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
   const bankReference = options.bankReference
     ? String(options.bankReference).trim()
     : "";
-  const paymentCoversInternet = options.paymentCoversInternet === true;
-  const paymentCoversDecoder = options.paymentCoversDecoder === true;
+  const paymentCoversInternet = options.paymentCoversInternet;
+  const paymentCoversDecoder = options.paymentCoversDecoder;
   const forceEmail = options.forceEmail === true && !paymentAlreadyMade;
   const skipEmail = options.skipEmail === true || paymentAlreadyMade;
 
@@ -811,9 +816,14 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     resolveAdvancePaymentCoverage,
     shouldIncludeDstvOneTimeFee,
   } = require("../utils/zohoInvoiceLineItems");
+  const coverage = resolveAdvancePaymentCoverage(customer, {
+    paymentAlreadyMade,
+    paymentCoversInternet,
+    paymentCoversDecoder,
+  });
 
   if (paymentAlreadyMade) {
-    if (!paymentCoversInternet && !paymentCoversDecoder) {
+    if (!coverage.includePackage && !coverage.includeDecoder) {
       return {
         ok: false,
         error:
@@ -824,7 +834,7 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     }
     if (
       !shouldIncludeDstvOneTimeFee(customer) &&
-      !paymentCoversInternet
+      !coverage.includePackage
     ) {
       return {
         ok: false,
@@ -836,7 +846,10 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
   }
 
   try {
-    const replaceFormerTenant = options.replaceFormerTenant !== false;
+    const thoroughMatch = options.thoroughMatch === true;
+    const replaceFormerTenant =
+      thoroughMatch ? false : options.replaceFormerTenant !== false;
+    const skipSignupInvoice = options.skipSignupInvoice === true;
     let zohoContact = await ensureZohoContactForCustomer(
       {
         ...customer,
@@ -844,7 +857,7 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         agencyId: ctx.agency_id,
         createdAt: ctx.created_at,
       },
-      { replaceFormerTenant }
+      { replaceFormerTenant, thoroughMatch }
     );
     if (!zohoContact?.contact_id) {
       throw new Error("Zoho contact could not be linked");
@@ -899,10 +912,57 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     // Advance payment / forced billing override the "existing contact → skip" rule.
     // Also bill when we retired a former tenant and created a fresh Zoho customer.
     const shouldBill =
-      contactCreated || forceBilling || paymentAlreadyMade || retiredFormer;
+      !skipSignupInvoice &&
+      (contactCreated || forceBilling || paymentAlreadyMade || retiredFormer);
 
-    // Pre-existing Zoho contact: link only. Signup / recurring are opt-in on edit.
-    if (!shouldBill) {
+    // Existing-customer import: never issue or email the onboarding invoice.
+    // A Zoho contact that already existed is linked only. A contact we had to
+    // create still gets a recurring profile so later cycles can bill.
+    if (skipSignupInvoice) {
+      invoice = {
+        created: false,
+        skipped: true,
+        reason: "existing_customer",
+        invoiceId: null,
+        invoiceNumber: null,
+        emailed: false,
+      };
+      if (!contactCreated) {
+        recurring = {
+          created: false,
+          skipped: true,
+          reason: "existing_zoho_contact",
+        };
+      } else {
+        const initialDue =
+          options.serviceDueDate || computeInvoiceDueDate(customer);
+        const recurringWindow = computeSignupRecurringWindow({
+          signupDate: new Date(),
+          paymentFrequency: customer.paymentFrequency,
+          customPeriodDays: customer.customPeriodDays,
+        });
+        try {
+          recurring = await ensureRecurringSubscription(customer, zohoContact, {
+            startDate: recurringWindow.startDate,
+          });
+          if (recurring && typeof recurring === "object") {
+            recurring.serviceDueDate = initialDue;
+            recurring.nextCycleDue = recurringWindow.nextCycleDue;
+            recurring.startDate = recurringWindow.startDate;
+          }
+        } catch (e) {
+          console.error("existing-customer recurring setup failed:", e.message);
+          recurring = {
+            created: false,
+            updated: false,
+            error: e.message || "recurring_setup_failed",
+            serviceDueDate: initialDue,
+            nextCycleDue: recurringWindow.nextCycleDue,
+            startDate: recurringWindow.startDate,
+          };
+        }
+      }
+    } else if (!shouldBill) {
       invoice = {
         created: false,
         skipped: true,
@@ -960,12 +1020,6 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
         throw e;
       }
     } else {
-      const coverage = resolveAdvancePaymentCoverage(customer, {
-        paymentAlreadyMade,
-        paymentCoversInternet,
-        paymentCoversDecoder,
-      });
-
       invoice = await createSignupInvoice(customer, zohoContact, {
         forceEmail,
         skipEmail,
@@ -1046,7 +1100,11 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
                   "Separate invoice — advance payment covered Internet/package only",
                   `Decoder (from plan): KES ${Math.round(
                     Number(customer.decoderFeeAmount || customer.decoder_fee_amount || 2900)
-                  )}`,
+                  )}${
+                    Number(customer.extraDecoderCount || customer.extra_decoder_count || 0) > 0
+                      ? ` × ${Number(customer.extraDecoderCount || customer.extra_decoder_count || 0) + 1} decoders`
+                      : ""
+                  }`,
                 ].join("\n"),
               }
             );
@@ -1234,7 +1292,8 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
     }
 
     const linkedExisting =
-      !contactCreated && invoice?.reason === "existing_zoho_contact";
+      skipSignupInvoice ||
+      (!contactCreated && invoice?.reason === "existing_zoho_contact");
 
     try {
       await logActivity({
@@ -1247,9 +1306,13 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
               : invoice.created
                 ? "zoho_invoice_created"
                 : "zoho_customer_linked",
-        title: linkedExisting
-          ? "Existing Zoho contact linked"
-          : hasTrial
+        title: skipSignupInvoice
+          ? contactCreated
+            ? "Existing customer added (no onboarding invoice)"
+            : "Existing Zoho contact linked (no onboarding invoice)"
+          : linkedExisting
+            ? "Existing Zoho contact linked"
+            : hasTrial
             ? "Trial period started"
             : invoice.paid
               ? "Signup invoice marked paid"
@@ -1258,9 +1321,15 @@ async function onboardNewCustomerBilling(customerId, options = {}) {
                 : invoice.reused
                   ? "Signup invoice already open"
                   : "Customer linked in Zoho",
-        message: linkedExisting
-          ? `${customer.customerNumber}: linked existing Zoho contact — signup/recurring skipped (use edit to bill)`
-          : hasTrial
+        message: skipSignupInvoice
+          ? `${customer.customerNumber}: ${
+              contactCreated
+                ? "no Zoho match — contact created"
+                : "linked existing Zoho contact"
+            } — onboarding invoice not sent`
+          : linkedExisting
+            ? `${customer.customerNumber}: linked existing Zoho contact — signup/recurring skipped (use edit to bill)`
+            : hasTrial
             ? `${customer.customerNumber}: 30-day trial — first invoice scheduled ${trialEndsAt}`
             : invoice.paid
               ? `${customer.customerNumber}: ${invoice.invoiceNumber || invoice.invoiceId} paid (${

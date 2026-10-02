@@ -8,6 +8,75 @@ export type VersionEntry = {
 /** Product versioning log — feature releases only (newest first). */
 export const VERSION_LOG: VersionEntry[] = [
   {
+    version: "1.23.0",
+    date: "2026-09-24",
+    title: "Customer cancellation report",
+    features: [
+      "Customer Cancellation Report lists cancelled customers with contact, premise, package, equipment collection dates, and move-out reason",
+    ],
+  },
+  {
+    version: "1.22.0",
+    date: "2026-09-18",
+    title: "IPTV disconnect and reconnect call Startlyx",
+    features: [
+      "Disconnect cancels the user's active Startlyx subscription and ends live sessions; reconnect re-subscribes the same Startlyx user to their last package",
+      "The status shown after disconnect or reconnect is read back from Startlyx instead of assumed",
+    ],
+  },
+  {
+    version: "1.21.0",
+    date: "2026-09-16",
+    title: "Activity and IPTV permissions",
+    features: [
+      "Activity and IPTV appear in Users & permissions so access can be granted like other modules, instead of being administrator-only",
+      "IPTV view, operate, and connection settings can be allocated separately",
+    ],
+  },
+  {
+    version: "1.20.0",
+    date: "2026-09-16",
+    title: "IPTV connection settings",
+    features: [
+      "Startlyx URL, admin email, and password are saved under Settings → IPTV and used by the IPTV console — no server .env restart required",
+    ],
+  },
+  {
+    version: "1.19.0",
+    date: "2026-09-16",
+    title: "Apartment and shop packages",
+    features: [
+      "Building prices are created as apartment or shop packages, and customers only see matching prices",
+    ],
+  },
+  {
+    version: "1.18.0",
+    date: "2026-09-15",
+    title: "IPTV test user disconnect and reconnect",
+    features: [
+      "Disconnect a Startlyx test subscriber by cancelling the active package, then reconnect by assigning it again",
+      "Pause days can be used in shorter stays, with the remaining balance shown until the allowance is exhausted",
+    ],
+  },
+  {
+    version: "1.17.0",
+    date: "2026-09-14",
+    title: "Admin IPTV console",
+    features: [
+      "Administrator-only IPTV module to test Startlyx: create a remote user, assign a package, and inspect live channel status",
+    ],
+  },
+  {
+    version: "1.16.0",
+    date: "2026-09-11",
+    title: "Partner types: Investor, DSTV, Internet",
+    features: [
+      "Partner access splits into Investor, DSTV Partner, and Internet Partner groups — all view-only",
+      "DSTV partners only see DSTV subscribers on customers, dashboards, and reports",
+      "Investors keep all customers with reports and analytics as the primary workspace",
+    ],
+  },
+  {
     version: "1.15.0",
     date: "2026-08-26",
     title: "Self-serve staff password reset",

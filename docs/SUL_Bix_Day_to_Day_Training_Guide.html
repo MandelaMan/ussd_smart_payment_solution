@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SUL Bix — Day-to-Day User Training Guide</title>
+<style>
+  :root {
+    --navy: #0f3d4c;
+    --cerulean: #166a82;
+    --azure: #6dcff6;
+    --sand: #f9a456;
+    --mindaro: #eaeeab;
+    --ink: #1a2332;
+    --muted: #5b6573;
+    --line: #d7dee6;
+    --paper: #ffffff;
+    --wash: #f4f8fa;
+    --do: #166534;
+    --do-bg: #ecfdf3;
+    --dont: #991b1b;
+    --dont-bg: #fef2f2;
+    --out: #1e4d6b;
+    --out-bg: #e8f4f8;
+    --tip: #92400e;
+    --tip-bg: #fff7ed;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    color: var(--ink);
+    font: 10.5pt/1.45 "Segoe UI", Calibri, Arial, sans-serif;
+    background: #fff;
+  }
+  @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
+  @media print {
+    .page { page-break-after: always; }
+    .page.cover { page-break-after: always; }
+    .keep { page-break-inside: avoid; break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+  .page.cover {
+    min-height: 250mm;
+    padding: 28mm 12mm 16mm;
+    background:
+      linear-gradient(165deg, var(--navy) 0%, var(--cerulean) 58%, #0b2c36 100%);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .cover-mark {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .cover-mark img {
+    height: 72px;
+    background: #fff;
+    border-radius: 10px;
+    padding: 8px 12px;
+  }
+  .eyebrow {
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--azure);
+    margin: 0 0 8px;
+  }
+  .cover h1 {
+    font-size: 32pt;
+    line-height: 1.1;
+    margin: 0 0 10px;
+    font-weight: 700;
+  }
+  .cover .lede {
+    font-size: 13pt;
+    max-width: 150mm;
+    color: rgba(255,255,255,.9);
+  }
+  .cover-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    border-top: 1px solid rgba(255,255,255,.25);
+    padding-top: 16px;
+    font-size: 9.5pt;
+  }
+  .cover-meta strong { display: block; color: var(--azure); font-size: 8pt; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
+  h1.sec { font-size: 18pt; color: var(--navy); margin: 0 0 8px; border-bottom: 3px solid var(--cerulean); padding-bottom: 6px; }
+  h2 { font-size: 13pt; color: var(--cerulean); margin: 16px 0 6px; }
+  h3 { font-size: 11pt; color: var(--navy); margin: 12px 0 4px; }
+  p { margin: 0 0 8px; }
+  ul, ol { margin: 0 0 8px; padding-left: 18px; }
+  li { margin: 0 0 3px; }
+  .toc a { color: var(--cerulean); text-decoration: none; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin: 3px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-size: 9.5pt; }
+  th, td { border: 1px solid var(--line); padding: 5px 7px; vertical-align: top; text-align: left; }
+  th { background: var(--navy); color: #fff; font-weight: 600; }
+  tr:nth-child(even) td { background: var(--wash); }
+  .chip {
+    display: inline-block;
+    font-size: 8pt;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #e6f3f7;
+    color: var(--cerulean);
+    margin: 0 3px 3px 0;
+    white-space: nowrap;
+  }
+  .chip.warn { background: #fff1e6; color: #9a4b12; }
+  .chip.danger { background: #fde8e8; color: #9b1c1c; }
+  .chip.ok { background: #e7f8ed; color: #166534; }
+  .callout {
+    border-left: 4px solid var(--cerulean);
+    background: var(--wash);
+    padding: 8px 10px;
+    margin: 8px 0 12px;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout.tip { border-left-color: var(--sand); background: var(--tip-bg); color: var(--tip); }
+  .callout.warn { border-left-color: var(--sand); background: #fff7ed; }
+  .process {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin: 0 0 12px;
+    overflow: hidden;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .process .hd {
+    background: var(--navy);
+    color: #fff;
+    padding: 8px 10px 7px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .process .hd h3 { color: #fff; margin: 0; font-size: 11.5pt; }
+  .process .no { color: var(--azure); font-size: 8pt; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
+  .process .bd { padding: 9px 10px 10px; }
+  .meta-row { font-size: 9.5pt; margin: 0 0 6px; color: var(--muted); }
+  .meta-row b { color: var(--navy); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .box { border-radius: 6px; padding: 7px 8px; font-size: 9.5pt; }
+  .box.do { background: var(--do-bg); color: var(--do); }
+  .box.dont { background: var(--dont-bg); color: var(--dont); }
+  .box.out { background: var(--out-bg); color: var(--out); grid-column: 1 / -1; }
+  .box b { display: block; font-size: 8pt; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 3px; }
+  .how { background: #f7fafc; border: 1px dashed var(--line); border-radius: 6px; padding: 7px 8px; margin: 6px 0; font-size: 9.5pt; }
+  .kicker { font-size: 8pt; letter-spacing: .14em; text-transform: uppercase; color: var(--cerulean); font-weight: 700; margin: 18px 0 4px; }
+  .footer-note { font-size: 8.5pt; color: var(--muted); margin-top: 10px; }
+  .agenda td:first-child { white-space: nowrap; font-weight: 600; color: var(--cerulean); width: 28mm; }
+</style>
+</head>
+<body>
+
+<section class="page cover">
+  <div>
+    <div class="cover-mark">
+      <img src="../admin/public/logo.png" alt="Starlynx Utility" />
+    </div>
+    <p class="eyebrow" style="margin-top:36px">Trainer edition · Internal use</p>
+    <h1>SUL Bix<br/>Day-to-Day User<br/>Training Guide</h1>
+    <p class="lede">A walk-through of every everyday process in BIX: who uses it, how it works, what happens after you click, and what to do — and not do — on the live system.</p>
+  </div>
+  <div class="cover-meta">
+    <div><strong>Product</strong>SUL Bix · Utility Admin</div>
+    <div><strong>Audience</strong>Staff, partners, and trainers</div>
+    <div><strong>Date</strong>September 2026 · v1.21</div>
+  </div>
+</section>
+
+<section class="page">
+  <h1 class="sec">How to use this guide</h1>
+  <p>This is the script you can hold while you train. Each process is written in the same shape so you can demonstrate, then let the trainee repeat.</p>
+  <div class="grid2">
+    <div class="callout">
+      <b>Before the room</b>
+      <ul>
+        <li>Confirm each trainee’s <b>group</b> in Settings → Users (Sales, Support, Billing, and so on). They will not see the same menus.</li>
+        <li>Prepare one test apartment and one test shop that are safe to change.</li>
+        <li>Have a cancelled apartment ready if you will show “new tenant after cancel”.</li>
+        <li>Log in as the trainee’s role, not only as Administrator. Admin sees everything and hides the real experience.</li>
+      </ul>
+    </div>
+    <div class="callout tip">
+      <b>During the session</b>
+      <ul>
+        <li>Open the live screen, then read the process card: Who → When → Steps → Outcome → Do / Don’t.</li>
+        <li>Ask the trainee to say out loud which connected system will change (BIX, TISP, Zoho, OLT) before they click.</li>
+        <li>Never practise Cancel, Wipe, Refund, or Suspend on a real paying customer.</li>
+        <li>If a menu item is missing, it is almost always a permission — not a broken screen.</li>
+      </ul>
+    </div>
+  </div>
+  <h2>Suggested session shape</h2>
+  <table class="agenda">
+    <thead><tr><th>Block</th><th>Focus</th><th>Who stays in the room</th></tr></thead>
+    <tbody>
+      <tr><td>45 min</td><td>What BIX is, login, roles, statuses, finding a customer</td><td>Everyone</td></tr>
+      <tr><td>75 min</td><td>Create customer, leads, installations, reminders</td><td>Sales, Support, Installations, Technicians</td></tr>
+      <tr><td>60 min</td><td>Upgrade, pause, resume, move, convert type</td><td>Support, Sales, Network Operations</td></tr>
+      <tr><td>45 min</td><td>Suspend, cancel, new tenant — demo only</td><td>Network Operations, Administrators, Support leads</td></tr>
+      <tr><td>60 min</td><td>Billing, payments, reports</td><td>Finance, Billing, Management</td></tr>
+      <tr><td>30 min</td><td>Partner view-only dashboards</td><td>Partners, Management</td></tr>
+      <tr><td>20 min</td><td>Golden rules recap and Q&amp;A</td><td>Everyone</td></tr>
+    </tbody>
+  </table>
+  <p class="footer-note">Split into two half-days if the group is mixed. Partners and technicians do not need the finance block.</p>
+
+  <h1 class="sec" style="margin-top:18px">Contents</h1>
+  <ol class="toc">
+    <li>What BIX is and how the pieces fit</li>
+    <li>Signing in and staying signed in</li>
+    <li>Roles, groups, and who uses which screen</li>
+    <li>Finding your way around</li>
+    <li>Customer statuses</li>
+    <li>Process catalogue
+      <ol>
+        <li>Access and home</li>
+        <li>Find, create, and edit customers</li>
+        <li>Package, billing, and location changes</li>
+        <li>Pause, resume, suspend, and cancel</li>
+        <li>Leads, communication, and reminders</li>
+        <li>Installations and network</li>
+        <li>Packages, buildings, apartments, agencies, campaigns</li>
+        <li>Money: transactions, billing, reports</li>
+        <li>Settings, users, IPTV, activity</li>
+      </ol>
+    </li>
+    <li>Daily playbooks by role</li>
+    <li>Quick reference matrix</li>
+    <li>Golden rules</li>
+  </ol>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 1</p>
+  <h1 class="sec">What BIX is and how the pieces fit</h1>
+  <p><b>SUL Bix</b> is the staff application for day-to-day work: customers, packages, buildings, collections, and field jobs. Customers do not log in here. They pay by M-Pesa / USSD; BIX is where the team records, bills, and restores service.</p>
+  <p>One action in BIX can update several systems. Train people to think in this chain before they click.</p>
+  <table>
+    <thead><tr><th>System</th><th>What it is in plain language</th><th>What staff should expect</th></tr></thead>
+    <tbody>
+      <tr><td><b>BIX (local)</b></td><td>The customer record you see: name, unit, package, status</td><td>Source of truth for identity, apartment, and subscription status</td></tr>
+      <tr><td><b>TISP</b></td><td>The ISP engine that allows or stops internet</td><td>Package, account number, due date, PPPoE. Due date = today means service stops</td></tr>
+      <tr><td><b>Zoho Books</b></td><td>Invoices and recurring billing</td><td>C2B bills the person. B2B bills the agency. Recurring invoices keep monthly billing going</td></tr>
+      <tr><td><b>OLT / ONU</b></td><td>The physical fibre port in the building</td><td>Pause / suspend / cancel can switch the ONU off if it is linked</td></tr>
+      <tr><td><b>M-Pesa</b></td><td>How most customers pay</td><td>Paybill or STK. A successful payment can restore a paused or suspended line</td></tr>
+    </tbody>
+  </table>
+  <h2>Two billing types — never mix them up</h2>
+  <table>
+    <thead><tr><th></th><th>C2B — invoice to customer</th><th>B2B — invoice to agency</th></tr></thead>
+    <tbody>
+      <tr><td>Who is billed</td><td>The resident / shop owner</td><td>The agency that manages the house</td></tr>
+      <tr><td>Zoho contact</td><td>Personal contact + personal recurring invoice</td><td>Agency contact. The house is a line on the agency</td></tr>
+      <tr><td>Customer number</td><td>POP C2B code, e.g. ET-401A or AZE-TGA-401A</td><td>POP B2B code, e.g. ETB-401A or AZEB-TGA-401A</td></tr>
+      <tr><td>To change type</td><td colspan="2"><b>Use Convert to C2B / B2B.</b> Do not try to change type on Edit.</td></tr>
+    </tbody>
+  </table>
+  <h2>Apartments and shops</h2>
+  <p>Both live in the same building and POP. Apartments use a unit number (e.g. 4G). Shops use a location code (e.g. SH01 / S18) and a business name. Packages are priced as apartment or shop — customers only see matching prices.</p>
+  <div class="callout tip"><b>Trainer tip.</b> Draw the four boxes (BIX, TISP, Zoho, OLT) on a whiteboard. After every demo, ask: “Which boxes just changed?”</div>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 2</p>
+  <h1 class="sec">Signing in and staying signed in</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 01</div><h3>Sign in</h3></div><div><span class="chip">Everyone</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Start of shift, or after the session expired.</p>
+      <ol>
+        <li>Open BIX at <b>/admin</b> (production URL as issued by IT).</li>
+        <li>Enter work email and password.</li>
+        <li>If this is the first login after an admin created the account, you <b>must set a full password</b> before the app opens.</li>
+        <li>Land on Home. The dashboard you see depends on your group (finance, support, partner, or executive).</li>
+      </ol>
+      <div class="how"><b>How it works.</b> BIX checks your role and group permissions. Administrators get every module. Users only get what their groups (and any extra grants) allow. The left menu hides what you cannot use; the API also blocks it.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>You are in. Sidebar shows only your modules. Your email and role appear at the bottom of the sidebar.</div>
+        <div class="box do"><b>Do</b>Use your own account. Sign out on shared PCs. Refresh the page after an admin changes your groups so new menus appear.</div>
+        <div class="box dont"><b>Don’t</b>Share passwords. Work in someone else’s logged-in session. Assume a missing button is a bug.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 02</div><h3>Reset a forgotten password</h3></div><div><span class="chip">Everyone</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Locked out, forgotten password, or too many failed sign-ins.</p>
+      <ol>
+        <li>On the login page click <b>Can’t access your account?</b></li>
+        <li>Enter your work email → <b>Send reset link</b>.</li>
+        <li>Open the email (link lasts about 60 minutes) and set a new password.</li>
+        <li>Completing the reset also unlocks a lockout from failed attempts.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> If the email exists, BIX sends a time-limited link. Admins can also send a reset link, unlock the account, or set a temporary password from Settings → Users. IT inbox: it@sulsolutions.biz if mail never arrives.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>New password; previous sessions are invalidated. You sign in again.</div>
+        <div class="box do"><b>Do</b>Use the self-serve link first. Tell IT if the mail is delayed.</div>
+        <div class="box dont"><b>Don’t</b>Ask a colleague to share their login while you wait. Reuse an old weak password.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 03</div><h3>Sign out</h3></div><div><span class="chip">Everyone</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> End of shift, leaving a shared desk, or switching accounts.</p>
+      <ol>
+        <li>Bottom of the left sidebar → <b>Sign out</b>.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Session ends. Next visit needs a password.</div>
+        <div class="box do"><b>Do</b>Sign out on tablets and shared PCs.</div>
+        <div class="box dont"><b>Don’t</b>Leave BIX open on a customer-facing counter.</div>
+      </div>
+    </div>
+  </article>
+  <div class="callout">Accounts have a concurrent session limit. Signing in on a new device can kick the oldest session off. If you suddenly see “session expired”, just sign in again — do not create a second account.</div>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 3</p>
+  <h1 class="sec">Roles, groups, and who uses which screen</h1>
+  <p>There are only two <b>system roles</b>. Day-to-day access comes from <b>groups</b>.</p>
+  <table>
+    <thead><tr><th>System role</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Administrator</td><td>Every module, automatically. Groups cannot reduce this. Use sparingly.</td></tr>
+      <tr><td>User</td><td>Can sign in and see Home. Everything else is added by groups and individual grants.</td></tr>
+    </tbody>
+  </table>
+  <p>Prefer <b>one primary group</b> per person. A second group always adds access; it never subtracts. Dangerous actions (cancel, wipe, refund, campaign create) are <b>not</b> in any preset — grant them one by one or use Administrator.</p>
+
+  <h2>Preset groups — match the job, not the job title</h2>
+  <table>
+    <thead><tr><th>Group</th><th>Typical job</th><th>Home</th><th>Can</th><th>Cannot (by default)</th></tr></thead>
+    <tbody>
+      <tr><td><b>Sales</b></td><td>Acquisition</td><td>Support home</td><td>Create/edit customers, leads, packages view, buildings/apartments view, campaigns view, reminders, installations view</td><td>Financials, cancel, disconnect, building create, agencies</td></tr>
+      <tr><td><b>Support</b></td><td>Help desk</td><td>Support home</td><td>Create/edit customers, pause/resume, OLT view, leads, communication, installations assign/update, reminders</td><td>Cancel, disconnect, agencies, building create</td></tr>
+      <tr><td><b>Installations</b></td><td>Onboarding coordinators</td><td>Support home</td><td>Create/edit customers, OLT, apartments occupancy, assign/update jobs, reminders</td><td>Building/POP create, cancel, financials</td></tr>
+      <tr><td><b>Technician</b></td><td>Field tech</td><td>Support home</td><td>View customers/buildings/apartments, update installation jobs, update reminders</td><td>Create customers, assign jobs, billing</td></tr>
+      <tr><td><b>Network Operations</b></td><td>NOC</td><td>Support home</td><td>Edit customers, disconnect, pause, OLT, edit buildings/POPs, installations</td><td>Cancel, finance, leads</td></tr>
+      <tr><td><b>Billing</b></td><td>Collections</td><td>Finance home</td><td>View financials, allocate, billing actions, communicate, reports, reminders</td><td>Refund, billing sync, customer create</td></tr>
+      <tr><td><b>Finance</b></td><td>Accounts / CFO ops</td><td>Finance home</td><td>Full billing ops including sync, analytics, reports + schedules, agencies view, export</td><td>Refund (grant separately), Settings, customer create</td></tr>
+      <tr><td><b>Management</b></td><td>Exec / PM</td><td>Executive home</td><td>Read finance, customers, reports, analytics, agencies, campaigns, leads, installations</td><td>Create/edit customers, allocate, cancel</td></tr>
+      <tr><td><b>Partner — Internet</b></td><td>Internet partner</td><td>Partner home</td><td>View all customers, dashboard, reports</td><td>Any create/edit, financials, buildings</td></tr>
+      <tr><td><b>Partner — DSTV</b></td><td>DSTV partner</td><td>Partner home</td><td>View <b>DSTV subscribers only</b>, dashboard, reports</td><td>Internet-only customers, any edit</td></tr>
+      <tr><td><b>Partner — Investor</b></td><td>Investor</td><td>Partner / reports-first</td><td>View all customers, reports, analytics</td><td>Any create/edit</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><b>Create-customer companion rule.</b> Creating a customer also needs view access to buildings, apartments, and packages. That is why Sales, Support, and Installations have those view rights — not so they can redesign the network.</div>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 4</p>
+  <h1 class="sec">Finding your way around</h1>
+  <p>Left sidebar (desktop) or menu / bottom nav (phone). Items appear only if you have permission.</p>
+  <table>
+    <thead><tr><th>Menu</th><th>What it is for</th><th>Typical groups</th></tr></thead>
+    <tbody>
+      <tr><td>Dashboard</td><td>Today’s picture: KPIs, charts, live activity</td><td>All signed-in users</td></tr>
+      <tr><td>Customers</td><td>Search, open, create, and act on subscribers</td><td>Sales, Support, Finance, NOC, Partners (view)</td></tr>
+      <tr><td>Leads</td><td>Prospects, public signups, WhatsApp/email inboxes</td><td>Sales, Support</td></tr>
+      <tr><td>Communication</td><td>Customer WhatsApp and email channels</td><td>Sales, Support</td></tr>
+      <tr><td>Packages</td><td>Product catalogue and building prices</td><td>Sales (view), Admin / config editors</td></tr>
+      <tr><td>Buildings</td><td>Properties, POP codes, OLTs, IP rules</td><td>NOC (edit), others view</td></tr>
+      <tr><td>Agencies</td><td>B2B partners and agency invoices</td><td>Finance, Admin</td></tr>
+      <tr><td>Campaigns</td><td>First-month discounts and referrals</td><td>View: Sales/Finance; create: Admin only</td></tr>
+      <tr><td>Apartments</td><td>Units, shops, occupancy history</td><td>Support, Installations, NOC</td></tr>
+      <tr><td>Installations</td><td>Field jobs for signup and unit moves</td><td>Installations, Technician, Support</td></tr>
+      <tr><td>Reminders</td><td>Action items, tags, checklists</td><td>Most operational groups</td></tr>
+      <tr><td>Activity</td><td>Audit of customer and user changes</td><td>Granted users / Admin</td></tr>
+      <tr><td>IPTV</td><td>Startlyx test console (not day-to-day billing)</td><td>Granted users / Admin</td></tr>
+      <tr><td>Transactions</td><td>M-Pesa, Zoho, TISP payment history</td><td>Finance, Billing, Management</td></tr>
+      <tr><td>Billing</td><td>Reconciliation, gaps, manual review</td><td>Finance, Billing</td></tr>
+      <tr><td>Analytics</td><td>BI dashboards and forecasts</td><td>Finance, Management, Investor</td></tr>
+      <tr><td>Reports</td><td>Downloadable operational and finance packs</td><td>Finance, Management, Partners</td></tr>
+      <tr><td>Settings</td><td>Users, webhooks, sync, logs, IPTV connection</td><td>Admin; slices for finance/ops</td></tr>
+    </tbody>
+  </table>
+  <h2>Opening a customer</h2>
+  <ol>
+    <li>Customers → search by name, number, phone, apartment, or building.</li>
+    <li>Click the row to expand: <b>Status, Package, Connection, Contact, Invoices, Payments</b>.</li>
+    <li>The ⋮ menu on the row (or in the panel) is where almost every service action lives.</li>
+  </ol>
+  <p>Invoices and Payments tabs hide if the user cannot see financials (e.g. Sales, Partners).</p>
+  <div class="callout tip"><b>Trainer tip.</b> On a phone, train the search bar and the ⋮ menu first. Almost every daily task starts there.</div>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 5</p>
+  <h1 class="sec">Customer statuses — say these words exactly</h1>
+  <table>
+    <thead><tr><th>Status</th><th>Meaning</th><th>Internet</th><th>Billing</th></tr></thead>
+    <tbody>
+      <tr><td><b>Active</b></td><td>Live on TISP and on Books — using the service</td><td>On</td><td>Running</td></tr>
+      <tr><td><b>Suspended</b></td><td>On Books, not live on TISP (includes “not yet on TISP”)</td><td>Off</td><td>Continues</td></tr>
+      <tr><td><b>Paused</b></td><td>Away on purpose — customer asked for a break</td><td>Off</td><td>Next invoice deferred; unused days credited</td></tr>
+      <tr><td><b>Cancelled</b></td><td>Churned — apartment/shop released for a new occupant</td><td>Off</td><td>Stopped; overdue invoices voided where possible</td></tr>
+    </tbody>
+  </table>
+  <p>Paused and Suspended keep the customer <b>status = active</b> in the database. That is why the ⋮ service menu still appears. Cancelled customers drop out of counts and most reports unless you turn on “show cancelled”.</p>
+  <h2>Pause allowance (per paid period)</h2>
+  <table>
+    <thead><tr><th>Payment frequency</th><th>Maximum pause</th></tr></thead>
+    <tbody>
+      <tr><td>Monthly</td><td>1 week</td></tr>
+      <tr><td>Quarterly</td><td>2 weeks</td></tr>
+      <tr><td>Yearly</td><td>1 month</td></tr>
+    </tbody>
+  </table>
+  <p>Days can be used in shorter stays. Remaining balance shows on the customer until the allowance is exhausted. A new allowance starts after the next payment.</p>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · A</p>
+  <h1 class="sec">Home dashboards</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 04</div><h3>Use Home for your role</h3></div><div><span class="chip">Everyone</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> First thing after login. Pick today’s work from the numbers, not from memory.</p>
+      <ol>
+        <li>Open <b>Dashboard</b>.</li>
+        <li>Read the cards that match your job (see below).</li>
+        <li>Use charts and activity as a jump-off: click through to customers, billing, or installations.</li>
+      </ol>
+      <table>
+        <thead><tr><th>If you are…</th><th>You see</th><th>Use it to</th></tr></thead>
+        <tbody>
+          <tr><td>Admin / Finance / Billing</td><td>Finance home: revenue, collections, package mix, live activity</td><td>Spot failed payments and collection risk</td></tr>
+          <tr><td>Support / Sales / Tech / NOC / Installations</td><td>Support home: subscriber health, installations, recent customer events</td><td>See who was created, paused, moved, assigned</td></tr>
+          <tr><td>Management</td><td>Executive home: outstanding, AR aging, churn, revenue trend</td><td>Weekly pulse, not data entry</td></tr>
+          <tr><td>Internet / DSTV / Investor partner</td><td>Partner home: collections, movement, package mix (DSTV filtered)</td><td>View only — no edits</td></tr>
+        </tbody>
+      </table>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>A role-specific picture of the business. No data is changed by looking.</div>
+        <div class="box do"><b>Do</b>Start every shift on Home. Partners: treat this as a report, not a work queue.</div>
+        <div class="box dont"><b>Don’t</b>Train partners on create/edit screens they cannot use. Don’t use Admin home as the Support demo.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · B</p>
+  <h1 class="sec">Find, create, and edit customers</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 05</div><h3>Find and open a customer</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Finance</span><span class="chip">NOC</span><span class="chip">Partners</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Any question about a person, unit, decoder, or bill.</p>
+      <ol>
+        <li>Customers → type at least 2 characters (name, customer number, phone, unit, building).</li>
+        <li>Optional filters: status, building, category, C2B/B2B, apartment/shop, show cancelled.</li>
+        <li>Click the row. Read Status first, then Package, then Connection.</li>
+        <li>DSTV partners only see DSTV subscribers — internet-only names will not appear.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>The live record. No change until you use ⋮ or Edit.</div>
+        <div class="box do"><b>Do</b>Confirm customer number and unit before any action. Check status: Active vs Paused vs Suspended vs Cancelled.</div>
+        <div class="box dont"><b>Don’t</b>Act on the first similar name. Don’t use Edit to change package or type.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 06</div><h3>Create an apartment customer</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Installations</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> New resident, verified lead, or replacement tenant on a free unit.</p>
+      <ol>
+        <li>Customers → <b>New customer</b> (or convert from a Lead).</li>
+        <li><b>Premise:</b> Apartment. Pick <b>Building</b>, then unit (e.g. 4G). Put the block in Block if the building uses blocks. Wait until the form says the unit is available.</li>
+        <li>Schedule installation (date/time, auto or named technician) if a field visit is needed.</li>
+        <li><b>Package &amp; billing:</b> frequency (monthly / quarterly / yearly / custom) → category → plan. Add extra TVs (KES 500 each after the first) and extra decoders (KES 3,500 each) when the package includes TV. Capture DSTV IUC/serial if required.</li>
+        <li>Fill contact, billing address, <b>C2B or B2B</b> (agency required for B2B), VAT exempt if applicable.</li>
+        <li><b>Network:</b> IP (if the building requires it) and PPPoE password (generated or typed). DSTV-only packages skip TISP network fields.</li>
+        <li>Read the submit summary → Create. Customer is emailed a welcome / signup invoice when Zoho onboarding succeeds.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> BIX stores the person and generates the customer number from POP code + building + unit. TISP gets an account (or an update if the unit’s old account still exists after a cancel). Zoho gets a new contact and signup invoice (C2B) or a house on the agency (B2B). Campaign first-month discounts apply at onboard only. Decoder fees are never discounted. An installation job is created when you scheduled one.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Active customer with a number, package, and (usually) a Zoho invoice. TISP due date follows signup rules (typically 7 days C2B / 30 days B2B if an initial invoice is raised). Job appears under Installations.</div>
+        <div class="box do"><b>Do</b>Verify phone and email. Use the live unit number. Pick apartment-priced packages for apartments. Capture decoder serial when DSTV is on the package.</div>
+        <div class="box dont"><b>Don’t</b>Create on an occupied unit. Don’t put block+unit in one field. Don’t pick a shop package for an apartment. Don’t skip agency on B2B.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 07</div><h3>Create a shop customer</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Installations</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> A business in the same building as apartments.</p>
+      <ol>
+        <li>New customer → Premise <b>Shop</b>.</li>
+        <li>Building → <b>Business name</b> → <b>Location in building</b> (e.g. S18). Confirm “Location is available”.</li>
+        <li>Choose a <b>shop</b> package (building prices are apartment or shop).</li>
+        <li>Complete billing, type, and network as for apartments.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Customer number uses the shop location segment. Same TISP/Zoho rules as apartments.</div>
+        <div class="box do"><b>Do</b>Use the posted shop code, not a nickname.</div>
+        <div class="box dont"><b>Don’t</b>Reuse an apartment unit number for a shop.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 08</div><h3>Convert a lead / public signup into a customer</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Public form or WhatsApp prospect is verified and ready to install.</p>
+      <ol>
+        <li>Leads → open the person. Public signups land as <b>Interested — pending conversion</b>.</li>
+        <li>Update status (contacted / qualified) and message them from the lead if needed.</li>
+        <li>Convert → New customer form opens with name, phone, building, unit, and package pre-filled.</li>
+        <li>Complete missing network / billing fields → Create. Lead becomes <b>Converted</b> and links to the customer.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>A real customer. The lead is no longer in the prospect queue.</div>
+        <div class="box do"><b>Do</b>Verify the unit is still free. Confirm package and frequency with the customer before convert.</div>
+        <div class="box dont"><b>Don’t</b>Convert twice — BIX will tell you a customer already exists. Don’t treat “Interested” as already billed.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 09</div><h3>Edit customer details</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Installations</span><span class="chip">NOC</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Wrong phone/email, IP, PPPoE, DSTV serial, VAT, or agency — not a package upgrade.</p>
+      <ol>
+        <li>Customer ⋮ → <b>Edit customer details</b>.</li>
+        <li>Building and unit are locked on edit. To change unit, use <b>Move apartment / Move unit</b>.</li>
+        <li>Customer type is locked. To change C2B/B2B, use <b>Convert</b>.</li>
+        <li>Package fields are locked unless the user has local package-correction permission (rare, dangerous). Normal staff use Upgrade / Downgrade / Update frequency.</li>
+        <li>Save. Active customers are pushed to TISP. C2B Zoho contact is updated; B2B personal Zoho is skipped.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Corrected record. TISP updated if still active. OLT unchanged (link ONU separately).</div>
+        <div class="box do"><b>Do</b>Fix contact and decoder serial here. Use dedicated actions for package, move, and type.</div>
+        <div class="box dont"><b>Don’t</b>Use Edit to “quietly” change package price. Don’t change type here.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 10</div><h3>Export or import customers</h3></div><div><span class="chip">Finance</span><span class="chip">Admin</span><span class="chip warn">Import: Support/Sales if granted</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Spreadsheet for accounts, or a controlled bulk load.</p>
+      <ol>
+        <li>Export: Customers → export button → choose columns, Excel/CSV, current page or all filtered rows.</li>
+        <li>Import: download the template first, fill it, upload, watch the progress dialog. Failed rows stay in the log.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>A file, or new/updated rows from the template.</div>
+        <div class="box do"><b>Do</b>Filter before export. Import only with a reviewed file.</div>
+        <div class="box dont"><b>Don’t</b>Email full customer exports to personal Gmail. Don’t re-import a file that already succeeded.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · C</p>
+  <h1 class="sec">Package, billing, and location changes</h1>
+  <p>All of these start from the customer ⋮ menu and only show for <b>active</b> customers (including Paused / Suspended).</p>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 11</div><h3>Upgrade package</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Customer wants a higher-priced plan now, optionally with a new frequency.</p>
+      <ol>
+        <li>⋮ → <b>Upgrade package</b>.</li>
+        <li>Pick the new plan (and frequency if they asked). Read the quote: remaining days on the current period and the top-up amount.</li>
+        <li>Pay by <b>Zoho invoice</b> or <b>M-Pesa STK</b>. If they already paid enough, the upgrade can apply immediately.</li>
+        <li>If STK: confirm the phone. Package changes when payment is confirmed — not when the push is sent.</li>
+        <li>A pending upgrade can be cancelled from the same dialog if they abandon payment.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Quote uses the current frequency first. TISP package updates only when the upgrade actually applies. Zoho raises a top-up invoice (C2B contact or B2B agency). C2B recurring lines refresh on apply. OLT does not change. Cancelling a pending upgrade does not void an already-created Zoho invoice — follow up manually if needed.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Immediate: new package on BIX + TISP, top-up invoice. Pending: old package stays until money lands.</div>
+        <div class="box do"><b>Do</b>Read the quote aloud. Confirm STK phone. Wait for payment before promising speed.</div>
+        <div class="box dont"><b>Don’t</b>Upgrade and downgrade in the same breath. Don’t tell them they are on the new plan while status is pending.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 12</div><h3>Downgrade package</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Customer wants a cheaper plan. Any pending upgrade is cancelled first.</p>
+      <ol>
+        <li>⋮ → <b>Downgrade package</b> → pick the lower plan → confirm the credit (if unused value remains).</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Local package changes immediately. TISP package updates. Zoho credit note when credit &gt; 0 (if Zoho errors, the local change still stands — chase finance). C2B recurring refreshes.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Lower package live. Possible Zoho credit. Pending upgrade gone.</div>
+        <div class="box do"><b>Do</b>Explain that unused days may become a credit, not cash in hand.</div>
+        <div class="box dont"><b>Don’t</b>Promise a cash refund from a downgrade. Refunds are a separate, dangerous permission.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 13</div><h3>Update payment frequency</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Same speed, different billing cycle (monthly ↔ quarterly ↔ yearly ↔ custom).</p>
+      <ol>
+        <li>⋮ → <b>Update frequency</b> → pick the cycle. BIX switches to the matching Mbps product and price.</li>
+        <li>Blocked if a pending upgrade exists — finish or cancel that first.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> No proration (unlike up/downgrade). TISP updates. C2B Zoho recurring refreshes. B2B skips personal Zoho. TISP’s own billing cycle stays monthly even if BIX frequency changes.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>New frequency and matching package price on the record.</div>
+        <div class="box do"><b>Do</b>Confirm the new invoice amount before saving.</div>
+        <div class="box dont"><b>Don’t</b>Use this to change Mbps. That’s upgrade/downgrade.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 14</div><h3>Move apartment or shop unit</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Installations</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Same building, new unit. (Different building = cancel + new signup, unless your ops policy says otherwise.)</p>
+      <ol>
+        <li>⋮ → <b>Move apartment</b> or <b>Move unit</b>.</li>
+        <li>Enter the new unit. Wait for occupancy check (must be free).</li>
+        <li>Enter a new IP if the building requires it.</li>
+        <li>Schedule installation and assign a technician if a visit is needed.</li>
+        <li>Confirm. Customer number changes (e.g. ET-401A → ET-502B).</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Apartment history closes the old unit and opens the new. TISP migrates: old account released, new account inserted, due date kept. C2B Zoho company name / recurring reference updated. B2B Zoho skip. ONU index/serial cleared so pause cannot kill the old port — <b>relink ONU after the move</b>.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>New number, new unit, old unit free. Installation job if scheduled. ONU needs relink.</div>
+        <div class="box do"><b>Do</b>Tell the customer their account number changed. Relink OLT/ONU. Book the technician.</div>
+        <div class="box dont"><b>Don’t</b>Move onto an occupied unit. Don’t leave ONU on the old port.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 15</div><h3>Convert C2B ↔ B2B</h3></div><div><span class="chip">Support</span><span class="chip">Sales</span><span class="chip">Admin</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> House moves from personal billing to an agency (or back). Agency is required for B2B.</p>
+      <ol>
+        <li>⋮ → <b>Convert to B2B</b> or <b>Convert to C2B</b>.</li>
+        <li>Pick the agency when going to B2B. Confirm the new number (C2B/B2B code swap, unit stays).</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Local type, agency, and number change. TISP migrates accounts and keeps the due date (never “today”). C2B→B2B: stop personal recurring, inactivate personal contact, raise agency signup invoice + rebuild agency recurring. B2B→C2B: rebuild agency recurring without this house, create personal contact + recurring + new invoice. If local convert works but TISP fails, Refresh Status can migrate from the alternate number.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>New customer number and billing party. Internet due date preserved.</div>
+        <div class="box do"><b>Do</b>Agree the agency in writing first. Check TISP after convert.</div>
+        <div class="box dont"><b>Don’t</b>Use Edit to change type. Don’t convert to B2B without an agency.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 16</div><h3>Create on TISP</h3></div><div><span class="chip">Support</span><span class="chip">NOC</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Active internet customer with no TISP due date, or TISP sync failed/pending. Hidden for DSTV-only.</p>
+      <ol>
+        <li>⋮ → <b>Create on TISP</b> (only if the menu shows it).</li>
+        <li>Confirm success on Status / Connection. If it fails, read the error and retry after fixing IP/PPPoE.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>TISP account exists; customer can be connected when due date is in the future.</div>
+        <div class="box do"><b>Do</b>Use this when onboarding skipped TISP. Check Connection tab afterwards.</div>
+        <div class="box dont"><b>Don’t</b>Force it on DSTV-only customers. Don’t create duplicates by guessing.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · D</p>
+  <h1 class="sec">Pause, resume, suspend, and cancel</h1>
+  <div class="callout warn"><b>Choose the right stop.</b> Pause = customer away, billing deferred. Suspend = non-payment / force stop, billing continues. Cancel = they left, unit is free. Payment can restore Pause and Suspend. Cancel cannot be undone — onboard a new tenant instead.</div>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 17</div><h3>Pause service (away)</h3></div><div><span class="chip">Support</span><span class="chip">NOC</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Customer is travelling or the unit is empty for a short, agreed stay. Only while status is Active. Blocked when pause days are exhausted.</p>
+      <ol>
+        <li>⋮ → <b>Pause service (away)</b>. The label shows remaining days if some were already used.</li>
+        <li>Start date, number of days (1 through remaining), reason (required).</li>
+        <li>Read the credit preview (return date, days credited, next due) → Pause service.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Subscription becomes Paused (customer stays active). TISP due date = today (internet stops now, even if start date is in the future). Matching Zoho recurring is deferred so the next invoice is after pause end plus credited days. Linked ONU is deactivated. Unused away days credit onto the next subscription when they pay. Customer is emailed unless mail is skipped.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Internet off. Status Paused. Allowance reduced. Next bill shifted. Credit shown on Status and Package tabs.</div>
+        <div class="box do"><b>Do</b>Use pause for travel/renovation. Record a clear reason. Tell them remaining days.</div>
+        <div class="box dont"><b>Don’t</b>Pause for non-payment (use Suspend). Don’t pause after days are exhausted. Don’t promise a longer break than the allowance.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 18</div><h3>Resume service</h3></div><div><span class="chip">Support</span><span class="chip">NOC</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Customer came back early, or you paused by mistake. Menu shows only while Paused.</p>
+      <ol>
+        <li>⋮ → <b>Resume service</b> → confirm. Remaining pause days stay available this period.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Restores internet now (TISP + OLT when linked). Unused pause days remain until the next payment starts a new allowance. Payment while paused can also reconnect automatically.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Status Active (or restored on TISP). Remaining days still shown.</div>
+        <div class="box do"><b>Do</b>Resume when they are back in the house. Confirm TISP if the toast warns.</div>
+        <div class="box dont"><b>Don’t</b>Resume a Suspended customer from this item — they need payment or a NOC reconnect path, not Pause-resume.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 19</div><h3>Suspend on TISP</h3></div><div><span class="chip">NOC</span><span class="chip warn">Not in Support preset</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Force-stop internet (typically non-payment) without touching Zoho.</p>
+      <ol>
+        <li>⋮ → <b>Suspend on TISP</b> → confirm “Stops TISP access today. Zoho billing is unchanged.”</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Subscription = Suspended. TISP due = today. ONU off if linked. Zoho invoices and recurring continue. Reconnect is payment-driven (M-Pesa or allocated Zoho payment → TISP due restored, ONU on).</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Internet off, bills still going. Status Suspended.</div>
+        <div class="box do"><b>Do</b>Use for collections enforcement. Tell the customer that paying restores service.</div>
+        <div class="box dont"><b>Don’t</b>Suspend people who are travelling (use Pause). Don’t expect Zoho to stop. Support should not have this button unless granted.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 20</div><h3>Cancel and release apartment / shop</h3></div><div><span class="chip danger">Administrator or individually granted</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Tenant left for good. This is the normal offboarding. Not in any preset group.</p>
+      <ol>
+        <li>⋮ → <b>Cancel &amp; release apartment</b> (or shop).</li>
+        <li>Reason required. Capture ONU collected date and DSTV decoder collected date when asked.</li>
+        <li>Confirm. Screen returns immediately; TISP and Zoho finish in the background — check Activity if you need proof.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Local: cancelled, history closed, number archived to <code>{number}-CXL-{id}</code>, IP/PPPoE/DSTV cleared so the live number can be reused. TISP due = cancel day (async). Zoho: void overdue invoices; C2B stop recurring, rename company, mark inactive; B2B void only this house and stop matching recurring (agency stays). ONU deactivate async. Partially paid Zoho invoices may fail to void — finance follow-up.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Unit is free for a new tenant immediately. Old person remains as cancelled history.</div>
+        <div class="box do"><b>Do</b>Collect ONU and decoder dates. Prefer Cancel over Wipe. Wait for background Zoho/TISP before promising “fully cleared”.</div>
+        <div class="box dont"><b>Don’t</b>Cancel to “fix” a wrong package. Don’t wipe an active customer. Don’t reuse the cancelled row — create a new customer.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 21</div><h3>New tenant on the same unit after cancel</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Installations</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> H302 is free because the previous person was cancelled.</p>
+      <ol>
+        <li>Confirm the previous customer is Cancelled and the unit shows available.</li>
+        <li>Create a new customer on that unit (Process 06). Do not “reactivate” the old row.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> New person gets the live number. TISP prefers UPDATE of the existing account (new name/phone/package/due) — not a duplicate insert. Zoho creates a <b>new</b> contact and signup invoice; old invoices are not inherited. If a leftover Zoho contact still owns the live name, it is retired to the CXL form. If signup wrongly linked the old contact, use <b>Retry billing onboarding</b> on the customer.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Fresh tenant, same unit number, clean Zoho, updated TISP.</div>
+        <div class="box do"><b>Do</b>Always Cancel → Create. Retry billing onboarding if old invoices appear on the new person.</div>
+        <div class="box dont"><b>Don’t</b>Edit the cancelled customer back to active. Don’t skip Cancel “to keep the number”.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 22</div><h3>Wipe local records</h3></div><div><span class="chip danger">Administrator only (customers.delete)</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Almost never. Only after Cancel, to remove a cancelled row from BIX.</p>
+      <ol>
+        <li>Show cancelled → ⋮ → <b>Wipe local records</b>. API rejects wipe while still active.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Hard-deletes the local row and related BIX history. TISP, Zoho, and OLT are <b>not</b> cleaned. Orphans can remain if Cancel did not finish.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Gone from BIX. Integrations may still have the account.</div>
+        <div class="box do"><b>Do</b>Cancel first and wait for background jobs.</div>
+        <div class="box dont"><b>Don’t</b>Wipe to offboard. Don’t demo this in training on anything but a disposable test row.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 23</div><h3>Apartment / occupancy history</h3></div><div><span class="chip">Everyone who can view customers</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Dispute over who lived in a unit, or when the decoder was collected.</p>
+      <ol>
+        <li>Customer ⋮ → <b>Apartment history</b> / <b>Occupancy history</b>, or Apartments → unit → history tab.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Read-only timeline. No TISP/Zoho/OLT calls.</div>
+        <div class="box do"><b>Do</b>Use this before creating a new tenant.</div>
+        <div class="box dont"><b>Don’t</b>Treat history as a way to undo Cancel.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · E</p>
+  <h1 class="sec">Leads, communication, and reminders</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 24</div><h3>Work the leads pipeline</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> New demand from website, WhatsApp, email, or a walk-in you typed in.</p>
+      <ol>
+        <li>Leads → All leads / WhatsApp / Email.</li>
+        <li>Create lead (manual) or open a public signup.</li>
+        <li>Statuses: New → Interested → Contacted → Qualified → Converted or Closed.</li>
+        <li>Send WhatsApp or email from the lead. Add notes.</li>
+        <li>Convert when ready (Process 08).</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>A tracked prospect, then a customer if converted.</div>
+        <div class="box do"><b>Do</b>Close junk leads. Keep one conversation thread per person.</div>
+        <div class="box dont"><b>Don’t</b>Create a customer without converting the lead — you will duplicate people.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 25</div><h3>Message a customer (Communication)</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Billing (collections messages)</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Welcome, follow-up, or collections copy that is not a lead chat.</p>
+      <ol>
+        <li>Communication → WhatsApp or Email tab.</li>
+        <li>Pick the customer thread → send. Billing users also send collection messages from Billing actions when permitted.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Message in the channel history. Customer may reply in the same thread.</div>
+        <div class="box do"><b>Do</b>Use the official channel so history stays on the record.</div>
+        <div class="box dont"><b>Don’t</b>Send personal WhatsApp from a private phone for official billing threats.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 26</div><h3>Create and close a reminder</h3></div><div><span class="chip">Sales</span><span class="chip">Support</span><span class="chip">Billing</span><span class="chip">NOC</span><span class="chip">Installations</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Follow-up: call back, collect decoder, check payment, visit site.</p>
+      <ol>
+        <li>From a customer ⋮ → <b>Create reminder</b>, or Reminders → New.</li>
+        <li>Type, due date, priority, tag people, optional checklist.</li>
+        <li>Bell / Reminders list → open → update status (in progress / completed / cancelled) and tick steps.</li>
+        <li>Filter Mine vs Overdue vs all.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Tagged users are notified. Work is visible instead of living in chat.</div>
+        <div class="box do"><b>Do</b>Tag the owner. Close completed items the same day.</div>
+        <div class="box dont"><b>Don’t</b>Create reminders instead of doing the real action (pause, allocate, etc.).</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · F</p>
+  <h1 class="sec">Installations and network</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 27</div><h3>Run an installation job</h3></div><div><span class="chip">Installations</span><span class="chip">Support</span><span class="chip">Technician</span><span class="chip">NOC</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> New signup or apartment move booked a visit. Kinds: Onboarding or Apartment move.</p>
+      <ol>
+        <li>Installations → filter by status, kind, date, search.</li>
+        <li>Coordinator: <b>Assign</b> technician (or leave auto), set/reschedule date and time.</li>
+        <li>Technician: mark <b>In progress</b> on arrival → <b>Completed</b> when live, with notes. Cancel only with a reason.</li>
+        <li>If internet still down after complete: check customer Connection and ONU link — completing the job does not by itself activate TISP.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Job status updated. Customer record unchanged except through other actions (OLT link, create on TISP).</div>
+        <div class="box do"><b>Do</b>Technicians update their own jobs. Coordinators assign. Capture notes (ONU serial, issues).</div>
+        <div class="box dont"><b>Don’t</b>Mark complete if the line is not passing traffic. Technicians should not reassign jobs (no assign permission).</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 28</div><h3>Link OLT / ONU on a customer</h3></div><div><span class="chip">Support</span><span class="chip">NOC</span><span class="chip">Installations</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> After install or after a unit move (ONU was cleared on move).</p>
+      <ol>
+        <li>Open customer → Connection tab → link building OLT and ONU index / serial as trained by NOC.</li>
+        <li>Refresh ONU status if the panel provides it.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Pause, suspend, and cancel deactivate this ONU. Payment-driven reconnect activates it. If unlinked, TISP still stops/starts but the physical port may stay as-is.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Physical port follows billing/service actions.</div>
+        <div class="box do"><b>Do</b>Relink after every move. Verify the index with the building plan.</div>
+        <div class="box dont"><b>Don’t</b>Copy the previous tenant’s ONU index without checking the closet.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · G</p>
+  <h1 class="sec">Packages, buildings, apartments, agencies, campaigns</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 29</div><h3>View or maintain packages</h3></div><div><span class="chip">Sales (view)</span><span class="chip">Admin / config editors</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Check a price before signup, or (config editors) add a plan for a building.</p>
+      <ol>
+        <li>Packages → search by plan, category, premise (apartment/shop), frequency.</li>
+        <li>Expand a product for Mbps, extra bandwidth, TV flags, building prices.</li>
+        <li>Create/edit only if you have packages.create / packages.edit. Building prices are apartment or shop — customers only see matching ones.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Catalogue used by New customer, upgrade, and reports.</div>
+        <div class="box do"><b>Do</b>Sales: look up, don’t invent a price. Editors: keep apartment vs shop prices separate.</div>
+        <div class="box dont"><b>Don’t</b>Delete a package that still has subscribers. Don’t train Sales to create packages.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 30</div><h3>Buildings and POPs</h3></div><div><span class="chip">NOC (edit)</span><span class="chip">Sales/Support (view)</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> New property, new OLT, or wrong C2B/B2B code / IP prefix.</p>
+      <ol>
+        <li>Buildings → open a building (name, POP, C2B code, B2B code, IP setup).</li>
+        <li>NOC: create/edit building and POP OLT records. Codes drive customer numbers — change them with extreme care.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Signup and numbering use the new property data.</div>
+        <div class="box do"><b>Do</b>Let NOC own codes and IP rules. Sales only selects the building on the form.</div>
+        <div class="box dont"><b>Don’t</b>Let Sales create buildings. Don’t change a live POP code without a migration plan.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 31</div><h3>Apartments occupancy</h3></div><div><span class="chip">Installations</span><span class="chip">Support</span><span class="chip">NOC</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Is this unit free? Who was here last?</p>
+      <ol>
+        <li>Apartments → filter building → open unit. Overview + occupancy ledger.</li>
+        <li>Installations group can maintain occupancy data; others typically view.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Clear occupied vs free before signup or move.</div>
+        <div class="box do"><b>Do</b>Check here when the new-customer form says occupied.</div>
+        <div class="box dont"><b>Don’t</b>Force a second active tenant on one unit.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 32</div><h3>Agencies (B2B)</h3></div><div><span class="chip">Admin</span><span class="chip">Finance (view)</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> A managing agent bills for several houses.</p>
+      <ol>
+        <li>Agencies → create name, contact, phone, email.</li>
+        <li>Open the agency for houses, invoices, and recurring.</li>
+        <li>Attach customers via Convert to B2B or at signup (Process 06 / 15).</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>One Zoho contact for the agent; houses listed underneath.</div>
+        <div class="box do"><b>Do</b>Create the agency before converting houses.</div>
+        <div class="box dont"><b>Don’t</b>Put personal C2B invoices on an agency contact by editing type.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 33</div><h3>Campaigns</h3></div><div><span class="chip">Sales (view)</span><span class="chip">Finance (view)</span><span class="chip danger">Create/edit: Administrator</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> First-month discount or referral window. Discount applies at onboard only.</p>
+      <ol>
+        <li>Campaigns → view dates, discount, applications, status.</li>
+        <li>Admin: create, pause, resume, edit dates. Decoder fees are never discounted.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Live campaign is offered on New customer when dates match.</div>
+        <div class="box do"><b>Do</b>Sales: check Campaigns before quoting a promo price.</div>
+        <div class="box dont"><b>Don’t</b>Manually subtract a promo on a random invoice. Don’t apply campaign to upgrades.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · H</p>
+  <h1 class="sec">Money: transactions, billing, reports</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 34</div><h3>Look up a payment (Transactions)</h3></div><div><span class="chip">Finance</span><span class="chip">Billing</span><span class="chip">Management</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> “I paid but still disconnected.”</p>
+      <ol>
+        <li>Transactions → filter All / M-Pesa / Zoho / TISP, Success / Failed, date, customer, STK vs paybill.</li>
+        <li>Expand the row for reference, phone, amount, and linked customer.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Proof of payment or a failed STK. Read-only unless you continue in Billing.</div>
+        <div class="box do"><b>Do</b>Search M-Pesa receipt / phone first. Then open the customer Payments tab.</div>
+        <div class="box dont"><b>Don’t</b>Reconnect from Transactions. Allocate unmatched money in Billing.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 35</div><h3>Billing reconciliation overview</h3></div><div><span class="chip">Finance</span><span class="chip">Billing</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Daily collections huddle. TISP vs Zoho mismatches.</p>
+      <ol>
+        <li>Billing → home: outstanding, customers with issues, revenue at risk, expected this month.</li>
+        <li>Finance (sync permission): run <b>Sync</b> if the picture looks stale.</li>
+        <li>Open <b>Billing Gaps</b> or <b>Manual Review</b>.</li>
+      </ol>
+      <table>
+        <thead><tr><th>Gap</th><th>Plain meaning</th><th>Typical next step</th></tr></thead>
+        <tbody>
+          <tr><td>Free service (overdue/unpaid)</td><td>Connected without payment</td><td>Collect or suspend (NOC)</td></tr>
+          <tr><td>Paid up, disconnected</td><td>Money in, line still off</td><td>Refresh status / wait for payment handler / check TISP</td></tr>
+          <tr><td>Not in Zoho Books</td><td>No Zoho link</td><td>Retry billing onboarding</td></tr>
+          <tr><td>Recurring invoice stopped</td><td>Monthly bill won’t generate</td><td>Resume recurring (billing action)</td></tr>
+          <tr><td>Missing invoice</td><td>Should have a bill, doesn’t</td><td>Finance follow-up</td></tr>
+          <tr><td>Disconnected, not invoiced</td><td>Off and also unbilled</td><td>Decide collect vs cancel</td></tr>
+          <tr><td>Skipped monthly payment</td><td>A cycle was skipped</td><td>Review + communicate</td></tr>
+          <tr><td>Manual review</td><td>Sync error</td><td>Verify, don’t click blindly</td></tr>
+        </tbody>
+      </table>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>A work queue. Opening a row shows invoices, payments, audit.</div>
+        <div class="box do"><b>Do</b>Work gaps every morning. Billing group allocates and messages; Finance runs sync.</div>
+        <div class="box dont"><b>Don’t</b>Give Billing the refund permission by default. Don’t ignore Manual Review.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 36</div><h3>Allocate a payment and run billing actions</h3></div><div><span class="chip">Billing</span><span class="chip">Finance</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> M-Pesa arrived without a match, or Zoho recurring stopped.</p>
+      <ol>
+        <li>Open the customer from Billing Gaps / customer Invoices-Payments.</li>
+        <li><b>Allocate payment</b> when an unallocated M-Pesa exists for that person.</li>
+        <li><b>Resume recurring invoice</b> when the profile was stopped by mistake.</li>
+        <li><b>Refresh status</b> after TISP/Zoho drift (also used after a failed C2B↔B2B migrate).</li>
+        <li>Send billing communications from permitted actions — keep the tone professional.</li>
+      </ol>
+      <div class="how"><b>How it works.</b> Allocating a payment for Paused/Suspended can restore TISP due date and activate ONU (payment-driven reconnect). Local subscription may return to Active per payment rules. Pause credit applies on the next subscription payment.</div>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Money sits on the right person; service may come back without a menu Resume.</div>
+        <div class="box do"><b>Do</b>Match amount and phone. Confirm the customer number before allocate.</div>
+        <div class="box dont"><b>Don’t</b>Allocate to the wrong house because the name is similar. Don’t refund from here without billing.refund.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 37</div><h3>Analytics</h3></div><div><span class="chip">Finance</span><span class="chip">Management</span><span class="chip">Investor</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Trends, forecasts, package mix — not a single ticket.</p>
+      <ol>
+        <li>Analytics → open a section → export if you have analytics.export.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>Charts and tables. No customer is changed.</div>
+        <div class="box do"><b>Do</b>Use with Reports for board packs.</div>
+        <div class="box dont"><b>Don’t</b>Take a screenshot of a stale filter and call it month-end.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 38</div><h3>Run and download reports</h3></div><div><span class="chip">Finance</span><span class="chip">Management</span><span class="chip">Partners</span><span class="chip">Support (view)</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Weekly ops, month-end, partner pack, DSTV roster.</p>
+      <ol>
+        <li>Reports → pick a family: Executive, Financial, Billing, Forecasting, Customer, Network, Audit.</li>
+        <li>Set date / month / year filters → Preview → Download (Excel/PDF where offered).</li>
+        <li>Star favourites. Finance can <b>schedule</b> email reports (reports.schedule).</li>
+        <li>Partners only see the catalogue allowed for their type; DSTV partners are scoped to DSTV subscribers.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>A file or on-screen preview. Schedules keep arriving until deleted.</div>
+        <div class="box do"><b>Do</b>Preview before download. Use DSTV IUC roster for decoder partners.</div>
+        <div class="box dont"><b>Don’t</b>Send unfiltered customer reports outside the company. Don’t grant export to people who only needed view.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 6 · I</p>
+  <h1 class="sec">Settings, users, IPTV, activity</h1>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 39</div><h3>Create a staff user and assign a group</h3></div><div><span class="chip">Administrator</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> New hire, role change, or partner access.</p>
+      <ol>
+        <li>Settings → <b>Users &amp; permissions</b> → Create user: name, job title, email, role (User unless they must be Administrator), groups, status.</li>
+        <li>Copy the generated temporary password or email it. They must set a full password on first login.</li>
+        <li>Optional: Permissions on that user to grant/deny one action (e.g. customers.cancel) without changing the group.</li>
+        <li>Groups tab edits the bundle for everyone in that group. Users should refresh BIX after a change.</li>
+        <li>When access is <b>gained</b>, they get an email listing new capabilities. Revokes do not email.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>The person can sign in with the right menus. Audit log stores the permission change.</div>
+        <div class="box do"><b>Do</b>One primary group. Grant cancel/refund individually. Disable leavers; don’t share logins.</div>
+        <div class="box dont"><b>Don’t</b>Make everyone Administrator. Don’t stack Sales+Finance “just in case”. Administrators cannot be deactivated.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 40</div><h3>Activity audit</h3></div><div><span class="chip">Granted users</span><span class="chip">Admin</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> “Who changed this package?” / training QA.</p>
+      <ol>
+        <li>Activity → filter customer/user changes. Also use the live feed on finance/support home.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>An audit trail. Nothing is reversed from here.</div>
+        <div class="box do"><b>Do</b>Use after a disputed cancel or convert.</div>
+        <div class="box dont"><b>Don’t</b>Treat Activity as a recycle bin.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 41</div><h3>IPTV test console</h3></div><div><span class="chip warn">Not a daily billing tool</span><span class="chip">iptv.view / operate</span></div></div>
+    <div class="bd">
+      <p class="meta-row"><b>When:</b> Testing Startlyx: create a test subscriber, assign a package, inspect channels, disconnect/reconnect a test user.</p>
+      <ol>
+        <li>IPTV → Create test / Channels / Packages / Users.</li>
+        <li>Connection URL and admin credentials live under Settings → IPTV (iptv.settings).</li>
+        <li>Disconnect cancels the active package; reconnect assigns it again.</li>
+      </ol>
+      <div class="grid2">
+        <div class="box out"><b>Outcome</b>A Startlyx test user — not a BIX internet customer.</div>
+        <div class="box do"><b>Do</b>Use obvious test usernames. Keep operate permission tight.</div>
+        <div class="box dont"><b>Don’t</b>Train sales to onboard fibre customers here. Don’t point it at production Startlyx without approval.</div>
+      </div>
+    </div>
+  </article>
+
+  <article class="process keep">
+    <div class="hd"><div><div class="no">Process 42</div><h3>Settings others may see</h3></div><div><span class="chip">Admin</span><span class="chip">Finance (sync)</span><span class="chip">Ops (logs)</span></div></div>
+    <div class="bd">
+      <ul>
+        <li><b>Webhooks</b> — M-Pesa STK/C2B callbacks, Zoho Books webhook (admin).</li>
+        <li><b>Communication</b> — Zoho Mail identity, customer email templates, WhatsApp Cloud API (admin).</li>
+        <li><b>Synchronization</b> — Zoho and other integration jobs (finance operators).</li>
+        <li><b>Logs</b> — API/integration errors; retry if permitted.</li>
+        <li><b>Versioning</b> — what shipped in BIX (this guide tracks 1.21).</li>
+      </ul>
+      <div class="grid2">
+        <div class="box do"><b>Do</b>Leave webhooks and flags to IT/Admin.</div>
+        <div class="box dont"><b>Don’t</b>Toggle integration flags during a training demo on production.</div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 7</p>
+  <h1 class="sec">Daily playbooks by role</h1>
+  <p>Give each trainee only their playbook after the shared intro. Times are a guide, not a clock-in rule.</p>
+
+  <h2>Sales</h2>
+  <ol>
+    <li>Home — new signups and leads activity.</li>
+    <li>Leads — reply WhatsApp/email, move status, convert verified people.</li>
+    <li>Customers — create apartment/shop, quote from Packages, apply live campaign only at onboard.</li>
+    <li>Upgrade/downgrade when they ask to change plan.</li>
+    <li>Reminders for call-backs. You do not see invoices; send money questions to Billing.</li>
+  </ol>
+
+  <h2>Support</h2>
+  <ol>
+    <li>Home — paused, new, moved, failed reconnects.</li>
+    <li>Find customer → confirm status before acting.</li>
+    <li>Edit contact/serial; pause/resume for travel; Create on TISP if missing; Communication for replies.</li>
+    <li>Assign/update installations; create reminders; link ONU with NOC guidance.</li>
+    <li>Escalate Suspend to NOC, Cancel to a granted user, money mismatches to Billing.</li>
+  </ol>
+
+  <h2>Technician</h2>
+  <ol>
+    <li>Installations — today’s assigned jobs.</li>
+    <li>In progress → complete with notes. View customer/building for address only.</li>
+    <li>You do not create customers or assign work to others.</li>
+  </ol>
+
+  <h2>Installations coordinator</h2>
+  <ol>
+    <li>New signups and moves: schedule, assign technician, watch overdue jobs.</li>
+    <li>Apartments occupancy before booking a clash.</li>
+    <li>Create the customer if sales handed you a qualified lead.</li>
+  </ol>
+
+  <h2>Network Operations</h2>
+  <ol>
+    <li>Buildings/POPs/OLT accuracy.</li>
+    <li>Suspend for non-payment when Billing asks.</li>
+    <li>Pause only when Support is unavailable and the customer is away.</li>
+    <li>ONU links after installs and moves. Disconnect is yours; Cancel is not.</li>
+  </ol>
+
+  <h2>Billing / collections</h2>
+  <ol>
+    <li>Transactions — overnight M-Pesa.</li>
+    <li>Billing Gaps — allocate unmatched, resume recurring, send collection messages.</li>
+    <li>Reminders for promised-to-pay. You do not create customers or refund without a special grant.</li>
+  </ol>
+
+  <h2>Finance</h2>
+  <ol>
+    <li>Finance home + Billing sync.</li>
+    <li>Gaps, agencies, analytics, scheduled reports.</li>
+    <li>Investigate Manual Review. Refunds only if billing.refund was granted.</li>
+  </ol>
+
+  <h2>Management</h2>
+  <ol>
+    <li>Executive home and Reports (weekly / monthly packs).</li>
+    <li>Read-only on customers. Do not “quickly edit” a package on a call.</li>
+  </ol>
+
+  <h2>Partners (Internet / DSTV / Investor)</h2>
+  <ol>
+    <li>Dashboard and Reports (Investor: reports/analytics first).</li>
+    <li>DSTV: decoder subscribers only. View only — request changes via SUL staff.</li>
+  </ol>
+
+  <h2>Administrator</h2>
+  <ol>
+    <li>Users &amp; groups, campaigns, dangerous grants, Settings, Versioning.</li>
+    <li>You can do every process — still follow Do/Don’t. Prefer acting as a demo account for training.</li>
+  </ol>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 8</p>
+  <h1 class="sec">Quick reference — who does which process</h1>
+  <p>R = routine for that group. V = view / receive. G = only if individually granted. — = not their job.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Process</th>
+        <th>Sales</th>
+        <th>Support</th>
+        <th>Tech</th>
+        <th>Inst.</th>
+        <th>NOC</th>
+        <th>Billing</th>
+        <th>Finance</th>
+        <th>Mgmt</th>
+        <th>Partner</th>
+        <th>Admin</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Sign in / reset password</td><td>R</td><td>R</td><td>R</td><td>R</td><td>R</td><td>R</td><td>R</td><td>R</td><td>R</td><td>R</td></tr>
+      <tr><td>Find customer</td><td>R</td><td>R</td><td>V</td><td>R</td><td>R</td><td>R</td><td>R</td><td>V</td><td>V</td><td>R</td></tr>
+      <tr><td>Create customer / convert lead</td><td>R</td><td>R</td><td>—</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Edit details</td><td>R</td><td>R</td><td>—</td><td>R</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Upgrade / downgrade / frequency</td><td>R</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Move unit</td><td>R</td><td>R</td><td>—</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Convert C2B/B2B</td><td>R</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Pause / resume</td><td>—</td><td>R</td><td>—</td><td>—</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Suspend on TISP</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Cancel &amp; release</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>G</td></tr>
+      <tr><td>Wipe local records</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>G</td></tr>
+      <tr><td>Installations update</td><td>V</td><td>R</td><td>R</td><td>R</td><td>R</td><td>—</td><td>—</td><td>V</td><td>—</td><td>R</td></tr>
+      <tr><td>Assign technician</td><td>—</td><td>R</td><td>—</td><td>R</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Buildings edit</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Allocate / billing actions</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td><td>R</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Billing sync</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td><td>—</td><td>—</td><td>R</td></tr>
+      <tr><td>Refund</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>G</td><td>—</td><td>—</td><td>G</td></tr>
+      <tr><td>Reports download</td><td>V</td><td>V</td><td>—</td><td>—</td><td>—</td><td>R</td><td>R</td><td>R</td><td>R</td><td>R</td></tr>
+      <tr><td>Users &amp; permissions</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>R</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="page">
+  <p class="kicker">Part 9</p>
+  <h1 class="sec">Golden rules — pin this slide</h1>
+  <ol>
+    <li><b>Status first.</b> Active, Paused, Suspended, and Cancelled need different actions.</li>
+    <li><b>Right stop.</b> Pause = away. Suspend = non-payment. Cancel = left for good.</li>
+    <li><b>Type and unit have dedicated actions.</b> Convert for C2B/B2B. Move for a new unit. Never Edit for those.</li>
+    <li><b>Package changes go through Upgrade / Downgrade / Frequency</b> so Zoho and TISP stay aligned. Do not “correct the price” on Edit unless you have the dangerous local-correction grant.</li>
+    <li><b>Cancel, then create</b> for a new tenant. Never revive a cancelled row.</li>
+    <li><b>Payment restores Pause and Suspend.</b> You do not need a secret reconnect menu for someone who just paid.</li>
+    <li><b>Relink ONU after a move.</b> The old port is cleared on purpose.</li>
+    <li><b>Campaigns discount first month only.</b> Decoder fees are never discounted. Extra TV = KES 500 per extra set. Extra decoder = KES 3,500 each (signup decoder charge is separate).</li>
+    <li><b>Missing menu = missing permission.</b> Ask an admin; don’t borrow a login.</li>
+    <li><b>Production is live money and live fibre.</b> Practise Cancel, Wipe, Refund, and Suspend only on agreed test accounts.</li>
+  </ol>
+
+  <h2>Connected-system cheat sheet</h2>
+  <table>
+    <thead><tr><th>Action</th><th>BIX</th><th>TISP</th><th>Zoho</th><th>OLT</th></tr></thead>
+    <tbody>
+      <tr><td>Create customer</td><td>New row</td><td>Insert or update</td><td>New contact + invoice (C2B) / agency house (B2B)</td><td>No (link later)</td></tr>
+      <tr><td>Edit details</td><td>Update</td><td>Update / migrate if number changed</td><td>C2B yes, B2B skip</td><td>No</td></tr>
+      <tr><td>Upgrade</td><td>Now or pending</td><td>When applied</td><td>Top-up invoice</td><td>No</td></tr>
+      <tr><td>Downgrade</td><td>Now</td><td>Update</td><td>Credit note if unused value</td><td>No</td></tr>
+      <tr><td>Move unit</td><td>New number</td><td>Migrate</td><td>C2B rename</td><td>Clear ONU</td></tr>
+      <tr><td>Convert type</td><td>New number</td><td>Migrate, keep due</td><td>Personal ↔ agency</td><td>No</td></tr>
+      <tr><td>Pause</td><td>Paused + credit</td><td>Due = today</td><td>Defer recurring</td><td>Off</td></tr>
+      <tr><td>Resume</td><td>Active</td><td>Restore</td><td>—</td><td>On</td></tr>
+      <tr><td>Suspend</td><td>Suspended</td><td>Due = today</td><td>Unchanged</td><td>Off</td></tr>
+      <tr><td>Cancel</td><td>Cancelled, number archived</td><td>Due = cancel day</td><td>Void overdue, stop recurring</td><td>Off</td></tr>
+      <tr><td>Payment while paused/suspended</td><td>May return Active</td><td>Due restored</td><td>Invoice paid</td><td>On</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip" style="margin-top:14px">
+    <b>End of training check.</b> Each person can: sign in; find a customer; explain Active vs Paused vs Suspended vs Cancelled; complete one process from their playbook without an admin account; name one thing they must never click.
+  </div>
+  <p class="footer-note">SUL Bix Day-to-Day User Training Guide · Trainer edition · September 2026 · Internal. Screens and permissions follow product 1.21. Group names and keys live in Settings → Users &amp; permissions.</p>
+</section>
+
+</body>
+</html>

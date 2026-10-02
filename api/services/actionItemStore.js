@@ -430,6 +430,52 @@ async function getById(id) {
   return item;
 }
 
+function mapNoteFollowUp(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    status: row.status,
+    dueDate: dateOnly(row.due_date),
+    title: row.title || "",
+  };
+}
+
+async function getOpenNoteFollowUp(customerId) {
+  const rows = await query(
+    `SELECT ai.id, ai.status, ai.due_date, ai.title
+     FROM action_items ai
+     JOIN action_types at ON at.id = ai.action_type_id
+     WHERE ai.customer_id = ?
+       AND at.type_key = 'note_followup'
+       AND ai.status IN ('open', 'in_progress')
+     ORDER BY ai.id DESC
+     LIMIT 1`,
+    [Number(customerId)]
+  );
+  return mapNoteFollowUp(rows[0]);
+}
+
+async function openNoteFollowUpsForCustomers(customerIds) {
+  const ids = [...new Set((customerIds || []).map((id) => Number(id)).filter((id) => id > 0))];
+  const byCustomer = new Map();
+  if (!ids.length) return byCustomer;
+  const rows = await query(
+    `SELECT ai.id, ai.customer_id, ai.status, ai.due_date, ai.title
+     FROM action_items ai
+     JOIN action_types at ON at.id = ai.action_type_id
+     WHERE at.type_key = 'note_followup'
+       AND ai.status IN ('open', 'in_progress')
+       AND ai.customer_id IN (${ids.map(() => "?").join(",")})
+     ORDER BY ai.id DESC`,
+    ids
+  );
+  for (const row of rows) {
+    const customerId = Number(row.customer_id);
+    if (!byCustomer.has(customerId)) byCustomer.set(customerId, mapNoteFollowUp(row));
+  }
+  return byCustomer;
+}
+
 async function listActionItems({
   status,
   typeKey,
@@ -463,24 +509,42 @@ async function listActionItems({
     params.push(Number(customerId));
   }
 
-  const assigneeId = assignedTo || mineUserId;
-  if (assigneeId) {
+  if (assignedTo) {
     clauses.push(
       `EXISTS (
          SELECT 1 FROM action_item_assignees aia
          WHERE aia.action_item_id = ai.id AND aia.user_id = ?
        )`
     );
-    params.push(Number(assigneeId));
+    params.push(Number(assignedTo));
+  } else if (mineUserId) {
+    // Assigned to me, or a note follow-up nobody was tagged on.
+    // Note authors may not have reminder access, so those stay visible here.
+    clauses.push(
+      `(
+         EXISTS (
+           SELECT 1 FROM action_item_assignees aia
+           WHERE aia.action_item_id = ai.id AND aia.user_id = ?
+         )
+         OR (
+           at.type_key = 'note_followup'
+           AND NOT EXISTS (
+             SELECT 1 FROM action_item_assignees aia2
+             WHERE aia2.action_item_id = ai.id
+           )
+         )
+       )`
+    );
+    params.push(Number(mineUserId));
   }
 
   const search = String(q || "").trim();
   if (search) {
     const like = `%${search}%`;
     clauses.push(
-      `(ai.title LIKE ? OR c.customer_number LIKE ? OR c.first_name LIKE ? OR c.last_name LIKE ? OR c.apartment_number LIKE ?)`
+      `(ai.title LIKE ? OR ai.description LIKE ? OR c.staff_notes LIKE ? OR c.customer_number LIKE ? OR c.first_name LIKE ? OR c.last_name LIKE ? OR c.apartment_number LIKE ?)`
     );
-    params.push(like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like);
   }
 
   if (from) {
@@ -1072,6 +1136,8 @@ module.exports = {
   listTypes,
   listAssignableUsers,
   listActionItems,
+  getOpenNoteFollowUp,
+  openNoteFollowUpsForCustomers,
   getById,
   createActionItem,
   updateActionItem,

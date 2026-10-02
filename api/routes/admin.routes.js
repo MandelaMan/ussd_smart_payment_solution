@@ -54,6 +54,7 @@ const {
 const { listOnus, getOnuAbility, getCustomerOltStatus } = require("../controllers/olt.controller");
 const {
   listCustomers,
+  listCustomerNotes,
   lookupCustomerByNumber,
   exportCustomers,
   getCustomer,
@@ -68,6 +69,8 @@ const {
   getDowngradeQuote,
   createCustomer,
   updateCustomer,
+  updateCustomerNotes,
+  getCustomerNoteFollowUp,
   updateCustomerTvCount,
   getCustomerIntegrations,
   convertCustomerType,
@@ -79,6 +82,9 @@ const {
   cancelSubscription,
   disconnectCustomer,
   pauseCustomer,
+  resumeCustomer,
+  pauseCustomerIndefinitely,
+  restartIndefinitePause,
   linkCustomerOlt,
   deleteCustomerPermanently,
   apartmentHistory,
@@ -166,6 +172,17 @@ const {
 const { authenticate } = require("../middleware/auth");
 const { attachPermissions, requirePermission, requireAdministrator } = require("../middleware/permissions");
 const {
+  getIptvStatus,
+  getIptvSettings,
+  updateIptvSettings,
+  listIptvChannels,
+  listIptvPackages,
+  listIptvUsers,
+  simulateIptvCustomer,
+  disconnectIptvUser,
+  reconnectIptvUser,
+} = require("../controllers/startlyx.controller");
+const {
   listPermissionCatalog,
   listGroups,
   getGroup,
@@ -193,7 +210,7 @@ router.get("/support-stats", requirePermission("dashboard.support", "customers.v
 router.get("/partner/dashboard", requirePermission("dashboard.partner"), getPartnerDashboard);
 router.get("/revenue-chart", requirePermission("dashboard.finance"), getRevenueChart);
 router.get("/activity", requirePermission("dashboard.activity"), getActivityFeed);
-router.get("/activity/audit", requireAdministrator, getActivityAudit);
+router.get("/activity/audit", requirePermission("activity_audit.view"), getActivityAudit);
 router.get("/reports", requirePermission("reports.view"), listReports);
 router.get("/reports/analytics", requirePermission("analytics.view", "reports.view"), getAnalytics);
 router.get("/reports/kpis", requirePermission("analytics.view", "dashboard.finance"), getKpis);
@@ -468,6 +485,7 @@ router.post(
   importCustomers
 );
 router.get("/customers", requirePermission("customers.view"), listCustomers);
+router.get("/customers/notes", requirePermission("customers.view"), listCustomerNotes);
 router.get(
   "/customers/lookup",
   requirePermission("customers.view"),
@@ -482,6 +500,12 @@ router.get(
 router.post("/customers", requirePermission("customers.create"), createCustomer);
 router.post("/customers/refresh-batch", requirePermission("customers.view"), refreshCustomersBatch);
 router.patch("/customers/:id", requirePermission("customers.edit"), updateCustomer);
+router.patch("/customers/:id/notes", requirePermission("customers.edit"), updateCustomerNotes);
+router.get(
+  "/customers/:id/note-followup",
+  requirePermission("customers.view"),
+  getCustomerNoteFollowUp
+);
 router.patch("/customers/:id/tv-count", requirePermission("customers.edit"), updateCustomerTvCount);
 router.post("/customers/:id/convert-type", requirePermission("customers.edit"), convertCustomerType);
 router.post("/customers/bulk-cancel", requirePermission("customers.cancel"), bulkCancelSubscriptions);
@@ -516,6 +540,17 @@ router.get("/customers/:id/olt-status", requirePermission("customers.olt"), getC
 router.post("/customers/:id/olt-link", requirePermission("customers.olt"), linkCustomerOlt);
 router.post("/customers/:id/disconnect", requirePermission("customers.disconnect"), disconnectCustomer);
 router.post("/customers/:id/pause", requirePermission("customers.pause"), pauseCustomer);
+router.post(
+  "/customers/:id/pause-indefinite",
+  requirePermission("customers.pause"),
+  pauseCustomerIndefinitely
+);
+router.post("/customers/:id/resume", requirePermission("customers.pause"), resumeCustomer);
+router.post(
+  "/customers/:id/restart",
+  requirePermission("customers.pause"),
+  restartIndefinitePause
+);
 router.delete("/customers/:id", requirePermission("customers.delete"), deleteCustomerPermanently);
 router.get(
   "/buildings/:buildingId/apartments/:apartmentNumber/history",
@@ -550,5 +585,15 @@ router.put(
   requirePermission("communication.settings"),
   updateCommunicationEmailSettings
 );
+
+router.get("/iptv/status", requirePermission("iptv.view"), getIptvStatus);
+router.get("/iptv/settings", requirePermission("iptv.view", "iptv.settings"), getIptvSettings);
+router.put("/iptv/settings", requirePermission("iptv.settings"), updateIptvSettings);
+router.get("/iptv/channels", requirePermission("iptv.view"), listIptvChannels);
+router.get("/iptv/packages", requirePermission("iptv.view"), listIptvPackages);
+router.get("/iptv/users", requirePermission("iptv.view"), listIptvUsers);
+router.post("/iptv/simulate", requirePermission("iptv.operate"), simulateIptvCustomer);
+router.post("/iptv/users/:id/disconnect", requirePermission("iptv.operate"), disconnectIptvUser);
+router.post("/iptv/users/:id/reconnect", requirePermission("iptv.operate"), reconnectIptvUser);
 
 module.exports = router;

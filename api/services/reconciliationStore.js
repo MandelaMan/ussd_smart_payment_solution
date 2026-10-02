@@ -26,7 +26,7 @@ const {
   resumeRecurringInvoice_JS,
   markInvoiceAsPaid_JS,
 } = require("../controllers/zoho.controller");
-const { getTISPCustomer } = require("../controllers/tisp.controller");
+const { getTISPCustomer, summarizeTispFaultMessage } = require("../controllers/tisp.controller");
 const { processUnallocatedMpesaPayment, applyZohoPaymentForMpesa, logZohoMpesaPaymentResult } = require("../controllers/mpesa.controller");
 const { normalizeSubscriptionStatus } = require("../utils/subscriptionStatus");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
@@ -670,7 +670,12 @@ async function buildCustomerRecord(customer, options = {}) {
         console.warn("[reconciliation] TISP snapshot save skipped:", e.message);
       }
     } catch (e) {
-      tispError = e.message || "TISP sync failed";
+      const body = e?.response?.data;
+      const raw =
+        (typeof body === "string" && body.trim()) ||
+        e?.message ||
+        "TISP sync failed";
+      tispError = summarizeTispFaultMessage(raw);
     }
   } else if (!tispDueDate && storedSnapshot?.tisp?.dueDate) {
     tispDueDate = storedSnapshot.tisp.dueDate;

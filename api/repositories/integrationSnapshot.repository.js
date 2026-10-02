@@ -279,14 +279,23 @@ async function replaceZohoInvoices(customerId, zohoContactId, invoices = []) {
 
 async function replaceZohoPayments(customerId, payments = []) {
   await query(`DELETE FROM zoho_customer_payments WHERE customer_id = ?`, [customerId]);
+  const seen = new Set();
   for (const p of payments) {
     const paymentId = p.payment_id || p.id;
-    if (!paymentId) continue;
+    if (!paymentId || seen.has(String(paymentId))) continue;
+    seen.add(String(paymentId));
     const invoiceNumber = extractZohoAppliedInvoiceNumbers(p);
     await query(
       `INSERT INTO zoho_customer_payments
         (customer_id, payment_id, payment_date, amount, reference_number, invoice_number, raw_json, synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+        payment_date = VALUES(payment_date),
+        amount = VALUES(amount),
+        reference_number = VALUES(reference_number),
+        invoice_number = VALUES(invoice_number),
+        raw_json = VALUES(raw_json),
+        synced_at = NOW()`,
       [
         customerId,
         String(paymentId),
@@ -325,15 +334,36 @@ async function listZohoPayments(customerId) {
   return scoped.map(mapStoredPayment);
 }
 
+async function recurringSnapshotIsFresh(customerId, maxAgeSeconds) {
+  const maxAge = Number(maxAgeSeconds);
+  if (!customerId || !Number.isFinite(maxAge) || maxAge <= 0) return false;
+  const rows = await query(
+    `SELECT MAX(synced_at) AS synced_at FROM zoho_recurring_invoices WHERE customer_id = ?`,
+    [customerId]
+  );
+  const syncedAt = rows[0]?.synced_at;
+  if (!syncedAt) return false;
+  const ageMs = Date.now() - new Date(syncedAt).getTime();
+  return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= maxAge * 1000;
+}
+
 async function replaceRecurringInvoices(customerId, recurring = []) {
   await query(`DELETE FROM zoho_recurring_invoices WHERE customer_id = ?`, [customerId]);
+  const seen = new Set();
   for (const inv of recurring) {
     const id = inv.recurring_invoice_id || inv.recurringinvoice_id || inv.id;
-    if (!id) continue;
+    if (!id || seen.has(String(id))) continue;
+    seen.add(String(id));
     await query(
       `INSERT INTO zoho_recurring_invoices
         (customer_id, recurring_invoice_id, status, next_invoice_date, last_sent_date, raw_json, synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+        status = VALUES(status),
+        next_invoice_date = VALUES(next_invoice_date),
+        last_sent_date = VALUES(last_sent_date),
+        raw_json = VALUES(raw_json),
+        synced_at = NOW()`,
       [
         customerId,
         String(id),
@@ -595,6 +625,7 @@ module.exports = {
   replaceZohoPayments,
   listZohoPayments,
   replaceRecurringInvoices,
+  recurringSnapshotIsFresh,
   listRecurringInvoices,
   getTispSnapshot,
   upsertTispSnapshot,

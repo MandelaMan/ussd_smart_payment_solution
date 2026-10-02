@@ -14,6 +14,9 @@ const { invalidateDashboardCaches } = require("../lib/cache");
 const { mapWithConcurrency } = require("../utils/mapWithConcurrency");
 const {
   normalizeSubscriptionStatus,
+  isIndefinitePauseStatus,
+  INDEFINITE_PAUSE_STATUS,
+  subscriptionStatusAfterTispRefresh,
 } = require("../utils/subscriptionStatus");
 
 const env = loadEnv();
@@ -85,23 +88,24 @@ async function processCustomerSyncJob(job) {
             result.raw?.Status ??
             result.raw?.subscriptionStatus ??
             null;
-          const previousStatus = normalizeSubscriptionStatus(
-            customer.subscriptionStatus || customer.subscription_status
+          const previousStatus =
+            customer.subscriptionStatus || customer.subscription_status;
+          const normalized = subscriptionStatusAfterTispRefresh(
+            previousStatus,
+            rawStatus
           );
-          const preservePaused = previousStatus === "Paused";
-          let normalized = rawStatus
-            ? normalizeSubscriptionStatus(String(rawStatus))
-            : "Active";
-          if (preservePaused && normalized !== "Active" && normalized !== "Cancelled") {
-            normalized = "Paused";
-          }
 
           await customerStore.updateCustomerSubscriptionStatus(
             customer.id,
             normalized
           );
           try {
-            await integrationSnapshot.upsertTispSnapshot(customer.id, result.raw);
+            const snapshotPayload = { ...(result.raw || {}) };
+            if (normalized === "Paused" || normalized === INDEFINITE_PAUSE_STATUS) {
+              snapshotPayload.status = normalized;
+              snapshotPayload.Status = normalized;
+            }
+            await integrationSnapshot.upsertTispSnapshot(customer.id, snapshotPayload);
           } catch (e) {
             console.warn("TISP snapshot save failed:", e.message);
           }
@@ -111,8 +115,11 @@ async function processCustomerSyncJob(job) {
           const previousStatus = normalizeSubscriptionStatus(
             customer.subscriptionStatus || customer.subscription_status
           );
-          const notOnTispStatus =
-            previousStatus === "Paused" ? "Paused" : "Not on TISP";
+          const notOnTispStatus = isIndefinitePauseStatus(previousStatus)
+            ? INDEFINITE_PAUSE_STATUS
+            : previousStatus === "Paused"
+              ? "Paused"
+              : "Not on TISP";
           await customerStore.updateCustomerSubscriptionStatus(
             customer.id,
             notOnTispStatus
@@ -146,8 +153,11 @@ async function processCustomerSyncJob(job) {
             const previousStatus = normalizeSubscriptionStatus(
               customer.subscriptionStatus || customer.subscription_status
             );
-            const notOnTispStatus =
-              previousStatus === "Paused" ? "Paused" : "Not on TISP";
+            const notOnTispStatus = isIndefinitePauseStatus(previousStatus)
+              ? INDEFINITE_PAUSE_STATUS
+              : previousStatus === "Paused"
+                ? "Paused"
+                : "Not on TISP";
             await customerStore.updateCustomerSubscriptionStatus(
               customer.id,
               notOnTispStatus

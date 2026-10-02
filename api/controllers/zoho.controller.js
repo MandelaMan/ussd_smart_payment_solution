@@ -25,6 +25,10 @@ const {
   pickZohoTransactionSeries,
   invoiceSeriesPayload,
 } = require("../utils/zohoTransactionSeries");
+const {
+  isZohoRecurringAlreadyGone,
+  zohoRecurringDeleteNeedsStop,
+} = require("../utils/zohoRecurrence");
 require("dotenv").config();
 
 /** ========= Config ========= **/
@@ -260,6 +264,8 @@ const {
   zohoContactMatchesCustomerIdentity,
   filterZohoInvoicesForContact,
   filterZohoPaymentsForContact,
+  isZohoDuplicateContactError,
+  zohoErrorText,
 } = require("../utils/zohoCustomerScope");
 const withTimeout = (promise, ms, label = "op") =>
   Promise.race([
@@ -554,6 +560,63 @@ const stopRecurringInvoice_JS = async (recurringInvoiceId) => {
       error.response?.data || error.message,
     );
     throw error;
+  }
+};
+
+/**
+ * Permanently remove a Zoho recurring invoice. Active profiles are stopped
+ * first when Zoho rejects DELETE. Already-deleted IDs are treated as success.
+ */
+const deleteRecurringInvoice_JS = async (recurringInvoiceId) => {
+  if (!recurringInvoiceId) return null;
+  const id = String(recurringInvoiceId);
+  const del = () =>
+    withTimeout(
+      callZoho(`recurringinvoices/${id}`, "DELETE"),
+      10_000,
+      "delete-recurring-invoice"
+    );
+
+  try {
+    return await del();
+  } catch (error) {
+    if (isZohoRecurringAlreadyGone(error)) {
+      return { deleted: true, missing: true };
+    }
+    if (!zohoRecurringDeleteNeedsStop(error)) {
+      console.error(
+        "deleteRecurringInvoice_JS error:",
+        error.response?.data || error.message
+      );
+      throw error;
+    }
+    try {
+      await stopRecurringInvoice_JS(id);
+    } catch (stopErr) {
+      if (!isZohoRecurringAlreadyGone(stopErr)) {
+        const stopMsg = String(
+          stopErr?.response?.data?.message || stopErr?.message || ""
+        ).toLowerCase();
+        if (!stopMsg.includes("already") && !stopMsg.includes("stopped")) {
+          console.warn(
+            "stop before delete recurring failed:",
+            stopErr.message || stopErr
+          );
+        }
+      }
+    }
+    try {
+      return await del();
+    } catch (retryErr) {
+      if (isZohoRecurringAlreadyGone(retryErr)) {
+        return { deleted: true, missing: true };
+      }
+      console.error(
+        "deleteRecurringInvoice_JS error:",
+        retryErr.response?.data || retryErr.message
+      );
+      throw retryErr;
+    }
   }
 };
 
@@ -1479,6 +1542,100 @@ const findContactByLookupKeys_JS = async (lookupKeys = [], options = {}) => {
   return null;
 };
 
+function thoroughZohoLookupQueries(customer) {
+  const keys = [];
+  const push = (value) => {
+    const key = String(value || "").trim();
+    if (!key) return;
+    if (keys.some((existing) => existing.toLowerCase() === key.toLowerCase())) {
+      return;
+    }
+    keys.push(key);
+  };
+  const first = customer?.firstName || customer?.first_name;
+  const middle = customer?.middleName || customer?.middle_name;
+  const last = customer?.lastName || customer?.last_name;
+  push(customer?.email);
+  push(customer?.phone || customer?.mobile);
+  push(customer?.customerNumber || customer?.customer_number);
+  push([first, middle, last].filter(Boolean).join(" "));
+  push([first, last].filter(Boolean).join(" "));
+  push([last, first].filter(Boolean).join(" "));
+  push(customer?.businessName || customer?.business_name);
+  return keys;
+}
+
+async function listZohoContactsForQuery(query) {
+  const key = String(query || "").trim();
+  if (!key) return [];
+  try {
+    if (key.includes("@")) {
+      const result = await withTimeout(
+        callZoho("contacts", "GET", null, {
+          email: key,
+          per_page: 20,
+          ...ZOHO_CONTACT_LIST_FILTER,
+        }),
+        8000,
+        "thorough-email"
+      );
+      return result.contacts || [];
+    }
+    if (looksLikePhoneKey(key)) {
+      const hit = await findContactByPhone_JS(key);
+      return hit?.contact_id ? [hit] : [];
+    }
+    const result = await withTimeout(
+      callZoho("contacts", "GET", null, {
+        search_text: key,
+        per_page: 20,
+        page: 1,
+        ...ZOHO_CONTACT_LIST_FILTER,
+      }),
+      9000,
+      "thorough-search"
+    );
+    return result.contacts || [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Search Zoho by email, phone, customer number, and name variants, including
+ * contact persons on the full record. Returns a match only when
+ * scoreExistingZohoContact accepts it. Never creates a contact.
+ */
+const findExistingZohoContactThoroughly_JS = async (customer) => {
+  const { scoreExistingZohoContact } = require("../utils/zohoCustomerScope");
+  const seen = new Set();
+  let best = null;
+  let bestScore = 0;
+
+  for (const query of thoroughZohoLookupQueries(customer)) {
+    const list = await listZohoContactsForQuery(query);
+    for (const lean of list) {
+      const id = lean?.contact_id ? String(lean.contact_id) : "";
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      let contact = lean;
+      try {
+        const full = await getContactFull_JS(id);
+        if (full?.contact_id) contact = full;
+      } catch {
+        /* lean contact is still scored */
+      }
+      const scored = scoreExistingZohoContact(contact, customer);
+      if (scored.accept && scored.score > bestScore) {
+        best = contact;
+        bestScore = scored.score;
+      }
+    }
+  }
+
+  return best;
+};
+
 // Items (array)
 const getItems_JS = async () => {
   try {
@@ -1556,11 +1713,21 @@ const getInvoiceTemplates_JS = async () => {
   }
 };
 
-// Create contact (object or null)
+function pickCreatedZohoContact(result) {
+  if (!result || typeof result !== "object") return null;
+  const raw =
+    result.contact ||
+    (Array.isArray(result.contacts) ? result.contacts[0] : null) ||
+    (result.contact_id ? result : null);
+  return pickLean(raw);
+}
+
+// Create contact (object or null). Duplicate Display Name returns null so
+// callers can look up / uniquify and retry — never a silent empty object.
 const createContact_JS = async (payload) => {
   try {
     if (!payload?.contact_name) {
-      return null;
+      throw new Error("Zoho contact_name is required");
     }
 
     const createResult = await withTimeout(
@@ -1568,21 +1735,47 @@ const createContact_JS = async (payload) => {
       12_000,
       "create-contact",
     );
-    const contact = pickLean(createResult.contact);
+    const zohoCode = Number(createResult?.code);
+    if (Number.isFinite(zohoCode) && zohoCode !== 0) {
+      if (isZohoDuplicateContactError(createResult)) {
+        console.warn(
+          "createContact_JS duplicate:",
+          zohoErrorText(createResult) || zohoCode
+        );
+        return null;
+      }
+      const err = new Error(
+        zohoErrorText(createResult) ||
+          `Zoho contact create failed (code ${zohoCode})`
+      );
+      err.response = { data: createResult };
+      throw err;
+    }
+
+    const contact = pickCreatedZohoContact(createResult);
     if (contact?.contact_id) {
       cache.set(norm(contact.contact_name || contact.company_name || ""), contact);
       if (contact.company_name) {
         cache.set(norm(contact.company_name), contact);
       }
+      return contact;
     }
-    return contact;
+
+    if (isZohoDuplicateContactError(createResult)) {
+      return null;
+    }
+
+    console.error(
+      "createContact_JS: no contact_id in response",
+      clipPayload(createResult, 4000)
+    );
+    return null;
   } catch (error) {
-    const msg =
-      error.response?.data?.message ||
-      error.response?.data?.code ||
-      error.message ||
-      "";
-    if (/already exists|duplicate contact|contact name already/i.test(String(msg))) {
+    if (isZohoDuplicateContactError(error)) {
+      console.warn(
+        "createContact_JS duplicate:",
+        zohoErrorText(error) || error.message
+      );
       return null;
     }
     console.error(
@@ -2235,6 +2428,7 @@ module.exports = {
   getRecurringInvoice_JS,
   resumeRecurringInvoice_JS,
   stopRecurringInvoice_JS,
+  deleteRecurringInvoice_JS,
   voidInvoice_JS,
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
@@ -2248,6 +2442,7 @@ module.exports = {
   getContactFull_JS,
   getCustomerByCompanyName_JS,
   findContactByLookupKeys_JS,
+  findExistingZohoContactThoroughly_JS,
   findContactByPhone_JS,
   getItems_JS,
   getItemsByAllowedSkuPrefixes_JS,

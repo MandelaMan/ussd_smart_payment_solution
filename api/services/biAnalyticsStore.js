@@ -2,6 +2,7 @@ const { query } = require("../config/db");
 const { getReportAnalytics } = require("./reportAnalyticsStore");
 const { getLeadStats } = require("./leadStore");
 const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
+const { zohoDistinctPaymentsSql } = require("../utils/collectedRevenueSql");
 const {
   MRR_EXPR,
   resolveDateRange,
@@ -13,21 +14,37 @@ const {
 async function getMonthlyRevenueSeries(filters, months = 12) {
   const { sql: filterSql, params: filterParams } = buildCustomerFilters(filters);
   const rows = await query(
-    `SELECT DATE_FORMAT(pt.created_at, '%Y-%m') AS month,
-      COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS total_revenue,
-      COUNT(DISTINCT CASE WHEN pt.status = 'SUCCESS' THEN pt.account_reference END) AS payers
-     FROM payment_transactions pt
-     JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
-     LEFT JOIN products p ON p.id = c.product_id
-     WHERE pt.created_at >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)${filterSql}
-     GROUP BY DATE_FORMAT(pt.created_at, '%Y-%m')
-     ORDER BY month ASC`,
-    [months, ...filterParams]
+    `SELECT t.month,
+      COALESCE(SUM(t.total_revenue), 0) AS total_revenue,
+      COALESCE(SUM(t.payers), 0) AS payers
+     FROM (
+       SELECT DATE_FORMAT(pt.created_at, '%Y-%m') AS month,
+         COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS total_revenue,
+         COUNT(DISTINCT CASE WHEN pt.status = 'SUCCESS' THEN pt.account_reference END) AS payers
+       FROM payment_transactions pt
+       JOIN customers c ON UPPER(c.customer_number) = UPPER(pt.account_reference)
+       LEFT JOIN products p ON p.id = c.product_id
+       WHERE pt.created_at >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)${filterSql}
+       GROUP BY DATE_FORMAT(pt.created_at, '%Y-%m')
+       UNION ALL
+       SELECT DATE_FORMAT(zp.payment_date, '%Y-%m') AS month,
+         COALESCE(SUM(zp.amount), 0) AS total_revenue,
+         COUNT(*) AS payers
+       FROM ${zohoDistinctPaymentsSql(
+         "WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)"
+       )} zp
+       JOIN customers c ON c.id = zp.customer_id
+       LEFT JOIN products p ON p.id = c.product_id
+       WHERE 1=1${filterSql}
+       GROUP BY DATE_FORMAT(zp.payment_date, '%Y-%m')
+     ) t
+     GROUP BY t.month
+     ORDER BY t.month ASC`,
+    [months, ...filterParams, months, ...filterParams]
   );
   return rows.map((r) => ({
     month: r.month,
     totalRevenue: Number(r.total_revenue),
-    // Payments are not tagged as recurring vs installation — surface total only.
     recurringRevenue: Number(r.total_revenue),
     installationRevenue: 0,
   }));

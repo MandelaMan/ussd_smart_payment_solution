@@ -14,6 +14,7 @@ async function listProducts(req, res, next) {
       paymentFrequency,
       categoryId,
       planId,
+      premiseType,
       activeOnly,
       search,
       page,
@@ -28,6 +29,7 @@ async function listProducts(req, res, next) {
       paymentFrequency: paymentFrequency || undefined,
       categoryId: categoryId ? Number(categoryId) : undefined,
       planId: planId ? Number(planId) : undefined,
+      premiseType: premiseType || undefined,
       activeOnly: activeOnly !== "false",
       search,
       page,
@@ -44,7 +46,15 @@ async function listProducts(req, res, next) {
 
 async function createProduct(req, res, next) {
   try {
-    const { planVariantId, buildingId, mbps, price, monthlyPrice, extraBandwidth } = req.body || {};
+    const {
+      planVariantId,
+      buildingId,
+      mbps,
+      price,
+      monthlyPrice,
+      extraBandwidth,
+      premiseType,
+    } = req.body || {};
 
     if (!planVariantId || !buildingId || price == null) {
       return res.status(400).json({
@@ -61,6 +71,7 @@ async function createProduct(req, res, next) {
         monthlyPrice != null ? Number(monthlyPrice) : undefined,
       extraBandwidth:
         extraBandwidth != null ? Number(extraBandwidth) : undefined,
+      premiseType,
     });
     const product = await store.getProductListRow(Number(id));
     const tisp = product
@@ -72,7 +83,7 @@ async function createProduct(req, res, next) {
       title: "Package created",
       message: `Package #${id} · building ${buildingId}${
         mbps != null ? ` · ${mbps} Mbps` : ""
-      }`,
+      } · ${String(premiseType || "").toLowerCase() === "shop" ? "shop" : "apartment"}`,
       source: "admin",
       referenceId: String(id),
       amount: price != null ? Number(price) : null,
@@ -90,12 +101,12 @@ async function createProduct(req, res, next) {
       const msg = String(err.message || "");
       if (msg.includes("uk_products_building_price")) {
         return res.status(409).json({
-          error: "Another package in this building already uses this price",
+          error: "Another package for this premise already uses this price in the building",
         });
       }
       return res.status(409).json({
         error:
-          "A price for this package variant already exists for the selected building",
+          "A price for this package variant already exists for the selected building and premise",
       });
     }
     if (err.message) {
@@ -148,13 +159,13 @@ async function updateProduct(req, res, next) {
       const msg = String(err.message || "");
       if (msg.includes("uk_products_building_price")) {
         return res.status(409).json({
-          error: "Another package in this building already uses this price",
+          error: "Another package for this premise already uses this price in the building",
         });
       }
       if (msg.includes("uk_product_building_variant")) {
         return res.status(409).json({
           error:
-            "A price for this package variant already exists for the selected building",
+            "A price for this package variant already exists for the selected building and premise",
         });
       }
       return res.status(409).json({ error: "Duplicate package record" });
@@ -220,7 +231,7 @@ async function deleteProduct(req, res, next) {
         customerCount: err.customerCount || 0,
       });
     }
-    if (err.code === "TARGET_PRODUCT_REQUIRED" || err.code === "TARGET_PRODUCT_BUILDING") {
+    if (err.code === "TARGET_PRODUCT_REQUIRED" || err.code === "TARGET_PRODUCT_BUILDING" || err.code === "TARGET_PRODUCT_PREMISE") {
       return res.status(400).json({ error: err.message, code: err.code });
     }
     if (err.code === "ER_ROW_IS_REFERENCED_2" || err.code === "ER_ROW_IS_REFERENCED") {

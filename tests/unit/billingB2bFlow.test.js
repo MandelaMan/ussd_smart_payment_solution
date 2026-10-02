@@ -7,6 +7,8 @@ const {
   computeTrialEndDate,
   computeServiceDueDate,
   computeRecurringStartBeforeDue,
+  resolveRecurringStartForDueDateChange,
+  clampRecurringStartDate,
   computeSignupRecurringWindow,
   resolveTispDueDateForEditBilling,
   buildRecurringSubscriptionInvoiceDescription,
@@ -110,6 +112,48 @@ describe("billing period + invoice terms", () => {
     assert.equal(
       computeRecurringStartBeforeDue("2026-08-07", 7, "Africa/Nairobi"),
       "2026-07-31"
+    );
+  });
+
+  it("due-date edit shifts recurring send to 7 days before the new due", () => {
+    assert.equal(
+      resolveRecurringStartForDueDateChange(
+        "2026-08-07",
+        "2026-09-15",
+        "Africa/Nairobi"
+      ),
+      "2026-09-08"
+    );
+    assert.equal(
+      resolveRecurringStartForDueDateChange(
+        "2026-09-15",
+        "2026-09-15",
+        "Africa/Nairobi"
+      ),
+      null
+    );
+    assert.equal(
+      resolveRecurringStartForDueDateChange(null, "2026-09-15", "Africa/Nairobi"),
+      "2026-09-08"
+    );
+  });
+
+  it("clamps a past recurring start to today so Zoho can send immediately", () => {
+    assert.equal(
+      clampRecurringStartDate(
+        "2020-01-01",
+        "2026-09-17T12:00:00+03:00",
+        "Africa/Nairobi"
+      ),
+      "2026-09-17"
+    );
+    assert.equal(
+      clampRecurringStartDate(
+        "2026-10-01",
+        "2026-09-17T12:00:00+03:00",
+        "Africa/Nairobi"
+      ),
+      "2026-10-01"
     );
   });
 

@@ -4,13 +4,13 @@ import { Box, Button, Heading, Stack, Text } from "@chakra-ui/react";
 type Props = { children: ReactNode };
 type State = { error: Error | null };
 
-const STALE_IMPORT_RE =
-  /dynamically imported module|Failed to fetch dynamically imported module|Loading chunk/i;
+const STALE_RENDER_RE =
+  /dynamically imported module|Failed to fetch dynamically imported module|Loading chunk|dispatcher is null|Invalid hook call|can't access property ["']useContext["']|Cannot read propert(?:y|ies) of null \(reading ["']useContext["']\)/i;
 const STALE_IMPORT_RELOAD_KEY = "sul-admin-stale-import-reload";
 
 function isStaleDynamicImportError(error: Error | null) {
   if (!error) return false;
-  return STALE_IMPORT_RE.test(error.message || "");
+  return STALE_RENDER_RE.test(error.message || "");
 }
 
 function shouldReloadForStaleImport() {

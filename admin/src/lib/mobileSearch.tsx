@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 type MobileSearchOpenValue = {
   searchOpen: boolean;
@@ -21,16 +21,18 @@ export function MobileSearchProvider({ children }: { children: ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
 
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchValue("");
+  }, []);
+
   const openValue = useMemo<MobileSearchOpenValue>(
     () => ({
       searchOpen,
       setSearchOpen,
-      closeSearch: () => {
-        setSearchOpen(false);
-        setSearchValue("");
-      },
+      closeSearch,
     }),
-    [searchOpen]
+    [searchOpen, closeSearch]
   );
 
   const queryValue = useMemo<MobileSearchQueryValue>(

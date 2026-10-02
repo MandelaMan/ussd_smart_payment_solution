@@ -1,4 +1,5 @@
 const { query } = require("../config/db");
+const { zohoDistinctPaymentsSql } = require("../utils/collectedRevenueSql");
 const { sendTableExport } = require("../utils/tableExportResponse");
 const { listIntegrationEvents } = require("../services/integrationEventStore");
 const { listActivity, listActivityAudit } = require("../services/activityLogStore");
@@ -117,8 +118,7 @@ async function queryRevenueChartByMonth(year, monthNum) {
          COALESCE(SUM(zp.amount), 0) AS revenue,
          COUNT(*) AS success_count,
          0 AS failed_count
-       FROM zoho_customer_payments zp
-       WHERE zp.payment_date >= ? AND zp.payment_date < ?
+       FROM ${zohoDistinctPaymentsSql("WHERE payment_date >= ? AND payment_date < ?")} zp
        GROUP BY zp.payment_date
      ) t
      GROUP BY t.day
@@ -156,8 +156,7 @@ async function queryRevenueChartByYear(year) {
          COALESCE(SUM(zp.amount), 0) AS revenue,
          COUNT(*) AS success_count,
          0 AS failed_count
-       FROM zoho_customer_payments zp
-       WHERE zp.payment_date >= ? AND zp.payment_date < ?
+       FROM ${zohoDistinctPaymentsSql("WHERE payment_date >= ? AND payment_date < ?")} zp
        GROUP BY DATE_FORMAT(zp.payment_date, '%Y-%m-01')
      ) t
      GROUP BY t.day
@@ -266,15 +265,13 @@ async function getStats(req, res, next) {
           (
             COUNT(*)
             + (SELECT COUNT(*)
-               FROM zoho_customer_payments zp
-               WHERE zp.payment_date >= ? AND zp.payment_date < ?
+               FROM ${zohoDistinctPaymentsSql("WHERE payment_date >= ? AND payment_date < ?")} zp
               )
           ) AS total,
           (
             SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END)
             + (SELECT COUNT(*)
-               FROM zoho_customer_payments zp
-               WHERE zp.payment_date >= ? AND zp.payment_date < ?
+               FROM ${zohoDistinctPaymentsSql("WHERE payment_date >= ? AND payment_date < ?")} zp
               )
           ) AS success_count,
           SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
@@ -282,8 +279,7 @@ async function getStats(req, res, next) {
           (
             COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0)
             + (SELECT COALESCE(SUM(zp.amount), 0)
-               FROM zoho_customer_payments zp
-               WHERE zp.payment_date >= ? AND zp.payment_date < ?
+               FROM ${zohoDistinctPaymentsSql("WHERE payment_date >= ? AND payment_date < ?")} zp
               )
           ) AS total_revenue
         FROM payment_transactions pt
@@ -315,8 +311,7 @@ async function getStats(req, res, next) {
           SELECT
             1 AS txn_count,
             COALESCE(amount, 0) AS revenue
-          FROM zoho_customer_payments
-          WHERE payment_date = CURDATE()
+          FROM ${zohoDistinctPaymentsSql("WHERE payment_date = CURDATE()")} zp
         ) x
       `),
       query(`
@@ -334,9 +329,9 @@ async function getStats(req, res, next) {
           SELECT
             1 AS txn_count,
             COALESCE(amount, 0) AS revenue
-          FROM zoho_customer_payments
-          WHERE YEAR(payment_date) = YEAR(CURDATE())
-            AND MONTH(payment_date) = MONTH(CURDATE())
+          FROM ${zohoDistinctPaymentsSql(
+            "WHERE YEAR(payment_date) = YEAR(CURDATE()) AND MONTH(payment_date) = MONTH(CURDATE())"
+          )} zp
         ) x
       `),
       query(
@@ -353,8 +348,9 @@ async function getStats(req, res, next) {
            SELECT
              1 AS txn_count,
              COALESCE(zp.amount, 0) AS revenue
-           FROM zoho_customer_payments zp
-           WHERE zp.payment_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+           FROM ${zohoDistinctPaymentsSql(
+             "WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)"
+           )} zp
          ) x`,
         [days, days]
       ),
@@ -473,10 +469,11 @@ async function getStats(req, res, next) {
          LEFT JOIN (
            SELECT
              c.building_id,
-             COALESCE(SUM(zp.amount), 0) AS revenue
-           FROM zoho_customer_payments zp
-           JOIN customers c ON c.id = zp.customer_id
-           WHERE zp.payment_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+             COALESCE(SUM(p.amount), 0) AS revenue
+           FROM ${zohoDistinctPaymentsSql(
+             "WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)"
+           )} p
+           JOIN customers c ON c.id = p.customer_id
            GROUP BY c.building_id
          ) zp ON zp.building_id = b.id
          GROUP BY b.id, b.name
@@ -494,9 +491,10 @@ async function getStats(req, res, next) {
             AND pt.amount IS NOT NULL
           UNION ALL
           SELECT zp.amount
-          FROM zoho_customer_payments zp
-          WHERE zp.payment_date >= ? AND zp.payment_date < ?
-            AND zp.amount IS NOT NULL
+          FROM ${zohoDistinctPaymentsSql(
+            "WHERE payment_date >= ? AND payment_date < ?"
+          )} zp
+          WHERE zp.amount IS NOT NULL
         ) x
         `,
         [yearStart, yearEnd, yearStart, yearEnd]

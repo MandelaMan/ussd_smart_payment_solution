@@ -10,7 +10,7 @@ import {
   Text,
 } from "@chakra-ui/react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FiArrowLeft, FiFilter, FiSearch } from "react-icons/fi";
 import { HiOutlineSortDescending } from "react-icons/hi";
 import { Link } from "react-router-dom";
@@ -89,6 +89,7 @@ export function MobilePageChrome({
   children,
 }: MobilePageChromeProps) {
   const mobileSearch = useMobileSearchOptional();
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const hasSearch = searchValue !== undefined && onSearchChange !== undefined;
@@ -106,6 +107,7 @@ export function MobilePageChrome({
 
   useEffect(() => {
     if (!searchOpen) return;
+    searchInputRef.current?.focus();
     const main = document.querySelector<HTMLElement>("[data-app-scroll-root]");
     if (main) {
       main.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -142,11 +144,16 @@ export function MobilePageChrome({
             </IconButton>
             <InputGroup flex={1} minW={0} startElement={<FiSearch size={16} />}>
               <Input
+                ref={searchInputRef}
                 size="md"
                 h="44px"
                 placeholder={searchPlaceholder}
                 value={searchValue}
-                onChange={(e) => onSearchChange(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  mobileSearch?.setSearchValue(next);
+                  onSearchChange(next);
+                }}
                 borderRadius="full"
                 bg="bg.muted"
                 border="none"

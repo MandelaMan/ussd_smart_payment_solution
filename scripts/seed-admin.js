@@ -10,13 +10,18 @@ const { query } = require("../api/config/db");
 const {
   initializeRbac,
 } = require("../api/rbac/permissionService");
+const {
+  LEGACY_ADMIN_EMAILS,
+  resolveAdminEmail,
+  resolveAdminName,
+} = require("../api/utils/canonicalAdminAccount");
 
 const TEST_USERS = [
   {
     role: "admin",
     groupSlugs: [],
-    name: process.env.ADMIN_NAME || "Admin",
-    email: process.env.ADMIN_EMAIL || "it@sulsolutions.biz",
+    name: resolveAdminName(),
+    email: resolveAdminEmail(),
     password: process.env.ADMIN_PASSWORD || "Admin@2026",
   },
   {
@@ -43,18 +48,27 @@ const TEST_USERS = [
   {
     role: "user",
     groupSlugs: ["customer-relations"],
-    name: process.env.PARTNER_NAME || "Partner User",
+    name: process.env.PARTNER_NAME || "Internet Partner",
     email: process.env.PARTNER_EMAIL || "partner@sulsolutions.biz",
     password: process.env.PARTNER_PASSWORD || "Partner@12345",
   },
+  {
+    role: "user",
+    groupSlugs: ["partner-dstv"],
+    name: process.env.DSTV_PARTNER_NAME || "DSTV Partner",
+    email: process.env.DSTV_PARTNER_EMAIL || "dstv-partner@sulsolutions.biz",
+    password: process.env.DSTV_PARTNER_PASSWORD || "DstvPartner@12345",
+  },
+  {
+    role: "user",
+    groupSlugs: ["partner-investor"],
+    name: process.env.INVESTOR_NAME || "Investor",
+    email: process.env.INVESTOR_EMAIL || "investor@sulsolutions.biz",
+    password: process.env.INVESTOR_PASSWORD || "Investor@12345",
+  },
 ];
 
-const DEFAULT_ADMIN_EMAIL = "it@sulsolutions.biz";
-const LEGACY_ADMIN_EMAILS = ["admin@sulsolutions.biz"];
-
-const ADMIN_SEED_EMAIL = String(process.env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL)
-  .trim()
-  .toLowerCase();
+const ADMIN_SEED_EMAIL = resolveAdminEmail();
 
 async function findExistingUser(normalizedEmail, role) {
   const exact = await query(
@@ -95,11 +109,11 @@ async function seedUser({ role, groupSlugs, name, email, password }) {
       } else {
         await query(
           `UPDATE admin_users
-           SET email = ?, password_hash = ?, must_change_password = 0,
+           SET name = ?, email = ?, password_hash = ?, must_change_password = 0,
                failed_login_count = 0, locked_until = NULL,
                token_version = token_version + 1
            WHERE id = ?`,
-          [normalizedEmail, hash, existing.id]
+          [resolveAdminName(), normalizedEmail, hash, existing.id]
         );
         if (existing.email !== normalizedEmail) {
           console.log(

@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import { api, type ActivityItem, type SupportStats } from "../lib/api";
 import { formatProductNameForDisplay, formatTitleCase } from "../lib/formatText";
+import { premiseLabel } from "../lib/premise";
 import { MetricCard } from "../components/MetricCard";
 import { PackageSubscriptionChart } from "../components/PackageSubscriptionChart";
 import {
@@ -66,6 +67,7 @@ const EVENT_ICONS: Record<string, typeof FiUser> = {
   installation_updated: FiTool,
   customer_type_changed: FiUser,
   customer_paused: FiUser,
+  customer_resumed: FiWifi,
   customer_disconnected: FiWifi,
   customer_deleted: FiAlertCircle,
   tisp_reconnected: FiWifi,
@@ -240,9 +242,9 @@ export function SupportDashboardPage() {
 
   const subs = stats.subscribers;
   const packageChartData = (subs.topPackages ?? []).slice(0, 5).map((p) => ({
-    name: p.mbps
-      ? `${formatProductNameForDisplay(p.package)} (${p.mbps}M)`
-      : formatProductNameForDisplay(p.package),
+    name: formatProductNameForDisplay(p.package),
+    speed: p.mbps ? `${p.mbps} Mbps` : undefined,
+    detail: premiseLabel(p.premiseType),
     subscribers: p.subscribers,
   }));
 

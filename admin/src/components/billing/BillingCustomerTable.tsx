@@ -21,7 +21,7 @@ import {
   BILLING_GAP_STATUSES,
   type BillingModuleDef,
 } from "../../lib/billingReconciliationNav";
-import { formatTitleCase } from "../../lib/formatText";
+import { formatBillingIssueText, formatTitleCase } from "../../lib/formatText";
 import { FilterField } from "../module/FilterField";
 import { FILTER_FLEX, FilterToolbar } from "../ui/FilterToolbar";
 import { SelectField } from "../ui/SelectField";
@@ -358,7 +358,7 @@ export function BillingCustomerTable({
                 )}
                 {columns.includes("issue") && (
                   <Table.Cell {...dataTableCellProps} fontSize="xs" color="fg" maxW="280px">
-                    <Text lineClamp={2}>{row.issueBasis || "—"}</Text>
+                    <Text lineClamp={2}>{formatBillingIssueText(row.issueBasis) || "-"}</Text>
                   </Table.Cell>
                 )}
                 {columns.includes("action") && (
@@ -541,7 +541,7 @@ export function BillingCustomerTable({
                             <ReconciliationStatusBadge status={statusForBadge} />
                           ) : row.issueBasis ? (
                             <Text fontSize="xs" color="fg.muted" lineClamp={2}>
-                              {row.issueBasis}
+                              {formatBillingIssueText(row.issueBasis)}
                             </Text>
                           ) : undefined
                         }

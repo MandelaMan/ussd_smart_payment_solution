@@ -72,3 +72,42 @@ describe("DSTV decoder fee is skipped for headend buildings", () => {
     assert.equal(expectedSignupInvoiceTotal(customer), 5000);
   });
 });
+
+describe("advance payment uses the current package when coverage is omitted", () => {
+  it("covers Internet/package for a customer already on a plan", () => {
+    const coverage = resolveAdvancePaymentCoverage(
+      { hasDstv: false, packagePrice: 16000 },
+      { paymentAlreadyMade: true }
+    );
+    assert.equal(coverage.includePackage, true);
+    assert.equal(coverage.includeDecoder, false);
+  });
+
+  it("also covers the decoder fee when the current package requires it", () => {
+    const coverage = resolveAdvancePaymentCoverage(
+      {
+        hasDstv: true,
+        decoderFeeRequired: true,
+        decoderFeeAmount: 2900,
+        packagePrice: 16000,
+        buildingDstvSetup: "decoder",
+      },
+      { paymentAlreadyMade: true }
+    );
+    assert.equal(coverage.includePackage, true);
+    assert.equal(coverage.includeDecoder, true);
+  });
+
+  it("still honors explicit coverage flags", () => {
+    const coverage = resolveAdvancePaymentCoverage(
+      { hasDstv: false, packagePrice: 16000 },
+      {
+        paymentAlreadyMade: true,
+        paymentCoversInternet: false,
+        paymentCoversDecoder: false,
+      }
+    );
+    assert.equal(coverage.includePackage, false);
+    assert.equal(coverage.includeDecoder, false);
+  });
+});

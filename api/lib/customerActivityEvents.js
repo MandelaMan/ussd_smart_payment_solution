@@ -19,6 +19,7 @@ const CUSTOMER_ACTIVITY_EVENT_TYPES = Object.freeze([
   "installation_updated",
   "customer_type_changed",
   "customer_paused",
+  "customer_resumed",
   "tisp_reconnected",
   "tisp_reconnect_failed",
   // Sensitive — also listed below; included so admins/authorized roles see a full timeline

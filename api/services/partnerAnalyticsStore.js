@@ -1,13 +1,23 @@
 const { query } = require("../config/db");
 const { formatProductNameForDisplay } = require("../utils/productNameDisplay");
+const {
+  runWithPartnerCustomerScope,
+  dstvCustomerSql,
+  dstvProductSql,
+  dstvPaymentSql,
+} = require("../rbac/partnerAccess");
 
 function monthLabel(year, month) {
   const d = new Date(year, month - 1, 1);
   return d.toLocaleString("en-US", { month: "short", year: "numeric" });
 }
 
-async function getPartnerDashboard({ months = 12 } = {}) {
+async function loadPartnerDashboard({ months = 12 } = {}) {
   const monthsBack = Math.min(24, Math.max(3, Number(months) || 12));
+  const dstvCustomers = dstvCustomerSql("c");
+  const dstvProducts = dstvProductSql("p");
+  const dstvPayments = dstvPaymentSql("payment_transactions");
+  const dstvPaymentsPt = dstvPaymentSql("pt");
 
   const [
     customerSummary,
@@ -20,12 +30,13 @@ async function getPartnerDashboard({ months = 12 } = {}) {
   ] = await Promise.all([
     query(`
       SELECT
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS total,
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
-        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
-        SUM(CASE WHEN status = 'active' AND customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b,
-        SUM(CASE WHEN status = 'active' AND customer_type = 'B2B' THEN 1 ELSE 0 END) AS b2b
-      FROM customers
+        SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS total,
+        SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN c.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+        SUM(CASE WHEN c.status = 'active' AND c.customer_type = 'C2B' THEN 1 ELSE 0 END) AS c2b,
+        SUM(CASE WHEN c.status = 'active' AND c.customer_type = 'B2B' THEN 1 ELSE 0 END) AS b2b
+      FROM customers c
+      WHERE 1=1${dstvCustomers}
     `),
     query(
       `SELECT YEAR(created_at) AS year, MONTH(created_at) AS month,
@@ -33,6 +44,7 @@ async function getPartnerDashboard({ months = 12 } = {}) {
         SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS payment_count
        FROM payment_transactions
        WHERE created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL ? MONTH)
+         ${dstvPayments}
        GROUP BY YEAR(created_at), MONTH(created_at)
        ORDER BY year ASC, month ASC`,
       [monthsBack - 1]
@@ -42,18 +54,20 @@ async function getPartnerDashboard({ months = 12 } = {}) {
         SUM(added) AS added,
         SUM(lost) AS lost
        FROM (
-         SELECT YEAR(created_at) AS year, MONTH(created_at) AS month,
+         SELECT YEAR(c.created_at) AS year, MONTH(c.created_at) AS month,
            COUNT(*) AS added, 0 AS lost
-         FROM customers
-         WHERE created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL ? MONTH)
-         GROUP BY YEAR(created_at), MONTH(created_at)
+         FROM customers c
+         WHERE c.created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL ? MONTH)
+           ${dstvCustomers}
+         GROUP BY YEAR(c.created_at), MONTH(c.created_at)
          UNION ALL
-         SELECT YEAR(updated_at) AS year, MONTH(updated_at) AS month,
+         SELECT YEAR(c.updated_at) AS year, MONTH(c.updated_at) AS month,
            0 AS added, COUNT(*) AS lost
-         FROM customers
-         WHERE status = 'cancelled'
-           AND updated_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL ? MONTH)
-         GROUP BY YEAR(updated_at), MONTH(updated_at)
+         FROM customers c
+         WHERE c.status = 'cancelled'
+           AND c.updated_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL ? MONTH)
+           ${dstvCustomers}
+         GROUP BY YEAR(c.updated_at), MONTH(c.updated_at)
        ) t
        GROUP BY year, month
        ORDER BY year ASC, month ASC`,
@@ -61,13 +75,15 @@ async function getPartnerDashboard({ months = 12 } = {}) {
     ),
     query(
       `SELECT
-        SUM(CASE WHEN event_type = 'upgrade' THEN 1 ELSE 0 END) AS upgrades,
-        SUM(CASE WHEN event_type = 'downgrade' THEN 1 ELSE 0 END) AS downgrades,
-        SUM(CASE WHEN event_type = 'switch_apartment' THEN 1 ELSE 0 END) AS apartment_switches,
-        SUM(CASE WHEN event_type = 'type_change' THEN 1 ELSE 0 END) AS type_changes,
-        SUM(CASE WHEN event_type = 'cancel' THEN 1 ELSE 0 END) AS cancellations
-       FROM customer_events
-       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)`,
+        SUM(CASE WHEN e.event_type = 'upgrade' THEN 1 ELSE 0 END) AS upgrades,
+        SUM(CASE WHEN e.event_type = 'downgrade' THEN 1 ELSE 0 END) AS downgrades,
+        SUM(CASE WHEN e.event_type = 'switch_apartment' THEN 1 ELSE 0 END) AS apartment_switches,
+        SUM(CASE WHEN e.event_type = 'type_change' THEN 1 ELSE 0 END) AS type_changes,
+        SUM(CASE WHEN e.event_type = 'cancel' THEN 1 ELSE 0 END) AS cancellations
+       FROM customer_events e
+       JOIN customers c ON c.id = e.customer_id
+       WHERE e.created_at >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+         ${dstvCustomers}`,
       [monthsBack]
     ),
     query(`
@@ -77,6 +93,7 @@ async function getPartnerDashboard({ months = 12 } = {}) {
       JOIN customers c ON c.product_id = p.id
       WHERE c.status = 'active'
         AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
+        ${dstvProducts}
       GROUP BY p.id, p.name, p.mbps
       ORDER BY subscribers DESC
       LIMIT 10
@@ -88,16 +105,19 @@ async function getPartnerDashboard({ months = 12 } = {}) {
       JOIN customers c ON c.building_id = b.id
       WHERE c.status = 'active'
         AND LOWER(COALESCE(c.subscription_status, '')) LIKE '%active%'
+        ${dstvCustomers}
       GROUP BY b.id, b.name
       ORDER BY subscribers DESC
       LIMIT 10
     `),
     query(
-      `SELECT event_type, COUNT(*) AS count
-       FROM customer_events
-       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-         AND event_type IN ('upgrade', 'downgrade', 'switch_apartment', 'type_change', 'cancel', 'created')
-       GROUP BY event_type
+      `SELECT e.event_type, COUNT(*) AS count
+       FROM customer_events e
+       JOIN customers c ON c.id = e.customer_id
+       WHERE e.created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+         AND e.event_type IN ('upgrade', 'downgrade', 'switch_apartment', 'type_change', 'cancel', 'created')
+         ${dstvCustomers}
+       GROUP BY e.event_type
        ORDER BY count DESC`
     ),
   ]);
@@ -110,27 +130,30 @@ async function getPartnerDashboard({ months = 12 } = {}) {
   periodStart.setDate(1);
 
   const [periodRevenue] = await query(
-    `SELECT COALESCE(SUM(CASE WHEN status = 'SUCCESS' THEN amount ELSE 0 END), 0) AS revenue
-     FROM payment_transactions
-     WHERE created_at >= ?`,
+    `SELECT COALESCE(SUM(CASE WHEN pt.status = 'SUCCESS' THEN pt.amount ELSE 0 END), 0) AS revenue
+     FROM payment_transactions pt
+     WHERE pt.created_at >= ?
+       ${dstvPaymentsPt}`,
     [periodStart]
   );
 
   const [periodAdded] = await query(
-    `SELECT COUNT(*) AS count FROM customers WHERE created_at >= ?`,
+    `SELECT COUNT(*) AS count FROM customers c WHERE c.created_at >= ?${dstvCustomers}`,
     [periodStart]
   );
 
   const [periodLost] = await query(
-    `SELECT COUNT(*) AS count FROM customers
-     WHERE status = 'cancelled' AND updated_at >= ?`,
+    `SELECT COUNT(*) AS count FROM customers c
+     WHERE c.status = 'cancelled' AND c.updated_at >= ?${dstvCustomers}`,
     [periodStart]
   );
 
   const [periodPackageChanges] = await query(
-    `SELECT COUNT(*) AS count FROM customer_events
-     WHERE event_type IN ('upgrade', 'downgrade', 'switch_apartment', 'type_change')
-       AND created_at >= ?`,
+    `SELECT COUNT(*) AS count FROM customer_events e
+     JOIN customers c ON c.id = e.customer_id
+     WHERE e.event_type IN ('upgrade', 'downgrade', 'switch_apartment', 'type_change')
+       AND e.created_at >= ?
+       ${dstvCustomers}`,
     [periodStart]
   );
 
@@ -189,6 +212,12 @@ async function getPartnerDashboard({ months = 12 } = {}) {
       count: Number(row.count || 0),
     })),
   };
+}
+
+async function getPartnerDashboard({ months = 12, customerScope = "all" } = {}) {
+  return runWithPartnerCustomerScope(customerScope, () =>
+    loadPartnerDashboard({ months })
+  );
 }
 
 module.exports = { getPartnerDashboard };

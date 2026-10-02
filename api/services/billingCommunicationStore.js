@@ -9,6 +9,7 @@ const {
   listTemplateOptions,
   buildTemplateContext,
 } = require("../utils/billingCommunicationTemplates");
+const { plainIssueText } = require("../utils/productNameDisplay");
 const { findContactByLookupKeys_JS } = require("../controllers/zoho.controller");
 const { getZohoContactLookupKeys, resolveInvoiceEmail, isB2BCustomer } = require("../utils/b2bBilling");
 
@@ -152,11 +153,12 @@ async function listCandidates(filters = {}) {
     const templateKey = resolveTemplateKey(record);
     const lastSent = lastSentMap.get(record.customerNumber);
     const validations = record.validations || [];
-    const issueBasis =
+    const issueBasis = plainIssueText(
       validations.find((v) => v.severity === "critical")?.message ||
-      validations.find((v) => v.severity === "high")?.message ||
-      validations[0]?.message ||
-      null;
+        validations.find((v) => v.severity === "high")?.message ||
+        validations[0]?.message ||
+        null
+    );
 
     if (filters.hasEmail === "true" && !email) continue;
 

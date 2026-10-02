@@ -14,8 +14,12 @@ const { buildingUsesDecoder } = require("./dstvSetup");
 const ZOHO_VAT_TAX_ID = process.env.ZOHO_VAT_TAX_ID || null;
 const DSTV_ONE_TIME_FEE = Number(process.env.ZOHO_DSTV_ONE_TIME_FEE || 2900);
 const EXTRA_TV_UNIT_FEE = Number(process.env.ZOHO_EXTRA_TV_FEE || 500) || 500;
+const EXTRA_DECODER_UNIT_FEE =
+  Number(process.env.ZOHO_EXTRA_DECODER_FEE || 3500) || 3500;
 const MAX_TV_COUNT = 10;
+const MAX_EXTRA_DECODER_COUNT = 10;
 const EXTRA_TV_LINE_NAME_RE = /^extra tvs?\b/i;
+const EXTRA_DECODER_LINE_NAME_RE = /^extra decoders?\b/i;
 
 function withTax(lineItem) {
   if (ZOHO_VAT_TAX_ID) {
@@ -116,6 +120,94 @@ function extraTvLineName(quantity, customerNumber = "") {
   return number ? `${base} — ${number}` : base;
 }
 
+function extraDecoderUnitFee() {
+  const n = Number(process.env.ZOHO_EXTRA_DECODER_FEE || EXTRA_DECODER_UNIT_FEE);
+  return n > 0 ? n : 3500;
+}
+
+function packageAllowsExtraDecoder(customer) {
+  if (!buildingUsesDecoder(customer)) return false;
+  return customerHasDstv(customer);
+}
+
+function normalizeExtraDecoderCount(value, allowsExtra = true) {
+  if (!allowsExtra) return 0;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(MAX_EXTRA_DECODER_COUNT, Math.floor(n));
+}
+
+function resolveExtraDecoderCountForProduct(product, requested, buildingOrCustomer = null) {
+  const hasDstv = Boolean(product?.has_dstv || product?.hasDstv);
+  const allows =
+    hasDstv &&
+    (buildingOrCustomer == null || buildingUsesDecoder(buildingOrCustomer));
+  return normalizeExtraDecoderCount(requested, allows);
+}
+
+function extraDecoderCount(customer) {
+  if (!packageAllowsExtraDecoder(customer)) return 0;
+  return normalizeExtraDecoderCount(
+    customer?.extraDecoderCount ?? customer?.extra_decoder_count,
+    true
+  );
+}
+
+function extraDecoderAmount(customer) {
+  return extraDecoderCount(customer) * extraDecoderUnitFee();
+}
+
+/** Included decoder plus extras — one-time 2900 charge quantity. */
+function decodersOwnedCount(customer) {
+  if (!shouldIncludeDstvOneTimeFee(customer)) return 0;
+  return extraDecoderCount(customer) + 1;
+}
+
+function isExtraDecoderLineItem(item) {
+  return EXTRA_DECODER_LINE_NAME_RE.test(String(item?.name || "").trim());
+}
+
+function extraDecoderLineMatchKey(item) {
+  const name = String(item?.name || "").trim().toLowerCase();
+  const house = name.match(/[—–-]\s*(.+)$/);
+  if (house) return `house:${house[1].trim()}`;
+  return "c2b";
+}
+
+function extraDecoderLineName(quantity, customerNumber = "") {
+  const qty = Number(quantity) || 1;
+  const base = qty === 1 ? "Extra decoder" : "Extra decoders";
+  const number = String(customerNumber || "").trim();
+  return number ? `${base} — ${number}` : base;
+}
+
+/**
+ * Recurring Extra decoder line (KES 3500 each). Not used on the first invoice.
+ */
+function buildExtraDecoderLineItem(customer, options = {}) {
+  const qty = extraDecoderCount(customer);
+  if (!(qty > 0)) return null;
+  const unit = extraDecoderUnitFee();
+  const customerNumber = String(
+    customer?.customerNumber || customer?.customer_number || ""
+  ).trim();
+  const name =
+    options.name ||
+    extraDecoderLineName(
+      qty,
+      options.includeCustomerNumber ? customerNumber : ""
+    );
+  return withTax({
+    name,
+    rate: unit,
+    quantity: qty,
+    description:
+      qty === 1
+        ? `Additional DSTV decoder subscription (KES ${Math.round(unit)} per decoder)`
+        : `${qty} additional DSTV decoder subscriptions (KES ${Math.round(unit)} each)`,
+  });
+}
+
 /**
  * Recurring Extra TV line (KES 500 each above the first TV), or null.
  * options.name — override (e.g. include customer number on agency invoices)
@@ -167,7 +259,15 @@ function mergeRecurringLineItems(existingItems, nextItems) {
             isExtraTvLineItem(e) &&
             extraTvLineMatchKey(e) === extraTvLineMatchKey(item)
         )
-      : takeExisting((e) => !isExtraTvLineItem(e));
+      : isExtraDecoderLineItem(item)
+        ? takeExisting(
+            (e) =>
+              isExtraDecoderLineItem(e) &&
+              extraDecoderLineMatchKey(e) === extraDecoderLineMatchKey(item)
+          )
+        : takeExisting(
+            (e) => !isExtraTvLineItem(e) && !isExtraDecoderLineItem(e)
+          );
     if (prev?.line_item_id) {
       return { ...item, line_item_id: prev.line_item_id };
     }
@@ -213,10 +313,11 @@ function resolveAdvancePaymentCoverage(customer, options = {}) {
     };
   }
 
-  // Legacy callers with no coverage flags → full first invoice.
+  // No flags: apply the payment to the customer's current package
+  // (Internet/package, plus decoder fee when that package requires it).
   return {
     includePackage: true,
-    includeDecoder: hasDstv,
+    includeDecoder: hasDstv && !skipDecoderFee,
     hasDstv,
   };
 }
@@ -262,9 +363,11 @@ function expectedSignupInvoiceTotal(customer, options = {}) {
   }
   if (coverage.includeDecoder && shouldIncludeDstvOneTimeFee(customer)) {
     const fee = resolveDstvOneTimeFee(customer);
+    const qty = Math.max(1, decodersOwnedCount(customer));
+    const decoderTotal = fee * qty;
     total += discountDecoder
-      ? discountedPackageAmount(fee, packageDiscountPercent)
-      : fee;
+      ? discountedPackageAmount(decoderTotal, packageDiscountPercent)
+      : decoderTotal;
   }
   return total;
 }
@@ -298,6 +401,10 @@ function buildAdvancePaymentInvoiceNotes({
     customer?.packagePrice || customer?.package_price || 0
   );
   const decoderFee = resolveDstvOneTimeFee(customer);
+  const decoderQty = Math.max(
+    coverage?.includeDecoder ? decodersOwnedCount(customer) : 0,
+    0
+  );
   const extraTv = extraTvAmount(customer);
   if (coverage?.includePackage) {
     lines.push(`Package (from plan): KES ${Math.round(packagePrice)}`);
@@ -308,15 +415,22 @@ function buildAdvancePaymentInvoiceNotes({
     }
   }
   if (coverage?.includeDecoder) {
-    lines.push(`Decoder (from plan): KES ${Math.round(decoderFee)}`);
+    const decoderTotal = decoderFee * Math.max(1, decoderQty || 1);
+    lines.push(
+      decoderQty > 1
+        ? `Decoder (from plan): KES ${Math.round(decoderFee)} × ${decoderQty} = KES ${Math.round(decoderTotal)}`
+        : `Decoder (from plan): KES ${Math.round(decoderFee)}`
+    );
   }
   if (
     coverage?.hasDstv &&
     coverage?.includePackage &&
     !coverage?.includeDecoder
   ) {
+    const outstanding =
+      decoderFee * Math.max(1, decodersOwnedCount(customer) || 1);
     lines.push(
-      `DSTV decoder not included in this payment — still outstanding (KES ${Math.round(decoderFee)})`
+      `DSTV decoder not included in this payment — still outstanding (KES ${Math.round(outstanding)})`
     );
   }
   if (
@@ -373,14 +487,20 @@ function buildDstvDecoderFeeLineItem(customer, options = {}) {
   const name =
     options.name ||
     (customerNumber ? `Decoder charge — ${customerNumber}` : "Decoder charge");
+  const qty = Math.max(1, decodersOwnedCount(customer));
 
   return withTax({
     name,
     rate: fee,
-    quantity: 1,
-    description: serial
-      ? `One-time DSTV decoder charge (serial: ${serial})`
-      : "One-time DSTV decoder charge",
+    quantity: qty,
+    description: [
+      qty === 1
+        ? "One-time DSTV decoder charge"
+        : `One-time DSTV decoder charge × ${qty} decoders owned`,
+      serial ? `serial: ${serial}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   });
 }
 
@@ -437,6 +557,14 @@ function buildSubscriptionLineItems(customer, period, options = {}) {
       includeCustomerNumber: b2b,
     });
     if (extraTvLine) items.push(extraTvLine);
+
+    // Extra decoder 3500 is recurring-only — never on the first/signup invoice.
+    if (options.includeOneTimeDstvFee !== true) {
+      const extraDecoderLine = buildExtraDecoderLineItem(customer, {
+        includeCustomerNumber: b2b,
+      });
+      if (extraDecoderLine) items.push(extraDecoderLine);
+    }
   }
 
   if (options.includeOneTimeDstvFee === true) {
@@ -459,6 +587,7 @@ module.exports = {
   buildSubscriptionLineItems,
   buildDstvDecoderFeeLineItem,
   buildExtraTvLineItem,
+  buildExtraDecoderLineItem,
   customerHasDstv,
   resolveDstvOneTimeFee,
   shouldIncludeDstvOneTimeFee,
@@ -467,9 +596,17 @@ module.exports = {
   extraTvCount,
   extraTvAmount,
   extraTvLineName,
+  extraDecoderUnitFee,
+  extraDecoderCount,
+  extraDecoderAmount,
+  extraDecoderLineName,
+  decodersOwnedCount,
   normalizeTvCount,
+  normalizeExtraDecoderCount,
   resolveTvCountForProduct,
+  resolveExtraDecoderCountForProduct,
   isExtraTvLineItem,
+  isExtraDecoderLineItem,
   mergeRecurringLineItems,
   resolveAdvancePaymentCoverage,
   expectedSignupInvoiceTotal,
@@ -478,5 +615,7 @@ module.exports = {
   normalizePackageDiscountPercent,
   DSTV_ONE_TIME_FEE,
   EXTRA_TV_UNIT_FEE,
+  EXTRA_DECODER_UNIT_FEE,
   MAX_TV_COUNT,
+  MAX_EXTRA_DECODER_COUNT,
 };

@@ -154,6 +154,7 @@ function legacyHasPermission(role: string, key: string): boolean {
   const partner = new Set([
     "dashboard.view",
     "dashboard.partner",
+    "partner.internet",
     "customers.view",
     "reports.view",
     "reports.export",
@@ -172,17 +173,63 @@ function legacyHasPermission(role: string, key: string): boolean {
   return key === "dashboard.view";
 }
 
-export function isPartner(user: User | null): boolean {
-  if (permissionsHydrated(user)) {
-    return (
-      hasPermission(user, "dashboard.partner") &&
-      !hasPermission(user, "customers.financials")
-    );
+export type PartnerType = "investor" | "dstv" | "internet";
+
+function groupSlugSet(user: User | null | undefined): Set<string> {
+  return new Set((user?.groups || []).map((g) => g.slug).filter(Boolean));
+}
+
+export function getPartnerType(user: User | null): PartnerType | null {
+  if (!user || isAdministrator(user)) return null;
+  const slugs = groupSlugSet(user);
+  const investor =
+    hasPermission(user, "partner.investor") || slugs.has("partner-investor");
+  const internet =
+    hasPermission(user, "partner.internet") || slugs.has("customer-relations");
+  const dstv =
+    hasPermission(user, "partner.dstv") || slugs.has("partner-dstv");
+  if (investor) return "investor";
+  if (internet) return "internet";
+  if (dstv) return "dstv";
+  if (
+    hasPermission(user, "dashboard.partner") &&
+    !hasPermission(user, "customers.financials")
+  ) {
+    return "internet";
   }
-  return rawRole(user) === "partner";
+  if (!permissionsHydrated(user) && rawRole(user) === "partner") {
+    return "internet";
+  }
+  return null;
+}
+
+export function isPartner(user: User | null): boolean {
+  return getPartnerType(user) != null;
+}
+
+export function isDstvPartner(user: User | null): boolean {
+  return getPartnerType(user) === "dstv";
+}
+
+export function isInvestorPartner(user: User | null): boolean {
+  return getPartnerType(user) === "investor";
+}
+
+export function partnerTypeLabel(type: PartnerType | null): string {
+  switch (type) {
+    case "investor":
+      return "Investor";
+    case "dstv":
+      return "DSTV partner";
+    case "internet":
+      return "Internet partner";
+    default:
+      return "Partner";
+  }
 }
 
 export function usePartnerDashboard(user: User | null): boolean {
+  if (!isPartner(user)) return false;
   if (permissionsHydrated(user)) {
     return (
       hasPermission(user, "dashboard.partner") &&
@@ -219,9 +266,22 @@ export function canAccessActivity(user: User | null): boolean {
   return hasPermission(user, "dashboard.activity");
 }
 
-/** Admin-only customer change audit module. */
+/** Customer and user change audit module. */
 export function canAccessActivityAudit(user: User | null): boolean {
-  return isAdministrator(user);
+  return hasPermission(user, "activity_audit.view");
+}
+
+/** Startlyx IPTV test console. */
+export function canAccessIptvConsole(user: User | null): boolean {
+  return hasPermission(user, "iptv.view");
+}
+
+export function canOperateIptv(user: User | null): boolean {
+  return hasPermission(user, "iptv.operate");
+}
+
+export function canConfigureIptv(user: User | null): boolean {
+  return hasPermission(user, "iptv.settings");
 }
 
 export function canAccessCustomerRead(user: User | null): boolean {
@@ -298,6 +358,11 @@ export function canDeleteCustomer(user: User | null): boolean {
 }
 
 export function canEditCustomerPackage(user: User | null): boolean {
+  return hasAnyPermission(user, ["customers.edit", "customers.package_edit"]);
+}
+
+/** Local package/frequency correction without creating a Zoho invoice. */
+export function canCorrectCustomerPackageLocally(user: User | null): boolean {
   return hasPermission(user, "customers.package_edit");
 }
 
@@ -333,5 +398,6 @@ export function canAccessSettings(user: User | null): boolean {
     "settings.sync",
     "users.view",
     "system_logs.view",
+    "iptv.settings",
   ]);
 }

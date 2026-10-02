@@ -5,15 +5,18 @@ const { describe, it } = require("node:test");
 const { assert } = require("../helpers");
 const {
   buildTispSetPackagePayload,
+  buildTispDuplicatePackageUpdatePayload,
   stringifyTispPackagePayload,
   isTispPackageMissingError,
   extractTispDuplicateRecordId,
   isTispDuplicatePackageError,
   syncProductToTisp,
   buildTispPackageLabel,
+  resolveTispPackageDescription,
   pickTispRouterPopName,
   buildTispCreateClientPayload,
 } = require("../../api/controllers/tisp.controller");
+const { TISP_PPOE_PACKAGE_IP_POOL } = require("../../api/utils/tispConstants");
 
 const BASE_PACKAGE = {
   packageLabel: "BASIC - INTERNET ONLY",
@@ -65,10 +68,32 @@ describe("TISP SetPackageDetails payload", () => {
     );
     assert.equal(payload.PackageType, "PPPOE");
     assert.equal(payload.Router, "ENAKI");
-    assert.equal(payload.PackageIPPool, "192.168.85.2-192.168.85.254");
+    assert.equal(payload.PackageIPPool, TISP_PPOE_PACKAGE_IP_POOL);
     const wire = stringifyTispPackagePayload(payload);
     assert.match(wire, /"PackageType":"PPPOE"/);
-    assert.match(wire, /"PackageIPPool":"192.168.85.2-192.168.85.254"/);
+    assert.ok(
+      wire.includes(`"PackageIPPool":"${TISP_PPOE_PACKAGE_IP_POOL}"`)
+    );
+    assert.doesNotMatch(wire, /": /);
+  });
+
+  it("sends the Azalea PPOE catalog INSERT as compact JSON", () => {
+    const payload = {
+      TransactionType: "INSERT",
+      PackageType: "PPPOE",
+      PackageDescription: "500_PREMIUM_PLUS_INT_DSTV_APT_MONTHLY_13450",
+      NewPackageDescription: "",
+      Router: "AZALEA",
+      UploadSpeed: "500",
+      DownloadSpeed: "500",
+      Cost: "13450",
+      PackageIPPool: "PPPOE POOL 100MBPS",
+      ShortCode: "000000",
+    };
+    assert.equal(
+      stringifyTispPackagePayload(payload),
+      '{"TransactionType":"INSERT","PackageType":"PPPOE","PackageDescription":"500_PREMIUM_PLUS_INT_DSTV_APT_MONTHLY_13450","NewPackageDescription":"","Router":"AZALEA","UploadSpeed":"500","DownloadSpeed":"500","Cost":"13450","PackageIPPool":"PPPOE POOL 100MBPS","ShortCode":"000000"}'
+    );
   });
 
   it("sets PackageType IP when the building/POP is STATIC and leaves PackageIPPool blank", () => {
@@ -125,16 +150,16 @@ describe("TISP SetPackageDetails payload", () => {
     assert.equal(payload.DownloadSpeed, "50");
   });
 
-  it("wire JSON keeps TISP field order and comma-space separators", () => {
+  it("wire JSON keeps TISP field order with no spaces after colons or commas", () => {
     const payload = buildTispSetPackagePayload(BASE_PACKAGE, "INSERT");
     const wire = stringifyTispPackagePayload(payload);
     assert.equal(
       wire,
-      '{"TransactionType":"INSERT", "PackageType":"IP", "PackageDescription":"100_BASIC_INT_MONTHLY_4500", "NewPackageDescription":"", "Router":"ENAKI", "UploadSpeed":"100", "DownloadSpeed":"100", "Cost":"4500", "PackageIPPool":"", "ShortCode":"000000"}'
+      '{"TransactionType":"INSERT","PackageType":"IP","PackageDescription":"100_BASIC_INT_MONTHLY_4500","NewPackageDescription":"","Router":"ENAKI","UploadSpeed":"100","DownloadSpeed":"100","Cost":"4500","PackageIPPool":"","ShortCode":"000000"}'
     );
   });
 
-  it("puts Id first on UPDATE and keeps NewPackageDescription empty unless renaming", () => {
+  it("puts Id after TransactionType on UPDATE and keeps NewPackageDescription empty unless renaming", () => {
     const payload = buildTispSetPackagePayload(
       {
         ...BASE_PACKAGE,
@@ -147,8 +172,10 @@ describe("TISP SetPackageDetails payload", () => {
     assert.equal(payload.Id, "61754fdd-ace2-4c27-b3a0-a17f091dda1e");
     assert.equal(payload.NewPackageDescription, "");
     const wire = stringifyTispPackagePayload(payload);
-    assert.match(wire, /^\{"Id":"61754fdd-ace2-4c27-b3a0-a17f091dda1e"/);
-    assert.match(wire, /"TransactionType":"UPDATE", "PackageType"/);
+    assert.match(
+      wire,
+      /^\{"TransactionType":"UPDATE","Id":"61754fdd-ace2-4c27-b3a0-a17f091dda1e","PackageType"/
+    );
     assert.match(wire, /"PackageDescription":"250_PREMIUM_INT_MONTHLY_4500"/);
     assert.match(wire, /"NewPackageDescription":""/);
     assert.match(wire, /"UploadSpeed":"250"/);
@@ -280,6 +307,62 @@ describe("TISP package missing / duplicate helpers", () => {
       ""
     );
   });
+
+  it("retries Duplicate Package Exists as UPDATE using PackageDescription", () => {
+    const insert = buildTispSetPackagePayload(
+      {
+        ...BASE_PACKAGE,
+        ipSetup: "PPOE",
+        packageLabel: "500_PREMIUM_PLUS_INT_DSTV_APT_MONTHLY_13450",
+        usePackageLabelAsIs: true,
+        mbps: 500,
+        price: 13450,
+        popName: "Azalea",
+      },
+      "INSERT"
+    );
+    const update = buildTispDuplicatePackageUpdatePayload(insert);
+    assert.equal(insert.TransactionType, "INSERT");
+    assert.equal(update.TransactionType, "UPDATE");
+    assert.equal(update.Id, undefined);
+    assert.equal(
+      update.PackageDescription,
+      "500_PREMIUM_PLUS_INT_DSTV_APT_MONTHLY_13450"
+    );
+    assert.equal(update.Router, "AZALEA");
+    assert.equal(update.Cost, "13450");
+    const wire = stringifyTispPackagePayload(update);
+    assert.match(wire, /^\{"TransactionType":"UPDATE"/);
+    assert.doesNotMatch(wire, /"Id":/);
+  });
+
+  it("creates the exact SetClientDetails package name when frequency is omitted", () => {
+    const label = "150_PREMIUM_INT_APT_QUARTERLY_16000";
+    assert.equal(
+      resolveTispPackageDescription({
+        packageLabel: label,
+        mbps: 150,
+        price: 16000,
+        popName: "Enaki",
+      }),
+      label
+    );
+    const payload = buildTispSetPackagePayload(
+      {
+        packageLabel: label,
+        usePackageLabelAsIs: true,
+        popName: "Enaki",
+        ipSetup: "STATIC",
+        mbps: 150,
+        price: 16000,
+      },
+      "INSERT"
+    );
+    assert.equal(payload.PackageDescription, label);
+    assert.equal(payload.UploadSpeed, "150");
+    assert.equal(payload.Cost, "16000");
+    assert.equal(payload.Router, "ENAKI");
+  });
 });
 
 describe("syncProductToTisp skips DSTV-only", () => {
@@ -288,6 +371,16 @@ describe("syncProductToTisp skips DSTV-only", () => {
       categoryCode: "dstv_only",
       planName: "DSTV Only",
       categoryName: "DSTV Only",
+      mbps: 0,
+    });
+    assert.equal(result.skipped, true);
+    assert.equal(result.reason, "dstv_only");
+  });
+
+  it("does not call TISP when the product name is DSTV Only", async () => {
+    const result = await syncProductToTisp({
+      name: "DSTV Only",
+      hasDstv: true,
       mbps: 0,
     });
     assert.equal(result.skipped, true);

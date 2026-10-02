@@ -8,10 +8,14 @@ const STATUS_COLORS: Record<string, string> = {
   pending: "orange.600",
   suspended: "orange.600",
   paused: "blue.600",
+  "paused indefinitely": "purple.600",
   unknown: "orange.600",
   "not on tisp": "orange.600",
   cancelled: "gray.500",
   canceled: "gray.500",
+  disconnected: "red.600",
+  expired: "gray.500",
+  "no subscription": "gray.500",
   failed: "red.600",
   error: "red.600",
 };
@@ -20,6 +24,7 @@ function resolveColor(status: string) {
   const key = status.trim().toLowerCase();
   if (STATUS_COLORS[key]) return STATUS_COLORS[key];
   if (key.includes("active")) return "green.600";
+  if (key.includes("indefinite")) return "purple.600";
   if (key.includes("pause")) return "blue.600";
   if (key.includes("suspend")) return "orange.600";
   if (key.includes("unknown") || key.includes("tisp")) return "orange.600";

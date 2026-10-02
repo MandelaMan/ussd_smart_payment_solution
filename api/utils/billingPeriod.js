@@ -204,6 +204,46 @@ function computeRecurringStartBeforeDue(
     .format("YYYY-MM-DD");
 }
 
+function dateOnlyYmd(value) {
+  if (value == null || value === "") return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return null;
+}
+
+/**
+ * When the service / TISP due date is edited, Zoho should send the next
+ * recurring invoice 7 days before that due. Returns null when the due date
+ * did not change so pause-shifted profiles are left alone.
+ */
+function resolveRecurringStartForDueDateChange(
+  previousDueDate,
+  nextDueDate,
+  timeZone = DEFAULT_TZ
+) {
+  const prev = dateOnlyYmd(previousDueDate) || "";
+  const next = dateOnlyYmd(nextDueDate);
+  if (!next || next === prev) return null;
+  return computeRecurringStartBeforeDue(
+    next,
+    RECURRING_LEAD_DAYS_BEFORE_DUE,
+    timeZone
+  );
+}
+
+/** Zoho rejects a start_date in the past — send today so the invoice goes out now. */
+function clampRecurringStartDate(
+  startDate,
+  now = new Date(),
+  timeZone = DEFAULT_TZ
+) {
+  const start = dateOnlyYmd(startDate);
+  if (!start) return null;
+  const today = moment.tz(now, timeZone).startOf("day").format("YYYY-MM-DD");
+  return start < today ? today : start;
+}
+
 /**
  * Recurring invoice after signup: next service due is signup + payment frequency
  * (not the Net 7/30 first-invoice due). The profile starts 7 days before that due.
@@ -285,6 +325,8 @@ module.exports = {
   computeTrialEndDate,
   computeServiceDueDate,
   computeRecurringStartBeforeDue,
+  resolveRecurringStartForDueDateChange,
+  clampRecurringStartDate,
   computeSignupRecurringWindow,
   resolveTispDueDateForEditBilling,
   buildPackageLabel,

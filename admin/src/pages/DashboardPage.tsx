@@ -8,30 +8,17 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { api, formatCurrency, formatMetricCurrency } from "../lib/api";
+import { api, formatMetricCurrency } from "../lib/api";
 import type { ActivityItem, Stats } from "../lib/api";
 import { formatProductNameForDisplay } from "../lib/formatText";
+import { premiseLabel } from "../lib/premise";
 import { DisplayText } from "../components/ui/DisplayText";
 import { MetricCard } from "../components/MetricCard";
 import { PackageSubscriptionChart } from "../components/PackageSubscriptionChart";
+import { BuildingRevenueChart } from "../components/BuildingRevenueChart";
+import { RevenueTrendChart } from "../components/RevenueTrendChart";
 import { ActivityPanel } from "../components/ActivityPanel";
 import {
-  ChartSkeleton,
   DashboardMetricsSkeleton,
   DashboardSkeleton,
 } from "../components/PageSkeletons";
@@ -46,12 +33,6 @@ import {
 import { prependActivityItem } from "../lib/activityFeed";
 import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { useAuth } from "../lib/authContext";
-
-const STATUS_COLORS: Record<string, string> = {
-  SUCCESS: BRAND.cerulean,
-  FAILED: "#e53e3e",
-  PENDING: BRAND.sandyBrown,
-};
 
 const REVENUE_MONTH_OPTIONS = [
   { value: "all", label: "All" },
@@ -69,6 +50,11 @@ const REVENUE_MONTH_OPTIONS = [
   { value: "12", label: "Dec" },
 ] as const;
 
+const REVENUE_YEAR_OPTIONS = Array.from({ length: 3 }, (_, index) => {
+  const year = new Date().getFullYear() - index;
+  return { value: String(year), label: String(year) };
+});
+
 const MONTH_LABELS = [
   "Jan",
   "Feb",
@@ -84,12 +70,6 @@ const MONTH_LABELS = [
   "Dec",
 ] as const;
 
-function formatAxisRevenue(value: number) {
-  if (value >= 1000) return `${(value / 1000).toFixed(0)}k`;
-  if (value > 0) return String(Math.round(value));
-  return "0";
-}
-
 /** Calendar month before `now` (1–12) and its year — used as the mobile revenue default. */
 function getPreviousCalendarMonth(now = new Date()) {
   const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -99,22 +79,15 @@ function getPreviousCalendarMonth(now = new Date()) {
   };
 }
 
-function revenueChartMargin(chartMonth: string) {
-  return {
-    top: 12,
-    right: 8,
-    left: 4,
-    bottom: chartMonth === "all" ? 32 : 26,
-  };
-}
-
 function buildRevenueChartData(
   chart: Stats["chart"],
   chartMonth: string,
   chartYear: number
 ) {
+  const now = new Date();
+
   if (chartMonth === "all") {
-    return chart.map((d, index) => {
+    const rows = chart.map((d, index) => {
       const parts = String(d.day || "").split("-");
       const monthIndex = Number(parts[1]) - 1;
       return {
@@ -125,6 +98,10 @@ function buildRevenueChartData(
           "",
       };
     });
+    if (chartYear === now.getFullYear()) {
+      return rows.slice(0, now.getMonth() + 1);
+    }
+    return rows;
   }
 
   const monthNum = parseInt(chartMonth, 10);
@@ -137,7 +114,11 @@ function buildRevenueChartData(
     })
   );
 
-  return Array.from({ length: daysInMonth }, (_, index) => {
+  const isCurrentMonth =
+    chartYear === now.getFullYear() && monthNum === now.getMonth() + 1;
+  const visibleDays = isCurrentMonth ? now.getDate() : daysInMonth;
+
+  return Array.from({ length: visibleDays }, (_, index) => {
     const dayNum = index + 1;
     const existing = byDay.get(dayNum);
     const dayIso = `${chartYear}-${chartMonth.padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
@@ -323,15 +304,6 @@ export function DashboardPage() {
       : 0;
 
   const revenueChartData = buildRevenueChartData(chartData, chartMonth, chartYear);
-  const chartIsEmpty =
-    chartMonth === "all"
-      ? revenueChartData.every((d) => d.revenue === 0)
-      : chartData.length === 0;
-
-  const monthDayCount =
-    chartMonth === "all"
-      ? 12
-      : new Date(chartYear, parseInt(chartMonth, 10), 0).getDate();
 
   const monthLabel =
     chartMonth === "all"
@@ -341,15 +313,16 @@ export function DashboardPage() {
         ).toLocaleDateString("en-KE", { month: "long", year: "numeric" });
 
   const packageChartData = (subs.topPackages ?? []).slice(0, 5).map((p) => ({
-    name: p.mbps
-      ? `${formatProductNameForDisplay(p.package)} (${p.mbps}M)`
-      : formatProductNameForDisplay(p.package),
+    name: formatProductNameForDisplay(p.package),
+    speed: p.mbps ? `${p.mbps} Mbps` : undefined,
+    detail: premiseLabel(p.premiseType),
     subscribers: p.subscribers,
   }));
 
   const revenueByBuildingData = (stats.revenueByBuilding ?? []).map((b) => ({
     building: b.building,
     revenue: b.revenue,
+    subscribers: b.subscribers,
   }));
 
   const trendChartHeight = { base: "240px", md: "200px" };
@@ -589,7 +562,7 @@ export function DashboardPage() {
           gap={{ base: 4, xl: 3 }}
           display={{ base: "none", lg: "grid" }}
         >
-          <Card title="Most Subscribed Packages" accent="cerulean">
+          <Card title="Most Subscribed Packages" subtitle="Active customers" accent="cerulean">
             {packageChartData.length === 0 ? (
               <Flex minH={{ base: "180px", md: "160px" }} align="center" justify="center">
                 <Text fontSize="sm" color="fg.subtle">No package data yet</Text>
@@ -626,227 +599,50 @@ export function DashboardPage() {
             subtitle={monthLabel}
             accent="cerulean"
             action={
-              <SelectField
-                w="120px"
-                size="sm"
-                fieldProps={{
-                  value: chartMonth,
-                  onChange: (e) => setChartMonth(e.target.value),
-                  borderRadius: "md",
-                  fontSize: "sm",
-                }}
-              >
-                {REVENUE_MONTH_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </SelectField>
+              <RevenuePeriodFilters
+                chartMonth={chartMonth}
+                chartYear={chartYear}
+                onMonth={setChartMonth}
+                onYear={setChartYear}
+              />
             }
           >
-            <Box h="180px" minH="180px" mt={0.5}>
-              {chartLoading ? (
-                <ChartSkeleton height="100%" />
-              ) : chartError ? (
-                <Flex h="100%" align="center" justify="center" px={3}>
-                  <Text fontSize="sm" color="fg.subtle" textAlign="center">
-                    Couldn’t load revenue chart
-                  </Text>
-                </Flex>
-              ) : chartIsEmpty ? (
-                <Flex h="100%" align="center" justify="center">
-                  <Text fontSize="sm" color="fg.subtle">
-                    No revenue for {monthLabel}
-                  </Text>
-                </Flex>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={revenueChartData}
-                    margin={revenueChartMargin(chartMonth)}
-                  >
-                    <defs>
-                      <linearGradient id="rev-mobile" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={BRAND.cerulean} stopOpacity={0.25} />
-                        <stop offset="95%" stopColor={BRAND.cerulean} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fontSize: chartMonth === "all" ? 10 : 11, fill: "#64748b" }}
-                      axisLine={false}
-                      tickLine={false}
-                      interval={chartMonth === "all" ? 0 : monthDayCount > 15 ? 2 : 0}
-                      minTickGap={chartMonth === "all" ? 4 : 8}
-                      tickMargin={10}
-                      height={chartMonth === "all" ? 44 : 40}
-                      padding={{ left: 4, right: 8 }}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: "#64748b" }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={44}
-                      tickMargin={4}
-                      tickFormatter={formatAxisRevenue}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      formatter={(v) => formatCurrency(Number(v))}
-                      labelFormatter={(_, payload) => {
-                        const day = payload?.[0]?.payload?.day;
-                        if (!day) return "";
-                        return new Date(day).toLocaleDateString("en-KE", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        });
-                      }}
-                      contentStyle={{ fontSize: 13 }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="revenue"
-                      stroke={BRAND.cerulean}
-                      fill="url(#rev-mobile)"
-                      strokeWidth={2.5}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </Box>
+            <RevenueTrendChart
+              data={revenueChartData}
+              chartMonth={chartMonth}
+              loading={chartLoading}
+              error={chartError ? "Couldn’t load revenue chart" : ""}
+              emptyLabel={`No revenue for ${monthLabel}`}
+              height="200px"
+            />
           </Card>
           </Box>
         ) : null}
 
-        <Grid
-          templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }}
-          gap={{ base: 4, xl: 3 }}
-          display={{ base: "none", lg: "grid" }}
-        >
+        <Box display={{ base: "none", lg: "block" }}>
           <Card
             title="Revenue Trend"
             subtitle={monthLabel}
             accent="cerulean"
             action={
-              <SelectField
-                w={{ base: "full", sm: "120px" }}
-                size="sm"
-                fieldProps={{
-                  value: chartMonth,
-                  onChange: (e) => setChartMonth(e.target.value),
-                  borderRadius: "md",
-                  fontSize: "sm",
-                }}
-              >
-                {REVENUE_MONTH_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </SelectField>
+              <RevenuePeriodFilters
+                chartMonth={chartMonth}
+                chartYear={chartYear}
+                onMonth={setChartMonth}
+                onYear={setChartYear}
+              />
             }
           >
-            <Box h={trendChartHeight} minH={trendChartHeight} mt={1}>
-              {chartLoading ? (
-                <ChartSkeleton height="100%" />
-              ) : chartError ? (
-                <Flex h="100%" align="center" justify="center" px={3}>
-                  <Text fontSize="sm" color="fg.subtle" textAlign="center">
-                    Couldn’t load revenue chart
-                  </Text>
-                </Flex>
-              ) : chartIsEmpty ? (
-                <Flex h="100%" align="center" justify="center">
-                  <Text fontSize="sm" color="fg.subtle">
-                    No revenue for {monthLabel}
-                  </Text>
-                </Flex>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={revenueChartData}
-                    margin={revenueChartMargin(chartMonth)}
-                  >
-                    <defs>
-                      <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={BRAND.cerulean} stopOpacity={0.25} />
-                        <stop offset="95%" stopColor={BRAND.cerulean} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fontSize: chartMonth === "all" ? 10 : 11, fill: "#64748b" }}
-                      axisLine={false}
-                      tickLine={false}
-                      interval={chartMonth === "all" ? 0 : monthDayCount > 15 ? 2 : 0}
-                      minTickGap={chartMonth === "all" ? 4 : 8}
-                      tickMargin={10}
-                      height={chartMonth === "all" ? 44 : 40}
-                      padding={{ left: 4, right: 8 }}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: "#64748b" }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={44}
-                      tickMargin={4}
-                      tickFormatter={formatAxisRevenue}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      formatter={(v) => formatCurrency(Number(v))}
-                      labelFormatter={(_, payload) => {
-                        const day = payload?.[0]?.payload?.day;
-                        if (!day) return "";
-                        return new Date(day).toLocaleDateString("en-KE", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        });
-                      }}
-                      contentStyle={{ fontSize: 13 }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="revenue"
-                      stroke={BRAND.cerulean}
-                      fill="url(#rev)"
-                      strokeWidth={2.5}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </Box>
+            <RevenueTrendChart
+              data={revenueChartData}
+              chartMonth={chartMonth}
+              loading={chartLoading}
+              error={chartError ? "Couldn’t load revenue chart" : ""}
+              emptyLabel={`No revenue for ${monthLabel}`}
+              height="240px"
+            />
           </Card>
-
-          <Card title="By Status" accent="cerulean">
-            <Box h={trendChartHeight} minH={trendChartHeight} mt={1}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={stats.statusBreakdown}
-                    dataKey="count"
-                    nameKey="status"
-                    cx="50%"
-                    cy="48%"
-                    innerRadius={54}
-                    outerRadius={80}
-                    paddingAngle={2}
-                  >
-                    {stats.statusBreakdown.map((entry) => (
-                      <Cell key={entry.status} fill={STATUS_COLORS[entry.status] || "#ccc"} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ fontSize: 13 }} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </Box>
-          </Card>
-        </Grid>
+        </Box>
 
         <Grid
           templateColumns={{ base: "1fr", lg: "1.6fr 1fr" }}
@@ -890,45 +686,7 @@ export function DashboardPage() {
 
         <Box display={{ base: "none", lg: "block" }}>
           <Card title="Revenue by Building" subtitle="Last 30 days" accent="cerulean">
-            <Box h={trendChartHeight} minH={trendChartHeight} mt={1} pb={3}>
-              {revenueByBuildingData.length === 0 ? (
-                <Flex h="100%" align="center" justify="center">
-                  <Text fontSize="sm" color="fg.subtle">No building revenue data yet</Text>
-                </Flex>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={revenueByBuildingData}
-                    margin={{ left: 4, right: 8, top: 8, bottom: 48 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
-                    <XAxis
-                      dataKey="building"
-                      tick={{ fontSize: 10, fill: "#64748b" }}
-                      axisLine={false}
-                      tickLine={false}
-                      interval={0}
-                      angle={-24}
-                      textAnchor="end"
-                      height={64}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: "#64748b" }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={48}
-                      tickFormatter={formatAxisRevenue}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      formatter={(v) => formatCurrency(Number(v))}
-                      contentStyle={{ fontSize: 13 }}
-                    />
-                    <Bar dataKey="revenue" fill={BRAND.cerulean} radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </Box>
+            <BuildingRevenueChart data={revenueByBuildingData} />
           </Card>
         </Box>
       </Stack>
@@ -946,6 +704,55 @@ export function DashboardPage() {
           live
         />
       </Box>
+    </Flex>
+  );
+}
+
+function RevenuePeriodFilters({
+  chartMonth,
+  chartYear,
+  onMonth,
+  onYear,
+}: {
+  chartMonth: string;
+  chartYear: number;
+  onMonth: (value: string) => void;
+  onYear: (value: number) => void;
+}) {
+  return (
+    <Flex gap={2} w={{ base: "full", sm: "auto" }}>
+      <SelectField
+        w={{ base: "full", sm: "104px" }}
+        size="sm"
+        fieldProps={{
+          value: chartMonth,
+          onChange: (e) => onMonth(e.target.value),
+          borderRadius: "md",
+          fontSize: "sm",
+        }}
+      >
+        {REVENUE_MONTH_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField
+        w="88px"
+        size="sm"
+        fieldProps={{
+          value: String(chartYear),
+          onChange: (e) => onYear(Number(e.target.value)),
+          borderRadius: "md",
+          fontSize: "sm",
+        }}
+      >
+        {REVENUE_YEAR_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </SelectField>
     </Flex>
   );
 }

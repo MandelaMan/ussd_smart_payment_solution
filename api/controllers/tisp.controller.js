@@ -75,21 +75,26 @@ const TISP_CREATE_FIELD_ORDER = [
   "PppoeRemoteAddress",
   "ShortCode",
   "AllowedPppoeDevices",
-  "PackageIPPool",
 ];
 
 function stringifyTispOrderedPayload(payload, fieldOrder) {
   const keys = fieldOrder.slice();
-  // TISP UPDATE needs the existing row UUID; omit on INSERT.
-  if (payload.Id) keys.unshift("Id");
   const parts = keys.map((key) => {
     const value = tispOptionalString(payload[key]);
     return `"${key}":${JSON.stringify(value)}`;
   });
-  // Match TISP's own JSON (ClientStatus): no space after colon, space after comma.
-  // Their Stream parser splits on comma-space; compact "," hid TransactionType=UPDATE
-  // and SetClientDetails defaulted to INSERT (Duplicate entry on client_account.PRIMARY).
-  return `{${parts.join(", ")}}`;
+  // SetPackageDetails may include Id after TransactionType. SetClientDetails
+  // must not — TISP matches clients on AccountNumber. Sending Id does not
+  // make UPDATE work; their UPDATE path still INSERTs that UUID.
+  const id = payload.Id ? tispOptionalString(payload.Id) : "";
+  if (id) {
+    const idPart = `"Id":${JSON.stringify(id)}`;
+    const txIndex = keys.indexOf("TransactionType");
+    parts.splice(txIndex >= 0 ? txIndex + 1 : 0, 0, idPart);
+  }
+  // No space after ":" or ",". Pretty JSON ("key": "value" / newlines) makes
+  // TISP report Package/Router/Location/ShortCode missing.
+  return `{${parts.join(",")}}`;
 }
 
 function stringifyTispCreatePayload(payload) {
@@ -231,7 +236,7 @@ async function postSetISPPayment(payload, meta = {}) {
   }
 }
 
-async function callTISP(method = "POST", data = null, params = {}) {
+async function callTISP(method = "POST", data = null, params = {}, options = {}) {
   try {
     const config = {
       method,
@@ -240,7 +245,9 @@ async function callTISP(method = "POST", data = null, params = {}) {
         "Content-Type": "application/json",
       },
       params,
-      timeout: TISP_REQUEST_TIMEOUT_MS,
+      timeout: Number(options.timeoutMs) > 0
+        ? Number(options.timeoutMs)
+        : TISP_REQUEST_TIMEOUT_MS,
     };
 
     if (data) {
@@ -255,12 +262,94 @@ async function callTISP(method = "POST", data = null, params = {}) {
   }
 }
 
+function looksLikeTispMarkup(text) {
+  return /<!DOCTYPE|<html\b|<\?xml|<style\b|<head\b/i.test(String(text || ""));
+}
+
+/**
+ * ClientStatus intermittently 200s with an ASP.NET fault page because TISP's
+ * GetPackageAll clears a shared DataSet while another request reads it.
+ * The read is idempotent, so a retry usually succeeds.
+ */
+function isTransientTispFault(text) {
+  const raw = String(text || "");
+  if (!raw) return false;
+  return (
+    looksLikeTispMarkup(raw) ||
+    /exception message is/i.test(raw) ||
+    /object reference not set/i.test(raw) ||
+    /request error/i.test(raw)
+  );
+}
+
+/**
+ * TISP sometimes returns HTTP 200 with an ASP.NET fault page (HTML/XML)
+ * instead of JSON. Keep the exception sentence; drop the stylesheet and stack.
+ */
+function summarizeTispFaultMessage(text) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "TISP request failed";
+  if (!looksLikeTispMarkup(raw) && raw.length <= 240) return raw;
+
+  const exception = raw.match(/exception message is '([^']+)'/i);
+  if (exception?.[1]) {
+    const detail = exception[1].replace(/\.\s*$/, "").trim();
+    return `Request failed: ${detail}.`;
+  }
+
+  const stripped = raw
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/<!DOCTYPE[^>]*>/gi, " ")
+    .replace(/<\?xml[^>]*\?>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const useful = stripped
+    .replace(/^Request Error\s*/i, "")
+    .split(/See server logs/i)[0]
+    .trim();
+
+  if (useful && !/^at System\./i.test(useful)) {
+    const clipped = useful.length > 180 ? `${useful.slice(0, 177)}…` : useful;
+    return looksLikeTispMarkup(raw)
+      ? `Request failed: ${clipped.replace(/\.\s*$/, "")}.`
+      : clipped;
+  }
+
+  return "Request failed. TISP returned an internal error page instead of the customer status.";
+}
+
 function parseTispResponseBody(data) {
   if (data == null) return null;
   if (typeof data === "object" && !Array.isArray(data)) return { ...data };
   if (typeof data === "string") {
-    const trimmed = data.trim();
+    let trimmed = data.trim();
     if (!trimmed) return null;
+    for (let i = 0; i < 2; i += 1) {
+      if (
+        !(
+          trimmed.startsWith("{") ||
+          trimmed.startsWith("[") ||
+          trimmed.startsWith('"')
+        )
+      ) {
+        break;
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === "string") {
+          trimmed = parsed.trim();
+          continue;
+        }
+        if (parsed && typeof parsed === "object") {
+          return Array.isArray(parsed) ? parsed : { ...parsed };
+        }
+      } catch {
+        break;
+      }
+    }
     if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
       try {
         return JSON.parse(trimmed);
@@ -344,7 +433,18 @@ function isTispDuplicateAccountError(err) {
 }
 
 function isTispDuplicatePackageError(err) {
-  return tispErrorMessage(err).toLowerCase().includes("duplicate package");
+  const lower = tispErrorMessage(err).toLowerCase();
+  return (
+    lower.includes("duplicate package") ||
+    (lower.includes("package") && lower.includes("already exist"))
+  );
+}
+
+/** Flip an INSERT SetPackageDetails body to UPDATE (TISP matches on PackageDescription). */
+function buildTispDuplicatePackageUpdatePayload(payload) {
+  const next = { ...(payload || {}), TransactionType: "UPDATE" };
+  if (!extractTispClientAccountId(next)) delete next.Id;
+  return next;
 }
 
 const TISP_RECORD_UUID_RE =
@@ -362,6 +462,41 @@ function extractTispDuplicateRecordId(err) {
 function extractTispDuplicateAccountId(err) {
   const match = tispErrorMessage(err).match(TISP_CLIENT_ACCOUNT_UUID_RE);
   return match ? match[1] : extractTispDuplicateRecordId(err);
+}
+
+/**
+ * TISP distinguishes UPDATE from INSERT, but UPDATE currently INSERTs the
+ * looked-up client_account row (PRIMARY duplicate). INSERT of the same
+ * AccountNumber returns "Duplicate Account Exists" instead.
+ */
+function isTispUpdateImplementedAsInsertError(payload, err) {
+  const type = String(payload?.TransactionType || "").toUpperCase();
+  if (type !== "UPDATE") return false;
+  const text = tispErrorMessage(err);
+  return /duplicate entry/i.test(text) && /client_account\.primary/i.test(text);
+}
+
+function explainTispSetClientError(payload, err) {
+  const text = tispErrorMessage(err).trim();
+  if (isTispUpdateImplementedAsInsertError(payload, err)) {
+    const account = String(payload?.AccountNumber || "").trim();
+    const id = extractTispDuplicateAccountId(err);
+    const who = account ? ` ${account}` : "";
+    const row = id ? ` ${id}` : "";
+    return `${text} (TISP already has${who}${row}; SetClientDetails UPDATE inserted that client_account row instead of updating it)`;
+  }
+  return text;
+}
+
+function extractTispLivePackageName(tispCustomer) {
+  if (!tispCustomer || typeof tispCustomer !== "object") return "";
+  const raw =
+    tispCustomer.package ??
+    tispCustomer.Package ??
+    tispCustomer.PACKAGE ??
+    tispCustomer.PackageDescription ??
+    "";
+  return String(raw).trim();
 }
 
 function extractTispClientAccountId(payload) {
@@ -459,11 +594,14 @@ function hasLocalTispAccountEvidence(ctx = {}) {
 
 /**
  * Whether pushCustomerToTisp may INSERT after UPDATE looks missing.
- * Edits of already-provisioned customers must never create a second record.
+ * Edits of customers that still exist on TISP must not create a second record.
+ * A confirmed "account does not exist" from UPDATE creates the account even
+ * when the local row still looks synced (stale due date / sync status).
  */
-function shouldAllowTispCreateFallback(meta = {}, ctx = {}) {
-  if (meta.allowCreate === false) return false;
+function shouldAllowTispCreateFallback(meta = {}, ctx = {}, updateErr = null) {
   if (meta.forceUpdate === true) return false;
+  if (isTispAccountMissingError(updateErr)) return true;
+  if (meta.allowCreate === false) return false;
   if (meta.preferUpdate === true && hasLocalTispAccountEvidence(ctx)) {
     return false;
   }
@@ -512,23 +650,61 @@ async function accountExistsOnTisp(customerNumber) {
   }
 }
 
-const getTISPCustomer = async (clientNo) => {
+const TISP_STATUS_FAULT_RETRIES = Number(
+  process.env.TISP_STATUS_FAULT_RETRIES || 2
+);
+
+const getTISPCustomer = async (clientNo, options = {}) => {
   const client = String(clientNo ?? "").trim().toUpperCase();
   if (!client) {
     throw new Error("Client number is required.");
   }
 
-  try {
-    const data = await callTISP("POST", { client });
-    const parsed = parseTispResponseBody(data);
-    if (parsed?.message && isTispErrorText(parsed.message)) {
-      throw new Error(parsed.message);
+  let lastFault = "";
+
+  for (let attempt = 0; attempt <= TISP_STATUS_FAULT_RETRIES; attempt += 1) {
+    try {
+      const data = await callTISP("POST", { client }, {}, options);
+      const parsed = parseTispResponseBody(data);
+      const message = parsed?.message;
+
+      if (message && isTransientTispFault(message)) {
+        lastFault = String(message);
+        console.error(
+          `TISP ClientStatus fault for ${client} (attempt ${attempt + 1}/${
+            TISP_STATUS_FAULT_RETRIES + 1
+          }):`,
+          lastFault.replace(/\s+/g, " ").slice(0, 300)
+        );
+        if (attempt < TISP_STATUS_FAULT_RETRIES) {
+          await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+          continue;
+        }
+        throw new Error(summarizeTispFaultMessage(lastFault));
+      }
+
+      if (message && isTispErrorText(message)) {
+        throw new Error(summarizeTispFaultMessage(message));
+      }
+
+      return normalizeTispClientPayload(parsed);
+    } catch (error) {
+      const body = error?.response?.data;
+      const retriableBody =
+        attempt < TISP_STATUS_FAULT_RETRIES &&
+        typeof body === "string" &&
+        isTransientTispFault(body);
+      if (retriableBody) {
+        lastFault = body;
+        await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+        continue;
+      }
+      console.error("Failed to get TISP customer:", error.message);
+      throw error;
     }
-    return normalizeTispClientPayload(parsed);
-  } catch (error) {
-    console.error("Failed to get TISP customer:", error.message);
-    throw error;
   }
+
+  throw new Error(summarizeTispFaultMessage(lastFault));
 };
 
 /**
@@ -546,8 +722,9 @@ async function postSetClientDetails(payload, meta = {}) {
     payload?.clientaccountnumber ??
     null;
   const packageLabel = String(payload?.Package ?? "").trim();
+  const allowLegacyPackage = meta._allowLegacyPackage === true;
 
-  if (!isValidTispPackageLabel(packageLabel)) {
+  if (!allowLegacyPackage && !isValidTispPackageLabel(packageLabel)) {
     const errorMessage = packageLabel
       ? `Invalid TISP Package format "${packageLabel}" (expected e.g. "${TISP_PACKAGE_EXAMPLE}")`
       : 'Customer package is not on the catalog package list. Relink the customer to a current plan (Basic / Basic Plus / Premium / Premium Plus) before syncing to TISP.';
@@ -598,11 +775,8 @@ async function postSetClientDetails(payload, meta = {}) {
 
   try {
     const r = await postTispJson(SET_CLIENT_URL, payload, {
-      wireFormat:
-        meta.operation === "set_client_create" ||
-        meta.operation === "set_client_update"
-          ? "create"
-          : "default",
+      // Ordered JSON matching the working Postman/INSERT field list.
+      wireFormat: "create",
     });
 
     httpStatus = r.status;
@@ -613,6 +787,11 @@ async function postSetClientDetails(payload, meta = {}) {
     // Do not treat "account exists" as success when TISP returned an error
     // body (e.g. "Package Missing.") — the UPDATE did not apply.
     const success = httpOk && parsed.ok;
+    const errorMessage = success
+      ? null
+      : explainTispSetClientError(payload, parsed.message) ||
+        parsed.message ||
+        `SetClientDetails HTTP ${r.status}: ${JSON.stringify(responseData)}`;
 
     await logApiCall({
       service: "tisp",
@@ -623,7 +802,7 @@ async function postSetClientDetails(payload, meta = {}) {
       httpStatus: r.status,
       requestPayload: payload,
       responsePayload: responseData,
-      errorMessage: success ? null : parsed.message,
+      errorMessage,
       customerId: meta.customerId ?? null,
       customerNumber,
       retryable: true,
@@ -631,47 +810,58 @@ async function postSetClientDetails(payload, meta = {}) {
     });
 
     if (!success) {
-      const err = new Error(
-        parsed.message ||
-          `SetClientDetails HTTP ${r.status}: ${JSON.stringify(responseData)}`,
-      );
+      const err = new Error(errorMessage);
       err.response = r;
       err._apiCallLogged = true;
       const duplicateId = extractTispDuplicateAccountId(parsed.message);
-      if (
-        duplicateId &&
-        !payload.Id &&
-        meta._retriedWithClientAccountId !== true
-      ) {
-        // TISP looked up the existing row then INSERTed it. Retry as UPDATE with Id.
-        const retried = await postSetClientDetails(
-          { ...payload, Id: duplicateId, TransactionType: "UPDATE" },
-          {
-            ...meta,
-            operation: "set_client_update",
-            _retriedWithClientAccountId: true,
+      // Persist the TISP row id for diagnostics. Do not retry with Id —
+      // UPDATE already looked up this UUID and INSERTed it (PRIMARY collision).
+      if (duplicateId && meta.customerId) {
+        try {
+          const snapRepo = require("../repositories/integrationSnapshot.repository");
+          const existing = await snapRepo.getTispSnapshot(meta.customerId);
+          let raw = {};
+          if (existing?.raw_json) {
+            raw =
+              typeof existing.raw_json === "string"
+                ? JSON.parse(existing.raw_json)
+                : existing.raw_json || {};
           }
-        );
-        if (meta.customerId) {
-          try {
-            const snapRepo = require("../repositories/integrationSnapshot.repository");
-            const existing = await snapRepo.getTispSnapshot(meta.customerId);
-            let raw = {};
-            if (existing?.raw_json) {
-              raw =
-                typeof existing.raw_json === "string"
-                  ? JSON.parse(existing.raw_json)
-                  : existing.raw_json || {};
-            }
-            await snapRepo.upsertTispSnapshot(meta.customerId, {
-              ...raw,
-              Id: duplicateId,
-            });
-          } catch {
-            /* best-effort — next edit can retry from the duplicate error again */
-          }
+          await snapRepo.upsertTispSnapshot(meta.customerId, {
+            ...raw,
+            Id: duplicateId,
+          });
+        } catch {
+          /* best-effort */
         }
-        return retried;
+      }
+      if (
+        isTispUpdateImplementedAsInsertError(payload, parsed.message) &&
+        meta._retriedWithLivePackage !== true
+      ) {
+        try {
+          const live = await getTISPCustomer(customerNumber);
+          const livePackage = extractTispLivePackageName(live);
+          if (
+            livePackage &&
+            livePackage.toUpperCase() !== packageLabel.toUpperCase()
+          ) {
+            return await postSetClientDetails(
+              { ...payload, Package: livePackage },
+              {
+                ...meta,
+                _retriedWithLivePackage: true,
+                _allowLegacyPackage: true,
+                operation: meta.operation || "set_client_update",
+              }
+            );
+          }
+        } catch (liveErr) {
+          console.warn(
+            "TISP live package retry after client_account.PRIMARY failed:",
+            liveErr.message || liveErr
+          );
+        }
       }
       if (
         isTispPackageMissingError(parsed.message) &&
@@ -680,14 +870,17 @@ async function postSetClientDetails(payload, meta = {}) {
       ) {
         try {
           await ensureTispPackage(
-            {
+            hydrateTispPackageInput({
               packageLabel,
+              usePackageLabelAsIs: true,
               mbps: meta.packageMbps,
               extraBandwidth: meta.extraBandwidth,
-              popName: meta.popName,
+              popName: meta.popName || payload.Router || payload.Location,
               price: meta.packagePrice,
               ipSetup: meta.ipSetup || payload.PackageType,
-            },
+              paymentFrequency: meta.paymentFrequency,
+              customPeriodDays: meta.customPeriodDays,
+            }),
             {
               parentLogId: meta.parentLogId ?? null,
               customerId: meta.customerId ?? null,
@@ -698,8 +891,15 @@ async function postSetClientDetails(payload, meta = {}) {
             ...meta,
             _retriedAfterPackageCreate: true,
           });
-        } catch {
-          /* keep the original Package Missing error */
+        } catch (packageErr) {
+          console.warn(
+            "ensure TISP package after Package Missing failed:",
+            packageErr.message || packageErr
+          );
+          err.message = `${parsed.message} (could not create package "${packageLabel}": ${
+            packageErr.message || packageErr
+          })`;
+          throw err;
         }
       }
       throw err;
@@ -729,15 +929,18 @@ async function postSetClientDetails(payload, meta = {}) {
 }
 
 function formatTispError(err, responseData) {
+  const existing = String(err?.message || "").trim();
   const fromResponse = err?.response?.data ?? responseData;
   const parsed = parseTispOperationResponse(fromResponse);
-  if (!parsed.ok && parsed.message) return parsed.message;
-
-  if (fromResponse != null) {
+  let raw = "";
+  if (existing && parsed.message && existing.includes(String(parsed.message).trim())) {
+    raw = existing;
+  } else if (!parsed.ok && parsed.message) {
+    raw = parsed.message;
+  } else if (fromResponse != null) {
     if (typeof fromResponse === "string" && fromResponse.trim()) {
-      return fromResponse.trim();
-    }
-    if (typeof fromResponse === "object") {
+      raw = fromResponse.trim();
+    } else if (typeof fromResponse === "object") {
       const msg =
         fromResponse.error ??
         fromResponse.Error ??
@@ -745,15 +948,18 @@ function formatTispError(err, responseData) {
         fromResponse.Message ??
         fromResponse.result ??
         fromResponse.Result;
-      if (msg != null && String(msg).trim()) return String(msg).trim();
-      try {
-        return JSON.stringify(fromResponse);
-      } catch {
-        return String(fromResponse);
+      if (msg != null && String(msg).trim()) raw = String(msg).trim();
+      else {
+        try {
+          raw = JSON.stringify(fromResponse);
+        } catch {
+          raw = String(fromResponse);
+        }
       }
     }
   }
-  return err?.message || "TISP SetClientDetails failed";
+  if (!raw) raw = err?.message || "TISP SetClientDetails failed";
+  return summarizeTispFaultMessage(raw);
 }
 
 function tispNamePart(value) {
@@ -1207,13 +1413,7 @@ function buildTispSetClientPayload(input, transactionType) {
     mbps: input.mbps ?? input.productMbps ?? input.product_mbps,
     extraBandwidth: input.extraBandwidth ?? input.extra_bandwidth ?? 0,
   });
-  const id =
-    String(transactionType || "").toUpperCase() === "UPDATE"
-      ? extractTispClientAccountId(input)
-      : "";
-
   return {
-    ...(id ? { Id: id } : {}),
     TransactionType: transactionType,
     PackageType: packageType,
     FirstName: first,
@@ -1240,9 +1440,6 @@ function buildTispSetClientPayload(input, transactionType) {
     PppoeRemoteAddress: pppoeRemoteAddress,
     ShortCode: String(TISP_DEFAULT_SHORTCODE).trim(),
     AllowedPppoeDevices: "1",
-    PackageIPPool: tispOptionalString(
-      input.PackageIPPool ?? input.packageIpPool ?? input.packageIPPool
-    ),
   };
 }
 
@@ -1321,6 +1518,10 @@ function resolveTispPackageDescription(input) {
       input?.package ||
       ""
   ).trim();
+  // A valid catalog name from SetClientDetails must be created as-is.
+  // Rebuilding without paymentFrequency turned QUARTERLY labels into MONTHLY,
+  // so TISP still returned "Package Missing." on the client retry.
+  if (isValidTispPackageLabel(explicit)) return explicit;
   const parsed = planAndCategoryFromLabel(explicit);
   const built = buildTispPackageLabel({
     ...input,
@@ -1329,6 +1530,25 @@ function resolveTispPackageDescription(input) {
   });
   if (built) return built;
   return explicit;
+}
+
+function hydrateTispPackageInput(input) {
+  const next = { ...(input || {}) };
+  const label = String(
+    next.packageLabel ||
+      next.PackageDescription ||
+      next.Package ||
+      next.package ||
+      ""
+  ).trim();
+  const parsed = planAndCategoryFromLabel(label);
+  if (parsed?.mbps && !tispPackageTotalMbps(next)) {
+    next.mbps = parsed.mbps;
+  }
+  if (parsed?.cost && !(Number(tispPackagePriceValue(next)) > 0)) {
+    next.price = parsed.cost;
+  }
+  return next;
 }
 
 function buildTispSetPackagePayload(input, transactionType = "INSERT") {
@@ -1454,6 +1674,21 @@ async function postSetPackageDetails(payload, meta = {}) {
     });
 
     if (!success) {
+      if (
+        isTispDuplicatePackageError(parsed.message) &&
+        !isUpdate &&
+        meta._retriedDuplicatePackage !== true
+      ) {
+        // TISP already has this PackageDescription. Retry the same body as UPDATE.
+        return await postSetPackageDetails(
+          buildTispDuplicatePackageUpdatePayload(payload),
+          {
+            ...meta,
+            operation: "set_package_update",
+            _retriedDuplicatePackage: true,
+          }
+        );
+      }
       const err = new Error(
         parsed.message ||
           `SetPackageDetails HTTP ${r.status}: ${JSON.stringify(responseData)}`
@@ -1509,7 +1744,7 @@ async function resolveTispPackageRouter(input) {
  */
 async function ensureTispPackage(input, meta = {}) {
   const popName = await resolveTispPackageRouter(input);
-  const resolved = { ...input, popName };
+  const resolved = hydrateTispPackageInput({ ...input, popName });
   const currentLabel = resolveTispPackageDescription(resolved);
   const previousLabel = String(
     meta.previousPackageLabel || input.previousPackageLabel || ""
@@ -1571,10 +1806,8 @@ async function ensureTispPackage(input, meta = {}) {
 }
 
 function productLooksDstvOnly(product) {
-  const { isDstvOnlyCategory } = require("../services/packageCatalogStore");
-  return isDstvOnlyCategory(
-    product?.categoryCode || product?.category_code || product?.categoryName
-  );
+  const { isDstvOnlyRecord } = require("../services/packageCatalogStore");
+  return isDstvOnlyRecord(product);
 }
 
 function tispLabelFromProduct(product) {
@@ -1716,16 +1949,20 @@ module.exports = {
   buildTispUpdateClientDetailsPayload,
   buildSetClientDetailsPayload,
   buildTispSetPackagePayload,
+  buildTispDuplicatePackageUpdatePayload,
   buildTispPackageLabel,
   pickTispRouterPopName,
   resolveTispPackageType,
   resolveTispNetworkFields,
   resolveTispPackageForWrite,
   isValidTispPackageLabel,
+  resolveTispPackageDescription,
   stringifyTispPayload,
   stringifyTispCreatePayload,
   stringifyTispPackagePayload,
   formatTispError,
+  summarizeTispFaultMessage,
+  isTransientTispFault,
   parseTispOperationResponse,
   accountExistsOnTisp,
   tispClientPayloadIndicatesAccount,
@@ -1733,8 +1970,11 @@ module.exports = {
   shouldAllowTispCreateFallback,
   isTispDuplicateAccountError,
   isTispDuplicatePackageError,
+  isTispUpdateImplementedAsInsertError,
+  explainTispSetClientError,
   extractTispDuplicateAccountId,
   extractTispDuplicateRecordId,
+  extractTispLivePackageName,
   extractTispClientAccountId,
   isTispAccountMissingError,
   isTispPackageMissingError,

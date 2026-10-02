@@ -1,6 +1,7 @@
 import { Box, Flex, Grid, Stack, Text } from "@chakra-ui/react";
 import type { ReactNode } from "react";
 import { FiChevronDown, FiChevronRight, FiMoreHorizontal } from "react-icons/fi";
+import { useMobileViewport } from "../../hooks/useMobileViewport";
 
 /** Shared mobile list row metrics — keep skeletons and rows in sync. */
 export const MOBILE_LIST_ROW = {
@@ -233,7 +234,7 @@ export function MobileDataCard({
 }
 
 type MobileDataListProps<T> = {
-  items: T[];
+  items?: T[];
   getKey: (item: T) => string | number;
   expandedId?: string | number | null;
   renderCard: (item: T, isOpen: boolean) => ReactNode;
@@ -242,14 +243,15 @@ type MobileDataListProps<T> = {
 };
 
 export function MobileDataList<T>({
-  items,
+  items = [],
   getKey,
   expandedId = null,
   renderCard,
   renderExpanded,
   emptyMessage,
 }: MobileDataListProps<T>) {
-  if (items.length === 0) {
+  const rows = Array.isArray(items) ? items : [];
+  if (rows.length === 0) {
     return emptyMessage ? (
       <Box py={8} px={4} textAlign="center">
         {emptyMessage}
@@ -259,7 +261,7 @@ export function MobileDataList<T>({
 
   return (
     <Stack gap={0} divideY="1px" divideColor="gray.100" maxW="100%" minW={0} overflowX="hidden">
-      {items.map((item) => {
+      {rows.map((item) => {
         const key = getKey(item);
         const isOpen = expandedId === key;
 
@@ -297,31 +299,22 @@ export function ResponsiveListViews({
   /** Stretch list/table skeletons to the height of a loading DataTableCard. */
   fill?: boolean;
 }) {
-  // When fill=true we need display:flex for height stretch, but must keep the
-  // mobile/desktop breakpoint — a plain "flex" would override and show both.
-  const mobileDisplay = fill
-    ? ({ base: "flex", lg: "none" } as const)
-    : MOBILE_LIST_DISPLAY;
-  const desktopDisplay = fill
-    ? ({ base: "none", lg: "flex" } as const)
-    : DESKTOP_TABLE_DISPLAY;
+  // Mount only the layout that is on screen. CSS `display: none` still runs
+  // effects, so the hidden tree was doubling every click and every fetch.
+  const isMobile = useMobileViewport();
   const fillProps = fill
     ? {
+        display: "flex" as const,
         flex: 1 as const,
         minH: 0,
         h: "full",
         flexDirection: "column" as const,
       }
-    : {};
+    : { display: "block" as const };
 
   return (
-    <>
-      <Box display={mobileDisplay} minW={0} maxW="100%" {...fillProps}>
-        {mobile}
-      </Box>
-      <Box display={desktopDisplay} minW={0} {...fillProps}>
-        {desktop}
-      </Box>
-    </>
+    <Box minW={0} maxW="100%" {...fillProps}>
+      {isMobile ? mobile : desktop}
+    </Box>
   );
 }

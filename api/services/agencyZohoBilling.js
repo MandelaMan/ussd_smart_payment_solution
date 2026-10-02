@@ -25,13 +25,16 @@ const {
   buildExtraTvLineItem,
   mergeRecurringLineItems,
 } = require("../utils/zohoInvoiceLineItems");
-const { computeRecurringStartDate } = require("../utils/zohoRecurrence");
+const {
+  computeRecurringStartDate,
+  listRecurringIdsToRemove,
+} = require("../utils/zohoRecurrence");
 const {
   createInvoice_JS,
   createRecurringInvoice_JS,
   updateRecurringInvoice_JS,
   getRecurringInvoices_JS,
-  stopRecurringInvoice_JS,
+  deleteRecurringInvoice_JS,
   resolveInvoiceEmailContactPersons,
   associateEmailContactPersonsOnOpenInvoices,
   resolveZohoInvoiceTransactionSeries,
@@ -82,9 +85,12 @@ async function repairAgencyOpenInvoiceEmails(zohoContact) {
 
 function billableManagedHouses(customers = []) {
   // All houses on an agency list are B2B-managed; require active + priced.
-  return (customers || []).filter(
-    (c) => c.status === "active" && Number(c.packagePrice || 0) > 0
-  );
+  return (customers || []).filter((c) => {
+    if (c.status !== "active" || Number(c.packagePrice || 0) <= 0) return false;
+    if (c.pauseIndefinite || Number(c.pause_indefinite) === 1) return false;
+    const status = String(c.subscriptionStatus || c.subscription_status || "").toLowerCase();
+    return !status.includes("indefinite");
+  });
 }
 
 function buildAgencyHouseLineItem(customer, discountPercent, { recurring = false } = {}) {
@@ -173,6 +179,42 @@ async function findAgencyRecurringProfile(zohoContactId, agency) {
   return byName || null;
 }
 
+function agencyRecurringRowMatches(row, agency) {
+  const ref = agencyRecurringReference(agency).toUpperCase();
+  const name = agencyRecurringName(agency).toUpperCase();
+  const agencyName = String(agency.name || "").trim().toUpperCase();
+  const rowRef = String(row?.reference_number || "").trim().toUpperCase();
+  const rowName = String(row?.recurrence_name || "").trim().toUpperCase();
+  return (
+    rowRef === ref ||
+    rowName === name ||
+    (agencyName && rowName.startsWith(`${agencyName} -`))
+  );
+}
+
+/** Delete every agency recurring profile (active and stopped). keepId stays. */
+async function deleteAgencyRecurringProfiles(zohoContactId, agency, keepId = "") {
+  if (!zohoContactId) return { deleted: 0, failed: 0, matched: 0 };
+  const list = await getRecurringInvoices_JS({
+    customer_id: zohoContactId,
+    per_page: 200,
+    filter_by: "Status.All",
+  });
+  const matches = (list || []).filter((row) => agencyRecurringRowMatches(row, agency));
+  let deleted = 0;
+  let failed = 0;
+  for (const id of listRecurringIdsToRemove(matches, keepId)) {
+    try {
+      await deleteRecurringInvoice_JS(id);
+      deleted += 1;
+    } catch (e) {
+      failed += 1;
+      console.warn("delete agency recurring profile failed:", e.message || e);
+    }
+  }
+  return { deleted, failed, matched: matches.length };
+}
+
 /**
  * Create or replace the consolidated agency recurring profile from active houses.
  */
@@ -187,17 +229,19 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
       : billableManagedHouses(await customerStore.listCustomersByAgency(agency.id));
 
   if (!houses.length) {
-    const existing = await findAgencyRecurringProfile(zohoContact.contact_id, agency);
-    if (existing?.recurring_invoice_id || existing?.recurringinvoice_id) {
-      const id = String(existing.recurring_invoice_id || existing.recurringinvoice_id);
-      try {
-        await stopRecurringInvoice_JS(id);
-      } catch (e) {
-        console.warn("stop empty agency recurring failed:", e.message);
-      }
-      return { created: false, updated: false, stopped: true, reason: "no_billable_houses" };
-    }
-    return { created: false, updated: false, reason: "no_billable_houses" };
+    const removed = await deleteAgencyRecurringProfiles(
+      zohoContact.contact_id,
+      agency
+    );
+    return {
+      created: false,
+      updated: false,
+      deleted: removed.deleted > 0,
+      deletedCount: removed.deleted,
+      deleteFailed: removed.failed,
+      stopped: false,
+      reason: "no_billable_houses",
+    };
   }
 
   const discountPercent = normalizeAgencyDiscountPercent(agency.discountPercent);
@@ -235,6 +279,11 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
         )
       );
       await repairAgencyOpenInvoiceEmails(zohoContact);
+      const removed = await deleteAgencyRecurringProfiles(
+        zohoContact.contact_id,
+        agency,
+        id
+      );
       return {
         created: false,
         updated: true,
@@ -242,11 +291,13 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
         houseCount: houses.length,
         totalAmount: lineItemsAmount(lineItems),
         recurring: updated,
+        deletedCount: removed.deleted,
+        deleteFailed: removed.failed,
       };
     } catch (e) {
       console.warn("agency recurring update failed, recreating:", e.message);
       try {
-        await stopRecurringInvoice_JS(id);
+        await deleteRecurringInvoice_JS(id);
       } catch {
         /* ignore */
       }
@@ -275,16 +326,25 @@ async function ensureAgencyRecurring(agency, zohoContact, customers = null) {
 
   await repairAgencyOpenInvoiceEmails(zohoContact);
 
+  const recurringInvoiceId = String(
+    created.recurring_invoice_id || created.recurringinvoice_id
+  );
+  const removed = await deleteAgencyRecurringProfiles(
+    zohoContact.contact_id,
+    agency,
+    recurringInvoiceId
+  );
+
   return {
     created: true,
     updated: false,
-    recurringInvoiceId: String(
-      created.recurring_invoice_id || created.recurringinvoice_id
-    ),
+    recurringInvoiceId,
     houseCount: houses.length,
     totalAmount: lineItemsAmount(lineItems),
     startDate,
     recurring: created,
+    deletedCount: removed.deleted,
+    deleteFailed: removed.failed,
   };
 }
 

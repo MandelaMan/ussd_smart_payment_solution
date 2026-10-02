@@ -78,6 +78,7 @@ describe("RBAC permission catalog integrity", () => {
       "customers.pause",
       "customers.disconnect",
       "customers.delete",
+      "customers.package_edit",
       "billing.allocate",
       "billing.actions",
     ]) {
@@ -87,6 +88,7 @@ describe("RBAC permission catalog integrity", () => {
 
   it("dangerous permissions are marked", () => {
     assert.equal(getPermission("customers.delete").dangerous, true);
+    assert.equal(getPermission("customers.package_edit").dangerous, true);
     assert.equal(getPermission("billing.refund").dangerous, true);
   });
 
@@ -133,6 +135,25 @@ describe("RBAC permission catalog integrity", () => {
     assert.ok(bySlug.technician.includes("installations.edit"));
   });
 
+  it("Activity and IPTV are catalog modules that are allocated, not preset", () => {
+    const moduleKeys = MODULES.map((mod) => mod.key);
+    assert.ok(moduleKeys.includes("activity_audit"));
+    assert.ok(moduleKeys.includes("iptv"));
+
+    for (const key of [
+      "activity_audit.view",
+      "iptv.view",
+      "iptv.operate",
+      "iptv.settings",
+    ]) {
+      assert.ok(getPermission(key), `missing ${key}`);
+    }
+
+    assert.equal(getPermission("activity_audit.view").dangerous, true);
+    assert.equal(getPermission("iptv.operate").dangerous, true);
+    assert.equal(getPermission("iptv.settings").dangerous, true);
+  });
+
   it("User role defaults are dashboard.view only", () => {
     assert.deepEqual([...USER_ROLE_DEFAULTS], ["dashboard.view"]);
   });
@@ -148,11 +169,16 @@ describe("RBAC permission catalog integrity", () => {
       "billing.reverse",
       "customers.cancel",
       "customers.delete",
+      "customers.package_edit",
       "customers.import",
       "campaigns.create",
       "campaigns.edit",
       "settings.view",
       "settings.sync",
+      "activity_audit.view",
+      "iptv.view",
+      "iptv.operate",
+      "iptv.settings",
     ]) {
       assert.equal(allGroupPerms.has(key), false, `${key} should not be in any preset`);
     }
@@ -165,6 +191,36 @@ describe("RBAC permission catalog integrity", () => {
     assert.equal(bySlug.finance.has("billing.refund"), false);
     assert.equal(bySlug["customer-relations"].has("customers.financials"), false);
     assert.ok(bySlug["network-operations"].has("customers.disconnect"));
+  });
+
+  it("partner groups are view-only with distinct types", () => {
+    const bySlug = Object.fromEntries(
+      GROUP_PRESETS.map((g) => [g.slug, new Set(g.permissions)])
+    );
+    for (const slug of ["customer-relations", "partner-dstv", "partner-investor"]) {
+      const perms = bySlug[slug];
+      assert.ok(perms, `missing group ${slug}`);
+      assert.ok(perms.has("customers.view"), `${slug} missing customers.view`);
+      assert.ok(perms.has("dashboard.partner"), `${slug} missing dashboard.partner`);
+      assert.ok(perms.has("reports.view"), `${slug} missing reports.view`);
+      for (const blocked of [
+        "customers.create",
+        "customers.edit",
+        "customers.financials",
+        "customers.pricing",
+        "customers.delete",
+        "reports.schedule",
+      ]) {
+        assert.equal(perms.has(blocked), false, `${slug} should not have ${blocked}`);
+      }
+    }
+    assert.ok(bySlug["customer-relations"].has("partner.internet"));
+    assert.ok(bySlug["partner-dstv"].has("partner.dstv"));
+    assert.ok(bySlug["partner-investor"].has("partner.investor"));
+    assert.ok(bySlug["partner-investor"].has("analytics.view"));
+    assert.ok(bySlug["partner-investor"].has("dashboard.investor"));
+    assert.equal(bySlug["partner-dstv"].has("analytics.view"), false);
+    assert.equal(bySlug["customer-relations"].has("analytics.view"), false);
   });
 
   it("customer-create groups include building, apartment, and package lookups", () => {
@@ -187,7 +243,13 @@ describe("RBAC permission catalog integrity", () => {
       ...USER_ROLE_DEFAULTS,
       ...GROUP_PRESETS.flatMap((g) => g.permissions),
     ]);
-    const skip = new Set(["users.view", "settings.view", "system_logs.view"]);
+    const skip = new Set([
+      "users.view",
+      "settings.view",
+      "system_logs.view",
+      "activity_audit.view",
+      "iptv.view",
+    ]);
     for (const mod of MODULES) {
       const view = mod.permissions.find((p) => p.key.endsWith(".view"));
       if (!view || skip.has(view.key)) continue;

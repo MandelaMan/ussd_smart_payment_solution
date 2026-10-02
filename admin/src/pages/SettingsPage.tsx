@@ -16,8 +16,9 @@ import {
   Text,
   Textarea,
 } from "@chakra-ui/react";
-import { api, type AppSettings } from "../lib/api";
+import { api, type AppSettings, type IptvSettings } from "../lib/api";
 import { TabStrip } from "../components/ui/TabStrip";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { UsersPage } from "./UsersPage";
 import { LogsPage } from "./LogsPage";
 import { SynchronizationPage } from "./SynchronizationPage";
@@ -27,6 +28,7 @@ import { SettingsPanelSkeleton } from "../components/PageSkeletons";
 import { useAuth } from "../lib/authContext";
 import {
   canAccessOps,
+  canConfigureIptv,
   canManageUsers,
   canOperateFinance,
 } from "../lib/rbac";
@@ -164,6 +166,7 @@ type TabId =
   | "permissions"
   | "webhooks"
   | "communication"
+  | "iptv"
   | "logs"
   | "synchronization"
   | "versioning";
@@ -1039,6 +1042,165 @@ function CommunicationPanel({
   );
 }
 
+const DEFAULT_STARTLYX_URL = "https://startlyx.iptvconsole.hydeinnovations.com";
+
+function IptvConnectionPanel({
+  settings,
+  onUpdated,
+}: {
+  settings: AppSettings | null;
+  onUpdated: (next: AppSettings) => void;
+}) {
+  const [iptv, setIptv] = useState<IptvSettings | null>(
+    settings?.integrations?.iptv || null
+  );
+  const [baseUrl, setBaseUrl] = useState(iptv?.baseUrl || DEFAULT_STARTLYX_URL);
+  const [adminEmail, setAdminEmail] = useState(iptv?.adminEmail || "");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loginOk, setLoginOk] = useState<boolean | null>(null);
+  const [loginError, setLoginError] = useState("");
+
+  useEffect(() => {
+    const fromSettings = settings?.integrations?.iptv;
+    if (fromSettings) {
+      setIptv(fromSettings);
+      setBaseUrl(fromSettings.baseUrl || DEFAULT_STARTLYX_URL);
+      setAdminEmail(fromSettings.adminEmail || "");
+      return;
+    }
+    let alive = true;
+    void api
+      .getIptvSettings()
+      .then((res) => {
+        if (!alive) return;
+        setIptv(res);
+        setBaseUrl(res.baseUrl || DEFAULT_STARTLYX_URL);
+        setAdminEmail(res.adminEmail || "");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [settings?.integrations?.iptv]);
+
+  async function save() {
+    setSaving(true);
+    setLoginError("");
+    try {
+      const res = await api.updateIptvSettings({
+        baseUrl: baseUrl.trim(),
+        adminEmail: adminEmail.trim(),
+        adminPassword: adminPassword.trim() || undefined,
+      });
+      setAdminPassword("");
+      setLoginOk(res.status.authenticated);
+      setLoginError(res.status.authenticated ? "" : res.status.error || "");
+      setIptv(res.settings);
+      if (settings) {
+        onUpdated({
+          ...settings,
+          integrations: {
+            ...settings.integrations,
+            iptv: res.settings,
+          },
+        });
+      }
+      toaster.create({
+        title: res.status.authenticated
+          ? "Connected to Startlyx"
+          : res.status.error || "Saved, but Startlyx login failed",
+        type: res.status.authenticated ? "success" : "error",
+      });
+    } catch (err) {
+      toaster.create({
+        title: err instanceof Error ? err.message : "Could not save IPTV settings",
+        type: "error",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <SettingsAccordionSection
+      title="Startlyx login"
+      defaultOpen
+      badges={
+        <>
+          <StatusBadge
+            ok={Boolean(iptv?.configured)}
+            okLabel="Credentials saved"
+            failLabel="Not set"
+          />
+          {loginOk != null ? (
+            <StatusBadge
+              ok={loginOk}
+              okLabel="Connected"
+              failLabel="Login failed"
+            />
+          ) : null}
+        </>
+      }
+    >
+      <Stack gap={3} maxW="560px">
+        <Text fontSize="sm" color="fg.muted">
+          Admin account used by the IPTV console to create test subscribers. Saved in app settings, not the server .env file.
+        </Text>
+        <Field.Root required>
+          <Field.Label>Console URL</Field.Label>
+          <Input
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder={DEFAULT_STARTLYX_URL}
+            autoComplete="off"
+          />
+        </Field.Root>
+        <Field.Root required>
+          <Field.Label>Admin email</Field.Label>
+          <Input
+            type="email"
+            value={adminEmail}
+            onChange={(e) => setAdminEmail(e.target.value)}
+            placeholder="network@sulsolutions.biz"
+            autoComplete="username"
+          />
+        </Field.Root>
+        <Field.Root required={!iptv?.passwordConfigured}>
+          <Field.Label>Admin password</Field.Label>
+          <PasswordInput
+            value={adminPassword}
+            onChange={(e) => setAdminPassword(e.target.value)}
+            placeholder={
+              iptv?.passwordConfigured
+                ? "Leave blank to keep the saved password"
+                : "Startlyx admin password"
+            }
+            autoComplete="new-password"
+          />
+        </Field.Root>
+        {loginError ? (
+          <Text fontSize="sm" color="orange.700">
+            {loginError}
+          </Text>
+        ) : null}
+        <Button
+          colorPalette="brand"
+          alignSelf="flex-start"
+          loading={saving}
+          disabled={
+            !adminEmail.trim() ||
+            (!adminPassword.trim() && !iptv?.passwordConfigured)
+          }
+          onClick={() => void save()}
+        >
+          Save and connect
+        </Button>
+      </Stack>
+    </SettingsAccordionSection>
+  );
+}
+
 function WebhooksPanel({ settings }: { settings: AppSettings }) {
   const webhooks = settings.webhooks;
   const integrations = settings.integrations;
@@ -1294,6 +1456,7 @@ export function SettingsPage() {
       { id: "permissions", label: "Users & permissions" },
       { id: "webhooks", label: "Webhooks" },
       { id: "communication", label: "Communication" },
+      { id: "iptv", label: "IPTV" },
       { id: "logs", label: "Logs" },
       { id: "synchronization", label: "Synchronization" },
       { id: "versioning", label: "Versioning" },
@@ -1305,6 +1468,7 @@ export function SettingsPage() {
         tab.id === "communication"
       )
         return canManageUsers(user);
+      if (tab.id === "iptv") return canConfigureIptv(user);
       if (tab.id === "logs") return canAccessOps(user);
       if (tab.id === "synchronization") return canOperateFinance(user);
       if (tab.id === "versioning") return canManageUsers(user) || canOperateFinance(user);
@@ -1474,6 +1638,17 @@ export function SettingsPage() {
                   Retry
                 </Button>
               </Stack>
+            )
+          ) : null}
+
+          {activeTab === "iptv" ? (
+            showSettingsLoading ? (
+              <SettingsPanelSkeleton />
+            ) : (
+              <IptvConnectionPanel
+                settings={settings}
+                onUpdated={setSettings}
+              />
             )
           ) : null}
 

@@ -11,6 +11,7 @@ import {
   Stack,
   Table,
   Text,
+  Textarea,
 } from "@chakra-ui/react";
 import type { IconType } from "react-icons";
 import {
@@ -46,7 +47,7 @@ import {
 import { formatCustomerPackageLabel, formatTitleCase } from "../../lib/formatText";
 import { customerDisplayTitle, isShopPremise } from "../../lib/premise";
 import { displayCustomerStatus, normalizeSubscriptionStatus } from "../../lib/customerStatus";
-import { pauseAwayDays, pauseCreditLabel } from "../../lib/pauseCredit";
+import { addCalendarDays, pauseAwayDays, pauseBalanceLabel, pauseCreditLabel, resolvePauseBalance } from "../../lib/pauseCredit";
 import {
   parseRetryAfterSeconds,
   SYNC_COOLDOWN_MS,
@@ -62,6 +63,10 @@ import {
   type CustomerAction,
 } from "./CustomerActionMenu";
 import { TabStrip } from "../ui/TabStrip";
+import { DateField } from "../ui/DateField";
+import { RowCheckbox } from "../ui/RowCheckbox";
+import { useAuth } from "../../lib/authContext";
+import { hasPermission } from "../../lib/rbac";
 import { DataTable, DataTableSortHeader, dataTableCellProps } from "../ui/DataTable";
 import { TextStatus } from "../ui/TextStatus";
 import { DetailCard, DetailGrid } from "../module/EntityExpandShell";
@@ -75,6 +80,10 @@ import {
   EXTRA_TV_UNIT_FEE,
   packageIncludesTv,
 } from "../../lib/extraTv";
+import {
+  extraDecoderFee,
+  EXTRA_DECODER_UNIT_FEE,
+} from "../../lib/extraDecoder";
 
 type Props = {
   customerId: number;
@@ -92,11 +101,22 @@ const ALL_TABS = [
   { id: "package", label: "Package" },
   { id: "connection", label: "Connection" },
   { id: "contact", label: "Contact info" },
+  { id: "notes", label: "Notes" },
   { id: "invoices", label: "Invoices" },
   { id: "payments", label: "Payments" },
 ] as const;
 
 type TabId = (typeof ALL_TABS)[number]["id"];
+
+const NOTES_MAX_LENGTH = 4000;
+const NOTE_SEPARATOR = "\n\n---\n\n";
+
+function parseNoteEntries(value: string | null | undefined): string[] {
+  return String(value || "")
+    .split(/\n[ \t]*---[ \t]*\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
 
 const SOURCE_LABELS: Record<string, string> = {
   mpesa: "M-Pesa",
@@ -132,22 +152,49 @@ function pauseCreditDaysFor(customer: Customer): number {
   return pauseAwayDays(customer.pauseStartDate, customer.pauseEndDate);
 }
 
-function formatPauseCreditDetail(customer: Customer): string | null {
+function toIsoDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const text = String(value).trim();
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(text);
+  if (iso) return iso[1];
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${parsed.getFullYear()}-${month}-${day}`;
+}
+
+function pauseNextDueLabel(customer: Customer, tispDueDate?: string | null): string | null {
+  const stored = toIsoDate(customer.pauseCreditedDueDate);
+  if (stored) return formatDateOnly(stored);
   const days = pauseCreditDaysFor(customer);
-  if (days <= 0 && !customer.pauseStartDate) return null;
+  if (days <= 0) return null;
+  const base =
+    toIsoDate(customer.pauseOriginalDueDate) ||
+    toIsoDate(customer.tispDueDate) ||
+    toIsoDate(tispDueDate);
+  if (!base) return null;
+  return formatDateOnly(addCalendarDays(base, days));
+}
+
+function formatPauseCreditDetail(customer: Customer): string | null {
+  const balance = resolvePauseBalance(customer);
+  const days = pauseCreditDaysFor(customer);
+  if (days <= 0 && !customer.pauseStartDate && balance.used <= 0) return null;
   const away =
     customer.pauseStartDate && customer.pauseEndDate
-      ? `Away ${formatDateOnly(customer.pauseStartDate)} → ${formatDateOnly(customer.pauseEndDate)}`
+      ? `Last stay ${formatDateOnly(customer.pauseStartDate)} → ${formatDateOnly(customer.pauseEndDate)}`
       : null;
-  if (days <= 0) return away;
+  const remaining =
+    balance.used > 0 || balance.exhausted ? pauseBalanceLabel(balance) : null;
+  if (days <= 0) return [remaining, away].filter(Boolean).join(" · ") || null;
   const credited = customer.pauseCreditAppliedAt
     ? `${pauseCreditLabel(days)} added to the last subscription`
     : `${pauseCreditLabel(days)} will be added to the next subscription`;
+  const nextDue = pauseNextDueLabel(customer);
   const due =
-    !customer.pauseCreditAppliedAt && customer.pauseCreditedDueDate
-      ? `next due ${formatDateOnly(customer.pauseCreditedDueDate)}`
-      : null;
-  return [credited, away, due].filter(Boolean).join(" · ");
+    !customer.pauseCreditAppliedAt && nextDue ? `next due ${nextDue}` : null;
+  return [remaining, credited, away, due].filter(Boolean).join(" · ");
 }
 
 function formatRelativeTime(iso: string | null | undefined): string | null {
@@ -270,6 +317,8 @@ type StatusNarration = {
   text: string;
   tone: StatusTone;
   detail?: string | null;
+  linkTo?: string | null;
+  linkLabel?: string | null;
 };
 
 function narrationToneColor(tone: StatusTone) {
@@ -360,6 +409,10 @@ function formatInvoiceDateDetail(invoice: ZohoInvoice | null | undefined): strin
   if (sent) parts.push(`Sent ${sent}`);
   if (due) parts.push(`Due ${due}`);
   return parts.length ? parts.join(" · ") : null;
+}
+
+function formatLastInvoiceDetail(dates: string | null): string | null {
+  return dates ? `Last invoice: ${dates}` : null;
 }
 
 function pickInvoiceForStatus(invoices: ZohoInvoice[]): ZohoInvoice | null {
@@ -456,6 +509,26 @@ function buildTispNarrations(
   }
 
   const statusLower = service.toLowerCase();
+  if (statusLower.includes("indefinite") || customer.pauseIndefinite) {
+    const since = customer.pauseStartDate
+      ? `since ${formatDateOnly(customer.pauseStartDate)}`
+      : null;
+    return [
+      {
+        label: "Service status",
+        text: [
+          `Paused indefinitely${since ? ` ${since}` : ""}.`,
+          "Internet, ONU, IPTV, and DSTV billing are stopped.",
+          "The recurring invoice is stopped until the service is restarted.",
+          customer.pauseReason ? `Reason: ${customer.pauseReason}.` : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        tone: "warn",
+      },
+      buildTispDueNarration(dueLabel, false),
+    ];
+  }
   if (statusLower.includes("pause")) {
     const pauseRange =
       customer.pauseStartDate && customer.pauseEndDate
@@ -468,17 +541,17 @@ function buildTispNarrations(
       customer.pauseCreditDays != null && customer.pauseCreditDays > 0
         ? customer.pauseCreditDays
         : pauseAwayDays(customer.pauseStartDate, customer.pauseEndDate);
+    const pauseBalance = resolvePauseBalance(customer);
     const creditApplied = Boolean(customer.pauseCreditAppliedAt);
+    const nextDue = pauseNextDueLabel(customer, integrations?.tispDueDate);
     const creditText =
       creditDays > 0
         ? creditApplied
           ? `${pauseCreditLabel(creditDays)} from this pause were added to the last subscription.`
           : `${pauseCreditLabel(creditDays)} from this pause will be added to the next subscription${
-              customer.pauseCreditedDueDate
-                ? ` (next due ${formatDateOnly(customer.pauseCreditedDueDate)})`
-                : ""
-            }.`
-        : null;
+              nextDue ? ` (next due ${nextDue})` : ""
+            }. ${pauseBalanceLabel(pauseBalance)}.`
+        : pauseBalanceLabel(pauseBalance);
     return [
       {
         label: "Internet status",
@@ -527,26 +600,38 @@ function buildTispNarrations(
   }
   if (statusLower.includes("active")) {
     const creditDays = pauseCreditDaysFor(customer);
+    const pauseBalance = resolvePauseBalance(customer);
     const creditPending = creditDays > 0 && !customer.pauseCreditAppliedAt;
     const creditApplied = creditDays > 0 && Boolean(customer.pauseCreditAppliedAt);
+    const showPauseBalance = pauseBalance.used > 0 || pauseBalance.exhausted;
+    const nextDue = pauseNextDueLabel(customer, integrations?.tispDueDate);
     return [
       {
         label: "Internet status",
         text: "Active on TISP and Books.",
         tone: "ok",
       },
-      ...(creditPending || creditApplied
+      ...(creditPending || creditApplied || showPauseBalance
         ? [
             {
-              label: "Pause credit",
-              text: creditApplied
-                ? `${pauseCreditLabel(creditDays)} from the last pause were added to this subscription.`
-                : `${pauseCreditLabel(creditDays)} from the last pause will be added to the next subscription${
-                    customer.pauseCreditedDueDate
-                      ? ` (next due ${formatDateOnly(customer.pauseCreditedDueDate)})`
-                      : ""
-                  }.`,
-              tone: creditApplied ? ("ok" as const) : ("warn" as const),
+              label: "Pause days",
+              text: [
+                creditApplied
+                  ? `${pauseCreditLabel(creditDays)} from the last pause were added to this subscription.`
+                  : creditPending
+                    ? `${pauseCreditLabel(creditDays)} from the last pause will be added to the next subscription${
+                        nextDue ? ` (next due ${nextDue})` : ""
+                      }.`
+                    : null,
+                showPauseBalance ? pauseBalanceLabel(pauseBalance) : null,
+              ]
+                .filter(Boolean)
+                .join(" "),
+              tone: pauseBalance.exhausted
+                ? ("bad" as const)
+                : creditApplied
+                  ? ("ok" as const)
+                  : ("warn" as const),
             },
           ]
         : []),
@@ -564,19 +649,136 @@ function buildTispNarrations(
   ];
 }
 
+function agencyDisplayName(
+  customer: Customer,
+  zohoStatus: CustomerZohoStatus | null
+): string | null {
+  const name = formatTitleCase(zohoStatus?.agencyName || customer.agencyName || "");
+  return name || null;
+}
+
+function billedThroughAgencyNarration(
+  customer: Customer,
+  zohoStatus: CustomerZohoStatus | null,
+  linked: boolean
+): StatusNarration {
+  const agencyName = agencyDisplayName(customer, zohoStatus);
+  const agencyId = customer.agencyId ?? zohoStatus?.agencyId ?? null;
+  if (!linked) {
+    return {
+      label: "Contact",
+      text: agencyName
+        ? `${agencyName} has no Zoho contact yet.`
+        : "Agency Zoho contact not linked.",
+      tone: "bad",
+    };
+  }
+  if (agencyName && agencyId) {
+    return {
+      label: "Contact",
+      text: "Billed through",
+      linkTo: `/agencies/${agencyId}`,
+      linkLabel: agencyName,
+      tone: "ok",
+    };
+  }
+  return {
+    label: "Contact",
+    text: agencyName
+      ? `Billed through ${agencyName}.`
+      : "Billed through the linked agency.",
+    tone: "ok",
+  };
+}
+
+function buildB2bZohoNarrations(
+  customer: Customer,
+  zohoStatus: CustomerZohoStatus | null
+): StatusNarration[] {
+  const linked = Boolean(zohoStatus?.linked);
+  const unpaidCount = zohoStatus?.unpaidCount ?? 0;
+  const balanceDue = zohoStatus?.totalBalanceDue ?? 0;
+  const invoiceCount = zohoStatus?.invoiceCount ?? 0;
+  const invoiceDates = formatInvoiceDateDetail(
+    pickInvoiceForStatus(zohoStatus?.invoices || [])
+  );
+
+  const rows: StatusNarration[] = [
+    billedThroughAgencyNarration(customer, zohoStatus, linked),
+  ];
+
+  if (!linked) {
+    rows.push({
+      label: "Invoice",
+      text: "Open the agency contact to see invoices.",
+      tone: "neutral",
+    });
+  } else if (invoiceCount === 0) {
+    rows.push({
+      label: "Invoice",
+      text: "No invoices yet.",
+      tone: "warn",
+    });
+  } else if (unpaidCount > 0 || balanceDue > 0) {
+    rows.push({
+      label: "Invoice",
+      text: `${unpaidCount} overdue · ${formatCurrency(balanceDue)}.`,
+      tone: "bad",
+      detail: invoiceDates,
+    });
+  } else {
+    rows.push({
+      label: "Invoice",
+      text: "No overdue invoices.",
+      tone: "ok",
+      detail: formatLastInvoiceDetail(invoiceDates),
+    });
+  }
+
+  if (!linked) {
+    rows.push({
+      label: "Payment",
+      text: "Open the agency contact to see payments.",
+      tone: "neutral",
+    });
+  } else if (unpaidCount > 0 || balanceDue > 0) {
+    rows.push({
+      label: "Payment",
+      text: `Overdue ${formatCurrency(balanceDue)}.`,
+      tone: "bad",
+    });
+  } else if (customer.lastPaymentDate) {
+    rows.push({
+      label: "Payment",
+      text: `Last payment ${formatDateOnly(customer.lastPaymentDate)}.`,
+      tone: "ok",
+    });
+  } else {
+    rows.push({
+      label: "Payment",
+      text: "No outstanding payments.",
+      tone: "ok",
+    });
+  }
+
+  rows.push({
+    label: "Recurring invoice",
+    text: linked
+      ? "Billed on the agency recurring invoice."
+      : "Recurring invoices go to the agency contact.",
+    tone: linked ? "ok" : "neutral",
+  });
+
+  return rows;
+}
+
 function buildZohoNarrations(
   customer: Customer,
   integrations: CustomerIntegrationsSummary | null,
   zohoStatus: CustomerZohoStatus | null
 ): StatusNarration[] {
   if (customer.customerType === "B2B" || integrations?.isB2B) {
-    return [
-      {
-        label: "Zoho",
-        text: "Billed through the agency Zoho contact.",
-        tone: "ok",
-      },
-    ];
+    return buildB2bZohoNarrations(customer, zohoStatus);
   }
 
   // Cancelled / former tenant — never show the live apartment contact as theirs.
@@ -660,7 +862,7 @@ function buildZohoNarrations(
       label: "Invoice",
       text: "No overdue invoices.",
       tone: "ok",
-      detail: invoiceDates,
+      detail: formatLastInvoiceDetail(invoiceDates),
     });
   }
 
@@ -824,7 +1026,23 @@ function StatusTile({
             color={narrationToneColor(item.tone)}
             lineHeight="1.45"
           >
-            {item.text}
+            {item.linkTo && item.linkLabel ? (
+              <>
+                {item.text}{" "}
+                <Box
+                  asChild
+                  color="blue.600"
+                  fontWeight="medium"
+                  textDecoration="underline"
+                  _hover={{ color: "blue.700" }}
+                >
+                  <RouterLink to={item.linkTo}>{item.linkLabel}</RouterLink>
+                </Box>
+                .
+              </>
+            ) : (
+              item.text
+            )}
           </Text>
           {item.detail ? (
             <Text fontSize="xs" color="fg.muted" mt={0.5} lineHeight="1.4">
@@ -875,10 +1093,6 @@ function StatusTileSkeleton() {
   );
 }
 
-function statusTileColumns(count: number) {
-  return count <= 1 ? "1fr" : { base: "1fr", sm: "1fr 1fr" };
-}
-
 function StatusNarrationBlock({
   title,
   items,
@@ -892,9 +1106,8 @@ function StatusNarrationBlock({
   featured?: boolean;
   skeletonCount?: number;
 }) {
-  const tileCount = loading ? skeletonCount : items.length;
-  const useFeatured = Boolean(featured) || tileCount <= 1;
-  const columns = statusTileColumns(tileCount);
+  const useFeatured = Boolean(featured);
+  const columns = { base: "1fr", sm: "1fr 1fr" };
 
   return (
     <Box>
@@ -947,6 +1160,8 @@ export function CustomerExpandPanel({
   hidePricing = false,
   hideFinancials = false,
 }: Props) {
+  const { user } = useAuth();
+  const canViewReminders = hasPermission(user, "action_items.view");
   const tabs = useMemo(
     () =>
       hideFinancials
@@ -974,6 +1189,13 @@ export function CustomerExpandPanel({
   const { inCooldown, remainingSeconds, startCooldown } = useSyncCooldown(customerId);
   const [error, setError] = useState("");
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesFocused, setNotesFocused] = useState(false);
+  const [followUpEnabled, setFollowUpEnabled] = useState(false);
+  const [followUpDue, setFollowUpDue] = useState("");
+  const [followUpPriority, setFollowUpPriority] = useState("normal");
+  const [noteFollowUp, setNoteFollowUp] = useState<Customer["noteFollowUp"]>(null);
   const [zohoStatus, setZohoStatus] = useState<CustomerZohoStatus | null>(null);
   const [integrations, setIntegrations] = useState<CustomerIntegrationsSummary | null>(null);
   const [integrationsLoading, setIntegrationsLoading] = useState(true);
@@ -1170,6 +1392,134 @@ export function CustomerExpandPanel({
     if (!customer || activeTab !== "connection" || oltLoadedRef.current) return;
     void loadOltStatus();
   }, [customer, activeTab, loadOltStatus]);
+
+  useEffect(() => {
+    setNotesDraft("");
+  }, [customer?.id]);
+
+  useEffect(() => {
+    setFollowUpEnabled(false);
+    setFollowUpDue("");
+    setFollowUpPriority("normal");
+  }, [customer?.id]);
+
+  useEffect(() => {
+    if (!customer?.id) {
+      setNoteFollowUp(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .getCustomerNoteFollowUp(customer.id)
+      .then((res) => {
+        if (!cancelled) setNoteFollowUp(res.followUp || null);
+      })
+      .catch(() => {
+        if (!cancelled) setNoteFollowUp(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [customer?.id, customer?.staffNotes]);
+
+  const savedNoteEntries = useMemo(
+    () => parseNoteEntries(customer?.staffNotes),
+    [customer?.staffNotes]
+  );
+  const notesDirty = notesDraft.trim() !== "";
+  const hasAnyNoteText = notesDirty || savedNoteEntries.length > 0;
+
+  async function removeNoteEntry(index: number) {
+    if (!customer || readOnly || savingNotes) return;
+    if (!window.confirm("Delete this note?")) return;
+    const remaining = savedNoteEntries.filter((_, i) => i !== index);
+    setSavingNotes(true);
+    try {
+      const res = await api.updateCustomerNotes(
+        customer.id,
+        remaining.join(NOTE_SEPARATOR)
+      );
+      setCustomer(res.customer);
+      onCustomerUpdated?.(res.customer);
+      toaster.create({ title: "Note deleted", type: "success" });
+    } catch (e) {
+      toaster.create({
+        title: "Could not delete note",
+        description: e instanceof Error ? e.message : "Delete failed",
+        type: "error",
+      });
+    } finally {
+      setSavingNotes(false);
+    }
+  }
+
+  async function saveNotes() {
+    if (!customer || readOnly) return;
+    const noteText = notesDraft.trim();
+    const combined = [...savedNoteEntries, ...(noteText ? [noteText] : [])].join(
+      NOTE_SEPARATOR
+    );
+    const creatingFollowUp = followUpEnabled && Boolean(combined);
+    if (!noteText && !creatingFollowUp) return;
+    if (followUpEnabled && !combined) {
+      toaster.create({
+        title: "Add a note before creating a follow-up",
+        type: "error",
+      });
+      return;
+    }
+    if (combined.length > NOTES_MAX_LENGTH) {
+      toaster.create({
+        title: "Notes are too long",
+        description: `All notes together must be ${NOTES_MAX_LENGTH} characters or fewer. Delete an older note first.`,
+        type: "error",
+      });
+      return;
+    }
+    setSavingNotes(true);
+    try {
+      const res = await api.updateCustomerNotes(
+        customer.id,
+        combined,
+        creatingFollowUp
+          ? { dueDate: followUpDue || null, priority: followUpPriority }
+          : undefined
+      );
+      setCustomer(res.customer);
+      setNotesDraft("");
+      onCustomerUpdated?.(res.customer);
+      if (res.followUp?.ok && res.followUp.id) {
+        setNoteFollowUp({
+          id: res.followUp.id,
+          status: res.followUp.status || "open",
+          dueDate: res.followUp.dueDate || null,
+          title: res.followUp.title,
+        });
+      }
+      if (res.followUp && !res.followUp.ok) {
+        toaster.create({
+          title: "Notes saved",
+          description: res.followUp.error || "Follow-up was not created",
+          type: "error",
+        });
+      } else if (res.followUp?.created) {
+        setFollowUpEnabled(false);
+        setFollowUpDue("");
+        setFollowUpPriority("normal");
+        toaster.create({ title: "Notes saved and follow-up sent to reminders", type: "success" });
+      } else {
+        toaster.create({ title: "Notes saved", type: "success" });
+      }
+    } catch (e) {
+      toaster.create({
+        title: "Could not save notes",
+        description: e instanceof Error ? e.message : "Save failed",
+        type: "error",
+      });
+    } finally {
+      setSavingNotes(false);
+    }
+  }
 
   async function handleRefresh() {
     if (inCooldown) {
@@ -1482,7 +1832,19 @@ export function CustomerExpandPanel({
   const paymentFrequencyLabel =
     customer.paymentFrequency === "custom" && customer.customPeriodDays
       ? `Custom (${customer.customPeriodDays} days)`
-      : customer.paymentFrequency;
+      : formatTitleCase(customer.paymentFrequency);
+
+  const currentPackageLabel = [
+    formatCustomerPackageLabel(
+      customer.productName,
+      customer.productMbps,
+      customer.productExtraBandwidth
+    ),
+    paymentFrequencyLabel,
+    customer.packagePrice ? formatCurrency(customer.packagePrice) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const tispNarrations = buildTispNarrations(customer, integrations);
   const zohoNarrations = buildZohoNarrations(customer, integrations, zohoStatus);
@@ -1709,9 +2071,25 @@ export function CustomerExpandPanel({
               </>
             )}
             <DetailCard label="Payment frequency" value={paymentFrequencyLabel} />
+            {displayCustomerStatus(customer) === "Paused Indefinitely" ? (
+              <DetailCard
+                label="Indefinite pause"
+                value={
+                  customer.pauseReason
+                    ? `${customer.pauseReason}${
+                        customer.pauseStartDate
+                          ? ` · since ${formatDateOnly(customer.pauseStartDate)}`
+                          : ""
+                      }`
+                    : "Services and recurring invoice stopped"
+                }
+                highlight
+                span={{ base: "1 / -1", md: "span 1" }}
+              />
+            ) : null}
             {formatPauseCreditDetail(customer) ? (
               <DetailCard
-                label="Pause credit"
+                label="Pause days"
                 value={formatPauseCreditDetail(customer)}
                 highlight={!customer.pauseCreditAppliedAt}
                 span={{ base: "1 / -1", md: "span 1" }}
@@ -1784,6 +2162,16 @@ export function CustomerExpandPanel({
                   ) : (
                     "1 (included)"
                   )
+                }
+              />
+            ) : null}
+            {customer.hasDstv && customer.buildingDstvSetup !== "headend_coax" ? (
+              <DetailCard
+                label="Extra decoders"
+                value={
+                  Number(customer.extraDecoderCount || 0) > 0
+                    ? `${customer.extraDecoderCount} extra · ${formatCurrency(extraDecoderFee(customer.extraDecoderCount))} recurring (${formatCurrency(EXTRA_DECODER_UNIT_FEE)} each)`
+                    : "None (1 included)"
                 }
               />
             ) : null}
@@ -1951,6 +2339,259 @@ export function CustomerExpandPanel({
             />
           </DetailGrid>
         </Box>
+
+        <Stack hidden={activeTab !== "notes"} w="full" gap={3}>
+          {savedNoteEntries.length > 0 ? (
+            <Stack gap={2}>
+              {savedNoteEntries
+                .map((entry, index) => ({ entry, index }))
+                .reverse()
+                .map(({ entry, index }, position) => (
+                  <Box
+                    key={`${index}-${entry.slice(0, 24)}`}
+                    borderWidth="1px"
+                    borderColor="border"
+                    borderLeftWidth="3px"
+                    borderLeftColor="brand.500"
+                    borderRadius="lg"
+                    bg="bg.panel"
+                    px={{ base: 3, md: 4 }}
+                    py={2.5}
+                  >
+                    <Flex align="flex-start" justify="space-between" gap={3}>
+                      <Text
+                        fontSize="sm"
+                        lineHeight="1.65"
+                        whiteSpace="pre-wrap"
+                        wordBreak="break-word"
+                        flex="1"
+                        minW={0}
+                      >
+                        {entry}
+                      </Text>
+                      {!readOnly ? (
+                        <IconButton
+                          aria-label="Delete note"
+                          size="2xs"
+                          variant="ghost"
+                          colorPalette="gray"
+                          disabled={savingNotes}
+                          onClick={() => void removeNoteEntry(index)}
+                        >
+                          <FiX />
+                        </IconButton>
+                      ) : null}
+                    </Flex>
+                    {position === 0 && customer?.staffNotesUpdatedAt ? (
+                      <Text fontSize="xs" color="fg.muted" mt={1}>
+                        Added {formatDate(customer.staffNotesUpdatedAt)}
+                      </Text>
+                    ) : null}
+                  </Box>
+                ))}
+            </Stack>
+          ) : readOnly ? (
+            <Text fontSize="sm" color="fg.muted">
+              No notes
+            </Text>
+          ) : null}
+          {!readOnly || noteFollowUp ? (
+          <Box
+            w="full"
+            borderWidth="1px"
+            borderColor={
+              notesFocused ? "brand.500" : notesDirty ? "orange.300" : "border"
+            }
+            borderRadius="lg"
+            bg="bg.panel"
+            overflow="hidden"
+            transition="border-color 0.15s ease, box-shadow 0.15s ease"
+            boxShadow={
+              notesFocused
+                ? "0 0 0 3px var(--chakra-colors-brand-100)"
+                : undefined
+            }
+          >
+            {!readOnly ? (
+            <>
+            <Flex
+              px={{ base: 3, md: 4 }}
+              py={2.5}
+              align="center"
+              justify="space-between"
+              gap={3}
+              borderBottomWidth="1px"
+              borderColor="border"
+              bg="bg.subtle"
+            >
+              <Flex align="center" gap={2} minW={0}>
+                <Box color="brand.600" display="flex" aria-hidden>
+                  <FiFileText />
+                </Box>
+                <Text fontSize="sm" fontWeight="semibold">
+                  {savedNoteEntries.length > 0 ? "Add a note" : "Internal notes"}
+                </Text>
+                {notesDirty ? (
+                  <Badge colorPalette="orange" variant="subtle" size="sm">
+                    Unsaved
+                  </Badge>
+                ) : null}
+              </Flex>
+            </Flex>
+            <Textarea
+              aria-label="Customer notes"
+              value={notesDraft}
+              placeholder="Add a note about this customer"
+              onChange={(e) => setNotesDraft(e.target.value)}
+              onFocus={() => setNotesFocused(true)}
+              onBlur={() => setNotesFocused(false)}
+              onKeyDown={(e) => {
+                if (savingNotes || !notesDirty) return;
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  void saveNotes();
+                }
+              }}
+              maxLength={NOTES_MAX_LENGTH}
+              rows={savedNoteEntries.length > 0 ? 4 : 8}
+              w="full"
+              minH={
+                savedNoteEntries.length > 0
+                  ? { base: "110px", md: "130px" }
+                  : { base: "180px", md: "240px" }
+              }
+              resize="vertical"
+              borderWidth="0"
+              borderRadius="0"
+              bg="transparent"
+              px={{ base: 3, md: 4 }}
+              py={3}
+              fontSize="sm"
+              lineHeight="1.65"
+              _hover={{ borderColor: "transparent" }}
+              _focusVisible={{ outline: "none", boxShadow: "none" }}
+            />
+            </>
+            ) : null}
+            {noteFollowUp ? (
+              <Flex
+                px={{ base: 3, md: 4 }}
+                py={2}
+                align="center"
+                justify="space-between"
+                gap={3}
+                flexWrap="wrap"
+                borderTopWidth={readOnly ? "0" : "1px"}
+                borderColor="border"
+              >
+                <Text fontSize="sm">
+                  Follow-up {noteFollowUp.status === "in_progress" ? "in progress" : "open"}
+                  {noteFollowUp.dueDate ? ` · due ${formatDate(noteFollowUp.dueDate)}` : ""}
+                </Text>
+                {canViewReminders ? (
+                  <RouterLink to={`/reminders?id=${noteFollowUp.id}`}>
+                    <Text fontSize="sm" color="brand.700" fontWeight="medium">
+                      Open reminder
+                    </Text>
+                  </RouterLink>
+                ) : (
+                  <Text fontSize="xs" color="fg.muted">
+                    Sent to reminders
+                  </Text>
+                )}
+              </Flex>
+            ) : null}
+            {!readOnly && !noteFollowUp ? (
+              <Flex
+                px={{ base: 3, md: 4 }}
+                py={2}
+                align="center"
+                gap={3}
+                flexWrap="wrap"
+                borderTopWidth="1px"
+                borderColor="border"
+              >
+                <Flex align="center" gap={2}>
+                  <RowCheckbox
+                    checked={followUpEnabled}
+                    disabled={!hasAnyNoteText}
+                    onChange={() => setFollowUpEnabled((current) => !current)}
+                    aria-label="Create a follow-up"
+                  />
+                  <Text
+                    fontSize="sm"
+                    cursor={hasAnyNoteText ? "pointer" : "not-allowed"}
+                    color={hasAnyNoteText ? "fg" : "fg.muted"}
+                    onClick={() => {
+                      if (!hasAnyNoteText) return;
+                      setFollowUpEnabled((current) => !current);
+                    }}
+                  >
+                    Create a follow-up
+                  </Text>
+                </Flex>
+                {followUpEnabled ? (
+                  <>
+                    <Box minW="160px" flex="1">
+                      <DateField
+                        size="sm"
+                        value={followUpDue}
+                        onChange={setFollowUpDue}
+                        onClear={() => setFollowUpDue("")}
+                        placeholder="Due date"
+                      />
+                    </Box>
+                    <Box minW="140px" w="160px">
+                      <SelectField
+                        size="sm"
+                        fieldProps={{
+                          value: followUpPriority,
+                          "aria-label": "Follow-up priority",
+                          onChange: (e) => setFollowUpPriority(e.target.value),
+                        }}
+                      >
+                        <option value="low">Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                      </SelectField>
+                    </Box>
+                  </>
+                ) : null}
+              </Flex>
+            ) : null}
+            {!readOnly ? (
+              <Flex
+                px={{ base: 3, md: 4 }}
+                py={2}
+                justify="flex-end"
+                gap={2}
+                borderTopWidth="1px"
+                borderColor="border"
+                bg="bg.subtle"
+              >
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!notesDirty || savingNotes}
+                  onClick={() => setNotesDraft("")}
+                >
+                  Discard
+                </Button>
+                <Button
+                  size="sm"
+                  colorPalette="brand"
+                  loading={savingNotes}
+                  disabled={!notesDirty && !(followUpEnabled && hasAnyNoteText)}
+                  onClick={() => void saveNotes()}
+                >
+                  {savedNoteEntries.length > 0 ? "Add note" : "Save notes"}
+                </Button>
+              </Flex>
+            ) : null}
+          </Box>
+          ) : null}
+        </Stack>
 
         <Box hidden={activeTab !== "invoices"} minH="180px">
           <Box>
@@ -2349,6 +2990,12 @@ export function CustomerExpandPanel({
 
             {paymentAlreadyMade ? (
               <>
+                {currentPackageLabel ? (
+                  <Text fontSize="sm" color="fg.muted">
+                    Payment will be applied to the current package:{" "}
+                    {currentPackageLabel}.
+                  </Text>
+                ) : null}
                 <Field.Root required>
                   <Field.Label>Payment method</Field.Label>
                   <SelectField

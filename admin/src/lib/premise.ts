@@ -23,6 +23,15 @@ export function isShopPremise(
   return normalizePremiseType(value) === "shop";
 }
 
+export const PREMISE_OPTIONS = [
+  { value: "apartment" as const, label: "Apartment" },
+  { value: "shop" as const, label: "Shop" },
+];
+
+export function premiseLabel(value: unknown): string {
+  return normalizePremiseType(value) === "shop" ? "Shop" : "Apartment";
+}
+
 export function customerDisplayTitle(customer: {
   fullName?: string | null;
   businessName?: string | null;

@@ -8,6 +8,7 @@ import {
   FiHome,
   FiMenu,
   FiPackage,
+  FiPieChart,
   FiTool,
   FiUser,
 } from "react-icons/fi";
@@ -16,6 +17,7 @@ import {
   canAccessFinance,
   canAccessReports,
   hasPermission,
+  isInvestorPartner,
   isPartner,
   useCeoDashboard,
 } from "./rbac";
@@ -67,7 +69,22 @@ export function buildMobileNavTabs(user: User | null): MobileNavTab[] {
   if (customers) tabs.push(customers);
 
   const extras: Array<MobileNavTab | null> = [];
-  if (isPartner(user)) {
+  if (isInvestorPartner(user)) {
+    extras.push(
+      tabIf(canAccessReports(user), {
+        key: "reports",
+        to: "/reports",
+        label: "Reports",
+        icon: FiBarChart2,
+      }),
+      tabIf(hasPermission(user, "analytics.view"), {
+        key: "analytics",
+        to: "/analytics",
+        label: "Analytics",
+        icon: FiPieChart,
+      })
+    );
+  } else if (isPartner(user)) {
     extras.push(
       tabIf(canAccessReports(user), {
         key: "reports",

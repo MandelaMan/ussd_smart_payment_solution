@@ -153,8 +153,8 @@ describe("TISP create payload for PPOE vs STATIC buildings", () => {
     assert.match(wire, /"StaticIPAddress":"10.2.2.2"/);
     assert.match(wire, /"PppoeRemoteAddress":""/);
     assert.match(wire, /"PackageType":"PPPOE"/);
-    assert.match(wire, /"TransactionType":"INSERT", "PackageType"/);
-    assert.match(wire, /"PackageIPPool":""/);
+    assert.match(wire, /"TransactionType":"INSERT","PackageType"/);
+    assert.doesNotMatch(wire, /"PackageIPPool":/);
   });
 });
 

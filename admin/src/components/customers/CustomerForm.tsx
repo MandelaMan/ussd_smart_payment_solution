@@ -57,6 +57,13 @@ import {
   normalizeTvCount,
   packageIncludesTv,
 } from "../../lib/extraTv";
+import {
+  decoderSignupFee,
+  extraDecoderFee,
+  MAX_EXTRA_DECODER_COUNT,
+  normalizeExtraDecoderCount,
+  EXTRA_DECODER_UNIT_FEE,
+} from "../../lib/extraDecoder";
 import { shouldUseAgencyContactForSkynestPlaceholder } from "../../lib/b2bAgencyContact";
 import { embeddedFieldInputStyles } from "../../theme";
 import { FormSection } from "./FormSection";
@@ -65,11 +72,14 @@ import { AppDialog, NESTED_APP_DIALOG_Z_INDEX } from "../ui/AppDialog";
 import { FormSubmitSummary, type FormSummaryItem } from "../ui/FormSubmitSummary";
 import { formatCustomerPackageLabel } from "../../lib/formatText";
 import { useAuth } from "../../lib/authContext";
-import { canEditCustomerPackage } from "../../lib/rbac";
+import { canCorrectCustomerPackageLocally, canEditCustomerPackage } from "../../lib/rbac";
 import { DateField } from "../ui/DateField";
 import type { LeadSignupPrefill } from "../../lib/leadSignup";
 import { TextStatus } from "../ui/TextStatus";
 import { TISP_STANDARD_DUE_DATE } from "../../lib/tispConstants";
+import { getCachedBuildings, getCachedPackageCatalog } from "../../lib/sharedLookups";
+import { cachedFetch, LOOKUP_CACHE_TTL_MS } from "../../lib/moduleDataCache";
+import { isDstvOnlyCustomer } from "../../lib/customerStatus";
 
 const PAYMENT_FREQUENCIES = [
   { value: "monthly", label: "Monthly" },
@@ -115,6 +125,13 @@ function formatLocalYmd(d: Date): string {
 
 function addLocalDays(days: number, from = new Date()): string {
   const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + days);
+  return formatLocalYmd(d);
+}
+
+function subtractLocalDays(days: number, fromYmd: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromYmd)) return null;
+  const [year, month, day] = fromYmd.split("-").map(Number);
+  const d = new Date(year, month - 1, day - days);
   return formatLocalYmd(d);
 }
 
@@ -201,6 +218,8 @@ type Props = {
   customer?: Customer | null;
   embedded?: boolean;
   leadPrefill?: LeadSignupPrefill | null;
+  /** Customer already exists outside BIX: link Zoho, skip onboarding invoice. */
+  existingCustomer?: boolean;
   onCreated?: (customer: Customer) => void;
   onUpdated?: (
     customer: Customer,
@@ -213,14 +232,17 @@ export function CustomerForm({
   customer,
   embedded = false,
   leadPrefill = null,
+  existingCustomer = false,
   onCreated,
   onUpdated,
   onCancel,
 }: Props) {
   const { user } = useAuth();
   const canEditPackage = canEditCustomerPackage(user);
+  const canCorrectPackageLocally = canCorrectCustomerPackageLocally(user);
   const isEdit = Boolean(customer);
   const isLeadConvert = Boolean(leadPrefill);
+  const isExistingIntake = existingCustomer && !isEdit && !isLeadConvert;
   const isActive = !customer || customer.status === "active";
   const showPackageEditor = !isEdit || canEditPackage;
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -254,6 +276,7 @@ export function CustomerForm({
   const [paymentFrequency, setPaymentFrequency] = useState("monthly");
   const [customPeriodDays, setCustomPeriodDays] = useState("");
   const [tvCount, setTvCount] = useState(1);
+  const [extraDecoderCount, setExtraDecoderCount] = useState(0);
   const [buildingId, setBuildingId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [planId, setPlanId] = useState("");
@@ -331,10 +354,19 @@ export function CustomerForm({
   useEffect(() => {
     setLookupsLoading(true);
     Promise.all([
-      api.listBuildings({ limit: "100" }).catch(() => ({ buildings: [] as Building[] })),
-      api.listAgencies({ limit: "100" }).catch(() => ({ agencies: [] })),
-      api.getPackageCatalog().catch(() => ({ categories: [] })),
-      api.getActiveCampaign().catch(() => ({
+      getCachedBuildings().catch(() => ({ buildings: [] as Building[] })),
+      cachedFetch(
+        "lookups:agencies",
+        () =>
+          api.listAgencies({ limit: "100" }).then((res) => ({
+            agencies: res.agencies || [],
+          })),
+        { ttlMs: LOOKUP_CACHE_TTL_MS }
+      ).catch(() => ({ agencies: [] as Agency[] })),
+      getCachedPackageCatalog().catch(() => ({ categories: [] as PackageCategory[] })),
+      cachedFetch("lookups:active-campaign", () => api.getActiveCampaign(), {
+        ttlMs: LOOKUP_CACHE_TTL_MS,
+      }).catch(() => ({
         ok: false,
         campaign: null,
         campaigns: [] as Campaign[],
@@ -557,6 +589,7 @@ export function CustomerForm({
       customer.customPeriodDays != null ? String(customer.customPeriodDays) : ""
     );
     setTvCount(normalizeTvCount(customer.tvCount || 1));
+    setExtraDecoderCount(normalizeExtraDecoderCount(customer.extraDecoderCount || 0));
     setBuildingId(String(customer.buildingId));
     setAgencyId(customer.agencyId ? String(customer.agencyId) : "");
     setDstvDecoderSerial(customer.dstvDecoderSerial || "");
@@ -698,16 +731,16 @@ export function CustomerForm({
   ]);
 
   const selectedCategory = catalog.find((c) => String(c.id) === categoryId);
-  const isDstvOnly = selectedCategory?.code === "dstv_only";
+  const isDstvOnlyCategorySelected = selectedCategory?.code === "dstv_only";
 
   useEffect(() => {
-    if (!isDstvOnly || !selectedCategory?.plans?.length) return;
+    if (!isDstvOnlyCategorySelected || !selectedCategory?.plans?.length) return;
     const firstPlan = selectedCategory.plans[0];
     if (!planId || !selectedCategory.plans.some((p) => String(p.id) === planId)) {
       setPlanId(String(firstPlan.id));
       setProductId("");
     }
-  }, [isDstvOnly, selectedCategory, planId]);
+  }, [isDstvOnlyCategorySelected, selectedCategory, planId]);
 
   useEffect(() => {
     if (isEdit && !canEditPackage) return;
@@ -730,9 +763,15 @@ export function CustomerForm({
     api
       .listProducts(params)
       .then((res) => {
-        setPackages(res.products);
+        const products = (res.products || []).filter((p) => {
+          if (isEdit && customer?.productId && p.id === customer.productId) {
+            return true;
+          }
+          return (p.premiseType || "apartment") === premiseType;
+        });
+        setPackages(products);
         setProductId((prev) =>
-          prev && res.products.some((p) => String(p.id) === prev)
+          prev && products.some((row) => String(row.id) === prev)
             ? prev
             : isEdit || isLeadConvert
               ? prev
@@ -744,7 +783,7 @@ export function CustomerForm({
         if (!isEdit && !isLeadConvert) setProductId("");
       })
       .finally(() => setPackagesLoading(false));
-  }, [buildingId, paymentFrequency, categoryId, planId, isEdit, isLeadConvert, canEditPackage]);
+  }, [buildingId, paymentFrequency, categoryId, planId, premiseType, isEdit, isLeadConvert, canEditPackage, customer?.productId]);
 
   const shopUnitForNumber = shopLocationCode(shopLocation);
   const unitCodeForPreview =
@@ -813,7 +852,7 @@ export function CustomerForm({
   // Create: default PPPoE username to customer number; regenerate password when POP changes.
   useEffect(() => {
     if (isEdit) return;
-    if (!isPpoe) {
+    if (!isPpoe || isDstvOnlyCategorySelected) {
       setPpoeUsername("");
       setPpoePassword("");
       setPpoeUsernameTouched(false);
@@ -822,16 +861,35 @@ export function CustomerForm({
     if (!ppoeUsernameTouched && previewCustomerNumber) {
       setPpoeUsername(previewCustomerNumber);
     }
-  }, [isEdit, isPpoe, previewCustomerNumber, ppoeUsernameTouched]);
+  }, [
+    isEdit,
+    isPpoe,
+    isDstvOnlyCategorySelected,
+    previewCustomerNumber,
+    ppoeUsernameTouched,
+  ]);
 
   useEffect(() => {
-    if (isEdit || !isPpoe) return;
+    if (isEdit || !isPpoe || isDstvOnlyCategorySelected) return;
     setPpoePassword(generatePppoePassword());
-  }, [isEdit, isPpoe, buildingId]);
+  }, [isEdit, isPpoe, isDstvOnlyCategorySelected, buildingId]);
 
   const selectedPackage = showPackageEditor
     ? packages.find((p) => String(p.id) === productId) || null
     : null;
+  const packageSelectionDirty =
+    isEdit && customer
+      ? Number(productId) !== Number(customer.productId) ||
+        paymentFrequency !== customer.paymentFrequency ||
+        (paymentFrequency === "custom" &&
+          Number(customPeriodDays || 0) !== Number(customer.customPeriodDays || 0))
+      : false;
+  const isDstvOnly = Boolean(
+    isDstvOnlyCategorySelected ||
+      selectedPackage?.categoryCode === "dstv_only" ||
+      (Boolean(selectedPackage?.hasDstv) && Number(selectedPackage?.mbps || 0) <= 0) ||
+      (isEdit && customer && isDstvOnlyCustomer(customer))
+  );
   const buildingRequiresDecoderSerial = selectedBuilding
     ? selectedBuilding.dstvSetup === "decoder"
     : false;
@@ -859,6 +917,13 @@ export function CustomerForm({
     ? selectedCategory?.decoderFeeAmount ||
       customer?.decoderFeeAmount ||
       2900
+    : 0;
+  const showExtraDecoderField = asksDecoderFee;
+  const extraDecoderRecurringAmount = showExtraDecoderField
+    ? extraDecoderFee(extraDecoderCount)
+    : 0;
+  const decoderFeeTotal = asksDecoderFee
+    ? decoderSignupFee(extraDecoderCount, decoderFee)
     : 0;
   const categoryCodeForTv =
     selectedCategory?.code || (isEdit ? customer?.categoryCode : undefined);
@@ -892,13 +957,19 @@ export function CustomerForm({
       : !isEdit
         ? (packageAfterCampaign ?? Number(packageAmount)) +
           extraTvFeeAmount +
-          decoderFee
-        : Number(packageAmount) + extraTvFeeAmount;
+          decoderFeeTotal
+        : Number(packageAmount) + extraTvFeeAmount + extraDecoderRecurringAmount;
 
   useEffect(() => {
     const code = String(categoryCodeForTv || "").toLowerCase();
     if (code === "internet_only" && tvCount !== 1) setTvCount(1);
   }, [categoryCodeForTv, tvCount]);
+
+  useEffect(() => {
+    if (!showExtraDecoderField && extraDecoderCount !== 0) {
+      setExtraDecoderCount(0);
+    }
+  }, [showExtraDecoderField, extraDecoderCount]);
 
   const previewCode = buildCustomerNumberPreview(
     buildings.find((x) => String(x.id) === buildingId),
@@ -917,6 +988,30 @@ export function CustomerForm({
     initializingEdit ||
     lookupsLoading;
 
+  const extraDecoderField = showExtraDecoderField ? (
+    <Field.Root>
+      <Field.Label>Extra decoders</Field.Label>
+      <Input
+        type="number"
+        min={0}
+        max={MAX_EXTRA_DECODER_COUNT}
+        value={extraDecoderCount}
+        onFocus={(e) => e.target.select()}
+        onChange={(e) => {
+          const next = normalizeExtraDecoderCount(e.target.value);
+          setExtraDecoderCount(next);
+          e.target.value = String(next);
+        }}
+        disabled={fieldsDisabled || !isActive}
+      />
+      <Field.HelperText>
+        {extraDecoderCount > 0
+          ? `Total first ${formatCurrency(decoderFeeTotal)}, recurring ${formatCurrency(extraDecoderRecurringAmount)}.`
+          : `1 included · ${formatCurrency(decoderFee || 2900)} each first · ${formatCurrency(EXTRA_DECODER_UNIT_FEE)}/extra after.`}
+      </Field.HelperText>
+    </Field.Root>
+  ) : null;
+
   const tvCountField = showTvCountField ? (
     <Field.Root>
       <Field.Label>Number of TVs</Field.Label>
@@ -925,16 +1020,18 @@ export function CustomerForm({
         min={1}
         max={MAX_TV_COUNT}
         value={tvCount}
-        onChange={(e) => setTvCount(normalizeTvCount(e.target.value))}
+        onFocus={(e) => e.target.select()}
+        onChange={(e) => {
+          const next = normalizeTvCount(e.target.value);
+          setTvCount(next);
+          e.target.value = String(next);
+        }}
         disabled={fieldsDisabled || !isActive}
       />
       <Field.HelperText>
-        1 TV is included. Each extra TV adds {formatCurrency(EXTRA_TV_UNIT_FEE)}{" "}
-        to the invoice and recurring
         {extraTvs > 0
-          ? ` · ${extraTvs} extra (${formatCurrency(extraTvFeeAmount)})`
-          : ""}
-        .
+          ? `Total ${formatCurrency(extraTvFeeAmount)}.`
+          : `1 included · ${formatCurrency(EXTRA_TV_UNIT_FEE)} each extra.`}
       </Field.HelperText>
     </Field.Root>
   ) : null;
@@ -1166,21 +1263,30 @@ export function CustomerForm({
             : "1 (included)",
       });
     }
+    if (showExtraDecoderField) {
+      items.push({
+        label: "Extra decoders",
+        value:
+          extraDecoderCount > 0
+            ? `${extraDecoderCount} extra · first invoice ${formatCurrency(decoderFeeTotal)} (${extraDecoderCount + 1} × ${formatCurrency(decoderFee || 2900)}) · recurring ${formatCurrency(extraDecoderRecurringAmount)}`
+            : "None (1 decoder included)",
+      });
+    }
     if (displayPrice != null) {
       const extraTvNote =
         extraTvFeeAmount > 0
           ? ` + extra TV ${formatCurrency(extraTvFeeAmount)}`
           : "";
       items.push({
-        label: !isEdit && decoderFee > 0 ? "First invoice" : "Package price",
+        label: !isEdit && decoderFeeTotal > 0 ? "First invoice" : "Package price",
         value:
           !isEdit && campaignDiscountPercent > 0
-            ? decoderFee > 0
-              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAfterCampaign)} after ${campaignDiscountPercent}% off · list ${formatCurrency(packageAmount)}${extraTvNote} + decoder ${formatCurrency(decoderFee)})`
+            ? decoderFeeTotal > 0
+              ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAfterCampaign)} after ${campaignDiscountPercent}% off · list ${formatCurrency(packageAmount)}${extraTvNote} + decoder ${formatCurrency(decoderFeeTotal)})`
               : `${formatCurrency(displayPrice)} (${campaignDiscountPercent}% campaign off · list ${formatCurrency(packageAmount)}${extraTvNote})`
-            : !isEdit && (decoderFee > 0 || extraTvFeeAmount > 0)
+            : !isEdit && (decoderFeeTotal > 0 || extraTvFeeAmount > 0)
               ? `${formatCurrency(displayPrice)} (pkg ${formatCurrency(packageAmount)}${extraTvNote}${
-                  decoderFee > 0 ? ` + decoder ${formatCurrency(decoderFee)}` : ""
+                  decoderFeeTotal > 0 ? ` + decoder ${formatCurrency(decoderFeeTotal)}` : ""
                 })`
               : formatCurrency(displayPrice),
       });
@@ -1212,7 +1318,7 @@ export function CustomerForm({
       ) {
         items.push({
           label: "Separate decoder invoice",
-          value: `${formatCurrency(decoderFee || 2900)} — unpaid, emailed to customer`,
+          value: `${formatCurrency(decoderFeeTotal)} — unpaid, emailed to customer`,
         });
       } else if (
         paymentAlreadyMade &&
@@ -1242,15 +1348,30 @@ export function CustomerForm({
     });
     items.push({ label: "VAT exempt", value: isVatExempt ? "Yes" : "No" });
 
-    if (previewIp) items.push({ label: "IP address", value: previewIp });
-    if (isPpoe && ppoeUsername.trim()) {
+    if (!isDstvOnly && previewIp) items.push({ label: "IP address", value: previewIp });
+    if (!isDstvOnly && isPpoe && ppoeUsername.trim()) {
       items.push({ label: "PPPoE username", value: ppoeUsername.trim().toUpperCase() });
     }
-    if (isPpoe && ppoePassword.trim()) {
+    if (!isDstvOnly && isPpoe && ppoePassword.trim()) {
       items.push({ label: "PPPoE password", value: ppoePassword.trim() });
     }
     if (showDstvSerialField && dstvDecoderSerial.trim()) {
       items.push({ label: "DSTV IUC/Serial", value: dstvDecoderSerial.trim().toUpperCase() });
+    }
+
+    if (!isEdit && isDstvOnly) {
+      items.push({
+        label: "TISP",
+        value: "Not applicable (DSTV Only — billed in Zoho)",
+      });
+      if (customerType === "C2B") {
+        items.push({
+          label: "Zoho Books",
+          value: trialPeriod
+            ? "Create contact · recurring after trial"
+            : "Create contact · signup invoice · recurring",
+        });
+      }
     }
 
     if (isEdit && isActive) {
@@ -1322,6 +1443,10 @@ export function CustomerForm({
     customerType,
     customPeriodDays,
     decoderFee,
+    decoderFeeTotal,
+    extraDecoderCount,
+    extraDecoderRecurringAmount,
+    showExtraDecoderField,
     extraTvFeeAmount,
     extraTvs,
     showTvCountField,
@@ -1383,10 +1508,12 @@ export function CustomerForm({
   ]);
 
   function validateForm() {
-    const ipResult = validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
-    if (!ipResult.ok) {
-      toaster.create({ title: ipResult.error, type: "error" });
-      return false;
+    if (!isDstvOnly) {
+      const ipResult = validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
+      if (!ipResult.ok) {
+        toaster.create({ title: ipResult.error, type: "error" });
+        return false;
+      }
     }
     if (!isEdit && Boolean(installationDate) !== Boolean(installationTime)) {
       toaster.create({
@@ -1515,7 +1642,7 @@ export function CustomerForm({
       });
       return false;
     }
-    if (isPpoe) {
+    if (isPpoe && !isDstvOnly) {
       if (!ppoeUsername.trim()) {
         toaster.create({ title: "PPPoE username is required", type: "error" });
         return false;
@@ -1610,7 +1737,9 @@ export function CustomerForm({
   }
 
   async function executeSubmit() {
-    const ipResult = validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
+    const ipResult = isDstvOnly
+      ? { ok: true as const, ip: "" }
+      : validateIpForBuilding(selectedBuilding, ipPrefix, ipLastOctet);
     if (!ipResult.ok) return;
 
     setSubmitting(true);
@@ -1637,7 +1766,9 @@ export function CustomerForm({
             billingZip.trim()
               ? billingCountry.trim() || "Kenya"
               : undefined,
-          ipAddress: ipResult.ip || undefined,
+          ipAddress: isDstvOnly
+            ? customer.ipAddress || undefined
+            : ipResult.ip || undefined,
           isVatExempt,
           customerType,
           agencyId: customerType === "B2B" ? Number(agencyId) : undefined,
@@ -1655,13 +1786,13 @@ export function CustomerForm({
               : dstvDecoderSerial.trim()
                 ? dstvDecoderSerial.trim().toUpperCase()
                 : undefined,
-          ...(isPpoe
+          ...(isPpoe && !isDstvOnly
             ? {
                 ppoeUsername: ppoeUsername.trim().toUpperCase(),
                 ppoePassword: ppoePassword.trim(),
               }
             : {}),
-          ...(canEditPackage && isActive
+          ...(canEditPackage && isActive && packageSelectionDirty
             ? {
                 paymentFrequency: paymentFrequency as Customer["paymentFrequency"],
                 customPeriodDays:
@@ -1671,10 +1802,13 @@ export function CustomerForm({
                 productId: Number(productId),
                 // Corrections (e.g. wrong package after upload) must save here;
                 // Upgrade/Downgrade remains the path when Zoho should re-bill.
-                forceLocalPackageCorrection: true,
+                forceLocalPackageCorrection: canCorrectPackageLocally || undefined,
               }
             : {}),
           tvCount: showTvCountField ? normalizeTvCount(tvCount) : 1,
+          extraDecoderCount: showExtraDecoderField
+            ? normalizeExtraDecoderCount(extraDecoderCount)
+            : 0,
           ...(isActive && customerType === "C2B"
             ? {
                 createInitialInvoice: createInitialInvoice || undefined,
@@ -1684,6 +1818,11 @@ export function CustomerForm({
                   (showTvCountField &&
                     normalizeTvCount(tvCount) !==
                       normalizeTvCount(customer.tvCount || 1)) ||
+                  (showExtraDecoderField &&
+                    normalizeExtraDecoderCount(extraDecoderCount) !==
+                      normalizeExtraDecoderCount(
+                        customer.extraDecoderCount || 0
+                      )) ||
                   undefined,
                 tispDueDate: tispDueDate.trim() || undefined,
               }
@@ -1719,15 +1858,29 @@ export function CustomerForm({
           else if (res.zoho?.invoice?.created) zohoParts.push("invoice created");
           else if (res.zoho?.invoice?.reused) zohoParts.push("existing invoice reused");
           if (res.zoho?.recurring?.created) zohoParts.push("recurring created");
-          else if (res.zoho?.recurring?.updated) zohoParts.push("recurring updated");
+          else if (res.zoho?.recurring?.updated) {
+            zohoParts.push(
+              res.zoho.recurring.startDate
+                ? `recurring send ${res.zoho.recurring.startDate}`
+                : "recurring updated"
+            );
+          }
           toaster.create({
             title: "Customer updated",
             description:
               zohoParts.length > 0
-                ? `${zohoParts.join(" · ")}${dueHint ? ` · TISP due ${String(dueHint).slice(0, 10)}` : ""}`
-                : dueHint
-                  ? `Saved and synced. TISP due date: ${String(dueHint).slice(0, 10)}.`
-                  : "Saved and synced to TISP and Zoho where applicable.",
+                ? `${zohoParts.join(" · ")}${
+                    isDstvOnly || res.tisp?.skipped
+                      ? ""
+                      : dueHint
+                        ? ` · TISP due ${String(dueHint).slice(0, 10)}`
+                        : ""
+                  }`
+                : isDstvOnly || res.tisp?.skipped
+                  ? "Saved and synced to Zoho Books (not TISP)."
+                  : dueHint
+                    ? `Saved and synced. TISP due date: ${String(dueHint).slice(0, 10)}.`
+                    : "Saved and synced to TISP and Zoho where applicable.",
             type: "success",
           });
         }
@@ -1746,6 +1899,9 @@ export function CustomerForm({
         if (res.zoho?.ok && (res.zoho.created || res.zoho.updated)) {
           setOnZoho(true);
           setZohoInactive(false);
+        }
+        if (res.zoho?.recurring?.startDate) {
+          setNextRecurringDate(res.zoho.recurring.startDate);
         }
         // Update syncs TISP/Zoho on the server and starts a cooldown — keep the
         // refresh button in sync so the first press is not a silent 429 miss.
@@ -1776,7 +1932,7 @@ export function CustomerForm({
           billingZip.trim()
             ? billingCountry.trim() || "Kenya"
             : undefined,
-        ipAddress: ipResult.ip || undefined,
+        ipAddress: isDstvOnly ? undefined : ipResult.ip || undefined,
         isVatExempt,
         customerType,
         premiseType,
@@ -1793,10 +1949,13 @@ export function CustomerForm({
         productId: Number(productId),
         agencyId: customerType === "B2B" ? Number(agencyId) : undefined,
         tvCount: showTvCountField ? normalizeTvCount(tvCount) : 1,
+        extraDecoderCount: showExtraDecoderField
+          ? normalizeExtraDecoderCount(extraDecoderCount)
+          : 0,
         dstvDecoderSerial: requiresDstvSerial
           ? dstvDecoderSerial.trim().toUpperCase()
           : undefined,
-        ...(isPpoe
+        ...(isPpoe && !isDstvOnly
           ? {
               ppoeUsername: ppoeUsername.trim().toUpperCase(),
               ppoePassword: ppoePassword.trim(),
@@ -1866,9 +2025,15 @@ export function CustomerForm({
             ? paymentCoversDecoder
             : undefined,
         leadId: leadPrefill?.id || undefined,
+        existingCustomer: isExistingIntake ? true : undefined,
       });
 
-      if (!res.tisp.ok) {
+      const dstvZohoNote =
+        isDstvOnly || res.tisp?.skipped
+          ? " · billed in Zoho (not TISP)"
+          : "";
+
+      if (!res.tisp.ok && !isExistingIntake) {
         toaster.create({
           title: `Customer ${res.customer.customerNumber} saved locally`,
           description: `TISP registration failed: ${res.tisp.error}`,
@@ -1880,6 +2045,23 @@ export function CustomerForm({
           title: `Customer ${res.customer.customerNumber} created`,
           description: `Zoho billing setup failed: ${res.zoho.error}`,
           type: "warning",
+          duration: 12000,
+        });
+      } else if (isExistingIntake) {
+        const zohoNote = !res.zoho?.ok
+          ? `Zoho link failed: ${res.zoho?.error || "unknown error"}`
+          : res.zoho.contactCreated
+            ? "No Zoho match — a new contact was created. Onboarding invoice was not sent."
+            : "Linked the existing Zoho contact. Onboarding invoice was not sent.";
+        const tispNote = !res.tisp.ok
+          ? ` TISP registration failed: ${res.tisp.error}`
+          : isDstvOnly || res.tisp?.skipped
+            ? " DSTV Only was not created on TISP."
+            : " Created on TISP.";
+        toaster.create({
+          title: `Customer ${res.customer.customerNumber} saved`,
+          description: `${zohoNote}${tispNote}`,
+          type: res.zoho?.ok ? "success" : "warning",
           duration: 12000,
         });
       } else if (res.zoho?.billingSkipped) {
@@ -1931,7 +2113,7 @@ export function CustomerForm({
             res.zoho.recurring?.created || res.zoho.recurring?.updated
               ? " · recurring set up"
               : ""
-          }`.trim(),
+          }${dstvZohoNote}`.trim(),
           type:
             res.zoho.invoice.paymentMatch === false || outstanding?.error
               ? "warning"
@@ -1969,10 +2151,10 @@ export function CustomerForm({
                 res.zoho?.recurring?.created || res.zoho?.recurring?.updated
                   ? " · recurring set up"
                   : ""
-              }`
+              }${dstvZohoNote}`
             : invoiceBits.length
-              ? `${res.customer.customerNumber} — ${invoiceBits.join(" · ")}`
-              : res.customer.customerNumber,
+              ? `${res.customer.customerNumber} — ${invoiceBits.join(" · ")}${dstvZohoNote}`
+              : `${res.customer.customerNumber}${dstvZohoNote}`,
           type: "success",
           duration: 10000,
         });
@@ -2024,6 +2206,7 @@ export function CustomerForm({
                   onChange: (e) => {
                     const next = e.target.value as PremiseType;
                     setPremiseType(next);
+                    setProductId("");
                     if (next === "shop") {
                       setApartmentNumber("");
                       setOccupancy(null);
@@ -2212,6 +2395,7 @@ export function CustomerForm({
                 <Input {...lockedPackageFieldProps} value={editFrequencyLabel} />
               </Field.Root>
               {tvCountField}
+              {extraDecoderField}
               {showDstvSerialField && (
                 <Field.Root required={requiresDstvSerial} gridColumn={{ md: "span 2" }}>
                   <Field.Label>DSTV decoder IUC/Serial number</Field.Label>
@@ -2319,7 +2503,7 @@ export function CustomerForm({
                   : !planId && !isDstvOnly
                     ? "Select category and plan first"
                     : packages.length === 0
-                      ? "No price set for this building — add it under Packages"
+                      ? `No ${premiseType === "shop" ? "shop" : "apartment"} price set for this building — add it under Packages`
                       : "Select price"}
               </option>
               {packages.map((p) => (
@@ -2334,22 +2518,33 @@ export function CustomerForm({
             </SelectField>
           </Field.Root>
           {tvCountField}
+          {extraDecoderField}
           {isEdit &&
             canEditPackage &&
             customer &&
             selectedPackage &&
-            (Number(productId) !== Number(customer.productId) ||
-              paymentFrequency !== customer.paymentFrequency ||
-              Number(packageAmount ?? 0) !== Number(customer.packagePrice || 0) ||
-              Boolean(customer.hasDstv) !== Boolean(selectedPackage.hasDstv)) && (
+            packageSelectionDirty && (
             <Box gridColumn={{ md: "span 2" }} bg="blue.50" borderRadius="md" px={3} py={2}>
               <Text fontSize="sm" color="blue.800">
-                Save here to fix a wrong package or frequency (database only). Use{" "}
-                {Number(packageAmount ?? 0) > Number(customer.packagePrice || 0) ||
-                (!customer.hasDstv && Boolean(selectedPackage.hasDstv))
-                  ? "Upgrade"
-                  : "Downgrade"}{" "}
-                if Zoho should bill the change.
+                {canCorrectPackageLocally ? (
+                  <>
+                    Save here to fix a wrong package or frequency (database only). Use{" "}
+                    {Number(packageAmount ?? 0) > Number(customer.packagePrice || 0) ||
+                    (!customer.hasDstv && Boolean(selectedPackage.hasDstv))
+                      ? "Upgrade"
+                      : "Downgrade"}{" "}
+                    if Zoho should bill the change.
+                  </>
+                ) : (
+                  <>
+                    Same-price package fixes save here. Use{" "}
+                    {Number(packageAmount ?? 0) > Number(customer.packagePrice || 0) ||
+                    (!customer.hasDstv && Boolean(selectedPackage.hasDstv))
+                      ? "Upgrade"
+                      : "Downgrade"}{" "}
+                    if the bill should change.
+                  </>
+                )}
               </Text>
             </Box>
           )}
@@ -2549,6 +2744,14 @@ export function CustomerForm({
                 disabled={fieldsDisabled || integrationsLoading}
                 placeholder="Select due date"
               />
+              {tispDueDate ? (
+                <Field.HelperText>
+                  Recurring invoice is sent 7 days before this date
+                  {subtractLocalDays(7, tispDueDate)
+                    ? ` (${formatDateOnly(subtractLocalDays(7, tispDueDate))}).`
+                    : "."}
+                </Field.HelperText>
+              ) : null}
             </Field.Root>
           </FormSection>
         ) : null}
@@ -2938,7 +3141,7 @@ export function CustomerForm({
           )}
         </FormSection>
 
-        {selectedBuilding && (
+        {selectedBuilding && !isDstvOnly && (
           <FormSection title="Network">
             {needsIp && ipRules ? (
               <Box gridColumn={{ md: "span 2" }}>
@@ -3109,7 +3312,11 @@ export function CustomerForm({
     >
       <Dialog.Header borderBottomWidth="1px" borderColor="border.muted" px={5} py={4} pr={12}>
         <Dialog.Title fontSize="lg">
-          {isEdit ? "Confirm customer update" : "Confirm new customer"}
+          {isEdit
+            ? "Confirm customer update"
+            : isExistingIntake
+              ? "Confirm existing customer"
+              : "Confirm new customer"}
         </Dialog.Title>
       </Dialog.Header>
       <Dialog.Body px={5} py={4}>
@@ -3117,21 +3324,23 @@ export function CustomerForm({
           description={
             isEdit
               ? undefined
+              : isExistingIntake
+                ? "No onboarding invoice. DSTV Only is not created on TISP."
               : trialPeriod
                 ? "Creates with a 30-day trial — no signup invoice."
                 : paymentAlreadyMade === true
                   ? asksDecoderFee &&
                     paymentCoversInternet &&
                     !paymentCoversDecoder
-                    ? `Creates the customer, marks the Internet invoice paid (${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}), and issues a separate unpaid DSTV decoder invoice (${formatCurrency(decoderFee || 2900)}) to the customer.`
+                    ? `Creates the customer, marks the Internet invoice paid (${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}), and issues a separate unpaid DSTV decoder invoice (${formatCurrency(decoderFeeTotal)}) to the customer.`
                     : asksDecoderFee &&
                         !paymentCoversInternet &&
                         paymentCoversDecoder
-                      ? `Creates the customer, marks the decoder invoice paid (${formatCurrency(decoderFee || 2900)}), and issues a separate unpaid Internet/package invoice (${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}).`
+                      ? `Creates the customer, marks the decoder invoice paid (${formatCurrency(decoderFeeTotal)}), and issues a separate unpaid Internet/package invoice (${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}).`
                       : `Creates the customer, marks the package invoice paid (${formatCurrency(
                           (paymentCoversInternet ? Number(packageAmount || 0) + extraTvFeeAmount : 0) +
                             (asksDecoderFee && paymentCoversDecoder
-                              ? Number(decoderFee || 2900)
+                              ? decoderFeeTotal
                               : 0)
                         )} from the payment reference). If the payment is short of the plan total, a separate balance invoice is issued.`
                   : customerType === "C2B"
@@ -3165,14 +3374,14 @@ export function CustomerForm({
               {asksDecoderFee &&
               paymentCoversInternet &&
               !paymentCoversDecoder
-                ? `This customer is on a DSTV package but payment covers Internet only. We will mark the package invoice paid and create a separate unpaid decoder invoice for ${formatCurrency(decoderFee || 2900)} (emailed to the customer).`
+                ? `This customer is on a DSTV package but payment covers Internet only. We will mark the package invoice paid and create a separate unpaid decoder invoice for ${formatCurrency(decoderFeeTotal)} (emailed to the customer).`
                 : asksDecoderFee &&
                     !paymentCoversInternet &&
                     paymentCoversDecoder
                   ? `Payment covers the DSTV decoder only. We will mark the decoder invoice paid and create a separate unpaid Internet/package invoice for ${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}.`
                   : `Selected plan: ${formatCurrency(Number(packageAmount || 0) + extraTvFeeAmount)}${
                       asksDecoderFee && paymentCoversDecoder
-                        ? ` + decoder ${formatCurrency(decoderFee || 2900)}`
+                        ? ` + decoder ${formatCurrency(decoderFeeTotal)}`
                         : ""
                     }. We will create the Zoho invoice from this package, attach the payment reference, and mark it paid. Any shortfall vs the plan total gets a separate unpaid balance invoice.`}
             </Text>
@@ -3374,7 +3583,7 @@ export function CustomerForm({
                         DSTV decoder
                       </Text>
                       <Text fontSize="xs" color="fg.muted">
-                        {formatCurrency(decoderFee || 2900)}
+                        {formatCurrency(decoderFeeTotal)}
                       </Text>
                     </Box>
                   </Checkbox.Root>
@@ -3389,7 +3598,7 @@ export function CustomerForm({
                       ? Number(packageAmount || 0) + extraTvFeeAmount
                       : 0) +
                       (asksDecoderFee && paymentStatusDraft.coversDecoder
-                        ? Number(decoderFee || 2900)
+                        ? decoderFeeTotal
                         : 0)
                   )}
                 </Text>
@@ -3438,14 +3647,22 @@ export function CustomerForm({
               ? "Verify signup & create customer"
               : isEdit
                 ? "Edit customer"
-                : premiseType === "shop"
-                  ? "New shop"
-                  : "New customer"}
+                : isExistingIntake
+                  ? premiseType === "shop"
+                    ? "Add existing shop"
+                    : "Add existing customer"
+                  : premiseType === "shop"
+                    ? "New shop"
+                    : "New customer"}
           </Heading>
           {leadPrefill ? (
             <Text fontSize="sm" color="fg.muted" mt={1} maxW="640px">
               Details came from the public signup link. Confirm building, package,
               and contact information before creating the full customer.
+            </Text>
+          ) : isExistingIntake ? (
+            <Text fontSize="sm" color="fg.muted" mt={1} maxW="640px">
+              No onboarding invoice. DSTV Only is not created on TISP.
             </Text>
           ) : null}
         </Box>
@@ -3468,9 +3685,12 @@ export function CustomerForm({
             {displayPrice != null && (
               <Text fontSize="sm" color="brand.700" mt={0.5}>
                 {formatCurrency(displayPrice)}
-                {!isEdit && decoderFee > 0 && (
+                {!isEdit && decoderFeeTotal > 0 && (
                   <Text as="span" fontSize="xs" display="block" color="brand.600">
-                    first invoice incl. {formatCurrency(decoderFee)} decoder
+                    first invoice incl. {formatCurrency(decoderFeeTotal)} decoder
+                    {extraDecoderCount > 0
+                      ? ` (${extraDecoderCount + 1} × ${formatCurrency(decoderFee || 2900)})`
+                      : ""}
                   </Text>
                 )}
                 {!isEdit && extraTvFeeAmount > 0 && (

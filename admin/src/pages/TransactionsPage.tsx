@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { mergeInfinitePage, useMobileViewport } from "../hooks/useMobileViewport";
 import { useTableSort } from "../hooks/useTableSort";
@@ -23,6 +23,7 @@ import { MobilePageChrome } from "../components/ui/MobilePageChrome";
 import { EmptyState, ListPageStack, PageErrorBanner } from "../components/ui/pageLayout";
 import { ListPageStickyChrome, ListPageTableSection } from "../components/ui/ListPageStickyChrome";
 import { SelectField } from "../components/ui/SelectField";
+import { beginListLoad, endListLoad } from "../lib/listLoad";
 import { DisplayText } from "../components/ui/DisplayText";
 import {
   DataTable,
@@ -82,6 +83,8 @@ export function TransactionsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<UnifiedTransaction[]>([]);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const [pagination, setPagination] = useState<ListPagination>({
     page: 1,
     limit: 30,
@@ -113,8 +116,12 @@ export function TransactionsPage() {
 
   const load = useCallback(async () => {
     const append = isMobile && page > 1;
-    if (append) setLoadingMore(true);
-    else setLoading(true);
+    beginListLoad({
+      hasRows: rowsRef.current.length > 0,
+      append,
+      setLoading,
+      setLoadingMore,
+    });
     setError("");
     try {
       const res = await api.getTransactions(filters());
@@ -131,8 +138,7 @@ export function TransactionsPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      endListLoad({ setLoading, setLoadingMore });
     }
   }, [page, search, status, channel, from, to, source, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 

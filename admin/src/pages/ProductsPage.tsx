@@ -39,6 +39,7 @@ import {
   storeListState,
 } from "../lib/listLoad";
 import { formatTitleCase } from "../lib/formatText";
+import { premiseLabel, PREMISE_OPTIONS } from "../lib/premise";
 import { SelectField } from "../components/ui/SelectField";
 import { AppDialog } from "../components/ui/AppDialog";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
@@ -131,8 +132,8 @@ function packageChoiceOption(p: Product) {
   return {
     value: String(p.id),
     label: `${p.planName || p.name} · ${p.categoryName || "Package"}${p.isActive ? "" : " (inactive)"}`,
-    description: `${speed} · ${formatCurrency(p.price)} · ${freq}`,
-    keywords: `${p.planName || ""} ${p.categoryName || ""} ${p.name}`,
+    description: `${premiseLabel(p.premiseType)} · ${speed} · ${formatCurrency(p.price)} · ${freq}`,
+    keywords: `${p.planName || ""} ${p.categoryName || ""} ${p.name} ${premiseLabel(p.premiseType)}`,
   };
 }
 
@@ -140,6 +141,7 @@ type ProductSortKey =
   | "categoryName"
   | "planName"
   | "buildingName"
+  | "premiseType"
   | "mbps"
   | "extraBandwidth"
   | "price"
@@ -194,6 +196,7 @@ export function ProductsPage() {
   const debouncedSearchInput = useDebouncedValue(searchInput);
   const [filterBuildingId, setFilterBuildingId] = useState("");
   const [filterPaymentFrequency, setFilterPaymentFrequency] = useState("");
+  const [filterPremiseType, setFilterPremiseType] = useState("");
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -211,6 +214,7 @@ export function ProductsPage() {
   const [planId, setPlanId] = useState("");
   const [paymentFrequency, setPaymentFrequency] = useState("monthly");
   const [buildingId, setBuildingId] = useState("");
+  const [premiseType, setPremiseType] = useState("");
   const [mbps, setMbps] = useState("");
   const [price, setPrice] = useState("");
   const [monthlyPrice, setMonthlyPrice] = useState("");
@@ -269,6 +273,7 @@ export function ProductsPage() {
       if (search.trim()) params.search = search.trim();
       if (filterBuildingId) params.buildingId = filterBuildingId;
       if (filterPaymentFrequency) params.paymentFrequency = filterPaymentFrequency;
+      if (filterPremiseType) params.premiseType = filterPremiseType;
       params.sortBy = sortQuery.sortBy;
       params.sortDir = sortQuery.sortDir;
       if (options?.bustCache) params._ts = String(Date.now());
@@ -294,7 +299,7 @@ export function ProductsPage() {
     } finally {
       endListLoad({ setLoading, setLoadingMore });
     }
-  }, [search, filterBuildingId, filterPaymentFrequency, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
+  }, [search, filterBuildingId, filterPaymentFrequency, filterPremiseType, page, sortQuery.sortBy, sortQuery.sortDir, isMobile]);
 
   function handleSort(
     column: ProductSortKey,
@@ -361,7 +366,12 @@ export function ProductsPage() {
       .then((res) => {
         if (cancelled) return;
         const options = (res.products || [])
-          .filter((p) => p.id !== deletingProduct.id)
+          .filter(
+            (p) =>
+              p.id !== deletingProduct.id &&
+              (p.premiseType || "apartment") ===
+                (deletingProduct.premiseType || "apartment")
+          )
           .sort((a, b) => Number(b.isActive) - Number(a.isActive));
         setMigrateOptions(options);
       })
@@ -394,6 +404,7 @@ export function ProductsPage() {
     setPlanId("");
     setPaymentFrequency("monthly");
     setBuildingId(filterBuildingId || "");
+    setPremiseType("");
     setMbps("");
     setPrice("");
     setMonthlyPrice("");
@@ -407,6 +418,7 @@ export function ProductsPage() {
     setPlanId(product.planId ? String(product.planId) : "");
     setPaymentFrequency(product.paymentFrequency);
     setBuildingId(String(product.buildingId));
+    setPremiseType(product.premiseType === "shop" ? "shop" : "apartment");
     setMbps(String(product.mbps));
     setPrice(String(product.price));
     setMonthlyPrice(
@@ -429,6 +441,10 @@ export function ProductsPage() {
       toaster.create({ title: "Select a valid package variant", type: "error" });
       return;
     }
+    if (premiseType !== "apartment" && premiseType !== "shop") {
+      toaster.create({ title: "Select apartment or shop", type: "error" });
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await api.createProduct({
@@ -442,6 +458,7 @@ export function ProductsPage() {
         price: Number(price),
         monthlyPrice: resolveMonthlyPricePayload(paymentFrequency, price, monthlyPrice),
         extraBandwidth: isDstvOnly ? 0 : extraBandwidth ? Number(extraBandwidth) : 0,
+        premiseType,
       });
       if (res.tisp?.ok === false) {
         toaster.create({
@@ -477,6 +494,10 @@ export function ProductsPage() {
       toaster.create({ title: "Select a building", type: "error" });
       return;
     }
+    if (premiseType !== "apartment" && premiseType !== "shop") {
+      toaster.create({ title: "Select apartment or shop", type: "error" });
+      return;
+    }
     setEditSubmitting(true);
     const expandedId = editing.id;
     try {
@@ -488,6 +509,7 @@ export function ProductsPage() {
         monthlyPrice: resolveMonthlyPricePayload(paymentFrequency, price, monthlyPrice),
         extraBandwidth: isDstvOnly ? 0 : extraBandwidth ? Number(extraBandwidth) : 0,
         isActive,
+        premiseType,
       });
       if (res.product) {
         setProducts((prev) =>
@@ -559,6 +581,9 @@ export function ProductsPage() {
       const bldg = buildings.find((b) => String(b.id) === filterBuildingId);
       if (bldg) filterTags.push(bldg.name);
       if (filterPaymentFrequency) filterTags.push(filterPaymentFrequency);
+      if (filterPremiseType) {
+        filterTags.push(filterPremiseType === "shop" ? "Shops" : "Apartments");
+      }
       if (search.trim()) filterTags.push(search.trim());
       await exportTableData({
         scope,
@@ -578,6 +603,7 @@ export function ProductsPage() {
               ...(filterPaymentFrequency
                 ? { paymentFrequency: filterPaymentFrequency }
                 : {}),
+              ...(filterPremiseType ? { premiseType: filterPremiseType } : {}),
               sortBy: sortQuery.sortBy,
               sortDir: sortQuery.sortDir,
             }).then((res) => ({
@@ -620,6 +646,13 @@ export function ProductsPage() {
             active: sorts[0]?.sortBy === "buildingName",
             direction: sorts[0]?.sortBy === "buildingName" ? sorts[0].sortDir : undefined,
             onClick: () => handleSort("buildingName"),
+          },
+          {
+            key: "premiseType",
+            label: "Premise",
+            active: sorts[0]?.sortBy === "premiseType",
+            direction: sorts[0]?.sortBy === "premiseType" ? sorts[0].sortDir : undefined,
+            onClick: () => handleSort("premiseType"),
           },
           {
             key: "price",
@@ -696,6 +729,27 @@ export function ProductsPage() {
               ))}
             </SelectField>
           </FilterField>
+          <FilterField label="Premise" flex={FILTER_FLEX.compact} minW={0} hideOnMobile>
+            <SelectField
+              size="sm"
+              fieldProps={{
+                value: filterPremiseType,
+                onChange: (e) => {
+                  setFilterPremiseType(e.target.value);
+                  setPage(1);
+                  setExpanded(null);
+                },
+                borderRadius: "md",
+              }}
+            >
+              <option value="">All premises</option>
+              {PREMISE_OPTIONS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </SelectField>
+          </FilterField>
             </FilterToolbar>
           </ListPageStickyChrome>
         }
@@ -711,6 +765,7 @@ export function ProductsPage() {
             planId={planId} setPlanId={setPlanId}
             paymentFrequency={paymentFrequency} setPaymentFrequency={setPaymentFrequency}
             buildingId={buildingId} setBuildingId={setBuildingId}
+            premiseType={premiseType} setPremiseType={setPremiseType}
             mbps={mbps} setMbps={setMbps}
             price={price} setPrice={setPrice}
             monthlyPrice={monthlyPrice} setMonthlyPrice={setMonthlyPrice}
@@ -742,7 +797,7 @@ export function ProductsPage() {
           <ResponsiveListViews
             fill
             mobile={<MobileCardListSkeleton fill variant="card" />}
-            desktop={<DataTableLoadingSkeleton columns={9} fill />}
+            desktop={<DataTableLoadingSkeleton columns={10} fill />}
           />
         ) : products.length === 0 ? (
           <EmptyState>No packages found</EmptyState>
@@ -765,6 +820,7 @@ export function ProductsPage() {
                     onClick={() => setExpanded(isOpen ? null : p.id)}
                     fields={[
                       { label: "Building", value: p.buildingName },
+                      { label: "Premise", value: premiseLabel(p.premiseType) },
                       {
                         label: "Speed",
                         value:
@@ -797,13 +853,14 @@ export function ProductsPage() {
               />
             }
             desktop={
-          <DataTable fixedLayout scrollMinW="1120px">
+          <DataTable fixedLayout scrollMinW="1240px">
             <Table.Header>
               <Table.Row>
                 <Table.ColumnHeader {...dataTableTitleColumnHeaderProps} w={DATA_TABLE_LEADING_COL_WIDTH} />
                 <DataTableSortHeader label="Category" column="categoryName" sorts={sorts} onSort={handleSort} headerProps={productCategoryHeaderProps} />
                 <DataTableSortHeader label="Plan" column="planName" sorts={sorts} onSort={handleSort} />
                 <DataTableSortHeader label="Building" column="buildingName" sorts={sorts} onSort={handleSort} />
+                <DataTableSortHeader label="Premise" column="premiseType" sorts={sorts} onSort={handleSort} />
                 <DataTableSortHeader label="Speed" column="mbps" sorts={sorts} onSort={handleSort} defaultDir="desc" />
                 <DataTableSortHeader label="Price" column="price" sorts={sorts} onSort={handleSort} defaultDir="desc" />
                 <DataTableSortHeader label="Users" column="customerCount" sorts={sorts} onSort={handleSort} defaultDir="desc" />
@@ -829,6 +886,9 @@ export function ProductsPage() {
                       <Table.Cell {...dataTableWrapCellProps}>
                         <DisplayText value={p.buildingName} maxLength={null} />
                       </Table.Cell>
+                      <Table.Cell {...dataTableCellProps}>
+                        {premiseLabel(p.premiseType)}
+                      </Table.Cell>
                       <Table.Cell {...dataTableCellProps} whiteSpace="nowrap">
                         {isDstvOnlyRow ? "—" : `${p.mbps + extra} Mbps`}
                       </Table.Cell>
@@ -843,7 +903,7 @@ export function ProductsPage() {
                     </Table.Row>
                     {isOpen && (
                       <Table.Row {...dataTableExpandRowProps}>
-                        <Table.Cell colSpan={9} p={3} bg="surface.50" borderBottom="none">
+                        <Table.Cell colSpan={10} p={3} bg="surface.50" borderBottom="none">
                           <ProductExpandPanel
                             product={p}
                             onEdit={openEdit}
@@ -877,6 +937,7 @@ export function ProductsPage() {
             planId={planId} setPlanId={setPlanId}
             paymentFrequency={paymentFrequency} setPaymentFrequency={setPaymentFrequency}
             buildingId={buildingId} setBuildingId={setBuildingId}
+            premiseType={premiseType} setPremiseType={setPremiseType}
             mbps={mbps} setMbps={setMbps}
             price={price} setPrice={setPrice}
             monthlyPrice={monthlyPrice} setMonthlyPrice={setMonthlyPrice}
@@ -943,10 +1004,10 @@ export function ProductsPage() {
                     ? "Loading packages…"
                     : migrateOptions.length
                       ? "Select a package"
-                      : "No other packages in this building"
+                      : "No other packages for this premise"
                 }
                 searchPlaceholder="Search packages…"
-                emptyLabel="No other packages in this building. Create one first, or mark this package inactive."
+                emptyLabel="No other packages for this premise in this building. Create one first, or mark this package inactive."
               />
             </Field.Root>
           </Box>
@@ -992,6 +1053,7 @@ function ProductForm({
   planId, setPlanId,
   paymentFrequency, setPaymentFrequency,
   buildingId, setBuildingId,
+  premiseType, setPremiseType,
   mbps, setMbps,
   price, setPrice,
   monthlyPrice, setMonthlyPrice,
@@ -1009,6 +1071,7 @@ function ProductForm({
   planId: string; setPlanId: (v: string) => void;
   paymentFrequency: string; setPaymentFrequency: (v: string) => void;
   buildingId: string; setBuildingId: (v: string) => void;
+  premiseType: string; setPremiseType: (v: string) => void;
   mbps: string; setMbps: (v: string) => void;
   price: string; setPrice: (v: string) => void;
   monthlyPrice: string; setMonthlyPrice: (v: string) => void;
@@ -1029,7 +1092,7 @@ function ProductForm({
   const internetFieldsDisabled = fieldsDisabled || isDstvOnly;
   const isMonthlyBilling = paymentFrequency === "monthly";
   const monthlyUserEditedRef = useRef(false);
-  const prevLookupRef = useRef({ paymentFrequency, buildingId, planId });
+  const prevLookupRef = useRef({ paymentFrequency, buildingId, planId, premiseType });
 
   const examplePrice = useMemo(() => {
     if (!selectedCategory || !selectedPlan || !selectedVariant) return null;
@@ -1079,9 +1142,11 @@ function ProductForm({
   useEffect(() => {
     const prev = prevLookupRef.current;
     const buildingOrPlanChanged =
-      prev.buildingId !== buildingId || prev.planId !== planId;
+      prev.buildingId !== buildingId ||
+      prev.planId !== planId ||
+      prev.premiseType !== premiseType;
     const frequencyChanged = prev.paymentFrequency !== paymentFrequency;
-    prevLookupRef.current = { paymentFrequency, buildingId, planId };
+    prevLookupRef.current = { paymentFrequency, buildingId, planId, premiseType };
 
     if (!frequencyChanged && !buildingOrPlanChanged) return;
     if (paymentFrequency === "monthly") return;
@@ -1095,14 +1160,18 @@ function ProductForm({
 
     monthlyUserEditedRef.current = false;
     let cancelled = false;
+    const monthlyParams: Record<string, string> = {
+      buildingId,
+      planId,
+      paymentFrequency: "monthly",
+      activeOnly: "false",
+      unpaginated: "true",
+    };
+    if (premiseType === "apartment" || premiseType === "shop") {
+      monthlyParams.premiseType = premiseType;
+    }
     api
-      .listProducts({
-        buildingId,
-        planId,
-        paymentFrequency: "monthly",
-        activeOnly: "false",
-        unpaginated: "true",
-      })
+      .listProducts(monthlyParams)
       .then((res) => {
         if (cancelled || monthlyUserEditedRef.current) return;
         const found = pickMonthlyEquivalentPrice(res.products || []);
@@ -1120,7 +1189,7 @@ function ProductForm({
     return () => {
       cancelled = true;
     };
-  }, [paymentFrequency, buildingId, planId, setMonthlyPrice]);
+  }, [paymentFrequency, buildingId, planId, premiseType, setMonthlyPrice]);
 
   return (
     <form onSubmit={onSubmit}>
@@ -1229,6 +1298,28 @@ function ProductForm({
           </Field.Root>
         )}
         <Field.Root required>
+          <Field.Label>Premise</Field.Label>
+          <SelectField
+            disabled={fieldsDisabled || affectedCustomerCount > 0}
+            fieldProps={{
+              value: premiseType,
+              onChange: (e) => setPremiseType(e.target.value),
+            }}
+          >
+            <option value="">Select apartment or shop</option>
+            {PREMISE_OPTIONS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </SelectField>
+          {affectedCustomerCount > 0 ? (
+            <Field.HelperText>
+              Move customers off this package before changing apartment or shop.
+            </Field.HelperText>
+          ) : null}
+        </Field.Root>
+        <Field.Root required>
           <Field.Label>Price (KES, incl. VAT)</Field.Label>
           <Input
             type="number"
@@ -1252,11 +1343,6 @@ function ProductForm({
             readOnly={isMonthlyBilling}
             bg={isMonthlyBilling ? "bg.subtle" : undefined}
           />
-          <Field.HelperText>
-            {isMonthlyBilling
-              ? "Matches price for monthly billing."
-              : "Optional. Filled from the monthly package for this plan and building when one exists."}
-          </Field.HelperText>
         </Field.Root>
         <Field.Root>
           <Field.Label>Extra bandwidth (Mbps)</Field.Label>

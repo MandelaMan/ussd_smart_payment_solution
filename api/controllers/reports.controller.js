@@ -10,13 +10,13 @@ const {
 const { getReportAnalytics } = require("../services/reportAnalyticsStore");
 const { toExcel, toPdf, toCsv } = require("../utils/reportExport");
 const { getKpiSnapshot, METRIC_DICTIONARY, getExpectedCollections } = require("../services/kpiEngine");
-const { normalizeRole, ROLES } = require("../middleware/rbac");
+const { resolvePartnerAccessFromReq, runWithPartnerCustomerScope } = require("../rbac/partnerAccess");
 
-function isPartnerUser(req) {
-  return normalizeRole(req.user?.role) === ROLES.PARTNER;
+function partnerAccess(req) {
+  return resolvePartnerAccessFromReq(req);
 }
 
-function parseReportParams(query = {}) {
+function parseReportParams(query = {}, access = {}) {
   return {
     from: query.from,
     to: query.to,
@@ -29,13 +29,15 @@ function parseReportParams(query = {}) {
     agencyId: query.agencyId,
     customerStatus: query.customerStatus,
     paymentStatus: query.paymentStatus,
+    customerScope: access.customerScope || "all",
   };
 }
 
 async function listReports(req, res, next) {
   try {
-    const reports = isPartnerUser(req)
-      ? listPartnerReportDefinitions()
+    const access = partnerAccess(req);
+    const reports = access.isPartner
+      ? listPartnerReportDefinitions(access.type)
       : listReportDefinitions();
     return res.json({ reports, families: [
       "Executive",
@@ -54,7 +56,8 @@ async function listReports(req, res, next) {
 async function previewReport(req, res, next) {
   try {
     const { id } = req.params;
-    if (isPartnerUser(req) && !isPartnerReport(id)) {
+    const access = partnerAccess(req);
+    if (access.isPartner && !isPartnerReport(id, access.type)) {
       return res.status(403).json({ error: "Report not available for your role." });
     }
     const def = getReportDefinition(id);
@@ -66,7 +69,7 @@ async function previewReport(req, res, next) {
       });
     }
 
-    const report = await runReport(id, parseReportParams(req.query));
+    const report = await runReport(id, parseReportParams(req.query, access));
     if (!report) return res.status(404).json({ error: "Report not found." });
 
     const previewLimit = Math.min(Number(req.query.limit) || 100, 500);
@@ -105,8 +108,9 @@ async function downloadReport(req, res, next) {
   try {
     const { id } = req.params;
     const format = (req.query.format || "xlsx").toLowerCase();
+    const access = partnerAccess(req);
 
-    if (isPartnerUser(req) && !isPartnerReport(id)) {
+    if (access.isPartner && !isPartnerReport(id, access.type)) {
       return res.status(403).json({ error: "Report not available for your role." });
     }
 
@@ -122,7 +126,7 @@ async function downloadReport(req, res, next) {
       return res.status(400).json({ error: "Format must be xlsx, pdf, or csv." });
     }
 
-    const report = await runReport(id, parseReportParams(req.query));
+    const report = await runReport(id, parseReportParams(req.query, access));
 
     if (!report) {
       return res.status(404).json({ error: "Report not found." });
@@ -183,6 +187,7 @@ async function getKpis(req, res, next) {
           agencyId: req.query.agencyId,
           customerStatus: req.query.customerStatus,
           subscriptionStatus: req.query.subscriptionStatus,
+          ...(partnerAccess(req).customerScope === "dstv" ? { hasDstv: true } : {}),
         },
         { from: req.query.from, to: req.query.to }
       ),
@@ -201,8 +206,11 @@ async function getKpis(req, res, next) {
 
 async function getMonthlyPaymentChurnSummaryHandler(req, res, next) {
   try {
+    const access = partnerAccess(req);
     const month = req.query.month || new Date().toISOString().slice(0, 7);
-    const summary = await getMonthlyPaymentChurnSummary(month);
+    const summary = await runWithPartnerCustomerScope(access.customerScope, () =>
+      getMonthlyPaymentChurnSummary(month)
+    );
     return res.json(summary);
   } catch (err) {
     if (err.message) return res.status(400).json({ error: err.message });

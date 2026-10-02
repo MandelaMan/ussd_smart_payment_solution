@@ -15,6 +15,11 @@ const {
   shouldAllowTispCreateFallback,
 } = require("./tisp.controller");
 const store = require("../services/customerModuleStore");
+const {
+  resolvePartnerAccessFromReq,
+  partnerCanViewCustomer,
+} = require("../rbac/partnerAccess");
+const { hasReqPermission } = require("../middleware/permissions");
 const oltEmsService = require("../services/oltEmsService");
 const integrationSnapshot = require("../repositories/integrationSnapshot.repository");
 const { onboardNewCustomerBilling } = require("../services/customerBillingOnboarding");
@@ -39,12 +44,14 @@ const {
   DEFAULT_TZ,
   computeTrialEndDate,
   computeInvoiceDueDate,
+  computeServiceDueDate,
   computeSignupRecurringWindow,
+  resolveRecurringStartForDueDateChange,
   resolveTispDueDateForEditBilling,
   resolveZohoPaymentTerms,
 } = require("../utils/billingPeriod");
 const {
-  isDstvOnlyCategory,
+  isDstvOnlyRecord,
 } = require("../services/packageCatalogStore");
 const moment = require("moment-timezone");
 const {
@@ -62,6 +69,7 @@ const {
   getCustomerPayments_JS,
   getRecurringInvoices_JS,
   stopRecurringInvoice_JS,
+  resumeRecurringInvoice_JS,
   voidInvoice_JS,
   updateRecurringInvoice_JS,
   markContactInactive_JS,
@@ -71,6 +79,9 @@ const zohoEntityRepo = require("../repositories/zohoEntity.repository");
 const pendingUpgradeStore = require("../services/pendingUpgradeStore");
 const {
   normalizeSubscriptionStatus,
+  isIndefinitePauseStatus,
+  INDEFINITE_PAUSE_STATUS,
+  subscriptionStatusAfterTispRefresh,
 } = require("../utils/subscriptionStatus");
 const { listUnifiedTransactions } = require("./admin.controller");
 const { mapWithConcurrency } = require("../utils/mapWithConcurrency");
@@ -89,8 +100,14 @@ const {
   lastPaymentFromZohoPayments,
 } = require("../utils/lastPaymentDate");
 const {
+  addCalendarDays,
+  assertPauseDurationAllowed,
   computePauseCredit,
+  computePauseCreditAmount,
+  exhaustedPauseDaysMessage,
   nextRecurringStartAfterPause,
+  pauseStatusToRestore,
+  resolvePauseBalance,
 } = require("../utils/pauseCredit");
 const {
   isB2BCustomer,
@@ -111,6 +128,8 @@ const {
   invoicesPredateCustomer,
   zohoContactLooksReusedByFormerTenant,
   filterInvoicesForCurrentTenant,
+  uniquifyZohoContactDisplayName,
+  zohoErrorText,
 } = require("../utils/zohoCustomerScope");
 const {
   summarizeOverdueZohoInvoices,
@@ -126,6 +145,19 @@ function notifyCustomersChanged(customerId, action = "updated") {
     action,
     customerId: customerId != null ? Number(customerId) : null,
   });
+}
+
+function applyPartnerCustomerListFilters(req, filters) {
+  const access = resolvePartnerAccessFromReq(req);
+  if (access.customerScope === "dstv") {
+    filters.hasDstv = true;
+  }
+  return access;
+}
+
+function hideCustomerOutsidePartnerScope(req, customer) {
+  const access = resolvePartnerAccessFromReq(req);
+  return Boolean(customer) && !partnerCanViewCustomer(access, customer);
 }
 
 const ZOHO_INVOICE_TAX_INCLUSIVE =
@@ -358,7 +390,7 @@ async function customerHasPriorCancelledTenant(customer) {
 
 /**
  * Rename Zoho company_name to the cancelled BIX number ({POP}-{APT}-CXL-{id},
- * e.g. ET-H302-CXL-237), stop recurring, mark inactive. Frees the live
+ * e.g. ET-H302-CXL-237), delete recurring, mark inactive. Frees the live
  * apartment number for a new Zoho customer + invoices.
  */
 async function retireFormerZohoTenantContact(contact, options = {}) {
@@ -417,13 +449,19 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
     .listCustomerIdsByZohoContactId(contact.contact_id)
     .catch(() => []);
 
+  let recurringRemoval = { deleted: 0, failed: 0, matched: 0 };
   try {
-    await stopZohoRecurringForCustomer(contact.contact_id, liveNumber);
+    const { deleteMatchedRecurringForCustomer } = require("../services/customerZohoSync");
+    recurringRemoval = await deleteMatchedRecurringForCustomer(
+      contact.contact_id,
+      liveNumber
+    );
   } catch (e) {
     console.warn(
-      `retire Zoho tenant: stop recurring failed for ${liveNumber}:`,
+      `retire Zoho tenant: delete recurring failed for ${liveNumber}:`,
       e.message || e
     );
+    recurringRemoval = { deleted: 0, failed: 1, matched: 0 };
   }
 
   let updatedContact = null;
@@ -520,6 +558,8 @@ async function retireFormerZohoTenantContact(contact, options = {}) {
     previousCompanyName: liveNumber,
     archivedCompanyName: archivedCompany,
     formerCustomerId: formerId,
+    recurringDeleted: recurringRemoval.deleted,
+    recurringDeleteFailed: recurringRemoval.failed,
   };
 }
 
@@ -590,8 +630,10 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
       .map((id) => String(id || "").trim())
       .filter(Boolean)
   );
+  const thoroughMatch = options.thoroughMatch === true;
   const identityFallback =
-    options.identityFallback !== false && !replaceFormerTenant;
+    thoroughMatch ||
+    (options.identityFallback !== false && !replaceFormerTenant);
 
   function isExcludedContact(contact) {
     const id = contact?.contact_id ? String(contact.contact_id) : "";
@@ -778,57 +820,59 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     if (refreshed) return refreshed;
   }
 
-  const payload = await buildZohoContactPayload(customer);
-  let created = null;
-  try {
-    created = await createContact_JS(payload);
-  } catch (e) {
-    // Duplicate / race: resolve the existing contact and update it instead.
-    // If it is still a former tenant, retire and retry create once.
-    const retry = await findZohoContactForCustomer(customer, {
-      identityFallback,
-      previousCustomerNumber: previousCustomerNumber || undefined,
-    });
-    if (retry?.contact_id && !isExcludedContact(retry)) {
-      const refreshed = await refreshExisting(retry);
+  if (thoroughMatch) {
+    const { findExistingZohoContactThoroughly_JS } = require("./zoho.controller");
+    const thorough = await findExistingZohoContactThoroughly_JS(customer);
+    if (thorough?.contact_id && !isExcludedContact(thorough)) {
+      const refreshed = await refreshExisting(thorough);
       if (refreshed) return refreshed;
-      try {
-        created = await createContact_JS(payload);
-      } catch (retryErr) {
-        throw new Error(
-          `Zoho contact creation failed: ${
-            retryErr.response?.data?.message || retryErr.message
-          }`
-        );
-      }
-    } else {
-      throw new Error(
-        `Zoho contact creation failed: ${e.response?.data?.message || e.message}`
-      );
     }
   }
 
-  if (created?.contact_id) {
-    const expectedCompany = String(
-      customer.customerNumber || customer.customer_number || ""
-    ).trim();
-    let contact = created;
+  const payload = await buildZohoContactPayload(customer);
+  const expectedCompany = String(
+    customer.customerNumber || customer.customer_number || ""
+  ).trim();
+
+  async function recoverExisting(allowIdentity) {
+    const found = await findZohoContactForCustomer(customer, {
+      identityFallback: allowIdentity,
+      previousCustomerNumber: previousCustomerNumber || undefined,
+    });
+    if (found?.contact_id && !isExcludedContact(found)) {
+      const refreshed = await refreshExisting(found);
+      if (refreshed) return refreshed;
+    }
+    return null;
+  }
+
+  async function persistCreated(createdContact) {
+    // Snapshot before company_name enforce so a later failure still links
+    // this customer — retry can update instead of creating a duplicate.
+    try {
+      if (customer.id) {
+        await integrationSnapshot.upsertZohoContact(customer.id, createdContact);
+      }
+    } catch (e) {
+      console.warn("Zoho contact snapshot failed:", e.message);
+    }
+    let contact = createdContact;
     try {
       contact =
         (await enforceZohoCompanyName(
-          created.contact_id,
+          createdContact.contact_id,
           expectedCompany,
           getContactFull_JS,
           updateContact_JS
         )) ||
-        (await getContactFull_JS(created.contact_id)) ||
-        created;
+        (await getContactFull_JS(createdContact.contact_id)) ||
+        createdContact;
     } catch (e) {
       console.warn("Zoho company_name enforce after create failed:", e.message);
       throw e;
     }
     try {
-      if (customer.id) {
+      if (customer.id && contact?.contact_id) {
         await integrationSnapshot.upsertZohoContact(customer.id, contact);
       }
     } catch (e) {
@@ -837,17 +881,48 @@ async function ensureZohoContactForCustomer(customer, options = {}) {
     return markCreated(contact, true);
   }
 
-  // Final safety: another create may have won the race.
-  const retry = await findZohoContactForCustomer(customer, {
-    identityFallback,
-    previousCustomerNumber: previousCustomerNumber || undefined,
-  });
-  if (retry?.contact_id && !isExcludedContact(retry)) {
-    const refreshed = await refreshExisting(retry);
-    if (refreshed) return refreshed;
+  let created = null;
+  let lastError = null;
+  try {
+    created = await createContact_JS(payload);
+  } catch (e) {
+    lastError = e;
   }
 
-  throw new Error("Zoho contact creation returned no contact_id");
+  if (created?.contact_id) {
+    return persistCreated(created);
+  }
+
+  // Duplicate Display Name / race: look up by email/phone/name even when
+  // replaceFormerTenant disabled identityFallback (customer-number-only).
+  let recovered = await recoverExisting(true);
+  if (recovered) return recovered;
+
+  const uniqueName = uniquifyZohoContactDisplayName(
+    payload.contact_name,
+    expectedCompany
+  );
+  if (uniqueName && uniqueName !== payload.contact_name) {
+    const uniquePayload = { ...payload, contact_name: uniqueName };
+    try {
+      created = await createContact_JS(uniquePayload);
+      lastError = null;
+    } catch (e) {
+      lastError = e;
+    }
+    if (created?.contact_id) {
+      return persistCreated(created);
+    }
+    recovered = await recoverExisting(true);
+    if (recovered) return recovered;
+  }
+
+  const zohoMsg = zohoErrorText(lastError);
+  throw new Error(
+    zohoMsg
+      ? `Zoho contact creation failed: ${zohoMsg}`
+      : "Zoho contact creation returned no contact_id"
+  );
 }
 
 async function syncCustomerToZoho(customer) {
@@ -891,7 +966,24 @@ async function syncZohoLastPayment(customer, zohoContactId, rawInvoices) {
   return lastPayment;
 }
 
+const zohoInvoiceInflight = new Map();
+
 async function fetchCustomerZohoInvoices(customer, options = {}) {
+  const customerId = Number(customer?.id);
+  const forceRefresh = options.skipCache === true || options.refresh === true;
+  if (!customerId || forceRefresh) {
+    return fetchCustomerZohoInvoicesNow(customer, options);
+  }
+  const pending = zohoInvoiceInflight.get(customerId);
+  if (pending) return pending;
+  const promise = fetchCustomerZohoInvoicesNow(customer, options).finally(() => {
+    zohoInvoiceInflight.delete(customerId);
+  });
+  zohoInvoiceInflight.set(customerId, promise);
+  return promise;
+}
+
+async function fetchCustomerZohoInvoicesNow(customer, options = {}) {
   const { loadEnv } = require("../config/env");
   const env = loadEnv();
   const customerId = Number(customer?.id);
@@ -1234,12 +1326,26 @@ function isTypePrefixAccountRenumber(previousNumber, ctx) {
 }
 
 async function refreshTispStatus(customer, options = {}) {
+  if (isDstvOnlyRecord(customer)) {
+    if (customer?.id) {
+      await store.updateCustomerTispSync(customer.id, "skipped", null);
+    }
+    return customer;
+  }
+
   const preferredDueDate = options.preferredDueDate
     ? integrationSnapshot.normalizeTispDueDateValue(options.preferredDueDate)
     : null;
 
+  let localStatus = customer.subscriptionStatus ?? customer.subscription_status;
+  if ((localStatus == null || String(localStatus).trim() === "") && customer?.id) {
+    const stored = await store.getCustomerById(customer.id);
+    localStatus = stored?.subscriptionStatus;
+  }
+  const preserveIndefinite = isIndefinitePauseStatus(localStatus);
   const preservePaused =
-    normalizeSubscriptionStatus(customer.subscriptionStatus) === "Paused";
+    !preserveIndefinite &&
+    normalizeSubscriptionStatus(localStatus) === "Paused";
 
   try {
     let tisp;
@@ -1254,21 +1360,9 @@ async function refreshTispStatus(customer, options = {}) {
     }
     const status =
       tisp?.status ?? tisp?.Status ?? tisp?.subscriptionStatus ?? null;
-    if (status) {
-      let normalized = normalizeSubscriptionStatus(String(status));
-      // Local "Paused" (away) must not be overwritten by TISP Suspended after we
-      // stop service for a temporary pause.
-      if (preservePaused && normalized !== "Active" && normalized !== "Cancelled") {
-        normalized = "Paused";
-      }
-      await store.updateCustomerSubscriptionStatus(customer.id, normalized);
-      customer.subscriptionStatus = normalized;
-    } else {
-      // Account payload returned but without a service status — treat as present/active.
-      const normalized = preservePaused ? "Paused" : "Active";
-      await store.updateCustomerSubscriptionStatus(customer.id, normalized);
-      customer.subscriptionStatus = normalized;
-    }
+    const normalized = subscriptionStatusAfterTispRefresh(localStatus, status);
+    await store.updateCustomerSubscriptionStatus(customer.id, normalized);
+    customer.subscriptionStatus = normalized;
 
     const liveDue = integrationSnapshot.extractTispDueDate(tisp);
     const snapshotPayload = { ...tisp };
@@ -1277,6 +1371,34 @@ async function refreshTispStatus(customer, options = {}) {
     if (preferredDueDate && liveDue !== preferredDueDate) {
       snapshotPayload.dueDate = preferredDueDate;
       snapshotPayload.duedate = preferredDueDate;
+    }
+    if (preserveIndefinite || preservePaused) {
+      snapshotPayload.status = customer.subscriptionStatus;
+      snapshotPayload.Status = customer.subscriptionStatus;
+    }
+    // A dated pause stops access by setting TISP due date to today. Client
+    // Status often still reports the old future due date — do not put that
+    // date back while the pause is open.
+    if (preservePaused) {
+      const today = moment.tz(DEFAULT_TZ).format("YYYY-MM-DD");
+      const liveYmd =
+        liveDue && /^\d{4}-\d{2}-\d{2}/.test(String(liveDue))
+          ? String(liveDue).slice(0, 10)
+          : null;
+      if (liveYmd && today && liveYmd > today && !preferredDueDate) {
+        let kept = null;
+        try {
+          const existingSnap = await integrationSnapshot.getTispSnapshot(customer.id);
+          kept = integrationSnapshot.dueDateFromTispSnapshotRow(existingSnap);
+        } catch {
+          /* keep the stop date as today */
+        }
+        const stopDue = kept && kept <= today ? kept : today;
+        const label = formatTispDueDate(stopDue);
+        snapshotPayload.dueDate = label;
+        snapshotPayload.duedate = label;
+        snapshotPayload.DueDate = label;
+      }
     }
     try {
       const existingSnap = await integrationSnapshot.getTispSnapshot(customer.id);
@@ -1305,7 +1427,11 @@ async function refreshTispStatus(customer, options = {}) {
       message.includes("no client");
     if (notFound) {
       try {
-        const notOnTispStatus = preservePaused ? "Paused" : "Not on TISP";
+        const notOnTispStatus = preserveIndefinite
+          ? INDEFINITE_PAUSE_STATUS
+          : preservePaused
+            ? "Paused"
+            : "Not on TISP";
         await store.updateCustomerSubscriptionStatus(customer.id, notOnTispStatus);
         customer.subscriptionStatus = notOnTispStatus;
         try {
@@ -1507,6 +1633,8 @@ async function createCustomerOnTisp(ctx, meta = {}) {
     popName: input.popName,
     ipSetup: input.ipSetup,
     packagePrice: input.price,
+    paymentFrequency: input.paymentFrequency,
+    customPeriodDays: input.customPeriodDays,
   });
   if (meta.skipStatusRefresh !== true) {
     try {
@@ -1614,17 +1742,6 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     customerNumber: accountNumber,
     ipAddress: resolvedIp,
   };
-  if (ctx.id) {
-    try {
-      const snap = await integrationSnapshot.getTispSnapshot(ctx.id);
-      const raw =
-        typeof snap?.raw_json === "string" ? JSON.parse(snap.raw_json) : snap?.raw_json;
-      const tispClientId = extractTispClientAccountId(raw);
-      if (tispClientId) input.tispClientId = tispClientId;
-    } catch {
-      /* first update can recover the Id from TISP's duplicate-key error */
-    }
-  }
 
   // When releasing an old account before renumbering, free IP / PPPoE so the
   // new AccountNumber can claim them. Do not apply the new apartment/IP here.
@@ -1663,6 +1780,8 @@ async function updateCustomerOnTisp(ctx, meta = {}) {
     popName: input.popName,
     ipSetup: input.ipSetup,
     packagePrice: input.price,
+    paymentFrequency: input.paymentFrequency,
+    customPeriodDays: input.customPeriodDays,
   });
   if (meta.skipStatusRefresh !== true) {
     try {
@@ -1937,10 +2056,7 @@ async function migrateTispAccountNumber(ctx, previousAccountNumber, meta = {}) {
 
 async function pushCustomerToTisp(ctx, meta = {}) {
   // DSTV Only customers receive no bandwidth — never provision on TISP.
-  if (
-    isDstvOnlyCategory(ctx.category_code ?? ctx.categoryCode) ||
-    isDstvOnlyCategory(ctx.category_name ?? ctx.categoryName)
-  ) {
+  if (isDstvOnlyRecord(ctx)) {
     const customerId = ctx.id ?? ctx.customerId;
     if (customerId) {
       await store.updateCustomerTispSync(customerId, "skipped", null);
@@ -2021,11 +2137,17 @@ async function pushCustomerToTisp(ctx, meta = {}) {
 
     const onCurrent = await accountExistsOnTisp(currentNumber);
     if (onCurrent) {
-      // Same account, new StaticIP: release old Mikrotik IP then claim new.
-      if (ipIdentityChanged) {
-        return await reclaimCustomerIpOnTisp(pushCtx, previousIp, meta);
+      try {
+        // Same account, new StaticIP: release old Mikrotik IP then claim new.
+        if (ipIdentityChanged) {
+          return await reclaimCustomerIpOnTisp(pushCtx, previousIp, meta);
+        }
+        return await updateCustomerOnTisp(pushCtx, meta);
+      } catch (updateErr) {
+        // Client Status said present, but SetClientDetails says the account
+        // is gone — fall through and create it.
+        if (!isTispAccountMissingError(updateErr)) throw updateErr;
       }
-      return await updateCustomerOnTisp(pushCtx, meta);
     }
 
     // Recovery: local number already converted (CLB-DLG1) but TISP still has
@@ -2045,11 +2167,16 @@ async function pushCustomerToTisp(ctx, meta = {}) {
       }
       return await updateCustomerOnTisp(pushCtx, meta);
     } catch (updateErr) {
-      const canInsert = shouldAllowTispCreateFallback(meta, pushCtx);
+      const missingOnTisp = isTispAccountMissingError(updateErr);
+      const canInsert = shouldAllowTispCreateFallback(
+        meta,
+        pushCtx,
+        updateErr
+      );
       if (!canInsert) {
         throw updateErr;
       }
-      if (preferUpdate && !isTispAccountMissingError(updateErr)) {
+      if (preferUpdate && !missingOnTisp) {
         // Soft Client Status failures / unrelated UPDATE errors: do not INSERT.
         throw updateErr;
       }
@@ -2248,6 +2375,38 @@ async function resolveCustomerIntegrationPresence(customerId) {
   };
 }
 
+const recurringRefreshInflight = new Map();
+const recurringFreshUntil = new Map();
+
+function recurringRefreshIsFresh(customerId) {
+  const until = recurringFreshUntil.get(customerId);
+  return typeof until === "number" && until > Date.now();
+}
+
+async function refreshCustomerRecurringSnapshot(customerId, zohoContactId) {
+  const pending = recurringRefreshInflight.get(customerId);
+  if (pending) return pending;
+  const promise = (async () => {
+    const liveRecurring = await getRecurringInvoices_JS({
+      customer_id: zohoContactId,
+      per_page: 50,
+    });
+    await integrationSnapshot.replaceRecurringInvoices(
+      customerId,
+      liveRecurring || []
+    );
+    const { loadEnv } = require("../config/env");
+    const maxAgeSeconds =
+      Number(loadEnv().CUSTOMER_CACHE_DURATION_SECONDS) || 300;
+    recurringFreshUntil.set(customerId, Date.now() + maxAgeSeconds * 1000);
+    return integrationSnapshot.listRecurringInvoices(customerId);
+  })().finally(() => {
+    recurringRefreshInflight.delete(customerId);
+  });
+  recurringRefreshInflight.set(customerId, promise);
+  return promise;
+}
+
 async function getCustomerIntegrations(req, res, next) {
   try {
     const id = Number(req.params.id);
@@ -2288,19 +2447,27 @@ async function getCustomerIntegrations(req, res, next) {
 
         let recurring = [];
         if (presence.zohoContactId) {
-          try {
-            const liveRecurring = await getRecurringInvoices_JS({
-              customer_id: presence.zohoContactId,
-              per_page: 50,
-            });
-            await integrationSnapshot.replaceRecurringInvoices(
+          const { loadEnv } = require("../config/env");
+          const maxAgeSeconds =
+            Number(loadEnv().CUSTOMER_CACHE_DURATION_SECONDS) || 300;
+          const fresh =
+            recurringRefreshIsFresh(id) ||
+            (await integrationSnapshot.recurringSnapshotIsFresh(
               id,
-              liveRecurring || []
-            );
+              maxAgeSeconds
+            ));
+          if (fresh) {
             recurring = await integrationSnapshot.listRecurringInvoices(id);
-          } catch (e) {
-            console.warn("Zoho recurring refresh failed:", e.message);
-            recurring = await integrationSnapshot.listRecurringInvoices(id);
+          } else {
+            try {
+              recurring = await refreshCustomerRecurringSnapshot(
+                id,
+                presence.zohoContactId
+              );
+            } catch (e) {
+              console.warn("Zoho recurring refresh failed:", e.message);
+              recurring = await integrationSnapshot.listRecurringInvoices(id);
+            }
           }
         } else {
           recurring = await integrationSnapshot.listRecurringInvoices(id);
@@ -2446,18 +2613,19 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
 
   const presence = await resolveCustomerIntegrationPresence(customerId);
   const isB2B = Boolean(presence?.isB2B);
-  const dstvOnly =
-    isDstvOnlyCategory(ctx.category_code) ||
-    isDstvOnlyCategory(ctx.category_name);
+  const dstvOnly = isDstvOnlyRecord(ctx);
 
   let tisp = { ok: true };
+  let dueBasedRecurringStart = null;
+  let nextDueDate = null;
   if (dstvOnly) {
     await store.updateCustomerTispSync(customerId, "skipped", null);
     tisp = { ok: true, skipped: true, reason: "dstv_only" };
   } else {
   try {
-    // Always update-first on edit. Never INSERT just because Client Status
-    // reported onTisp=false (that caused "Duplicate Account Exists" on phone edits).
+    // Always update-first on edit. INSERT only when TISP UPDATE says the
+    // account does not exist — not merely because Client Status said missing
+    // (that caused "Duplicate Account Exists" on phone edits).
     // Apartment / account renumber: keep the existing TISP due date — never default
     // to today (that disconnects the customer after migrate release).
     // Signup invoice / recurring on edit: reset DueDate from today (Net 7/30 or
@@ -2485,6 +2653,19 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     if (!dueForSync) {
       dueForSync = ctx.tisp_due_date || TISP_STANDARD_DUE_DATE;
     }
+    const previousDueDate =
+      integrationSnapshot.normalizeTispDueDateValue(
+        presence?.tispDueDate || ctx.tisp_due_date || null
+      ) || null;
+    nextDueDate =
+      integrationSnapshot.normalizeTispDueDateValue(dueForSync) ||
+      String(dueForSync || "").slice(0, 10) ||
+      null;
+    // Billing reset already computes recurring from today; only follow an
+    // explicit due-date edit so pause-shifted profiles stay put otherwise.
+    dueBasedRecurringStart = billingReset
+      ? null
+      : resolveRecurringStartForDueDateChange(previousDueDate, nextDueDate);
     const alreadyOnTisp =
       Boolean(presence?.onTisp) || hasLocalTispAccountEvidence(tispCtx);
     await pushCustomerToTisp(tispCtx, {
@@ -2523,7 +2704,7 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
     zoho = { ok: true, skipped: true, reason: "b2b_agency_billing" };
   } else {
     try {
-      const { mapContextToCustomer, ensureRecurringSubscription, updateZohoContactDetails } = require(
+      const { mapContextToCustomer, ensureRecurringSubscription, syncRecurringStartToDueDate, updateZohoContactDetails } = require(
         "../services/customerZohoSync"
       );
       const { createSignupInvoice } = require(
@@ -2585,9 +2766,20 @@ async function syncIntegrationsOnCustomerUpdate(customerId, options = {}) {
           customPeriodDays: customer.customPeriodDays,
         });
         recurring = await ensureRecurringSubscription(customer, contact, {
-          startDate: recurringWindow.startDate,
+          // Apply a start date on update only when due date changed or
+          // billing was explicitly reset — apartment moves must not shift it.
+          startDate:
+            dueBasedRecurringStart ||
+            (billingReset ? recurringWindow.startDate : undefined),
           previousCustomerNumber: previousCustomerNumber || undefined,
         });
+      } else if (dueBasedRecurringStart) {
+        recurring = await syncRecurringStartToDueDate(
+          contact,
+          customer,
+          nextDueDate,
+          { previousCustomerNumber: previousCustomerNumber || undefined }
+        );
       }
 
       if (billingReset && !dstvOnly && tisp.ok && tisp.skipped !== true) {
@@ -2718,10 +2910,7 @@ async function syncNewCustomerToTisp(customerId, customerNumber, meta = {}) {
     const ctx = await store.getCustomerContext(customerId);
     if (!ctx) throw new Error("Customer not found");
 
-    if (
-      isDstvOnlyCategory(ctx.category_code) ||
-      isDstvOnlyCategory(ctx.category_name)
-    ) {
+    if (isDstvOnlyRecord(ctx)) {
       await store.updateCustomerTispSync(customerId, "skipped", null);
       return null;
     }
@@ -2778,10 +2967,7 @@ async function provisionCustomerOnTispOnly(customerId, dueDateInput) {
   if (String(ctx.status || "").toLowerCase() !== "active") {
     throw new Error("Only active customers can be created on TISP");
   }
-  if (
-    isDstvOnlyCategory(ctx.category_code) ||
-    isDstvOnlyCategory(ctx.category_name)
-  ) {
+  if (isDstvOnlyRecord(ctx)) {
     throw new Error("DSTV Only customers are not added on TISP");
   }
 
@@ -2954,6 +3140,9 @@ async function lookupCustomerByNumber(req, res, next) {
       if (!customer) {
         return res.json({ ok: true, found: false, reason: "not_found" });
       }
+      if (hideCustomerOutsidePartnerScope(req, customer)) {
+        return res.json({ ok: true, found: false, reason: "not_found" });
+      }
       if (
         cancelledOnly ||
         String(customer.status || "").toLowerCase() === "cancelled"
@@ -3000,6 +3189,9 @@ async function lookupCustomerByNumber(req, res, next) {
     }
     const customer = await store.getCustomerById(row.id);
     if (!customer) {
+      return res.json({ ok: true, found: false, reason: "not_found" });
+    }
+    if (hideCustomerOutsidePartnerScope(req, customer)) {
       return res.json({ ok: true, found: false, reason: "not_found" });
     }
     if (String(customer.status || "").toLowerCase() === "cancelled") {
@@ -3063,6 +3255,7 @@ async function listCustomers(req, res, next) {
       sortBy,
       sortDir,
     };
+    applyPartnerCustomerListFilters(req, listFilters);
     let result = await store.listCustomers(listFilters);
 
     // Explicit refresh button only — never block search on live TISP/Zoho.
@@ -3241,7 +3434,7 @@ async function exportCustomers(req, res, next) {
         ? 10000
         : Math.min(100, Math.max(1, parseInt(String(limit || "20"), 10) || 20));
 
-    const result = await store.listCustomers({
+    const listFilters = {
       accountStatus: status,
       subscriptionStatus: subscriptionStatus || undefined,
       buildingId: buildingId ? Number(buildingId) : undefined,
@@ -3254,7 +3447,9 @@ async function exportCustomers(req, res, next) {
       sortBy,
       sortDir,
       forExport: exportScope === "all",
-    });
+    };
+    applyPartnerCustomerListFilters(req, listFilters);
+    const result = await store.listCustomers(listFilters);
 
     const safeFormat = String(format || "csv").toLowerCase();
     const scopeSuffix =
@@ -3364,16 +3559,26 @@ async function getCustomer(req, res, next) {
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
+    if (hideCustomerOutsidePartnerScope(req, customer)) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
     if (req.query.refresh === "true" && customer.status === "active") {
       await refreshTispStatusWithCooldown(customer);
       customer = await store.getCustomerById(id);
     }
 
-    const [events, pendingUpgrade, customerWithDue] = await Promise.all([
+    const [events, pendingUpgrade] = await Promise.all([
       store.getCustomerEvents(id),
       pendingUpgradeStore.getActivePendingUpgrade(id),
-      attachTispDueDate(customer),
     ]);
+
+    const restored = pauseStatusToRestore(customer, events);
+    if (restored) {
+      await store.updateCustomerSubscriptionStatus(id, restored);
+      customer = await store.getCustomerById(id);
+    }
+
+    const customerWithDue = await attachTispDueDate(customer);
 
     return res.json({ customer: customerWithDue, events, pendingUpgrade });
   } catch (err) {
@@ -3624,23 +3829,39 @@ async function createCustomer(req, res, next) {
       );
     }
 
-    let tispError = await syncNewCustomerToTisp(
-      created.customerId,
-      created.customerNumber,
-      { dueDate: serviceDueDate }
-    );
+    const dstvOnly =
+      Boolean(created.dstvOnly) || isDstvOnlyRecord(created.product);
+
+    let tispError = null;
+    if (dstvOnly) {
+      await store.updateCustomerTispSync(created.customerId, "skipped", null);
+    } else {
+      tispError = await syncNewCustomerToTisp(
+        created.customerId,
+        created.customerNumber,
+        { dueDate: serviceDueDate }
+      );
+    }
 
     let zoho = { ok: false, error: null, invoice: null };
     try {
       const wantsSignupInvoice =
         String(body.customerType).toUpperCase() === "C2B" &&
         body.trialPeriod !== true;
-      // Payment reference entered → always create Zoho invoice and mark paid.
+      // DSTV Only has no TISP account. New customers get a Zoho contact and
+      // signup invoice. Existing customers are matched in Zoho first and are
+      // not sent an onboarding invoice.
       zoho = await onboardNewCustomerBilling(created.customerId, {
-        forceBilling: wantsSignupInvoice || paymentAlreadyMade,
-        forceEmail: wantsSignupInvoice && !paymentAlreadyMade,
-        skipEmail: paymentAlreadyMade,
-        replaceFormerTenant: true,
+        forceBilling: existingCustomer
+          ? false
+          : wantsSignupInvoice || paymentAlreadyMade || dstvOnly,
+        forceEmail: existingCustomer
+          ? false
+          : wantsSignupInvoice && !paymentAlreadyMade,
+        skipEmail: existingCustomer || paymentAlreadyMade,
+        skipSignupInvoice: existingCustomer,
+        thoroughMatch: existingCustomer,
+        replaceFormerTenant: !existingCustomer,
         paymentAlreadyMade,
         paymentMethod: paymentAlreadyMade ? paymentMethod : undefined,
         mpesaCode:
@@ -3662,6 +3883,7 @@ async function createCustomer(req, res, next) {
 
       // Unpaid signup: align TISP due with Zoho invoice (sent date + Net 7/30).
       if (
+        !dstvOnly &&
         !body.trialPeriod &&
         !paymentAlreadyMade &&
         zoho?.ok &&
@@ -3751,7 +3973,9 @@ async function createCustomer(req, res, next) {
       customer,
       tisp: tispError
         ? { ok: false, error: tispError }
-        : { ok: true, dueDate: serviceDueDate },
+        : dstvOnly
+          ? { ok: true, skipped: true, reason: "dstv_only" }
+          : { ok: true, dueDate: serviceDueDate },
       zoho: zoho.ok
         ? {
             ok: true,
@@ -3828,7 +4052,10 @@ async function resolveCustomerDueDateFromTisp(customerRow, billingContext) {
     if (snap) {
       dueDate = integrationSnapshot.dueDateFromTispSnapshotRow(snap);
       if (snap.subscription_status) {
-        subscriptionStatus = normalizeSubscriptionStatus(snap.subscription_status);
+        subscriptionStatus = subscriptionStatusAfterTispRefresh(
+          customerRow.subscriptionStatus,
+          snap.subscription_status
+        );
       }
     }
   } catch {
@@ -3848,13 +4075,24 @@ async function resolveCustomerDueDateFromTisp(customerRow, billingContext) {
     ]);
     dueDate = integrationSnapshot.extractTispDueDate(tisp) || dueDate;
     const tispStatus = tisp?.status ?? tisp?.Status ?? null;
-    if (tispStatus) {
-      subscriptionStatus = normalizeSubscriptionStatus(String(tispStatus));
+    subscriptionStatus = subscriptionStatusAfterTispRefresh(
+      customerRow.subscriptionStatus,
+      tispStatus
+    );
+    if (subscriptionStatus !== customerRow.subscriptionStatus) {
       await store.updateCustomerSubscriptionStatus(customerRow.id, subscriptionStatus);
       customerRow.subscriptionStatus = subscriptionStatus;
     }
     try {
-      await integrationSnapshot.upsertTispSnapshot(customerRow.id, tisp);
+      const snapshotPayload = { ...tisp };
+      if (
+        subscriptionStatus === "Paused" ||
+        subscriptionStatus === INDEFINITE_PAUSE_STATUS
+      ) {
+        snapshotPayload.status = subscriptionStatus;
+        snapshotPayload.Status = subscriptionStatus;
+      }
+      await integrationSnapshot.upsertTispSnapshot(customerRow.id, snapshotPayload);
     } catch (e) {
       console.warn("TISP snapshot save failed:", e.message);
     }
@@ -5030,12 +5268,14 @@ async function stopZohoRecurringForCustomer(contactId, customerNumber) {
   });
 
   let stopped = 0;
+  const recurringIds = [];
   for (const row of matches) {
     const id = row.recurring_invoice_id || row.recurringinvoice_id;
     if (!id) continue;
     try {
       await stopRecurringInvoice_JS(String(id));
       stopped += 1;
+      recurringIds.push(String(id));
     } catch (e) {
       console.warn(
         `stop recurring ${id} for ${customerNumber} failed:`,
@@ -5043,7 +5283,7 @@ async function stopZohoRecurringForCustomer(contactId, customerNumber) {
       );
     }
   }
-  return { stopped, matched: matches.length };
+  return { stopped, matched: matches.length, recurringIds };
 }
 
 /**
@@ -5152,6 +5392,17 @@ function zohoVoidActivityBits(zoho) {
   ];
 }
 
+function zohoRecurringDeleteActivityBits(zoho) {
+  const deleted = Number(zoho?.recurringDeleted) || 0;
+  const failed = Number(zoho?.recurringDeleteFailed) || 0;
+  return [
+    deleted > 0
+      ? `Zoho recurring deleted (${deleted})`
+      : null,
+    failed > 0 ? `Zoho recurring delete failed (${failed})` : null,
+  ];
+}
+
 function recurringWouldInvoiceDuringPause(nextInvoiceDate, pauseStart, pauseEnd) {
   if (!nextInvoiceDate) return true;
   const next = String(nextInvoiceDate).slice(0, 10);
@@ -5166,7 +5417,8 @@ async function deferZohoRecurringForCustomer(
   customerNumber,
   pauseStart,
   pauseEnd,
-  credit = {}
+  credit = {},
+  options = {}
 ) {
   if (!contactId || !customerNumber) {
     return { deferred: 0, matched: 0, resumeDate: pauseEnd, creditDays: 0 };
@@ -5174,33 +5426,41 @@ async function deferZohoRecurringForCustomer(
 
   const creditDays = Math.max(0, Number(credit.creditDays) || 0);
   const creditedDueDate = credit.creditedDueDate || null;
+  const {
+    recurringMatchesCustomerRefs,
+    isActiveRecurring,
+  } = require("../utils/zohoRecurrence");
 
   const list = await getRecurringInvoices_JS({
     customer_id: contactId,
-    per_page: 50,
+    per_page: 200,
+    filter_by: "Status.All",
   });
   const ref = String(customerNumber).trim().toUpperCase();
-  const matches = (list || []).filter((row) => {
-    const status = String(row.status || row.recurrence_status || "").toLowerCase();
-    if (["stopped", "expired", "inactive"].includes(status)) return false;
-    const rowRef = String(row.reference_number || row.recurrence_name || "")
-      .trim()
-      .toUpperCase();
-    return rowRef === ref || rowRef.includes(ref);
-  });
+  let matches = (list || []).filter(
+    (row) => isActiveRecurring(row) && recurringMatchesCustomerRefs(row, [ref])
+  );
+  if (!matches.length && options.allowSingleProfileFallback) {
+    const active = (list || []).filter(isActiveRecurring);
+    if (active.length === 1) matches = active;
+  }
 
   let deferred = 0;
+  let failed = 0;
   const profiles = [];
+  const errors = [];
+  const { clampRecurringStartDate } = require("../utils/billingPeriod");
   for (const row of matches) {
     const id = row.recurring_invoice_id || row.recurringinvoice_id;
     if (!id) continue;
-    const nextDate = row.next_invoice_date || null;
-    const newStartDate = nextRecurringStartAfterPause({
+    const nextDate = formatDateOnly(row.next_invoice_date) || null;
+    const shiftedStart = nextRecurringStartAfterPause({
       nextInvoiceDate: nextDate,
       pauseEnd,
       creditDays,
       creditedDueDate,
     });
+    const newStartDate = clampRecurringStartDate(shiftedStart);
     const mustShift =
       !nextDate ||
       recurringWouldInvoiceDuringPause(nextDate, pauseStart, pauseEnd) ||
@@ -5218,6 +5478,8 @@ async function deferZohoRecurringForCustomer(
         creditDays,
       });
     } catch (e) {
+      failed += 1;
+      errors.push(e.message || `defer recurring ${id} failed`);
       console.warn(
         `defer recurring ${id} for ${customerNumber} failed:`,
         e.message
@@ -5228,10 +5490,84 @@ async function deferZohoRecurringForCustomer(
   return {
     deferred,
     matched: matches.length,
+    failed,
+    errors,
     profiles,
     resumeDate: pauseEnd,
     creditDays,
     creditedDueDate,
+  };
+}
+
+async function createPauseZohoCreditNote({
+  contactId,
+  customerNumber,
+  packagePrice,
+  paymentFrequency,
+  customPeriodDays,
+  creditDays,
+  pauseStart,
+  pauseEnd,
+  isB2B = false,
+  agencyName = null,
+}) {
+  const amount = computePauseCreditAmount({
+    packagePrice,
+    paymentFrequency,
+    customPeriodDays,
+    creditDays,
+  });
+  if (!contactId || amount <= 0) {
+    return {
+      skipped: true,
+      reason: !contactId ? "no_contact" : "no_credit_amount",
+      amount: 0,
+    };
+  }
+
+  const description = isB2B
+    ? `Service pause credit (B2B via ${agencyName || "agency"}): ${pauseStart} → ${pauseEnd} · ${creditDays}d unused (${customerNumber})`
+    : `Service pause credit: ${pauseStart} → ${pauseEnd} · ${creditDays}d unused (${customerNumber})`;
+
+  const lineItem = {
+    name: `Service pause credit — ${creditDays} day${creditDays === 1 ? "" : "s"}`,
+    rate: amount,
+    quantity: 1,
+    description,
+  };
+  if (ZOHO_VAT_TAX_ID) {
+    lineItem.tax_id = ZOHO_VAT_TAX_ID;
+  }
+
+  const creditNote = await createCreditNote_JS({
+    customer_id: contactId,
+    items: [lineItem],
+    is_inclusive_tax: ZOHO_INVOICE_TAX_INCLUSIVE,
+    reference_number: `${customerNumber} pause credit`,
+    notes: description,
+  });
+
+  if (creditNote) {
+    try {
+      await zohoEntityRepo.upsertCreditNoteRecord(creditNote);
+    } catch (persistErr) {
+      console.error(
+        "zoho pause credit note local upsert failed:",
+        persistErr.message
+      );
+    }
+  }
+
+  return {
+    skipped: false,
+    creditNoteId: creditNote?.creditnote_id
+      ? String(creditNote.creditnote_id)
+      : creditNote?.credit_note_id
+        ? String(creditNote.credit_note_id)
+        : null,
+    creditNoteNumber:
+      creditNote?.creditnote_number || creditNote?.credit_note_number || null,
+    amount,
   };
 }
 
@@ -5253,8 +5589,16 @@ async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd, credit = {
     phone: ctx.phone,
     email: ctx.email,
   };
+  const paymentFrequency = ctx.payment_frequency || "monthly";
+  const customPeriodDays = ctx.custom_period_days ?? null;
+  const packagePrice = ctx.package_price;
+  const creditDays = Math.max(0, Number(credit.creditDays) || 0);
 
   try {
+    let contactId = null;
+    let isB2B = false;
+    let snapshotContact = null;
+
     if (isB2BCustomer(customer)) {
       const agency = await resolveAgencyForCustomer(customer, store);
       if (!agency?.name) {
@@ -5264,67 +5608,90 @@ async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd, credit = {
       if (!agencyContact?.contact_id) {
         return { ok: true, skipped: true, reason: "b2b_no_zoho_contact" };
       }
-      const recurring = await deferZohoRecurringForCustomer(
-        agencyContact.contact_id,
-        ctx.customer_number,
-        pauseStart,
-        pauseEnd,
-        credit
-      );
-      invalidateCustomerZoho(customerId);
-      return {
-        ok: true,
-        skipped: false,
-        contactId: agencyContact.contact_id,
-        recurring,
-      };
-    }
-
-    const contact = await findZohoContactForCustomer(customer);
-    if (!contact?.contact_id) {
-      return { ok: true, skipped: true, reason: "no_zoho_contact" };
+      contactId = agencyContact.contact_id;
+      isB2B = true;
+      customer.agencyName = agency.name;
+    } else {
+      const contact = await findZohoContactForCustomer(customer);
+      if (!contact?.contact_id) {
+        return { ok: true, skipped: true, reason: "no_zoho_contact" };
+      }
+      contactId = contact.contact_id;
+      snapshotContact = contact;
     }
 
     const recurring = await deferZohoRecurringForCustomer(
-      contact.contact_id,
+      contactId,
       ctx.customer_number,
       pauseStart,
       pauseEnd,
-      credit
+      credit,
+      { allowSingleProfileFallback: !isB2B }
     );
 
+    let creditNote = { skipped: true, amount: 0 };
     try {
-      const [invoices, payments, recurringList] = await Promise.all([
-        getInvoices_JS({
-          customer_id: contact.contact_id,
-          per_page: 50,
-          page: 1,
-        }),
-        getCustomerPayments_JS({
-          customer_id: contact.contact_id,
-          per_page: 50,
-        }),
-        getRecurringInvoices_JS({
-          customer_id: contact.contact_id,
-          per_page: 50,
-        }),
-      ]);
-      await integrationSnapshot.saveZohoBillingSnapshot(customerId, {
-        contact,
-        invoices: invoices || [],
-        payments: payments || [],
-        recurring: recurringList || [],
+      creditNote = await createPauseZohoCreditNote({
+        contactId,
+        customerNumber: ctx.customer_number,
+        packagePrice,
+        paymentFrequency,
+        customPeriodDays,
+        creditDays,
+        pauseStart,
+        pauseEnd,
+        isB2B,
+        agencyName: customer.agencyName,
       });
     } catch (e) {
-      console.warn("Zoho snapshot refresh after pause failed:", e.message);
+      creditNote = {
+        skipped: false,
+        error: e.message || "Zoho credit note failed",
+        amount: 0,
+      };
+    }
+
+    if (!isB2B && snapshotContact) {
+      try {
+        const [invoices, payments, recurringList] = await Promise.all([
+          getInvoices_JS({
+            customer_id: contactId,
+            per_page: 50,
+            page: 1,
+          }),
+          getCustomerPayments_JS({
+            customer_id: contactId,
+            per_page: 50,
+          }),
+          getRecurringInvoices_JS({
+            customer_id: contactId,
+            per_page: 50,
+          }),
+        ]);
+        await integrationSnapshot.saveZohoBillingSnapshot(customerId, {
+          contact: snapshotContact,
+          invoices: invoices || [],
+          payments: payments || [],
+          recurring: recurringList || [],
+        });
+      } catch (e) {
+        console.warn("Zoho snapshot refresh after pause failed:", e.message);
+      }
     }
 
     invalidateCustomerZoho(customerId);
+    const recurringFailed = Number(recurring.failed || 0) > 0;
     return {
-      ok: true,
+      ok: !creditNote.error && !recurringFailed,
       skipped: false,
-      contactId: contact.contact_id,
+      contactId,
       recurring,
+      creditNote,
+      error:
+        creditNote.error ||
+        (recurringFailed
+          ? recurring.errors?.[0] || "Zoho recurring update failed"
+          : null),
     };
   } catch (e) {
     return { ok: false, error: e.message || "Zoho pause billing sync failed" };
@@ -5333,9 +5700,10 @@ async function syncPauseZohoBilling(customerId, pauseStart, pauseEnd, credit = {
 
 /**
  * After local cancel: set TISP due date to cancellation day, void overdue
- * Zoho invoices, then for C2B mark the Zoho contact inactive (stop recurring
- * first). B2B only voids/stops that customer's invoices/recurring on the
- * agency contact — agency stays active.
+ * Zoho invoices, then for C2B delete the recurring profile and mark the Zoho
+ * contact inactive. B2B voids that house's overdue invoices and drops the house
+ * from the agency recurring profile (the profile itself is deleted when no
+ * billable houses remain). Agency contact stays active.
  */
 async function syncCancellationIntegrations(customerId, cancellationDate = new Date()) {
   const ctx = await store.getCustomerContext(customerId);
@@ -5434,12 +5802,16 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
           const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
           const refreshed = await refreshAgencyRecurring(agency.id);
           invalidateCustomerZoho(customerId);
+          const recurringDeleted = Number(refreshed.recurring?.deletedCount) || 0;
+          const recurringDeleteFailed = Number(refreshed.recurring?.deleteFailed) || 0;
           result.zoho = {
-            ok: true,
+            ok: recurringDeleteFailed === 0,
             skipped: false,
             contactInactivated: false,
             reason: "b2b_agency_recurring_refreshed",
             recurring: refreshed.recurring || null,
+            recurringDeleted,
+            recurringDeleteFailed,
             overdueInvoicesVoided: overdueVoids.voided,
             overdueInvoicesFailed: overdueVoids.failed,
             overdueInvoicesCount: overdueVoids.overdueCount,
@@ -5447,17 +5819,19 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
         } catch (e) {
           // Fall back to legacy per-number stop if consolidated refresh fails
           if (agencyContact?.contact_id) {
-            const recurring = await stopZohoRecurringForCustomer(
+            const { deleteMatchedRecurringForCustomer } = require("../services/customerZohoSync");
+            const recurring = await deleteMatchedRecurringForCustomer(
               agencyContact.contact_id,
               liveNumber
             );
             invalidateCustomerZoho(customerId);
             result.zoho = {
-              ok: true,
+              ok: recurring.failed === 0,
               skipped: false,
               contactInactivated: false,
               reason: "b2b_agency_contact_kept",
-              recurringStopped: recurring.stopped,
+              recurringDeleted: recurring.deleted,
+              recurringDeleteFailed: recurring.failed,
               warning: e.message,
               overdueInvoicesVoided: overdueVoids.voided,
               overdueInvoicesFailed: overdueVoids.failed,
@@ -5493,12 +5867,13 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
         });
         invalidateCustomerZoho(customerId);
         result.zoho = {
-          ok: true,
+          ok: Number(retired?.recurringDeleteFailed) === 0,
           skipped: false,
           contactInactivated: true,
           companyNameArchived: retired?.archivedCompanyName || null,
           zohoContactId: contact.contact_id,
-          recurringStopped: true,
+          recurringDeleted: retired?.recurringDeleted || 0,
+          recurringDeleteFailed: retired?.recurringDeleteFailed || 0,
           overdueInvoicesVoided: overdueVoids.voided,
           overdueInvoicesFailed: overdueVoids.failed,
           overdueInvoicesCount: overdueVoids.overdueCount,
@@ -5507,6 +5882,17 @@ async function syncCancellationIntegrations(customerId, cancellationDate = new D
     }
   } catch (e) {
     result.zoho = { ok: false, error: e.message || "Zoho cancellation sync failed" };
+  }
+
+  if (result.zoho?.ok && Number(result.zoho.recurringDeleteFailed) === 0) {
+    try {
+      await integrationSnapshot.replaceRecurringInvoices(customerId, []);
+    } catch (e) {
+      console.warn(
+        "clear local recurring snapshot on cancel failed:",
+        e.message || e
+      );
+    }
   }
 
   return result;
@@ -5565,6 +5951,7 @@ async function cancelSubscription(req, res, next) {
                   ? `TISP due ${integrations.tisp.dueDate}`
                   : null,
                 integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+                ...zohoRecurringDeleteActivityBits(integrations.zoho),
                 ...zohoVoidActivityBits(integrations.zoho),
                 integrations.olt?.ok && !integrations.olt?.skipped
                   ? "OLT ONU deactivated"
@@ -5678,6 +6065,193 @@ async function extendTispDueDateForCustomer(ctx, dueDate) {
     tisp.error = formatTispError(e);
   }
   return tisp;
+}
+
+async function stopIptvForIndefinitePause(ctx) {
+  let startlyx;
+  try {
+    startlyx = require("../services/startlyx/startlyxClient");
+  } catch {
+    return { ok: true, skipped: true, reason: "iptv_unavailable" };
+  }
+  if (!startlyx.isConfigured()) {
+    return { ok: true, skipped: true, reason: "iptv_not_configured" };
+  }
+  const email = ctx?.email || null;
+  const username = ctx?.customer_number || null;
+  if (!email && !username) {
+    return { ok: true, skipped: true, reason: "no_iptv_lookup" };
+  }
+  try {
+    const user = await startlyx.findUser({ email, username });
+    if (!user?.id) return { ok: true, skipped: true, reason: "no_iptv_user" };
+    await startlyx.disconnectUser(user.id);
+    return { ok: true, skipped: false, userId: String(user.id) };
+  } catch (e) {
+    return { ok: false, skipped: false, error: e.message || "IPTV disconnect failed" };
+  }
+}
+
+async function restartIptvUser(userId) {
+  if (!userId) return { ok: true, skipped: true, reason: "no_iptv_user" };
+  let startlyx;
+  try {
+    startlyx = require("../services/startlyx/startlyxClient");
+  } catch {
+    return { ok: true, skipped: true, reason: "iptv_unavailable" };
+  }
+  if (!startlyx.isConfigured()) {
+    return { ok: true, skipped: true, reason: "iptv_not_configured" };
+  }
+  try {
+    await startlyx.reconnectUser(String(userId));
+    return { ok: true, skipped: false, userId: String(userId) };
+  } catch (e) {
+    return { ok: false, skipped: false, error: e.message || "IPTV reconnect failed" };
+  }
+}
+
+function indefiniteRestartDueDate(ctx, savedDueDate) {
+  const saved = formatDateOnly(savedDueDate);
+  const today = formatDateOnly(new Date().toISOString());
+  if (saved && today && saved >= today) return saved;
+  return computeServiceDueDate({
+    anchorDate: new Date(),
+    paymentFrequency: ctx?.payment_frequency || "monthly",
+    customPeriodDays: ctx?.custom_period_days ?? null,
+  });
+}
+
+async function stopRecurringForIndefinitePause(customerId) {
+  const ctx = await store.getCustomerContext(customerId);
+  if (!ctx) return { ok: false, error: "Customer not found", stopped: 0, recurringIds: [] };
+
+  const customer = {
+    id: ctx.id,
+    customerNumber: ctx.customer_number,
+    customerType: ctx.customer_type,
+    agencyId: ctx.agency_id,
+    agencyName: ctx.agency_name,
+    firstName: ctx.first_name,
+    lastName: ctx.last_name,
+    middleName: ctx.middle_name,
+    phone: ctx.phone,
+    email: ctx.email,
+  };
+
+  if (isB2BCustomer(customer)) {
+    const agency = await resolveAgencyForCustomer(customer, store);
+    if (!agency?.id) {
+      return { ok: true, skipped: true, reason: "b2b_no_agency", b2b: true, stopped: 0, recurringIds: [] };
+    }
+    const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+    const refreshed = await refreshAgencyRecurring(agency.id);
+    invalidateCustomerZoho(customerId);
+    return {
+      ok: true,
+      skipped: false,
+      b2b: true,
+      stopped: 0,
+      recurringIds: [],
+      recurring: refreshed?.recurring || null,
+    };
+  }
+
+  const contact = await findZohoContactForCustomer(customer);
+  if (!contact?.contact_id) {
+    return { ok: true, skipped: true, reason: "no_zoho_contact", b2b: false, stopped: 0, recurringIds: [] };
+  }
+  const stopped = await stopZohoRecurringForCustomer(contact.contact_id, ctx.customer_number);
+  invalidateCustomerZoho(customerId);
+  return {
+    ok: Number(stopped.stopped) === Number(stopped.matched) || Number(stopped.matched) === 0,
+    skipped: false,
+    b2b: false,
+    contactId: contact.contact_id,
+    stopped: stopped.stopped,
+    matched: stopped.matched,
+    recurringIds: stopped.recurringIds || [],
+  };
+}
+
+async function resumeRecurringAfterIndefinitePause(customerId, savedIds = []) {
+  const ctx = await store.getCustomerContext(customerId);
+  if (!ctx) return { ok: false, error: "Customer not found", resumed: 0 };
+
+  const customer = {
+    id: ctx.id,
+    customerNumber: ctx.customer_number,
+    customerType: ctx.customer_type,
+    agencyId: ctx.agency_id,
+    agencyName: ctx.agency_name,
+    firstName: ctx.first_name,
+    lastName: ctx.last_name,
+    middleName: ctx.middle_name,
+    phone: ctx.phone,
+    email: ctx.email,
+  };
+
+  if (isB2BCustomer(customer)) {
+    const agency = await resolveAgencyForCustomer(customer, store);
+    if (!agency?.id) {
+      return { ok: true, skipped: true, reason: "b2b_no_agency", b2b: true, resumed: 0 };
+    }
+    const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
+    const refreshed = await refreshAgencyRecurring(agency.id);
+    invalidateCustomerZoho(customerId);
+    return {
+      ok: true,
+      skipped: false,
+      b2b: true,
+      resumed: 0,
+      recurring: refreshed?.recurring || null,
+    };
+  }
+
+  const contact = await findZohoContactForCustomer(customer);
+  if (!contact?.contact_id) {
+    return { ok: true, skipped: true, reason: "no_zoho_contact", b2b: false, resumed: 0 };
+  }
+
+  const wanted = new Set((savedIds || []).map((id) => String(id)));
+  const list = await getRecurringInvoices_JS({
+    customer_id: contact.contact_id,
+    per_page: 50,
+  });
+  const ref = String(ctx.customer_number || "").trim().toUpperCase();
+  const ids = new Set(wanted);
+  for (const row of list || []) {
+    const id = row.recurring_invoice_id || row.recurringinvoice_id;
+    if (!id) continue;
+    const rowRef = String(row.reference_number || row.recurrence_name || "")
+      .trim()
+      .toUpperCase();
+    const matches = rowRef === ref || rowRef.includes(ref);
+    const status = String(row.status || row.recurrence_status || "").toLowerCase();
+    const stopped = ["stopped", "inactive"].includes(status);
+    if (matches && stopped) ids.add(String(id));
+  }
+
+  let resumed = 0;
+  const errors = [];
+  for (const id of ids) {
+    try {
+      await resumeRecurringInvoice_JS(String(id));
+      resumed += 1;
+    } catch (e) {
+      errors.push(e.message || `resume recurring ${id} failed`);
+      console.warn(`resume recurring ${id} for ${ctx.customer_number} failed:`, e.message);
+    }
+  }
+  invalidateCustomerZoho(customerId);
+  return {
+    ok: errors.length === 0,
+    skipped: false,
+    b2b: false,
+    resumed,
+    matched: ids.size,
+    error: errors[0] || null,
+  };
 }
 
 /**
@@ -5795,6 +6369,14 @@ async function pauseCustomer(req, res, next) {
     if (ctx.status !== "active") {
       return res.status(400).json({ error: "Customer is not active" });
     }
+    const subscriptionStatus = normalizeSubscriptionStatus(
+      ctx.subscription_status
+    );
+    if (subscriptionStatus !== "Active") {
+      return res.status(400).json({
+        error: "Only customers with an active subscription can pause service",
+      });
+    }
 
     const pauseReason = String(reason || notes || "").trim();
     const startInput = pauseStartDate ?? pause_start_date ?? null;
@@ -5802,6 +6384,15 @@ async function pauseCustomer(req, res, next) {
     const pauseStart =
       formatDateOnly(startInput) || formatDateOnly(new Date().toISOString());
     const pauseEnd = formatDateOnly(endInput);
+    const paymentFrequency = ctx.payment_frequency || "monthly";
+    const customPeriodDays = ctx.custom_period_days ?? null;
+    const pauseBalance = resolvePauseBalance({
+      paymentFrequency,
+      customPeriodDays,
+      lastPaymentDate: ctx.last_payment_date,
+      pauseCreditDays: ctx.pause_credit_days,
+      pauseCreditAppliedAt: ctx.pause_credit_applied_at,
+    });
 
     if (!pauseReason) {
       return res.status(400).json({ error: "Pause reason is required" });
@@ -5809,18 +6400,64 @@ async function pauseCustomer(req, res, next) {
     if (!pauseEnd) {
       return res.status(400).json({ error: "Pause end date is required" });
     }
-    if (pauseEnd < pauseStart) {
+    if (pauseBalance.exhausted) {
       return res.status(400).json({
-        error: "Pause end date must be on or after the start date",
+        error: exhaustedPauseDaysMessage(pauseBalance),
+        pause: {
+          allowanceDays: pauseBalance.allowance,
+          daysUsed: pauseBalance.used,
+          daysRemaining: pauseBalance.remaining,
+        },
       });
     }
+    try {
+      assertPauseDurationAllowed({
+        pauseStart,
+        pauseEnd,
+        paymentFrequency,
+        customPeriodDays,
+        remainingDays: pauseBalance.remaining,
+      });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
 
+    const pendingCredit =
+      !ctx.pause_credit_applied_at &&
+      Math.max(0, Number(ctx.pause_credit_days) || 0) > 0;
     const originalDueDate =
-      formatDateOnly(ctx.tisp_due_date || ctx.tispDueDate) || null;
+      formatDateOnly(
+        pendingCredit
+          ? ctx.pause_original_due_date || ctx.tisp_due_date || ctx.tispDueDate
+          : ctx.tisp_due_date || ctx.tispDueDate
+      ) || null;
     const pauseCredit = computePauseCredit({
       pauseStart,
       pauseEnd,
       originalDueDate,
+    });
+    const totalCreditDays = pauseBalance.used + pauseCredit.daysAway;
+    const remainingAfter = Math.max(0, pauseBalance.allowance - totalCreditDays);
+    pauseCredit.creditedDueDate = originalDueDate
+      ? addCalendarDays(originalDueDate, totalCreditDays)
+      : pauseCredit.creditedDueDate;
+    pauseCredit.creditAmount = computePauseCreditAmount({
+      packagePrice: ctx.package_price,
+      paymentFrequency,
+      customPeriodDays,
+      creditDays: pauseCredit.creditDays,
+    });
+
+    await store.pauseCustomer(customerId, {
+      reason: pauseReason,
+      pauseStartDate: pauseStart,
+      pauseEndDate: pauseEnd,
+      episodeDays: pauseCredit.daysAway,
+      creditDays: pauseCredit.creditDays,
+      totalCreditDays,
+      remainingDays: remainingAfter,
+      originalDueDate: pauseCredit.originalDueDate,
+      creditedDueDate: pauseCredit.creditedDueDate,
     });
 
     const tisp = await stopTispServiceToday(ctx);
@@ -5828,15 +6465,6 @@ async function pauseCustomer(req, res, next) {
     const olt = await oltEmsService.deactivateOnuForCustomer(ctx, {
       customerId: ctx.id,
       customerNumber: ctx.customer_number,
-    });
-
-    await store.pauseCustomer(customerId, {
-      reason: pauseReason,
-      pauseStartDate: pauseStart,
-      pauseEndDate: pauseEnd,
-      creditDays: pauseCredit.creditDays,
-      originalDueDate: pauseCredit.originalDueDate,
-      creditedDueDate: pauseCredit.creditedDueDate,
     });
 
     const zoho = await syncPauseZohoBilling(
@@ -5847,12 +6475,13 @@ async function pauseCustomer(req, res, next) {
     );
 
     try {
-      await integrationSnapshot.upsertTispSnapshot(customerId, {
-        status: "Paused",
-        DueDate: tisp.dueDate,
-        dueDate: tisp.dueDate,
-        duedate: tisp.dueDate,
-      });
+      const snapshotPayload = { status: "Paused" };
+      if (tisp.ok && tisp.skipped !== true && tisp.dueDate) {
+        snapshotPayload.DueDate = tisp.dueDate;
+        snapshotPayload.dueDate = tisp.dueDate;
+        snapshotPayload.duedate = tisp.dueDate;
+      }
+      await integrationSnapshot.upsertTispSnapshot(customerId, snapshotPayload);
     } catch (e) {
       console.warn("TISP snapshot save (pause) failed:", e.message);
     }
@@ -5876,8 +6505,14 @@ async function pauseCustomer(req, res, next) {
         customer?.customerNumber || "",
         `away ${pauseStart} → ${pauseEnd}`,
         pauseCredit.creditDays > 0
-          ? `${pauseCredit.creditDays} day${pauseCredit.creditDays === 1 ? "" : "s"} credited on next subscription`
+          ? `${pauseCredit.creditDays} day${pauseCredit.creditDays === 1 ? "" : "s"} this stay`
           : null,
+        totalCreditDays > 0
+          ? `${totalCreditDays} of ${pauseBalance.allowance} pause days used`
+          : null,
+        remainingAfter > 0
+          ? `${remainingAfter} day${remainingAfter === 1 ? "" : "s"} remaining`
+          : "pause days exhausted",
         pauseCredit.creditedDueDate
           ? `next due ${pauseCredit.creditedDueDate}`
           : null,
@@ -5886,8 +6521,13 @@ async function pauseCustomer(req, res, next) {
         zoho.skipped
           ? null
           : zoho.recurring?.deferred
-            ? `Zoho recurring deferred (${pauseCredit.creditDays || 0}d credit)`
+            ? `Zoho recurring updated (${pauseCredit.creditDays || 0}d credit)`
             : "Zoho recurring unchanged",
+        zoho.creditNote?.creditNoteNumber
+          ? `Zoho credit ${zoho.creditNote.creditNoteNumber} KES ${zoho.creditNote.amount}`
+          : zoho.creditNote?.amount
+            ? `Zoho credit KES ${zoho.creditNote.amount}`
+            : null,
         zoho.error || null,
         tisp.skipped ? "not on TISP" : null,
         tisp.error || null,
@@ -5902,9 +6542,48 @@ async function pauseCustomer(req, res, next) {
       customerRef: customer?.customerNumber,
     });
 
+    const creditAmount =
+      Number(zoho.creditNote?.amount) > 0
+        ? Number(zoho.creditNote.amount)
+        : pauseCredit.creditAmount || 0;
+    const creditAmountLabel =
+      creditAmount > 0
+        ? `KES ${creditAmount.toLocaleString("en-KE")}`
+        : "";
+    const remainingNote =
+      remainingAfter > 0
+        ? ` You have ${remainingAfter} pause day${
+            remainingAfter === 1 ? "" : "s"
+          } remaining this billing period.`
+        : " You have used all pause days for this billing period.";
+    const pauseCreditNote =
+      pauseCredit.creditDays > 0
+        ? [
+            `The ${pauseCredit.creditDays} day${
+              pauseCredit.creditDays === 1 ? "" : "s"
+            } you are away will be credited in Zoho Books${
+              creditAmountLabel ? ` (${creditAmountLabel})` : ""
+            }${
+              zoho.creditNote?.creditNoteNumber
+                ? ` as ${zoho.creditNote.creditNoteNumber}`
+                : ""
+            } and added to your next subscription${
+              pauseCredit.creditedDueDate
+                ? ` (next due ${pauseCredit.creditedDueDate})`
+                : ""
+            }.${remainingNote}`,
+            zoho.recurring?.deferred
+              ? "Your recurring invoice has been updated accordingly."
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : remainingNote.trim();
+
+    let email = { ok: false, skipped: true };
     try {
       const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
-      await sendCustomerLifecycleEmail("pause", customer, {
+      email = await sendCustomerLifecycleEmail("pause", customer, {
         createdBy: req.user?.id || null,
         extraVars: {
           pauseStartDate: pauseStart,
@@ -5913,17 +6592,18 @@ async function pauseCustomer(req, res, next) {
           pauseCreditDays:
             pauseCredit.creditDays > 0 ? String(pauseCredit.creditDays) : "0",
           pauseCreditedDueDate: pauseCredit.creditedDueDate || "",
-          pauseCreditNote:
-            pauseCredit.creditDays > 0
-              ? `The ${pauseCredit.creditDays} day${pauseCredit.creditDays === 1 ? "" : "s"} you are away will be added to your next subscription${
-                  pauseCredit.creditedDueDate
-                    ? ` (next due ${pauseCredit.creditedDueDate})`
-                    : ""
-                }.`
-              : "",
+          pauseCreditAmount: creditAmountLabel,
+          pauseCreditNote,
         },
       });
+      if (!email?.ok) {
+        console.warn(
+          "pause email skipped:",
+          email?.reason || email?.error || "not sent"
+        );
+      }
     } catch (e) {
+      email = { ok: false, error: e.message };
       console.warn("pause email failed:", e.message);
     }
 
@@ -5935,11 +6615,430 @@ async function pauseCustomer(req, res, next) {
         endDate: pauseEnd,
         reason: pauseReason,
         creditDays: pauseCredit.creditDays,
+        creditAmount,
         originalDueDate: pauseCredit.originalDueDate,
         creditedDueDate: pauseCredit.creditedDueDate,
+        allowanceDays: pauseBalance.allowance,
+        daysUsed: totalCreditDays,
+        daysRemaining: remainingAfter,
       },
       tisp,
       olt,
+      zoho,
+      email,
+    });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
+/**
+ * Point the customer's Zoho recurring profile at a service due date
+ * (next invoice 7 days before that due). Used when pause defers billing
+ * and when resume restores the original due date.
+ */
+async function syncRecurringInvoiceToServiceDue(customerId, dueDate) {
+  const due = formatDateOnly(dueDate);
+  if (!due) return { ok: true, skipped: true, reason: "missing_due_date" };
+
+  const ctx = await store.getCustomerContext(customerId);
+  if (!ctx) return { ok: false, error: "Customer not found" };
+
+  const customer = {
+    id: ctx.id,
+    customerNumber: ctx.customer_number,
+    customerType: ctx.customer_type,
+    agencyId: ctx.agency_id,
+    agencyName: ctx.agency_name,
+    firstName: ctx.first_name,
+    lastName: ctx.last_name,
+    middleName: ctx.middle_name,
+    phone: ctx.phone,
+    email: ctx.email,
+  };
+
+  if (isB2BCustomer(customer)) {
+    return { ok: true, skipped: true, reason: "b2b_agency_recurring", b2b: true };
+  }
+
+  const contact = await findZohoContactForCustomer(customer);
+  if (!contact?.contact_id) {
+    return { ok: true, skipped: true, reason: "no_zoho_contact" };
+  }
+
+  const { syncRecurringStartToDueDate } = require("../services/customerZohoSync");
+  const recurring = await syncRecurringStartToDueDate(contact, customer, due);
+  invalidateCustomerZoho(customerId);
+  try {
+    const [invoices, payments, recurringList] = await Promise.all([
+      getInvoices_JS({ customer_id: contact.contact_id, per_page: 50, page: 1 }),
+      getCustomerPayments_JS({ customer_id: contact.contact_id, per_page: 50 }),
+      getRecurringInvoices_JS({ customer_id: contact.contact_id, per_page: 50 }),
+    ]);
+    await integrationSnapshot.saveZohoBillingSnapshot(customerId, {
+      contact,
+      invoices: invoices || [],
+      payments: payments || [],
+      recurring: recurringList || [],
+    });
+  } catch (e) {
+    console.warn("Zoho snapshot refresh after recurring due sync failed:", e.message);
+  }
+
+  const updated = Number(recurring?.profilesUpdated) || 0;
+  return {
+    ok: true,
+    skipped: false,
+    updated,
+    startDate: recurring?.startDate || null,
+    dueDate: due,
+    recurring,
+  };
+}
+
+async function resumeCustomer(req, res, next) {
+  try {
+    const customerId = Number(req.params.id);
+    const ctx = await store.getCustomerContext(customerId);
+    if (!ctx) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+    if (ctx.status === "cancelled") {
+      return res.status(400).json({ error: "Cannot resume a cancelled customer" });
+    }
+    const subscriptionStatus = normalizeSubscriptionStatus(
+      ctx.subscription_status
+    );
+    if (subscriptionStatus !== "Paused") {
+      return res.status(400).json({ error: "Customer is not paused" });
+    }
+
+    const originalDueDate =
+      formatDateOnly(
+        ctx.pause_original_due_date || ctx.tisp_due_date || ctx.tispDueDate
+      ) || null;
+    const tisp = originalDueDate
+      ? await extendTispDueDateForCustomer(ctx, originalDueDate)
+      : { ok: true, skipped: true, reason: "missing_due_date" };
+
+    const olt = await oltEmsService.activateOnuForCustomer(ctx, {
+      customerId: ctx.id,
+      customerNumber: ctx.customer_number,
+    });
+
+    let zoho = { ok: true, skipped: true };
+    try {
+      zoho = await syncRecurringInvoiceToServiceDue(customerId, originalDueDate);
+    } catch (e) {
+      zoho = { ok: false, error: e.message || "Zoho recurring update failed" };
+    }
+
+    await store.resumeCustomer(customerId);
+
+    try {
+      await store.updateCustomerTispSync(
+        customerId,
+        tisp.ok ? "synced" : "failed",
+        tisp.ok ? null : tisp.error || "TISP resume failed"
+      );
+    } catch {
+      /* best-effort */
+    }
+
+    const customer = await store.getCustomerById(customerId);
+    const pauseBalance = resolvePauseBalance(customer);
+
+    await logActivity({
+      eventType: "customer_resumed",
+      title: "Resume service",
+      message: [
+        customer?.customerNumber || "",
+        originalDueDate ? `TISP due restored ${originalDueDate}` : null,
+        zoho.skipped
+          ? null
+          : zoho.updated
+            ? `Zoho recurring updated (${zoho.updated})`
+            : "Zoho recurring unchanged",
+        zoho.error || null,
+        pauseBalance.remaining > 0
+          ? `${pauseBalance.remaining} of ${pauseBalance.allowance} pause days remaining`
+          : exhaustedPauseDaysMessage(pauseBalance),
+        tisp.error || null,
+        olt.skipped ? null : olt.ok ? "OLT ONU activated" : olt.error,
+        olt.skipped ? `OLT skipped (${olt.reason})` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      source: "admin",
+      status: tisp.ok && zoho.ok !== false && (olt.ok || olt.skipped) ? "success" : "failed",
+      customerRef: customer?.customerNumber,
+    });
+
+    return res.json({
+      ok: true,
+      customer,
+      pause: {
+        allowanceDays: pauseBalance.allowance,
+        daysUsed: pauseBalance.used,
+        daysRemaining: pauseBalance.remaining,
+      },
+      tisp,
+      olt,
+      zoho,
+    });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
+/**
+ * Open-ended pause. Stops internet, ONU, IPTV when linked, and recurring invoices.
+ * Does not use the dated pause-day allowance or pause credit.
+ */
+async function pauseCustomerIndefinitely(req, res, next) {
+  try {
+    const { notes, reason } = req.body || {};
+    const customerId = Number(req.params.id);
+    const ctx = await store.getCustomerContext(customerId);
+    if (!ctx) return res.status(404).json({ error: "Customer not found" });
+    if (ctx.status === "cancelled") {
+      return res.status(400).json({ error: "Cannot pause a cancelled customer" });
+    }
+    if (ctx.status !== "active") {
+      return res.status(400).json({ error: "Customer is not active" });
+    }
+    const subscriptionStatus = normalizeSubscriptionStatus(ctx.subscription_status);
+    if (subscriptionStatus === INDEFINITE_PAUSE_STATUS) {
+      return res.status(400).json({ error: "Customer is already paused indefinitely" });
+    }
+    if (subscriptionStatus !== "Active") {
+      return res.status(400).json({
+        error: "Only customers with an active subscription can pause indefinitely",
+      });
+    }
+
+    const pauseReason = String(reason || notes || "").trim();
+    if (!pauseReason) {
+      return res.status(400).json({ error: "Pause reason is required" });
+    }
+
+    const dstvOnly = isDstvOnlyRecord(ctx);
+    const tisp = dstvOnly
+      ? { ok: true, skipped: true, reason: "dstv_only" }
+      : await stopTispServiceToday(ctx);
+    const olt = await oltEmsService.deactivateOnuForCustomer(ctx, {
+      customerId: ctx.id,
+      customerNumber: ctx.customer_number,
+    });
+    const iptv = await stopIptvForIndefinitePause(ctx);
+    const hasDstv = Boolean(ctx.product_has_dstv);
+
+    const customer = await store.pauseCustomerIndefinitely(customerId, {
+      reason: pauseReason,
+      iptvUserId: iptv.userId || null,
+      dueDate: formatDateOnly(ctx.tisp_due_date),
+    });
+
+    let zoho = { ok: true, skipped: true, stopped: 0, recurringIds: [] };
+    try {
+      zoho = await stopRecurringForIndefinitePause(customerId);
+      if (!zoho.b2b && zoho.recurringIds?.length) {
+        await store.setIndefinitePauseRecurringIds(customerId, zoho.recurringIds);
+      }
+    } catch (e) {
+      zoho = { ok: false, error: e.message || "Zoho recurring stop failed", stopped: 0, recurringIds: [] };
+    }
+
+    try {
+      await integrationSnapshot.upsertTispSnapshot(customerId, {
+        status: INDEFINITE_PAUSE_STATUS,
+        DueDate: tisp.dueDate,
+        dueDate: tisp.dueDate,
+        duedate: tisp.dueDate,
+      });
+    } catch (e) {
+      console.warn("TISP snapshot save (indefinite pause) failed:", e.message);
+    }
+
+    try {
+      await store.updateCustomerTispSync(
+        customerId,
+        tisp.ok ? "synced" : "failed",
+        tisp.ok ? null : tisp.error || "TISP pause failed"
+      );
+    } catch {
+      /* best-effort */
+    }
+
+    const saved = await store.getCustomerById(customerId);
+    await logActivity({
+      eventType: "customer_paused",
+      title: "Pause indefinitely",
+      message: [
+        saved?.customerNumber || "",
+        "indefinite",
+        pauseReason,
+        tisp.skipped ? (dstvOnly ? "DSTV only" : "not on TISP") : tisp.dueDate ? `TISP due ${tisp.dueDate}` : null,
+        tisp.error || null,
+        olt.skipped ? `OLT skipped (${olt.reason})` : olt.ok ? "OLT ONU deactivated" : olt.error,
+        iptv.skipped ? null : iptv.ok ? "IPTV suspended" : iptv.error,
+        hasDstv ? "DSTV billing stopped" : null,
+        zoho.b2b
+          ? "Agency recurring refreshed without this house"
+          : zoho.stopped
+            ? `Zoho recurring stopped (${zoho.stopped})`
+            : zoho.skipped
+              ? null
+              : "Zoho recurring unchanged",
+        zoho.error || null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      source: "admin",
+      status:
+        tisp.ok && (olt.ok || olt.skipped) && zoho.ok !== false && iptv.ok !== false
+          ? "success"
+          : "failed",
+      customerRef: saved?.customerNumber,
+    });
+
+    let email = { ok: false, skipped: true };
+    try {
+      const { sendCustomerLifecycleEmail } = require("../services/customerWelcomeEmail");
+      email = await sendCustomerLifecycleEmail("pause", saved || customer, {
+        createdBy: req.user?.id || null,
+        extraVars: {
+          pauseStartDate: formatDateOnly(new Date().toISOString()) || "",
+          pauseEndDate: "until restarted",
+          pauseReason,
+          pauseCreditDays: "0",
+          pauseCreditedDueDate: "",
+          pauseCreditAmount: "",
+          pauseCreditNote:
+            "Service is paused indefinitely. Internet and other services are stopped, and recurring invoices are stopped, until you ask us to restart.",
+        },
+      });
+    } catch (e) {
+      email = { ok: false, error: e.message };
+      console.warn("indefinite pause email failed:", e.message);
+    }
+
+    return res.json({
+      ok: true,
+      customer: saved || customer,
+      pause: {
+        indefinite: true,
+        reason: pauseReason,
+        startDate: saved?.pauseStartDate || null,
+      },
+      tisp,
+      olt,
+      iptv,
+      dstv: hasDstv
+        ? { ok: true, included: true }
+        : { ok: true, skipped: true, reason: "no_dstv" },
+      zoho,
+      email,
+    });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+}
+
+async function restartIndefinitePause(req, res, next) {
+  try {
+    const customerId = Number(req.params.id);
+    const ctx = await store.getCustomerContext(customerId);
+    if (!ctx) return res.status(404).json({ error: "Customer not found" });
+    if (ctx.status === "cancelled") {
+      return res.status(400).json({ error: "Cannot restart a cancelled customer" });
+    }
+    const indefinite =
+      Number(ctx.pause_indefinite) === 1 ||
+      isIndefinitePauseStatus(ctx.subscription_status);
+    if (!indefinite) {
+      return res.status(400).json({ error: "Customer is not paused indefinitely" });
+    }
+
+    const savedDue = formatDateOnly(ctx.indefinite_pause_due_date);
+    const savedRecurringIds = String(ctx.pause_stopped_recurring_ids || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const iptvUserId = ctx.indefinite_pause_iptv_user_id || null;
+    const reason = ctx.pause_reason || null;
+
+    const restarted = await store.restartIndefinitePause(customerId);
+    const dueDate = indefiniteRestartDueDate(ctx, savedDue);
+    const dstvOnly = isDstvOnlyRecord(ctx);
+    const tisp = dstvOnly
+      ? { ok: true, skipped: true, reason: "dstv_only" }
+      : dueDate
+        ? await extendTispDueDateForCustomer(ctx, dueDate)
+        : { ok: true, skipped: true, reason: "missing_due_date" };
+    const olt = await oltEmsService.activateOnuForCustomer(ctx, {
+      customerId: ctx.id,
+      customerNumber: ctx.customer_number,
+    });
+    const iptv = await restartIptvUser(iptvUserId);
+
+    let zoho = { ok: true, skipped: true, resumed: 0 };
+    try {
+      zoho = await resumeRecurringAfterIndefinitePause(customerId, savedRecurringIds);
+    } catch (e) {
+      zoho = { ok: false, error: e.message || "Zoho recurring resume failed", resumed: 0 };
+    }
+
+    try {
+      await store.updateCustomerTispSync(
+        customerId,
+        tisp.ok ? "synced" : "failed",
+        tisp.ok ? null : tisp.error || "TISP restart failed"
+      );
+    } catch {
+      /* best-effort */
+    }
+
+    const customer = restarted.customer || (await store.getCustomerById(customerId));
+    await logActivity({
+      eventType: "customer_resumed",
+      title: "Restart service",
+      message: [
+        customer?.customerNumber || "",
+        "restarted after indefinite pause",
+        reason,
+        dueDate ? `TISP due ${dueDate}` : null,
+        savedDue && dueDate && savedDue !== dueDate ? `previous due ${savedDue} had passed` : null,
+        tisp.error || null,
+        olt.skipped ? `OLT skipped (${olt.reason})` : olt.ok ? "OLT ONU activated" : olt.error,
+        iptv.skipped ? null : iptv.ok ? "IPTV reconnected" : iptv.error,
+        zoho.b2b
+          ? "Agency recurring refreshed with this house"
+          : zoho.resumed
+            ? `Zoho recurring resumed (${zoho.resumed})`
+            : null,
+        zoho.error || null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      source: "admin",
+      status:
+        tisp.ok && (olt.ok || olt.skipped) && zoho.ok !== false && iptv.ok !== false
+          ? "success"
+          : "failed",
+      customerRef: customer?.customerNumber,
+    });
+
+    return res.json({
+      ok: true,
+      customer,
+      pause: { indefinite: false, reason, dueDate },
+      tisp,
+      olt,
+      iptv,
       zoho,
     });
   } catch (err) {
@@ -6084,6 +7183,7 @@ async function bulkCancelSubscriptions(req, res, next) {
                     ? `TISP due ${integrations.tisp.dueDate}`
                     : null,
                   integrations.zoho?.contactInactivated ? "Zoho inactive" : null,
+                  ...zohoRecurringDeleteActivityBits(integrations.zoho),
                   ...zohoVoidActivityBits(integrations.zoho),
                 ]
                   .filter(Boolean)
@@ -6217,32 +7317,40 @@ async function importCustomerRowWithProgress(row, emit, batchSeen) {
     throw e;
   }
 
-  emitImportProgress(emit, {
-    type: "progress",
-    line: row.line,
-    step: "tisp_sync",
-    customerNumber: created.customerNumber,
-  });
+  const dstvOnly =
+    Boolean(created.dstvOnly) || isDstvOnlyRecord(created.product);
 
-  const tispError = await syncNewCustomerToTisp(
-    created.customerId,
-    created.customerNumber
-  );
+  let tispError = null;
+  if (dstvOnly) {
+    await store.updateCustomerTispSync(created.customerId, "skipped", null);
+  } else {
+    emitImportProgress(emit, {
+      type: "progress",
+      line: row.line,
+      step: "tisp_sync",
+      customerNumber: created.customerNumber,
+    });
 
-  emitImportProgress(emit, {
-    type: "progress",
-    line: row.line,
-    step: "tisp_status",
-    customerNumber: created.customerNumber,
-  });
+    tispError = await syncNewCustomerToTisp(
+      created.customerId,
+      created.customerNumber
+    );
 
-  try {
-    const customerForTisp = await store.getCustomerById(created.customerId);
-    if (customerForTisp?.status === "active") {
-      await refreshTispStatus(customerForTisp);
+    emitImportProgress(emit, {
+      type: "progress",
+      line: row.line,
+      step: "tisp_status",
+      customerNumber: created.customerNumber,
+    });
+
+    try {
+      const customerForTisp = await store.getCustomerById(created.customerId);
+      if (customerForTisp?.status === "active") {
+        await refreshTispStatus(customerForTisp);
+      }
+    } catch {
+      // best-effort
     }
-  } catch {
-    // best-effort
   }
 
   emitImportProgress(emit, {
@@ -6441,24 +7549,20 @@ async function updateCustomer(req, res, next) {
       return res.status(400).json({ error: "First name and last name are required" });
     }
 
-    const role = String(req.user?.role || "").toLowerCase();
-    const isAdmin = role === "admin";
     const wantsPackageEdit =
       body.productId != null ||
       body.paymentFrequency != null ||
       body.customPeriodDays != null;
-
-    if (wantsPackageEdit && !isAdmin) {
-      return res.status(403).json({
-        error: "Only administrators can edit package and billing frequency",
-      });
-    }
+    const allowPackageEdit =
+      wantsPackageEdit && hasReqPermission(req, "customers.edit");
+    const allowLocalPackageCorrection =
+      allowPackageEdit &&
+      hasReqPermission(req, "customers.package_edit") &&
+      body.forceLocalPackageCorrection === true;
 
     const createInitialInvoice = body.createInitialInvoice === true;
     const createRecurringInvoice = body.createRecurringInvoice === true;
     const updateZohoRecurring = body.updateZohoRecurring === true;
-    const forceLocalPackageCorrection =
-      body.forceLocalPackageCorrection === true;
     const disregardExistingInvoices =
       body.disregardExistingInvoices === true;
     const tispDueDate = body.tispDueDate
@@ -6481,6 +7585,7 @@ async function updateCustomer(req, res, next) {
       previousIp,
       changes: fieldChanges,
       tvCountChanged,
+      extraDecoderCountChanged,
     } = await store.updateCustomerDetails(
       id,
       {
@@ -6511,10 +7616,11 @@ async function updateCustomer(req, res, next) {
         ppoePassword: body.ppoePassword,
         tispPassword: body.tispPassword,
         tvCount: body.tvCount,
+        extraDecoderCount: body.extraDecoderCount,
       },
       {
-        allowPackageEdit: isAdmin && wantsPackageEdit,
-        forceLocalPackageCorrection,
+        allowPackageEdit,
+        forceLocalPackageCorrection: allowLocalPackageCorrection,
       }
     );
 
@@ -6525,7 +7631,10 @@ async function updateCustomer(req, res, next) {
       const syncResult = await syncIntegrationsOnCustomerUpdate(id, {
         createInitialInvoice,
         createRecurringInvoice,
-        updateZohoRecurring: updateZohoRecurring || Boolean(tvCountChanged),
+        updateZohoRecurring:
+          updateZohoRecurring ||
+          Boolean(tvCountChanged) ||
+          Boolean(extraDecoderCountChanged),
         disregardExistingInvoices,
         tispDueDate: tispDueDate || undefined,
         apartmentChanged: Boolean(apartmentChanged),
@@ -6538,7 +7647,11 @@ async function updateCustomer(req, res, next) {
       tisp = syncResult.tisp;
       zoho = syncResult.zoho;
 
-      if (tvCountChanged && updated?.customerType === "B2B" && updated.agencyId) {
+      if (
+        (tvCountChanged || extraDecoderCountChanged) &&
+        updated?.customerType === "B2B" &&
+        updated.agencyId
+      ) {
         try {
           const { refreshAgencyRecurring } = require("../services/agencyZohoBilling");
           const rec = await refreshAgencyRecurring(updated.agencyId);
@@ -6548,7 +7661,10 @@ async function updateCustomer(req, res, next) {
             recurring: rec,
           };
         } catch (e) {
-          console.warn("agency recurring refresh after TV count change failed:", e.message);
+          console.warn(
+            "agency recurring refresh after TV / extra decoder change failed:",
+            e.message
+          );
           zoho = { ...zoho, ok: false, error: e.message };
         }
       }
@@ -6616,6 +7732,130 @@ async function updateCustomer(req, res, next) {
     if (err.message && !err.statusCode) {
       return res.status(400).json({ error: err.message });
     }
+    return next(err);
+  }
+}
+
+async function listCustomerNotes(req, res, next) {
+  try {
+    const { search, buildingId, subscriptionStatus, page, limit } = req.query;
+    const filters = {
+      search,
+      buildingId: buildingId ? Number(buildingId) : undefined,
+      subscriptionStatus: subscriptionStatus || undefined,
+      page,
+      limit,
+    };
+    applyPartnerCustomerListFilters(req, filters);
+    const result = await store.listCustomerNotes(filters);
+    const actionItems = require("../services/actionItemStore");
+    const followUps = await actionItems.openNoteFollowUpsForCustomers(
+      (result.data || []).map((customer) => customer.id)
+    );
+    result.data = (result.data || []).map((customer) => ({
+      ...customer,
+      noteFollowUp: followUps.get(customer.id) || null,
+    }));
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function getCustomerNoteFollowUp(req, res, next) {
+  try {
+    const actionItems = require("../services/actionItemStore");
+    const followUp = await actionItems.getOpenNoteFollowUp(Number(req.params.id));
+    return res.json({ ok: true, followUp });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function updateCustomerNotes(req, res, next) {
+  try {
+    const id = Number(req.params.id);
+    const customer = await attachTispDueDate(
+      await store.updateCustomerNotes(id, req.body?.notes)
+    );
+    notifyCustomersChanged(id, "updated");
+    try {
+      await logActivity({
+        eventType: "customer_updated",
+        title: "Customer notes",
+        message: `${customer?.customerNumber || id} notes updated`,
+        source: "admin",
+        status: "success",
+        customerRef: customer?.customerNumber || null,
+        referenceId: String(id),
+      });
+    } catch (logErr) {
+      console.error("activity log (customer notes) failed:", logErr.message);
+    }
+
+    let followUp = null;
+    const requested = req.body?.followUp;
+    const noteText = String(req.body?.notes || "").trim();
+    if (noteText) {
+      try {
+        const actionItems = require("../services/actionItemStore");
+        const { userHasPermission } = require("../rbac/permissionService");
+        const existing = await actionItems.getOpenNoteFollowUp(id);
+        const priority = ["low", "normal", "high", "urgent"].includes(requested?.priority)
+          ? requested.priority
+          : "normal";
+        if (existing) {
+          const patch = { description: noteText.slice(0, 2000) };
+          if (requested) {
+            patch.dueDate = requested.dueDate || null;
+            patch.priority = priority;
+          }
+          const item = await actionItems.updateActionItem(existing.id, patch, {
+            actor: req.user,
+          });
+          followUp = {
+            ok: true,
+            id: item.id,
+            title: item.title,
+            dueDate: item.dueDate,
+            status: item.status,
+            created: false,
+          };
+        } else if (requested) {
+          const canSeeReminders = await userHasPermission(req.user, "action_items.view");
+          const item = await actionItems.createActionItem(
+            {
+              typeKey: "note_followup",
+              customerId: id,
+              description: noteText.slice(0, 2000),
+              dueDate: requested.dueDate || null,
+              priority,
+              assigneeIds:
+                canSeeReminders && req.user?.id ? [Number(req.user.id)] : [],
+              notifyCustomer: false,
+            },
+            { actor: req.user }
+          );
+          followUp = {
+            ok: true,
+            id: item.id,
+            title: item.title,
+            dueDate: item.dueDate,
+            status: item.status,
+            created: true,
+          };
+        }
+      } catch (followErr) {
+        followUp = {
+          ok: false,
+          error: followErr.message || "Could not link a reminder",
+        };
+      }
+    }
+
+    return res.json({ ok: true, customer, followUp });
+  } catch (err) {
+    if (err.message) return res.status(400).json({ error: err.message });
     return next(err);
   }
 }
@@ -7132,8 +8372,18 @@ async function retryBillingOnboarding(req, res, next) {
     const bankReference = body.bankReference
       ? String(body.bankReference).trim()
       : "";
-    const paymentCoversInternet = body.paymentCoversInternet === true;
-    const paymentCoversDecoder = body.paymentCoversDecoder === true;
+    const paymentCoversInternet =
+      body.paymentCoversInternet === true
+        ? true
+        : body.paymentCoversInternet === false
+          ? false
+          : undefined;
+    const paymentCoversDecoder =
+      body.paymentCoversDecoder === true
+        ? true
+        : body.paymentCoversDecoder === false
+          ? false
+          : undefined;
 
     if (paymentAlreadyMade) {
       if (!["mpesa", "paystack", "bank"].includes(paymentMethod)) {
@@ -7151,16 +8401,19 @@ async function retryBillingOnboarding(req, res, next) {
           error: "Enter the Paystack / Zoho payment REFERENCE#",
         });
       }
-      const { buildingUsesDecoder } = require("../utils/dstvSetup");
-      const hasDecoderFee = Boolean(
-        buildingUsesDecoder(customer) &&
-          (customer.hasDstv || customer.decoderFeeRequired)
-      );
-      if (!paymentCoversInternet && !(hasDecoderFee && paymentCoversDecoder)) {
+      const {
+        resolveAdvancePaymentCoverage,
+      } = require("../utils/zohoInvoiceLineItems");
+      const coverage = resolveAdvancePaymentCoverage(customer, {
+        paymentAlreadyMade: true,
+        paymentCoversInternet,
+        paymentCoversDecoder,
+      });
+      if (!coverage.includePackage && !coverage.includeDecoder) {
         return res.status(400).json({
           error:
             "Select what the payment covers (Internet/package" +
-            (hasDecoderFee ? ", and/or DSTV decoder)" : ")"),
+            (coverage.hasDstv ? ", and/or DSTV decoder)" : ")"),
         });
       }
     }
@@ -7186,10 +8439,12 @@ async function retryBillingOnboarding(req, res, next) {
           paymentAlreadyMade && paymentMethod === "bank"
             ? bankReference || undefined
             : undefined,
-        paymentCoversInternet:
-          paymentAlreadyMade && paymentCoversInternet ? true : false,
-        paymentCoversDecoder:
-          paymentAlreadyMade && paymentCoversDecoder ? true : false,
+        paymentCoversInternet: paymentAlreadyMade
+          ? paymentCoversInternet
+          : undefined,
+        paymentCoversDecoder: paymentAlreadyMade
+          ? paymentCoversDecoder
+          : undefined,
       });
       if (!billing.ok) {
         return res.status(502).json({
@@ -7297,14 +8552,17 @@ async function refreshCustomersBatch(req, res, next) {
     let skipped = 0;
 
     const updated = await mapWithConcurrency(ids, 5, async (id) => {
+      let customer = await store.getCustomerById(id);
+      if (!customer || hideCustomerOutsidePartnerScope(req, customer)) {
+        skipped += 1;
+        return null;
+      }
       if (!force && syncCooldown.getRemainingMs(id) > 0) {
         skipped += 1;
-        const cached = await attachTispDueDate(await store.getCustomerById(id));
-        return cached;
+        return attachTispDueDate(customer);
       }
 
-      let customer = await store.getCustomerById(id);
-      if (!customer || customer.status !== "active") {
+      if (customer.status !== "active") {
         skipped += 1;
         return customer;
       }
@@ -7491,6 +8749,7 @@ async function getCustomerTransactions(req, res, next) {
 
 module.exports = {
   listCustomers,
+  listCustomerNotes,
   lookupCustomerByNumber,
   exportCustomers,
   getCustomer,
@@ -7505,6 +8764,8 @@ module.exports = {
   getDowngradeQuote,
   createCustomer,
   updateCustomer,
+  updateCustomerNotes,
+  getCustomerNoteFollowUp,
   updateCustomerTvCount,
   convertCustomerType: convertCustomerTypeHandler,
   upgradePackage,
@@ -7515,6 +8776,9 @@ module.exports = {
   cancelSubscription,
   disconnectCustomer,
   pauseCustomer,
+  resumeCustomer,
+  pauseCustomerIndefinitely,
+  restartIndefinitePause,
   extendTispDueDateForCustomer,
   linkCustomerOlt,
   deleteCustomerPermanently,
